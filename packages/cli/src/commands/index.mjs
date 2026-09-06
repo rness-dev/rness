@@ -27,3 +27,6 @@ export async function runCommand(name, args) {
   }
   return handler(args)
 }
+
+import { contextCommand } from './context.mjs'
+registerCommand('context', contextCommand)
