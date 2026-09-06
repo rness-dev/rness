@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { runCommand, usage } from './commands/index.mjs'
 
@@ -22,6 +23,18 @@ export async function main(argv) {
   return runCommand(name, rest)
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+function invokedDirectly() {
+  const entry = process.argv[1]
+  if (!entry) return false
+  const self = fileURLToPath(import.meta.url)
+  if (entry === self) return true
+  try {
+    return realpathSync(entry) === self
+  } catch {
+    return false
+  }
+}
+
+if (invokedDirectly()) {
   main(process.argv.slice(2)).then((code) => process.exit(code))
 }
