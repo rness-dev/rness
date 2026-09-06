@@ -26,6 +26,7 @@ export async function loadManifest(rnessDir) {
   } catch (e) {
     fail(`invalid JSON (${e.message})`)
   }
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) fail('must be a JSON object')
   if (data.contract !== 1) fail(`unsupported contract: ${JSON.stringify(data.contract)} (expected 1)`)
 
   const repos = data.repos ?? {}

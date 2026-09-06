@@ -40,3 +40,18 @@ test('missing file throws', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'rness-'))
   await assert.rejects(() => loadManifest(dir), /rness\.json:/)
 })
+
+test('rejects a JSON null document with a prefixed error', async () => {
+  const d = await fixture('null')
+  await assert.rejects(() => loadManifest(d), /rness\.json:.*JSON object/)
+})
+
+test('rejects a non-object JSON document (array) with a prefixed error', async () => {
+  const d = await fixture('[]')
+  await assert.rejects(() => loadManifest(d), /rness\.json:.*JSON object/)
+})
+
+test('rejects genuinely malformed JSON with a prefixed error', async () => {
+  const d = await fixture('{ not valid json')
+  await assert.rejects(() => loadManifest(d), /rness\.json:.*invalid JSON/)
+})
