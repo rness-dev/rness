@@ -1,0 +1,23 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { findWorkspace } from '../../src/core/workspace.mjs'
+
+test('finds the workspace root from a nested cwd', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'rness-')))
+  await mkdir(join(root, '.rness'))
+  await writeFile(join(root, '.rness', 'rness.json'), '{"contract":1,"repos":{},"scopes":{}}')
+  const nested = join(root, 'org', 'web', 'src')
+  await mkdir(nested, { recursive: true })
+  const ws = await findWorkspace(nested)
+  assert.equal(ws.root, root)
+  assert.equal(ws.rnessDir, join(root, '.rness'))
+})
+
+test('throws when no workspace above', async () => {
+  const lonely = await realpath(await mkdtemp(join(tmpdir(), 'rness-')))
+  await assert.rejects(() => findWorkspace(lonely), /no rness workspace/)
+})
