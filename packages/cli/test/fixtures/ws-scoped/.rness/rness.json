@@ -1,0 +1,4 @@
+{ "contract": 1, "repos": {}, "scopes": {
+  "web": { "path": "org/web", "extends": ["platform"] },
+  "platform": { "path": "org/platform" }
+} }
