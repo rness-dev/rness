@@ -1,5 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises'
-import { join, posix, sep } from 'node:path'
+import { join, posix, relative, sep } from 'node:path'
 import { parseFrontMatter, extractTitle } from './frontmatter.mjs'
 
 async function walk(dir) {
@@ -23,7 +23,7 @@ export async function collectMarkdown(dir) {
   const items = await Promise.all(
     files.map(async (path) => {
       const body = await readFile(path, 'utf8')
-      const rel = path.slice(dir.length + 1).split(sep).join(posix.sep)
+      const rel = relative(dir, path).split(sep).join(posix.sep)
       return { path, rel, fields: parseFrontMatter(body), title: extractTitle(body), body }
     }),
   )

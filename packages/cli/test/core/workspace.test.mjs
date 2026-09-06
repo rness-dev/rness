@@ -21,3 +21,19 @@ test('throws when no workspace above', async () => {
   const lonely = await realpath(await mkdtemp(join(tmpdir(), 'rness-')))
   await assert.rejects(() => findWorkspace(lonely), /no rness workspace/)
 })
+
+test('resolves a relative startDir instead of looping', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'rness-')))
+  await mkdir(join(root, '.rness'))
+  await writeFile(join(root, '.rness', 'rness.json'), '{"contract":1,"repos":{},"scopes":{}}')
+  const nested = join(root, 'a', 'b')
+  await mkdir(nested, { recursive: true })
+  const cwd = process.cwd()
+  process.chdir(nested)
+  try {
+    const ws = await findWorkspace('.')
+    assert.equal(ws.root, root)
+  } finally {
+    process.chdir(cwd)
+  }
+})

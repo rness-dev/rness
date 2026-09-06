@@ -1,5 +1,5 @@
 import { access } from 'node:fs/promises'
-import { dirname, join, parse } from 'node:path'
+import { dirname, join, parse, resolve } from 'node:path'
 
 async function exists(p) {
   try {
@@ -11,8 +11,8 @@ async function exists(p) {
 }
 
 export async function findWorkspace(startDir) {
-  let dir = startDir
-  const { root: fsRoot } = parse(startDir)
+  let dir = resolve(startDir)
+  const { root: fsRoot } = parse(dir)
   while (true) {
     if (await exists(join(dir, '.rness', 'rness.json'))) {
       return { root: dir, rnessDir: join(dir, '.rness') }
