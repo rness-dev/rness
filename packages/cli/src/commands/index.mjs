@@ -30,3 +30,6 @@ export async function runCommand(name, args) {
 
 import { contextCommand } from './context.mjs'
 registerCommand('context', contextCommand)
+
+import { validateCommand } from './validate.mjs'
+registerCommand('validate', validateCommand)

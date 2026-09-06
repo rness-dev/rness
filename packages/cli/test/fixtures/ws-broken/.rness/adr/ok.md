@@ -1,0 +1,4 @@
+---
+status: Accepted
+---
+# Good ADR
