@@ -4,19 +4,44 @@ import { findWorkspace } from '../core/workspace.mjs'
 import { loadManifest } from '../core/manifest.mjs'
 import { resolveScope } from '../core/scope.mjs'
 import { assembleContext } from '../core/context.mjs'
+import { usage } from './index.mjs'
+
+function needsValue(args, i) {
+  const value = args[i + 1]
+  return value === undefined || value.startsWith('--') ? undefined : value
+}
 
 function parse(args) {
   const opts = { json: false, scope: undefined, cwd: process.cwd() }
   for (let i = 0; i < args.length; i += 1) {
-    if (args[i] === '--json') opts.json = true
-    else if (args[i] === '--scope') opts.scope = args[++i]
-    else if (args[i] === '--cwd') opts.cwd = args[++i]
+    const arg = args[i]
+    if (arg === '--json') {
+      opts.json = true
+    } else if (arg === '--scope') {
+      const value = needsValue(args, i)
+      if (value === undefined) return { ok: false }
+      opts.scope = value
+      i += 1
+    } else if (arg === '--cwd') {
+      // --cwd is an internal flag for tests; not part of the public interface.
+      const value = needsValue(args, i)
+      if (value === undefined) return { ok: false }
+      opts.cwd = value
+      i += 1
+    } else {
+      return { ok: false }
+    }
   }
-  return opts
+  return { ok: true, opts }
 }
 
 export async function contextCommand(args) {
-  const opts = parse(args)
+  const parsed = parse(args)
+  if (!parsed.ok) {
+    process.stderr.write(usage())
+    return 2
+  }
+  const opts = parsed.opts
   let ws
   try {
     ws = await findWorkspace(opts.cwd)
@@ -34,7 +59,7 @@ export async function contextCommand(args) {
 
   let scope
   if (opts.scope !== undefined) {
-    if (!manifest.scopes[opts.scope]) {
+    if (!Object.hasOwn(manifest.scopes, opts.scope)) {
       process.stderr.write(`unknown scope: ${opts.scope}\n`)
       return 1
     }

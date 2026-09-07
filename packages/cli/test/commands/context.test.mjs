@@ -82,3 +82,32 @@ test('a malformed rness.json is a handled error', async () => {
   assert.equal(code, 1)
   assert.match(c.errText(), /rness\.json:/)
 })
+
+test('a prototype-chain name is not a real scope (I3)', async () => {
+  const c = capture()
+  const code = await contextCommand(['--scope', 'constructor', '--cwd', scopedCwd])
+  c.restore()
+  assert.equal(code, 1)
+  assert.match(c.errText(), /unknown scope/)
+})
+
+test('an unknown flag is bad usage, exit 2 (I5)', async () => {
+  const c = capture()
+  const code = await contextCommand(['--bogus', '--cwd', scopedCwd])
+  c.restore()
+  assert.equal(code, 2)
+})
+
+test('--scope with no value is bad usage, exit 2 (I5)', async () => {
+  const c = capture()
+  const code = await contextCommand(['--scope', '--cwd', scopedCwd])
+  c.restore()
+  assert.equal(code, 2)
+})
+
+test('--scope as the final arg with no value is bad usage, exit 2 (I5)', async () => {
+  const c = capture()
+  const code = await contextCommand(['--cwd', scopedCwd, '--scope'])
+  c.restore()
+  assert.equal(code, 2)
+})

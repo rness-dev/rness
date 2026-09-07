@@ -31,6 +31,11 @@ test('rejects an extends target that is not a scope', async () => {
   await assert.rejects(() => loadManifest(d), /rness\.json:.*ghost/)
 })
 
+test('rejects an extends target that only exists on the prototype chain (I3)', async () => {
+  const d = await fixture({ contract: 1, repos: {}, scopes: { web: { path: 'org/web', extends: ['constructor'] } } })
+  await assert.rejects(() => loadManifest(d), /rness\.json:.*constructor/)
+})
+
 test('rejects a path with ..', async () => {
   const d = await fixture({ contract: 1, repos: {}, scopes: { web: { path: '../escape' } } })
   await assert.rejects(() => loadManifest(d), /rness\.json:/)

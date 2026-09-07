@@ -49,7 +49,7 @@ export async function loadManifest(rnessDir) {
   }
   for (const [name, entry] of Object.entries(normalised)) {
     for (const target of entry.extends) {
-      if (!normalised[target]) fail(`scope "${name}" extends unknown scope "${target}"`)
+      if (!Object.hasOwn(normalised, target)) fail(`scope "${name}" extends unknown scope "${target}"`)
     }
   }
 
