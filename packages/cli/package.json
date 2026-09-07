@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "bin": { "rness": "./src/cli.mjs" },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=24" },
   "scripts": { "test": "node --test 'test/**/*.test.mjs'" },
   "files": ["src"]
 }
