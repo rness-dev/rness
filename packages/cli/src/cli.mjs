@@ -36,5 +36,15 @@ function invokedDirectly() {
 }
 
 if (invokedDirectly()) {
-  main(process.argv.slice(2)).then((code) => process.exit(code))
+  // Set process.exitCode rather than calling process.exit(): process.exit()
+  // terminates before Node drains an async stdout pipe, truncating piped output
+  // at the ~64 KiB pipe buffer (breaks `rness context --json | jq`, `$(...)`).
+  main(process.argv.slice(2))
+    .then((code) => {
+      process.exitCode = code
+    })
+    .catch((e) => {
+      process.stderr.write(`${e.message}\n`)
+      process.exitCode = 1
+    })
 }

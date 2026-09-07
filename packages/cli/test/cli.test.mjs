@@ -1,8 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { openSync, closeSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { main } from '../src/cli.mjs'
 
 const execFileP = promisify(execFile)
@@ -55,12 +59,57 @@ test('runs when executed directly as a script', async () => {
 })
 
 test('runs when invoked through a bin symlink', async (t) => {
-  const { mkdtemp, symlink } = await import('node:fs/promises')
-  const { tmpdir } = await import('node:os')
-  const { join } = await import('node:path')
+  const { symlink } = await import('node:fs/promises')
   const dir = await mkdtemp(join(tmpdir(), 'rness-bin-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
   const link = join(dir, 'rness')
   await symlink(cliPath, link)
   const { stdout } = await execFileP(process.execPath, [link, '--version'])
   assert.match(stdout, /^\d+\.\d+\.\d+\s*$/)
+})
+
+test('piped stdout is not truncated at the 64 KiB pipe buffer (C1)', async (t) => {
+  const ws = await mkdtemp(join(tmpdir(), 'rness-pipe-'))
+  t.after(() => rm(ws, { recursive: true, force: true }))
+  const rnessDir = join(ws, '.rness')
+  await mkdir(join(rnessDir, 'standards'), { recursive: true })
+  await writeFile(
+    join(rnessDir, 'rness.json'),
+    JSON.stringify({ contract: 1, repos: {}, scopes: { web: { path: 'org/web' } } }),
+  )
+  // ~100 KB of markdown at the collection root (global -> included for any scope).
+  const big = `# Big\n\n${'lorem ipsum dolor sit amet '.repeat(4000)}\n`
+  await writeFile(join(rnessDir, 'standards', 'big.md'), big)
+  assert.ok(Buffer.byteLength(big) > 65536)
+
+  // Path 1: stdout captured through a pipe (execFile), the way jq/wc/$(...) see it.
+  const { stdout: piped } = await execFileP(
+    process.execPath,
+    [cliPath, 'context', '--scope', 'web', '--json'],
+    { cwd: ws, maxBuffer: 64 * 1024 * 1024 },
+  )
+
+  // Path 2: stdout redirected to a file.
+  const outPath = join(ws, 'out.json')
+  const fd = openSync(outPath, 'w')
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cliPath, 'context', '--scope', 'web', '--json'], {
+      cwd: ws,
+      stdio: ['ignore', fd, 'inherit'],
+    })
+    child.on('error', reject)
+    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))))
+  })
+  closeSync(fd)
+  const redirected = await readFile(outPath)
+
+  // The pipe output must be complete: valid JSON, larger than the pipe buffer,
+  // and byte-identical in length to the file-redirect output.
+  assert.doesNotThrow(() => JSON.parse(piped), 'piped --json output is valid JSON')
+  assert.ok(
+    Buffer.byteLength(piped) > 65536,
+    `piped output clamped to ${Buffer.byteLength(piped)} bytes`,
+  )
+  assert.notEqual(Buffer.byteLength(piped), 65536)
+  assert.equal(Buffer.byteLength(piped), redirected.length)
 })
