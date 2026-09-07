@@ -24,7 +24,13 @@ export async function contextCommand(args) {
     process.stderr.write(`${e.message}\n`)
     return 1
   }
-  const manifest = await loadManifest(ws.rnessDir)
+  let manifest
+  try {
+    manifest = await loadManifest(ws.rnessDir)
+  } catch (e) {
+    process.stderr.write(`${e.message}\n`)
+    return 1
+  }
 
   let scope
   if (opts.scope !== undefined) {
@@ -38,7 +44,13 @@ export async function contextCommand(args) {
     scope = resolveScope(manifest, rel)
   }
 
-  const ctx = await assembleContext({ rnessDir: ws.rnessDir, manifest, scope })
+  let ctx
+  try {
+    ctx = await assembleContext({ rnessDir: ws.rnessDir, manifest, scope })
+  } catch (e) {
+    process.stderr.write(`${e.message}\n`)
+    return 1
+  }
 
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(ctx, null, 2)}\n`)

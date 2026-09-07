@@ -1,0 +1,4 @@
+{ "contract": 1, "repos": {}, "scopes": {
+  "alpha": { "path": "org/alpha", "extends": ["beta"] },
+  "beta": { "path": "org/beta", "extends": ["alpha"] }
+} }
