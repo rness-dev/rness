@@ -1,0 +1,5 @@
+{ "contract": 1, "repos": {}, "scopes": {
+  "a": { "path": "org/a", "extends": ["b"] },
+  "b": { "path": "org/b", "extends": ["c"] },
+  "c": { "path": "org/c" }
+} }

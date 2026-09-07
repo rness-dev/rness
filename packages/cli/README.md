@@ -10,6 +10,9 @@ Not an agent — no LLM loop.
 
 Run inside an rness workspace (a directory tree containing `.rness/rness.json`).
 
+`--cwd <dir>` is an internal flag (used by the test suite to point a command at
+a fixture); it is not part of the supported interface.
+
 ## Develop
 
     cd cli && npm test

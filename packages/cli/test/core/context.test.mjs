@@ -2,11 +2,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
 import { loadManifest } from '../../src/core/manifest.mjs'
 import { assembleContext } from '../../src/core/context.mjs'
 
 const rnessDir = fileURLToPath(new URL('../fixtures/ws-scoped/.rness', import.meta.url))
+const routingDir = fileURLToPath(new URL('../fixtures/ws-routing/.rness', import.meta.url))
 
 test('web scope pulls web + platform + global standards, nearest first', async () => {
   const manifest = await loadManifest(rnessDir)
@@ -23,4 +23,37 @@ test('global scope pulls only collection-root files', async () => {
   assert.deepEqual(standards.files.map((f) => f.rel), ['global.md'])
   const adr = ctx.collections.find((c) => c.name === 'adr')
   assert.deepEqual(adr.files.map((f) => f.rel), ['0001-x.md'])
+})
+
+test('front-matter scopes routes a file from another dir into that scope group', async () => {
+  const manifest = await loadManifest(routingDir)
+  const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
+  const standards = ctx.collections.find((c) => c.name === 'standards')
+  const routed = standards.files.find((f) => f.rel === 'misc/routed.md')
+  assert.ok(routed, 'misc/routed.md is included')
+  assert.equal(routed.scope, 'b')
+})
+
+test('a file tagged scope: global inside a scope dir is excluded', async () => {
+  const manifest = await loadManifest(routingDir)
+  const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
+  const standards = ctx.collections.find((c) => c.name === 'standards')
+  assert.equal(
+    standards.files.some((f) => f.rel === 'a/tagged-global.md'),
+    false,
+  )
+})
+
+test('a 3-deep extends chain orders a-group, b-group, c-group, then global', async () => {
+  const manifest = await loadManifest(routingDir)
+  const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
+  const standards = ctx.collections.find((c) => c.name === 'standards')
+  assert.deepEqual(
+    standards.files.map((f) => f.rel),
+    ['a/one.md', 'b/two.md', 'misc/routed.md', 'c/three.md', 'root.md'],
+  )
+  assert.deepEqual(
+    standards.files.map((f) => f.scope),
+    ['a', 'b', 'b', 'c', null],
+  )
 })

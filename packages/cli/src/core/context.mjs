@@ -18,7 +18,7 @@ async function assembleCollection(dir, name, chain) {
   const items = await collectMarkdown(dir)
   const chainSet = new Set(chain)
   const groups = new Map(chain.map((s) => [s, []]))
-  const global = []
+  const rootFiles = []
 
   for (const item of items) {
     const owner = ownerScope(item.rel)
@@ -27,7 +27,7 @@ async function assembleCollection(dir, name, chain) {
     const globalTagged = item.fields?.scope === 'global'
 
     if (isGlobalRoot) {
-      global.push({ ...item, scope: null })
+      rootFiles.push({ ...item, scope: null })
       continue
     }
     if (globalTagged) continue
@@ -47,7 +47,7 @@ async function assembleCollection(dir, name, chain) {
     files.push({ rel: f.rel, scope: f.scope, title: f.title, body: f.body })
   }
   for (const s of chain) for (const f of groups.get(s)) push(f)
-  for (const f of global) push(f)
+  for (const f of rootFiles) push(f)
   return { name, files }
 }
 
