@@ -3,5 +3,9 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=24" },
-  "scripts": { "test": "pnpm -r test" }
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build"
+  }
 }

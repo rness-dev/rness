@@ -1,10 +1,29 @@
 {
-  "name": "rness",
-  "version": "0.1.0",
+  "name": "@rness/cli",
+  "version": "0.2.0",
+  "description": "Configuration-plane CLI for rness workspaces: resolve, validate and sync org-level context for AI coding agents",
   "license": "MIT",
   "type": "module",
-  "bin": { "rness": "./src/cli.mjs" },
   "engines": { "node": ">=24" },
-  "scripts": { "test": "node --test 'test/**/*.test.mjs'" },
-  "files": ["src"]
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rness-dev/rness.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/rness-dev/rness",
+  "scripts": {
+    "test": "node --test 'test/**/*.test.ts' 'test/**/*.test.mjs'",
+    "typecheck": "tsc --noEmit",
+    "build": "tsup",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4",
+    "tsup": "8.5.1",
+    "typescript": "7.0.2"
+  }
 }
