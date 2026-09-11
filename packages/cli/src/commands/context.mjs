@@ -1,8 +1,8 @@
 import { relative } from 'node:path'
 import { posix, sep } from 'node:path'
-import { findWorkspace } from '../core/workspace.mjs'
-import { loadManifest } from '../core/manifest.mjs'
-import { resolveScope } from '../core/scope.mjs'
+import { findWorkspace } from '../core/workspace.ts'
+import { loadManifest } from '../core/manifest.ts'
+import { resolveScope } from '../core/scope.ts'
 import { assembleContext } from '../core/context.mjs'
 import { usage } from './index.mjs'
 

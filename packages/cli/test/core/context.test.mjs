@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { loadManifest } from '../../src/core/manifest.mjs'
+import { loadManifest } from '../../src/core/manifest.ts'
 import { assembleContext } from '../../src/core/context.mjs'
 
 const rnessDir = fileURLToPath(new URL('../fixtures/ws-scoped/.rness', import.meta.url))

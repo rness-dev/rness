@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadManifest } from '../../src/core/manifest.mjs'
+import { loadManifest } from '../../src/core/manifest.ts'
 
-async function fixture(json) {
+async function fixture(json: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'rness-'))
   const rnessDir = join(dir, '.rness')
   await mkdir(rnessDir)
@@ -14,11 +14,16 @@ async function fixture(json) {
 }
 
 test('loads a valid manifest and defaults extends to []', async () => {
-  const d = await fixture({ contract: 1, repos: {}, scopes: { web: { path: 'org/web' }, ui: { path: 'org/p/pkg/ui', extends: ['web'] } } })
+  const d = await fixture({
+    contract: 1,
+    repos: { web: { url: 'https://github.com/acme/web.git' } },
+    scopes: { web: { path: 'org/web' }, ui: { path: 'org/p/pkg/ui', extends: ['web'] } },
+  })
   const m = await loadManifest(d)
   assert.equal(m.contract, 1)
-  assert.deepEqual(m.scopes.web.extends, [])
-  assert.deepEqual(m.scopes.ui.extends, ['web'])
+  assert.deepEqual(m.repos.web, { url: 'https://github.com/acme/web.git' })
+  assert.deepEqual(m.scopes.web?.extends, [])
+  assert.deepEqual(m.scopes.ui?.extends, ['web'])
 })
 
 test('rejects wrong contract version', async () => {
@@ -31,7 +36,7 @@ test('rejects an extends target that is not a scope', async () => {
   await assert.rejects(() => loadManifest(d), /rness\.json:.*ghost/)
 })
 
-test('rejects an extends target that only exists on the prototype chain (I3)', async () => {
+test('rejects an extends target that only exists on the prototype chain', async () => {
   const d = await fixture({ contract: 1, repos: {}, scopes: { web: { path: 'org/web', extends: ['constructor'] } } })
   await assert.rejects(() => loadManifest(d), /rness\.json:.*constructor/)
 })
@@ -39,6 +44,11 @@ test('rejects an extends target that only exists on the prototype chain (I3)', a
 test('rejects a path with ..', async () => {
   const d = await fixture({ contract: 1, repos: {}, scopes: { web: { path: '../escape' } } })
   await assert.rejects(() => loadManifest(d), /rness\.json:/)
+})
+
+test('rejects a repo without a string url', async () => {
+  const d = await fixture({ contract: 1, repos: { web: {} }, scopes: {} })
+  await assert.rejects(() => loadManifest(d), /rness\.json:.*"url"/)
 })
 
 test('missing file throws', async () => {

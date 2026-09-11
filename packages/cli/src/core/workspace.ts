@@ -1,7 +1,8 @@
 import { access } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
+import type { Workspace } from './types.ts'
 
-async function exists(p) {
+async function exists(p: string): Promise<boolean> {
   try {
     await access(p)
     return true
@@ -10,7 +11,8 @@ async function exists(p) {
   }
 }
 
-export async function findWorkspace(startDir) {
+/** Walk up from `startDir`; the first directory holding `.rness/rness.json` is the root. */
+export async function findWorkspace(startDir: string): Promise<Workspace> {
   let dir = resolve(startDir)
   const { root: fsRoot } = parse(dir)
   while (true) {

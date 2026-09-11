@@ -1,6 +1,6 @@
-import { findWorkspace } from '../core/workspace.mjs'
-import { loadManifest } from '../core/manifest.mjs'
-import { scopeChain } from '../core/scope.mjs'
+import { findWorkspace } from '../core/workspace.ts'
+import { loadManifest } from '../core/manifest.ts'
+import { scopeChain } from '../core/scope.ts'
 import { checkContract } from '../core/contract.mjs'
 import { usage } from './index.mjs'
 

@@ -1,9 +1,9 @@
-// cli/test/core/scope.test.mjs
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveScope, scopeChain } from '../../src/core/scope.mjs'
+import { resolveScope, scopeChain } from '../../src/core/scope.ts'
+import type { Manifest } from '../../src/core/types.ts'
 
-const manifest = {
+const manifest: Manifest = {
   contract: 1,
   repos: {},
   scopes: {
@@ -35,6 +35,9 @@ test('scopeChain is nearest-first and deduped', () => {
 })
 
 test('scopeChain detects a cycle', () => {
-  const cyclic = { ...manifest, scopes: { a: { path: 'a', extends: ['b'] }, b: { path: 'b', extends: ['a'] } } }
+  const cyclic: Manifest = {
+    ...manifest,
+    scopes: { a: { path: 'a', extends: ['b'] }, b: { path: 'b', extends: ['a'] } },
+  }
   assert.throws(() => scopeChain(cyclic, 'a'), /cycle/)
 })
