@@ -9,11 +9,12 @@ polyrepo. rness never runs an LLM loop and is not an agent.
 
 | Path | npm | Status |
 | --- | --- | --- |
-| `packages/cli` | `rness` — core CLI: `context`, `validate` | shipping |
-| `packages/create` | `create-rness` — workspace bootstrap | planned |
-| `packages/mcp` | `rness-mcp` — MCP server | planned |
+| `packages/cli` | `@rness/cli` — the CLI, command `rness`: `context`, `validate` | shipping |
+| `packages/create` | `@rness/create` — `npm create @rness <org>` | planned |
+| `packages/create-rness` | `create-rness` — `npm create rness <org>` | name reserved |
+| `packages/mcp` | `@rness/mcp` — MCP server | planned |
 | `plugins/claude-code` | Claude Code plugin; this repository is its marketplace | planned |
-| `scaffold/`, `templates/`, `action/` | `.rness/` skeleton, demo apps, GitHub projection Action | planned |
+| `templates/`, `action/` | demo apps, GitHub projection Action | planned |
 
 ## Develop
 
@@ -21,5 +22,4 @@ polyrepo. rness never runs an LLM loop and is not an agent.
     pnpm test                              # every package
     node packages/cli/src/cli.mjs --help
 
-Node ≥ 24, pnpm. The core CLI carries zero runtime dependencies; every other
-package has a single, named dependency budget.
+Node ≥ 24, pnpm, TypeScript. MIT licence.
