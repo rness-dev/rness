@@ -48,7 +48,15 @@ test('a 3-deep extends chain orders a-group, b-group, c-group, then global', asy
   const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
   assert.deepEqual(
     standards(ctx).files.map((f) => f.rel),
-    ['a/one.md', 'b/two.md', 'misc/routed.md', 'c/three.md', 'root.md'],
+    ['a/one.md', 'b/two.md', 'misc/routed.md', 'c/three.md', 'misc/listed.md', 'root.md'],
   )
-  assert.deepEqual(standards(ctx).files.map((f) => f.scope), ['a', 'b', 'b', 'c', null])
+  assert.deepEqual(standards(ctx).files.map((f) => f.scope), ['a', 'b', 'b', 'c', 'c', null])
+})
+
+test('front-matter scopes as a YAML list routes into the first listed scope of the chain', async () => {
+  const manifest = await loadManifest(routingDir)
+  const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
+  const listed = standards(ctx).files.find((f) => f.rel === 'misc/listed.md')
+  assert.ok(listed, 'misc/listed.md is included')
+  assert.equal(listed.scope, 'c')
 })
