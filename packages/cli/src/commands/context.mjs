@@ -3,7 +3,7 @@ import { posix, sep } from 'node:path'
 import { findWorkspace } from '../core/workspace.ts'
 import { loadManifest } from '../core/manifest.ts'
 import { resolveScope } from '../core/scope.ts'
-import { assembleContext } from '../core/context.mjs'
+import { assembleContext } from '../core/context.ts'
 import { usage } from './index.mjs'
 
 function needsValue(args, i) {

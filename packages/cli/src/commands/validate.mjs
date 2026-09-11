@@ -1,7 +1,7 @@
 import { findWorkspace } from '../core/workspace.ts'
 import { loadManifest } from '../core/manifest.ts'
 import { scopeChain } from '../core/scope.ts'
-import { checkContract } from '../core/contract.mjs'
+import { checkContract } from '../core/contract.ts'
 import { usage } from './index.mjs'
 
 function parse(args) {
