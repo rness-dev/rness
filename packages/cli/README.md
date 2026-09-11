@@ -1,22 +1,31 @@
-# rness CLI
+# @rness/cli
 
-Configuration-plane CLI for rness. Resolves and validates workspace context.
-Not an agent — no LLM loop.
+The `rness` command: configuration-plane CLI for rness workspaces. It
+resolves, validates and (from 0.3.0) syncs an organisation's context for AI
+coding agents. Not an agent — no LLM loop.
+
+## Install
+
+    npm i -g @rness/cli        # the command is `rness`
+    npx @rness/cli --help
+
+Inside a workspace, every `rness` delegates to the copy pinned in
+`.rness/package.json`.
 
 ## Commands
 
     rness context [--scope <name>] [--json]   Resolve the context for a scope
     rness validate                            Check .rness/ against the contract
 
-Run inside an rness workspace (a directory tree containing `.rness/rness.json`).
-
-`--cwd <dir>` is an internal flag (used by the test suite to point a command at
-a fixture); it is not part of the supported interface.
+Exit codes: 0 success, 1 handled error, 2 bad usage. `RNESS_DEBUG=1` adds
+stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
 ## Develop
 
-This package lives in the `rness` pnpm workspace (`packages/cli`).
+    pnpm install                      # from the repository root
+    pnpm --filter @rness/cli test     # node:test on the TypeScript sources
+    pnpm --filter @rness/cli typecheck
+    pnpm --filter @rness/cli build    # tsup → dist/
+    node packages/cli/src/bin/rness.ts --help
 
-    pnpm install          # from the repository root
-    pnpm --filter rness test
-    node packages/cli/src/cli.mjs --help
+Node ≥ 24. MIT.
