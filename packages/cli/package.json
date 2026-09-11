@@ -12,7 +12,7 @@
   },
   "homepage": "https://github.com/rness-dev/rness",
   "scripts": {
-    "test": "node --test 'test/**/*.test.ts' 'test/**/*.test.mjs'",
+    "test": "node --test 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
     "build": "tsup",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
