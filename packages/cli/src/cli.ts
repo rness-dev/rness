@@ -59,9 +59,10 @@ export async function run(argv: string[]): Promise<number> {
     await program.parseAsync(argv, { from: 'user' })
   } catch (e) {
     if (e instanceof CommanderError) {
-      return e.code === 'commander.helpDisplayed' || e.code === 'commander.version' || e.code === 'commander.help'
-        ? 0
-        : 2
+      // Commander 15 reuses `commander.help`'s code for both the successful
+      // `--help` path and error paths (e.g. `help wat`, a lone `--`), so the
+      // exit code it already computed is the only reliable signal here.
+      return e.exitCode === 0 ? 0 : 2
     }
     throw e
   }

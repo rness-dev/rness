@@ -4,6 +4,7 @@ import { loadManifest } from '../core/manifest.ts'
 import { resolveScope } from '../core/scope.ts'
 import { assembleContext } from '../core/context.ts'
 import type { Context } from '../core/types.ts'
+import { reportError } from '../report.ts'
 
 export interface ContextOptions {
   /** Scope to resolve; default: the scope owning `cwd`. */
@@ -12,13 +13,6 @@ export interface ContextOptions {
   json?: boolean
   /** Internal (tests): directory to resolve from; default `process.cwd()`. */
   cwd?: string
-}
-
-function reportError(e: unknown): number {
-  const message = e instanceof Error ? e.message : String(e)
-  process.stderr.write(`${message}\n`)
-  if (process.env['RNESS_DEBUG'] && e instanceof Error && e.stack) process.stderr.write(`${e.stack}\n`)
-  return 1
 }
 
 export function renderMarkdown(ctx: Context): string {

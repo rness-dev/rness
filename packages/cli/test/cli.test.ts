@@ -49,8 +49,24 @@ test('a name inherited from Object.prototype is not a command', async () => {
 
 test('the internal --cwd option is hidden from help', async () => {
   const c = capture()
-  await run(['context', '--help'])
+  const code = await run(['context', '--help'])
   c.restore()
+  assert.equal(code, 0)
   assert.doesNotMatch(c.out(), /--cwd/)
   assert.match(c.out(), /--scope <name>/)
+})
+
+test('help with an unknown command name is bad usage, exit 2', async () => {
+  const c = capture()
+  const code = await run(['help', 'wat'])
+  c.restore()
+  assert.equal(code, 2)
+  assert.match(c.err(), /Usage: rness/)
+})
+
+test('a lone -- is bad usage, exit 2', async () => {
+  const c = capture()
+  const code = await run(['--'])
+  c.restore()
+  assert.equal(code, 2)
 })
