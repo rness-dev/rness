@@ -15,4 +15,8 @@ a fixture); it is not part of the supported interface.
 
 ## Develop
 
-    cd cli && npm test
+This package lives in the `rness` pnpm workspace (`packages/cli`).
+
+    pnpm install          # from the repository root
+    pnpm --filter rness test
+    node packages/cli/src/cli.mjs --help
