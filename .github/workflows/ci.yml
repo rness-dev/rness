@@ -17,11 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm build
+      - name: Smoke the built CLI
+        run: |
+          node packages/cli/dist/bin/rness.js --version
+          cd packages/cli && npm pack --dry-run

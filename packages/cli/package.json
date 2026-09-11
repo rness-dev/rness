@@ -11,6 +11,12 @@
     "directory": "packages/cli"
   },
   "homepage": "https://github.com/rness-dev/rness",
+  "bin": { "rness": "./dist/bin/rness.js" },
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "scaffold", "README.md"],
   "scripts": {
     "test": "node --test 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
