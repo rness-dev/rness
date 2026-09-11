@@ -11,7 +11,7 @@
     "directory": "packages/cli"
   },
   "homepage": "https://github.com/rness-dev/rness",
-  "bin": { "rness": "./dist/bin/rness.js" },
+  "bin": { "rness": "dist/bin/rness.js" },
   "exports": {
     ".": "./dist/index.js",
     "./package.json": "./package.json"
