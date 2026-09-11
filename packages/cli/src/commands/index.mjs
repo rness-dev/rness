@@ -20,7 +20,8 @@ export function registerCommand(name, handler) {
 }
 
 export async function runCommand(name, args) {
-  const handler = COMMANDS[name]
+  // Own properties only: `rness constructor` must not resolve Object.prototype.
+  const handler = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined
   if (!handler) {
     process.stderr.write(USAGE)
     return 2

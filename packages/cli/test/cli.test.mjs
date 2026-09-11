@@ -53,6 +53,14 @@ test('unknown command exits 2 with usage on stderr', async () => {
   assert.match(c.err(), /Usage: rness/)
 })
 
+test('a name inherited from Object.prototype is not a command', async () => {
+  const c = capture()
+  const code = await main(['constructor'])
+  c.restore()
+  assert.equal(code, 2)
+  assert.match(c.err(), /Usage: rness/)
+})
+
 test('runs when executed directly as a script', async () => {
   const { stdout } = await execFileP(process.execPath, [cliPath, '--version'])
   assert.match(stdout, /^\d+\.\d+\.\d+\s*$/)
