@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { collectMarkdown } from './collect.mjs'
+import { collectMarkdown } from './collect.ts'
 import { scopeChain } from './scope.mjs'
 
 const COLLECTIONS = ['standards', 'adr', 'specs', 'plans', 'skills']

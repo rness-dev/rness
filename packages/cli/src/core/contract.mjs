@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { collectMarkdown } from './collect.mjs'
+import { collectMarkdown } from './collect.ts'
 
 const STATUSES = {
   adr: ['Proposed', 'Accepted', 'Rejected', 'Superseded'],
