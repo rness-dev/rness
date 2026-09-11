@@ -1,0 +1,15 @@
+{
+  "name": "rness-context",
+  "private": true,
+  "type": "module",
+  "packageManager": "__RNESS_PM__",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "context": "rness context",
+    "validate": "rness validate",
+    "sync": "rness sync"
+  },
+  "devDependencies": {
+    "@rness/cli": "__RNESS_VERSION__"
+  }
+}
