@@ -6,6 +6,8 @@ export interface Delegate {
   /** Absolute path of the pinned copy's `dist/index.js`. */
   entry: string
   version: string
+  /** Workspace root (the directory holding `.rness/`). */
+  root: string
 }
 
 /**
@@ -14,9 +16,12 @@ export interface Delegate {
  * pinned copy is the only one that should ever act on a workspace.
  */
 export async function findDelegate(cwd: string, ownVersion: string): Promise<Delegate | null> {
+  let root: string
   let rnessDir: string
   try {
-    rnessDir = (await findWorkspace(cwd)).rnessDir
+    const ws = await findWorkspace(cwd)
+    root = ws.root
+    rnessDir = ws.rnessDir
   } catch {
     return null
   }
@@ -28,5 +33,5 @@ export async function findDelegate(cwd: string, ownVersion: string): Promise<Del
     return null
   }
   if (typeof version !== 'string' || version === ownVersion) return null
-  return { entry: join(pkgDir, 'dist', 'index.js'), version }
+  return { entry: join(pkgDir, 'dist', 'index.js'), version, root }
 }

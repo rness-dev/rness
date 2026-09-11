@@ -20,6 +20,6 @@ polyrepo. rness never runs an LLM loop and is not an agent.
 
     pnpm install
     pnpm typecheck && pnpm test && pnpm build     # every package
-    node packages/cli/src/bin/rness.ts --help     # run the CLI from source
+    RNESS_NO_DELEGATE=1 node packages/cli/src/bin/rness.ts --help     # run the CLI from source
 
 Node ≥ 24, pnpm, TypeScript. MIT licence.

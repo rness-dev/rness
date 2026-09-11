@@ -72,11 +72,49 @@ test('delegates to the workspace-pinned @rness/cli when versions differ', async 
   const bypassed = await execFileP(process.execPath, [binPath, 'validate'], { cwd, env: { ...process.env, RNESS_NO_DELEGATE: '1' } })
   assert.equal(bypassed.stdout.trim(), 'context ok')
 
+  const notOne = (await execFileP(process.execPath, [binPath, 'validate'], {
+    cwd,
+    env: { ...process.env, RNESS_NO_DELEGATE: '0' },
+  }).catch((e: { code: number; stdout: string }) => e)) as { code: number; stdout: string }
+  assert.equal(notOne.code, 7, 'RNESS_NO_DELEGATE=0 still delegates')
+  assert.match(notOne.stdout, /^DELEGATED 9\.9\.9/)
+
   const create = (await execFileP(process.execPath, [binPath, 'create', 'acme'], { cwd }).catch(
     (e: { code: number; stdout: string; stderr: string }) => e,
   )) as { code: number; stdout: string; stderr: string }
   assert.equal(create.code, 2, 'create never delegates; 0.2.0 has no create command so it is bad usage')
   assert.doesNotMatch(create.stdout, /DELEGATED/)
+})
+
+test('a pinned package.json without dist/index.js fails loudly, not silently', async (t) => {
+  const root = await tmp('rness-broken-')
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await workspace(root)
+  const pkg = join(root, '.rness', 'node_modules', '@rness', 'cli')
+  await mkdir(pkg, { recursive: true })
+  await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: '@rness/cli', version: '9.9.9', type: 'module' }))
+  const cwd = join(root, 'org', 'web')
+  await mkdir(cwd, { recursive: true })
+
+  const failure = (await execFileP(process.execPath, [binPath, 'validate'], { cwd }).catch(
+    (e: { code: number; stderr: string }) => e,
+  )) as { code: number; stderr: string }
+  assert.equal(failure.code, 1)
+  assert.match(failure.stderr, /not installed correctly/)
+})
+
+test('a delegate run() that resolves to a non-number exits 1, not 0', async (t) => {
+  const root = await tmp('rness-nonnum-')
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await workspace(root)
+  const pkg = join(root, '.rness', 'node_modules', '@rness', 'cli')
+  await mkdir(join(pkg, 'dist'), { recursive: true })
+  await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: '@rness/cli', version: '9.9.9', type: 'module' }))
+  await writeFile(join(pkg, 'dist', 'index.js'), "export async function run() { return 'seven' }\n")
+  const cwd = join(root, 'org', 'web')
+  await mkdir(cwd, { recursive: true })
+
+  await assert.rejects(execFileP(process.execPath, [binPath, 'validate'], { cwd }), (e: { code?: number }) => e.code === 1)
 })
 
 test('piped stdout is not truncated at the 64 KiB pipe buffer', async (t) => {

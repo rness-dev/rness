@@ -66,6 +66,37 @@ test('a malformed rness.json is a handled error', async () => {
   assert.match(c.err(), /rness\.json:/)
 })
 
+test('RNESS_DEBUG=1 prints the stack instead of the message', async () => {
+  const previous = process.env['RNESS_DEBUG']
+  process.env['RNESS_DEBUG'] = '1'
+  try {
+    const c = capture()
+    const code = await run(['context', '--cwd', badJsonCwd])
+    c.restore()
+    assert.equal(code, 1)
+    assert.match(c.err(), /^Error: rness\.json:[^\n]*\n\s+at /)
+  } finally {
+    if (previous === undefined) delete process.env['RNESS_DEBUG']
+    else process.env['RNESS_DEBUG'] = previous
+  }
+})
+
+test('RNESS_DEBUG=0 prints the plain message, no stack', async () => {
+  const previous = process.env['RNESS_DEBUG']
+  process.env['RNESS_DEBUG'] = '0'
+  try {
+    const c = capture()
+    const code = await run(['context', '--cwd', badJsonCwd])
+    c.restore()
+    assert.equal(code, 1)
+    assert.match(c.err(), /^rness\.json:/)
+    assert.doesNotMatch(c.err(), /\n    at /)
+  } finally {
+    if (previous === undefined) delete process.env['RNESS_DEBUG']
+    else process.env['RNESS_DEBUG'] = previous
+  }
+})
+
 test('outside any workspace is a handled error', async () => {
   const c = capture()
   const code = await run(['context', '--cwd', '/'])

@@ -37,6 +37,10 @@ test('a non-mapping document throws a prefixed error', () => {
   assert.throws(() => parseFrontMatter('---\n- a\n- b\n---\n'), /front matter: .*mapping/)
 })
 
+test('a leading UTF-8 BOM does not hide the front matter block', () => {
+  assert.deepEqual(parseFrontMatter('﻿---\nstatus: Draft\n---\n# T\n'), { status: 'Draft' })
+})
+
 test('extractTitle returns first h1', () => {
   assert.equal(extractTitle('---\na: b\n---\n# Hello\n## no\n'), 'Hello')
   assert.equal(extractTitle('no title here\n'), null)

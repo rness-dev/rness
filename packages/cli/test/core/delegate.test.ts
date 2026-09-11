@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, realpath } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findDelegate } from '../../src/core/delegate.ts'
@@ -18,23 +18,27 @@ async function workspaceWithPinned(version: string | null): Promise<string> {
   return root
 }
 
-test('returns the pinned copy when its version differs', async () => {
+test('returns the pinned copy when its version differs', async (t) => {
   const root = await workspaceWithPinned('9.9.9')
+  t.after(() => rm(root, { recursive: true, force: true }))
   const d = await findDelegate(join(root, 'org'), '0.2.0')
-  assert.deepEqual(d, { entry: join(root, '.rness', 'node_modules', '@rness', 'cli', 'dist', 'index.js'), version: '9.9.9' })
+  assert.deepEqual(d, { entry: join(root, '.rness', 'node_modules', '@rness', 'cli', 'dist', 'index.js'), version: '9.9.9', root })
 })
 
-test('returns null when the pinned copy has the same version', async () => {
+test('returns null when the pinned copy has the same version', async (t) => {
   const root = await workspaceWithPinned('0.2.0')
+  t.after(() => rm(root, { recursive: true, force: true }))
   assert.equal(await findDelegate(root, '0.2.0'), null)
 })
 
-test('returns null when nothing is pinned', async () => {
+test('returns null when nothing is pinned', async (t) => {
   const root = await workspaceWithPinned(null)
+  t.after(() => rm(root, { recursive: true, force: true }))
   assert.equal(await findDelegate(root, '0.2.0'), null)
 })
 
-test('returns null outside a workspace', async () => {
+test('returns null outside a workspace', async (t) => {
   const lonely = await realpath(await mkdtemp(join(tmpdir(), 'rness-lonely-')))
+  t.after(() => rm(lonely, { recursive: true, force: true }))
   assert.equal(await findDelegate(lonely, '0.2.0'), null)
 })

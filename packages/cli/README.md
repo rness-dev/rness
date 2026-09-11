@@ -26,6 +26,9 @@ stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
     pnpm --filter @rness/cli test     # node:test on the TypeScript sources
     pnpm --filter @rness/cli typecheck
     pnpm --filter @rness/cli build    # tsup → dist/
-    node packages/cli/src/bin/rness.ts --help
+    RNESS_NO_DELEGATE=1 node packages/cli/src/bin/rness.ts --help
+
+Inside a workspace whose `.rness/` pins a published `@rness/cli`, set
+`RNESS_NO_DELEGATE=1` to run this source tree instead of delegating.
 
 Node ≥ 24. MIT.

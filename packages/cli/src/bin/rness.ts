@@ -15,11 +15,21 @@ async function main(): Promise<number> {
     return 1
   }
   const argv = process.argv.slice(2)
-  const skipDelegation = argv[0] === 'create' || Boolean(process.env['RNESS_NO_DELEGATE'])
+  const skipDelegation = argv[0] === 'create' || process.env['RNESS_NO_DELEGATE'] === '1'
   const delegate = skipDelegation ? null : await findDelegate(process.cwd(), VERSION)
   if (delegate !== null) {
-    const mod = (await import(pathToFileURL(delegate.entry).href)) as { run: (argv: string[]) => Promise<number> }
-    return mod.run(argv)
+    const broken = (reason: string): Error =>
+      new Error(`@rness/cli ${delegate.version} pinned in ${delegate.root}/.rness is not installed correctly (${reason}); reinstall in .rness/`)
+    let mod: Record<string, unknown>
+    try {
+      mod = (await import(pathToFileURL(delegate.entry).href)) as Record<string, unknown>
+    } catch (e) {
+      throw broken(e instanceof Error ? e.message : String(e))
+    }
+    if (typeof mod['run'] !== 'function') throw broken('dist/index.js does not export run')
+    const delegateRun = mod['run'] as (argv: string[]) => Promise<unknown>
+    const code = await delegateRun(argv)
+    return typeof code === 'number' ? code : 1
   }
   return run(argv)
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, realpath } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findWorkspace } from '../../src/core/workspace.ts'
@@ -12,8 +12,9 @@ async function workspace(): Promise<string> {
   return root
 }
 
-test('finds the workspace root from a nested cwd', async () => {
+test('finds the workspace root from a nested cwd', async (t) => {
   const root = await workspace()
+  t.after(() => rm(root, { recursive: true, force: true }))
   const nested = join(root, 'org', 'web', 'src')
   await mkdir(nested, { recursive: true })
   const ws = await findWorkspace(nested)
@@ -21,13 +22,15 @@ test('finds the workspace root from a nested cwd', async () => {
   assert.equal(ws.rnessDir, join(root, '.rness'))
 })
 
-test('throws when no workspace above', async () => {
+test('throws when no workspace above', async (t) => {
   const lonely = await realpath(await mkdtemp(join(tmpdir(), 'rness-')))
+  t.after(() => rm(lonely, { recursive: true, force: true }))
   await assert.rejects(() => findWorkspace(lonely), /no rness workspace/)
 })
 
-test('resolves a relative startDir instead of looping', async () => {
+test('resolves a relative startDir instead of looping', async (t) => {
   const root = await workspace()
+  t.after(() => rm(root, { recursive: true, force: true }))
   const nested = join(root, 'a', 'b')
   await mkdir(nested, { recursive: true })
   const cwd = process.cwd()
