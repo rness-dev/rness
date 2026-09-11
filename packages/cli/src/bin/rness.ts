@@ -6,6 +6,15 @@ import { findDelegate } from '../core/delegate.ts'
 import { isSupportedNode, MIN_NODE_MAJOR } from '../core/node-version.ts'
 import { reportError } from '../report.ts'
 
+// `rness context | head`: once the reader has its lines it closes the pipe and
+// every further write emits EPIPE on stdout. Nothing is left to deliver, so end
+// quietly with success. This is the one process.exit() in the code base — it
+// runs only when there is no output left to drain (see main() below).
+process.stdout.on('error', (e: NodeJS.ErrnoException) => {
+  if (e.code === 'EPIPE') process.exit(0)
+  throw e
+})
+
 // Set process.exitCode rather than calling process.exit(): process.exit()
 // terminates before Node drains an async stdout pipe, truncating piped output
 // at the ~64 KiB pipe buffer (breaks `rness context --json | jq`, `$(...)`).

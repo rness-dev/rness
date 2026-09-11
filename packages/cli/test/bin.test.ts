@@ -149,3 +149,31 @@ test('piped stdout is not truncated at the 64 KiB pipe buffer', async (t) => {
   assert.ok(Buffer.byteLength(piped) > 65536, `piped output clamped to ${Buffer.byteLength(piped)} bytes`)
   assert.equal(Buffer.byteLength(piped), redirected.length)
 })
+
+test('a reader closing the pipe early (`rness context | head`) ends quietly with exit 0', async (t) => {
+  const ws = await tmp('rness-epipe-')
+  t.after(() => rm(ws, { recursive: true, force: true }))
+  await workspace(ws)
+  // Larger than the pipe buffer, so the CLI is still writing when the reader leaves.
+  await writeFile(join(ws, '.rness', 'standards', 'big.md'), `# Big\n\n${'lorem ipsum dolor sit amet '.repeat(4000)}\n`)
+
+  const result = await new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
+    const child = spawn(process.execPath, [binPath, 'context', '--scope', 'web', '--json'], {
+      cwd: ws,
+      env: noDelegate,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+    })
+    // Close the read end before the CLI writes anything: every write then hits
+    // a pipe with no reader — what `head` leaves behind once it has its lines.
+    child.stdout?.destroy()
+    child.on('error', reject)
+    child.on('exit', (code) => resolve({ code, stderr }))
+  })
+
+  assert.equal(result.code, 0)
+  assert.equal(result.stderr, '')
+})
