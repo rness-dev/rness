@@ -33,8 +33,10 @@ repo: <repository or scope this applies to>
 
 `date` is the creation date; add `updated: YYYY-MM-DD` on meaningful change
 (never on an ADR). Link related documents with `spec:`, `plan:`, `adr:`, or
-`superseded_by:`. A file may declare `scopes: [a, b]` to apply to scopes it is
-not filed under, or `scope: global` to opt out of its directory's scope.
+`superseded_by:`. A file's directory decides its scope: `<collection>/<file>.md`
+applies everywhere, `<collection>/<scope>/**` applies to that scope and to the
+scopes that extend it. Front matter never re-routes a file; `rness validate`
+rejects a `scopes` or `scope` key.
 
 `rness validate` enforces the front matter and the status sets above.
 

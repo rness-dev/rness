@@ -1,8 +1,8 @@
 # @rness/cli
 
 The `rness` command: configuration-plane CLI for rness workspaces. It
-resolves, validates and (from 0.3.0) syncs an organisation's context for AI
-coding agents. Not an agent — no LLM loop.
+resolves, validates and syncs an organisation's context for AI coding agents.
+Not an agent — no LLM loop.
 
 ## Install
 
@@ -14,11 +14,14 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 
 ## Commands
 
-    rness context [--scope <name>] [--json]   Resolve the context for a scope
-    rness validate                            Check .rness/ against the contract
+    rness context [--scope <name>] [--json]           Resolve the context for a scope
+    rness validate                                    Check .rness/ and every generated block
+    rness sync [--scope <name>] [--check] [--pull] -y Clone repositories, write the blocks
 
 Exit codes: 0 success, 1 handled error, 2 bad usage. `RNESS_DEBUG=1` adds
-stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+stack traces; `RNESS_NO_DELEGATE=1` skips the delegation. `sync` asks for
+confirmation in a terminal; pass `-y`/`--yes` in scripts. `--check` writes
+nothing and exits 1 when a block is out of date — use it in CI.
 
 ## Develop
 
