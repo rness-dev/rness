@@ -38,18 +38,25 @@ export function mergeBlock(existing: string | null, block: string): MergeResult 
   if (existing === null) return { ok: true, text: `${block}\n`, changed: true }
   const eol = existing.includes('\r\n') ? '\r\n' : '\n'
   const lines = existing.split(/\r?\n/)
-  const blockLines = block.split('\n')
   const found = findBlock(lines)
   if (found.kind === 'error') return { ok: false, error: found.message }
-  let out: string[]
+  const rendered = block.split('\n').join(eol)
+  // Offsets of every line start in the original text, so the regions outside the
+  // span are copied byte for byte — a file mixing LF and CRLF keeps every separator.
+  const starts: number[] = [0]
+  for (const m of existing.matchAll(/\r?\n/g)) starts.push((m.index ?? 0) + m[0].length)
+  const lineStart = (i: number): number => starts[i] ?? existing.length
+  let text: string
   if (found.kind === 'one') {
-    out = [...lines.slice(0, found.begin), ...blockLines, ...lines.slice(found.end + 1)]
+    const endLine = lines[found.end] ?? ''
+    const afterEnd = lineStart(found.end) + endLine.length
+    text = `${existing.slice(0, lineStart(found.begin))}${rendered}${existing.slice(afterEnd)}`
   } else if ((lines[0] ?? '').startsWith('# ') && (lines[1] ?? '') === '') {
-    out = [lines[0] ?? '', '', ...blockLines, '', ...lines.slice(2)]
+    const at = lineStart(2)
+    text = `${existing.slice(0, at)}${rendered}${eol}${eol}${existing.slice(at)}`
   } else {
-    out = [...blockLines, '', ...lines]
+    text = `${rendered}${eol}${eol}${existing}`
   }
-  const text = out.join(eol)
   return { ok: true, text, changed: text !== existing }
 }
 
@@ -62,6 +69,7 @@ export async function ensureClaudeMd(dir: string): Promise<'created' | 'prepende
     return 'created'
   }
   if (existing.split(/\r?\n/).some((l) => l.trim() === '@AGENTS.md')) return 'unchanged'
-  await writeFileAtomic(file, `@AGENTS.md\n${existing}`)
+  const eol = existing.includes('\r\n') ? '\r\n' : '\n'
+  await writeFileAtomic(file, `@AGENTS.md${eol}${existing}`)
   return 'prepended'
 }

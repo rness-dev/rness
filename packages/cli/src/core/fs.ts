@@ -1,4 +1,4 @@
-import { access, readFile, rename, writeFile } from 'node:fs/promises'
+import { access, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 export async function exists(p: string): Promise<boolean> {
@@ -20,9 +20,17 @@ export async function readOrNull(p: string): Promise<string | null> {
   }
 }
 
+let sequence = 0
+
 /** Write to a temporary file in the same directory, then rename over the target. */
 export async function writeFileAtomic(p: string, text: string): Promise<void> {
-  const tmp = join(dirname(p), `.${basename(p)}.${process.pid}.tmp`)
+  sequence += 1
+  const tmp = join(dirname(p), `.${basename(p)}.${process.pid}.${sequence}.tmp`)
   await writeFile(tmp, text, 'utf8')
-  await rename(tmp, p)
+  try {
+    await rename(tmp, p)
+  } catch (e) {
+    await rm(tmp, { force: true })
+    throw e
+  }
 }

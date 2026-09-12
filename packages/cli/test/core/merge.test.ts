@@ -54,6 +54,24 @@ test('malformed spans are errors and leave the text alone', () => {
   assert.equal(result.ok, false)
 })
 
+test('a file mixing LF and CRLF keeps every separator outside the span', () => {
+  const mixed = '# Title\r\n\r\nline one\nline two\r\n'
+  const inserted = mergeBlock(mixed, BLOCK)
+  assert.ok(inserted.ok)
+  assert.equal(inserted.text, `# Title\r\n\r\n${BLOCK.split('\n').join('\r\n')}\r\n\r\nline one\nline two\r\n`)
+  const replaced = mergeBlock('a\nb\r\n<!-- BEGIN rness -->\r\nold\r\n<!-- END rness -->\r\nc\nd\r\n', BLOCK)
+  assert.ok(replaced.ok)
+  assert.equal(replaced.text, `a\nb\r\n${BLOCK.split('\n').join('\r\n')}\r\nc\nd\r\n`)
+})
+
+test('ensureClaudeMd prepends with the file\'s own line ending', async (t) => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-claude-crlf-')))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(join(dir, 'CLAUDE.md'), '# Local\r\n\r\nNotes.\r\n')
+  assert.equal(await ensureClaudeMd(dir), 'prepended')
+  assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '@AGENTS.md\r\n# Local\r\n\r\nNotes.\r\n')
+})
+
 test('ensureClaudeMd creates, prepends, or leaves alone', async (t) => {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-claude-')))
   t.after(() => rm(dir, { recursive: true, force: true }))
