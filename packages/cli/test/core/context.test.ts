@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { loadManifest } from '../../src/core/manifest.ts'
-import { assembleContext } from '../../src/core/context.ts'
+import { assembleContext, ownerScope } from '../../src/core/context.ts'
 import type { Context } from '../../src/core/types.ts'
 
 const rnessDir = fileURLToPath(new URL('../fixtures/ws-scoped/.rness', import.meta.url))
@@ -13,6 +13,12 @@ function standards(ctx: Context) {
   assert.ok(c)
   return c
 }
+
+test('ownerScope is the first path segment, null at the collection root', () => {
+  assert.equal(ownerScope('coding.md'), null)
+  assert.equal(ownerScope('web/seo.md'), 'web')
+  assert.equal(ownerScope('web/nested/deep.md'), 'web')
+})
 
 test('web scope pulls web + platform + global standards, nearest first', async () => {
   const manifest = await loadManifest(rnessDir)
@@ -29,34 +35,19 @@ test('global scope pulls only collection-root files', async () => {
   assert.deepEqual(adr?.files.map((f) => f.rel), ['0001-x.md'])
 })
 
-test('front-matter scopes routes a file from another dir into that scope group', async () => {
+test('a file under a directory outside the chain is ignored, whatever its front matter says', async () => {
+  // misc/routed.md carries `scopes: b`; `misc` is not a scope, so the file
+  // belongs nowhere — the directory decides, front matter never re-routes.
   const manifest = await loadManifest(routingDir)
   const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
-  const routed = standards(ctx).files.find((f) => f.rel === 'misc/routed.md')
-  assert.ok(routed, 'misc/routed.md is included')
-  assert.equal(routed.scope, 'b')
-})
-
-test('a file tagged scope: global inside a scope dir is excluded', async () => {
-  const manifest = await loadManifest(routingDir)
-  const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
-  assert.equal(standards(ctx).files.some((f) => f.rel === 'a/tagged-global.md'), false)
+  assert.equal(standards(ctx).files.some((f) => f.rel === 'misc/routed.md'), false)
+  const global = await assembleContext({ rnessDir: routingDir, manifest, scope: null })
+  assert.equal(standards(global).files.some((f) => f.rel === 'misc/routed.md'), false)
 })
 
 test('a 3-deep extends chain orders a-group, b-group, c-group, then global', async () => {
   const manifest = await loadManifest(routingDir)
   const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
-  assert.deepEqual(
-    standards(ctx).files.map((f) => f.rel),
-    ['a/one.md', 'b/two.md', 'misc/routed.md', 'c/three.md', 'misc/listed.md', 'root.md'],
-  )
-  assert.deepEqual(standards(ctx).files.map((f) => f.scope), ['a', 'b', 'b', 'c', 'c', null])
-})
-
-test('front-matter scopes as a YAML list routes into the first listed scope of the chain', async () => {
-  const manifest = await loadManifest(routingDir)
-  const ctx = await assembleContext({ rnessDir: routingDir, manifest, scope: 'a' })
-  const listed = standards(ctx).files.find((f) => f.rel === 'misc/listed.md')
-  assert.ok(listed, 'misc/listed.md is included')
-  assert.equal(listed.scope, 'c')
+  assert.deepEqual(standards(ctx).files.map((f) => f.rel), ['a/one.md', 'b/two.md', 'c/three.md', 'root.md'])
+  assert.deepEqual(standards(ctx).files.map((f) => f.scope), ['a', 'b', 'c', null])
 })

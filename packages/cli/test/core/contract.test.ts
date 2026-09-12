@@ -6,13 +6,16 @@ import { checkContract } from '../../src/core/contract.ts'
 const brokenDir = fileURLToPath(new URL('../fixtures/ws-broken/.rness', import.meta.url))
 const scopedDir = fileURLToPath(new URL('../fixtures/ws-scoped/.rness', import.meta.url))
 
-test('flags a spec with no front matter and a plan with invalid front matter', async () => {
+test('reports every problem of the broken tree, in every collection', async () => {
   const problems = await checkContract(brokenDir)
-  assert.equal(problems.length, 2)
-  assert.match(problems.find((p) => p.startsWith('plans/')) ?? '', /plans\/invalid-yaml\.md: invalid front matter/)
-  assert.match(problems.find((p) => p.startsWith('specs/')) ?? '', /specs\/bad\.md: missing a front-matter block/)
+  const find = (prefix: string) => problems.find((p) => p.startsWith(prefix)) ?? ''
+  assert.equal(problems.length, 4, problems.join('\n'))
+  assert.match(find('specs/bad.md'), /missing a front-matter block/)
+  assert.match(find('plans/invalid-yaml.md'), /invalid front matter/)
+  assert.match(find('skills/bad.md'), /invalid front matter/)
+  assert.match(find('standards/web/placed.md'), /front matter "scopes" is not supported/)
 })
 
-test('a valid tree has no problems', async () => {
+test('standards and skills need no front matter and no status', async () => {
   assert.deepEqual(await checkContract(scopedDir), [])
 })
