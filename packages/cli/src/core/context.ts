@@ -29,7 +29,7 @@ async function assembleCollection(dir: string, name: CollectionName, chain: stri
   }
   const files: ContextFile[] = []
   const push = (f: Owned): void => {
-    files.push({ rel: f.rel, scope: f.scope, title: f.title, body: f.body })
+    files.push({ rel: f.rel, scope: f.scope, title: f.title, body: f.body, content: f.content })
   }
   for (const s of chain) for (const f of groups.get(s) ?? []) push(f)
   for (const f of rootFiles) push(f)

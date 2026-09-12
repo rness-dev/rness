@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
@@ -7,7 +8,15 @@ async function git(args: readonly string[], cwd?: string): Promise<string> {
   try {
     const { stdout } = await execFileP('git', [...args], {
       ...(cwd === undefined ? {} : { cwd }),
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        // Pin the command to `cwd` itself: without a ceiling, git walks up and
+        // a plain directory under `org/` would report — or be pulled into —
+        // whatever repository happens to sit above the workspace root. git
+        // ignores a relative ceiling entry, hence the resolve().
+        ...(cwd === undefined ? {} : { GIT_CEILING_DIRECTORIES: dirname(resolve(cwd)) }),
+      },
       maxBuffer: 16 * 1024 * 1024,
     })
     return stdout

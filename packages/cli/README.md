@@ -23,6 +23,16 @@ stack traces; `RNESS_NO_DELEGATE=1` skips the delegation. `sync` asks for
 confirmation in a terminal; pass `-y`/`--yes` in scripts. `--check` writes
 nothing and exits 1 when a block is out of date — use it in CI.
 
+## 0.3.0 — what changed for a 0.2.0 workspace
+
+- The directory decides a file's scope. `scopes: […]` and `scope: global`
+  front-matter keys no longer route anything; `rness validate` reports them.
+  Move the file instead (`standards/<scope>/…` or the collection root).
+- `rness.json` may declare `"org": "<github-org>"`; without it the
+  workspace directory name is used and `validate` warns.
+- `validate` now checks every generated block: a stale block is an error,
+  a missing one a warning — run `rness sync`.
+
 ## Develop
 
     pnpm install                      # from the repository root

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { VERSION } from '../version.ts'
 import { assembleContext } from './context.ts'
-import { parseHeader, renderBlock } from './block.ts'
+import { blockHash, bodyOf, parseHeader, renderBlock } from './block.ts'
 import { findBlock } from './merge.ts'
 import { exists, readOrNull } from './fs.ts'
 import type { Manifest } from './types.ts'
@@ -37,7 +37,10 @@ export async function checkBlocks({ root, rnessDir, manifest, org }: CheckBlocks
   }
 
   for (const t of targets) {
-    if (!(await exists(t.dir))) continue
+    if (!(await exists(t.dir))) {
+      warnings.push(`${t.label}: directory not present, block not checked`)
+      continue
+    }
     const text = await readOrNull(join(t.dir, 'AGENTS.md'))
     const lines = text === null ? [] : text.split(/\r?\n/)
     const found = findBlock(lines)
@@ -52,7 +55,10 @@ export async function checkBlocks({ root, rnessDir, manifest, org }: CheckBlocks
     const header = parseHeader(lines[found.begin + 1] ?? '')
     const context = await assembleContext({ rnessDir, manifest, scope: t.scope })
     const fresh = renderBlock({ scope: t.scope, org, depth: t.depth, context, version: VERSION })
-    if (header === null || header.hash !== fresh.hash) {
+    // Two ways to be stale: the header no longer matches a fresh render, or the
+    // body no longer matches its own header — a hand edit inside the block.
+    const actual = blockHash(bodyOf(lines.slice(found.begin, found.end + 1)))
+    if (header === null || header.hash !== fresh.hash || header.hash !== actual) {
       problems.push(`${t.label}: stale rness block (run rness sync)`)
     }
   }

@@ -26,8 +26,10 @@ async function check(root: string) {
   return checkBlocks({ root, rnessDir: join(root, '.rness'), manifest, org: 'acme' })
 }
 
-test('a freshly synced workspace has no problems and no warnings', async (t) => {
-  assert.deepEqual(await check(await synced(t)), { problems: [], warnings: [] })
+const ABSENT_API = 'org/api/AGENTS.md: directory not present, block not checked'
+
+test('a freshly synced workspace has no problems; an absent scope directory is only noted', async (t) => {
+  assert.deepEqual(await check(await synced(t)), { problems: [], warnings: [ABSENT_API] })
 })
 
 test('editing a standard makes the block stale; a missing block is only a warning', async (t) => {
@@ -38,7 +40,17 @@ test('editing a standard makes the block stale; a missing block is only a warnin
   const { rm } = await import('node:fs/promises')
   await rm(join(root, 'AGENTS.md'))
   const missing = await check(root)
-  assert.deepEqual(missing.warnings, ['AGENTS.md: no rness block yet (run rness sync)'])
+  assert.deepEqual(missing.warnings, ['AGENTS.md: no rness block yet (run rness sync)', ABSENT_API])
+})
+
+test('a hand edit inside the block body is stale even though the header still matches', async (t) => {
+  const root = await synced(t)
+  const file = join(root, 'org', 'web', 'AGENTS.md')
+  const text = await readFile(file, 'utf8')
+  await writeFile(file, text.replace('standalone clone', 'standalone copy'))
+  assert.notEqual(await readFile(file, 'utf8'), text, 'the edit landed inside the block body')
+  const edited = await check(root)
+  assert.deepEqual(edited.problems, ['org/web/AGENTS.md: stale rness block (run rness sync)'])
 })
 
 test('a malformed block is a problem; no org/ means nothing to check', async (t) => {

@@ -36,7 +36,7 @@ function buildProgram(state: RunState): Command {
 
   program
     .command('validate')
-    .description('Check the .rness/ tree against the contract')
+    .description('Check the .rness/ tree against the contract and every generated block')
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: ValidateOptions) => {
       state.code = await validateCommand(opts)

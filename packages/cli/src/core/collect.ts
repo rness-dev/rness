@@ -1,6 +1,6 @@
 import { glob, readFile } from 'node:fs/promises'
 import { join, posix, sep } from 'node:path'
-import { parseFrontMatter, extractTitle } from './frontmatter.ts'
+import { parseFrontMatter, extractTitle, stripFrontMatter } from './frontmatter.ts'
 import type { MarkdownItem } from './types.ts'
 
 function toPosix(rel: string): string {
@@ -27,7 +27,7 @@ export async function collectMarkdown(dir: string): Promise<MarkdownItem[]> {
       } catch (e) {
         fieldsError = e instanceof Error ? e.message : String(e)
       }
-      return { path, rel, fields, fieldsError, title: extractTitle(body), body }
+      return { path, rel, fields, fieldsError, title: extractTitle(body), body, content: stripFrontMatter(body) }
     }),
   )
   return items.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))

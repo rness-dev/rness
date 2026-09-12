@@ -1,4 +1,4 @@
-import { access, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { access, lstat, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 export async function exists(p: string): Promise<boolean> {
@@ -7,6 +7,20 @@ export async function exists(p: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * True when `p` is itself a symbolic link (the link is not followed). False
+ * when it does not exist. Callers use it to leave a `CLAUDE.md → AGENTS.md`
+ * link alone: reading follows the link and the atomic rename would replace it.
+ */
+export async function isSymlink(p: string): Promise<boolean> {
+  try {
+    return (await lstat(p)).isSymbolicLink()
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw e
   }
 }
 

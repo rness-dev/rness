@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { lstat, readFile, readlink, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { run } from '../../src/cli.ts'
 import { capture } from '../helpers/capture.ts'
@@ -144,6 +144,36 @@ test('--pull on a directory that is not a clone is a reported problem; other out
   assert.match(r.err, /org\/web: git status failed: /)
   assert.match(r.out, /unchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md/)
 })
+
+// A symlinked pair is the common `CLAUDE.md → AGENTS.md` setup. Following it
+// would make the link a regular file holding a duplicate of its target, so the
+// whole directory is skipped and neither file is touched.
+for (const [link, target] of [
+  ['CLAUDE.md', 'AGENTS.md'],
+  ['AGENTS.md', 'CLAUDE.md'],
+] as const) {
+  test(`${link} symlinked to ${target} is left alone, in --yes and in --check`, async (t) => {
+    const root = await basic(t)
+    const dir = join(root, 'org', 'web')
+    const real = '# web\n\nHand-written.\n'
+    await writeFile(join(dir, target), real)
+    await symlink(target, join(dir, link))
+
+    const r = await sync(['--yes', '--cwd', root])
+    assert.equal(r.code, 0, r.err)
+    assert.match(r.out, /^updated {2}AGENTS\.md\nskipped {2}org\/web\/AGENTS\.md \(symlink\)\n/)
+    assert.equal(await readFile(join(dir, target), 'utf8'), real, `${target} untouched`)
+    assert.equal((await lstat(join(dir, link))).isSymbolicLink(), true, `${link} is still a symlink`)
+    assert.equal(await readlink(join(dir, link)), target)
+    assert.doesNotMatch(await readFile(join(dir, target), 'utf8'), /BEGIN rness/)
+
+    const check = await sync(['--check', '--cwd', root])
+    assert.equal(check.code, 0, check.err)
+    assert.match(check.out, /skipped {2}org\/web\/AGENTS\.md \(symlink\)/)
+    assert.equal((await lstat(join(dir, link))).isSymbolicLink(), true)
+    assert.equal(await readFile(join(dir, target), 'utf8'), real)
+  })
+}
 
 test('a clone failure is reported, the manifest is untouched, other work continues', async (t) => {
   const root = await makeWorkspace(t, {

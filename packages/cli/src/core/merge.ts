@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { BEGIN, END } from './block.ts'
-import { readOrNull, writeFileAtomic } from './fs.ts'
+import { isSymlink, readOrNull, writeFileAtomic } from './fs.ts'
 
 export type FindResult =
   | { kind: 'none' }
@@ -60,9 +60,16 @@ export function mergeBlock(existing: string | null, block: string): MergeResult 
   return { ok: true, text, changed: text !== existing }
 }
 
-/** `CLAUDE.md` next to an `AGENTS.md`: create with `@AGENTS.md`, or prepend that line when absent. */
+/**
+ * `CLAUDE.md` next to an `AGENTS.md`: create with `@AGENTS.md`, or prepend that
+ * line when absent. A symlinked `CLAUDE.md` is left exactly as it is — reading
+ * would follow it and the atomic rename would replace the link with a regular
+ * file holding a copy of its target. (`sync` skips such a directory outright;
+ * this guard is defence in depth for any other caller.)
+ */
 export async function ensureClaudeMd(dir: string): Promise<'created' | 'prepended' | 'unchanged'> {
   const file = join(dir, 'CLAUDE.md')
+  if (await isSymlink(file)) return 'unchanged'
   const existing = await readOrNull(file)
   if (existing === null) {
     await writeFileAtomic(file, '@AGENTS.md\n')

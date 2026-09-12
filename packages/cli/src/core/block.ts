@@ -67,7 +67,7 @@ export function renderBlock({ scope, org, depth, context, version }: BlockInput)
   const rules =
     standards.length === 0
       ? ['_No standards apply to this scope yet._']
-      : standards.map((f) => `<!-- rness: standards/${f.rel} -->\n${toLf(f.body).trim()}`)
+      : standards.map((f) => `<!-- rness: standards/${f.rel} -->\n${toLf(f.content).trim()}`)
   const body = `${intro(scope, org, depth)}\n\n## Rules\n${rules.join('\n\n')}`
   const hash = blockHash(body)
   const text = [BEGIN, header(version, scope, hash), body, END].join('\n')

@@ -21,7 +21,7 @@ export function renderMarkdown(ctx: Context): string {
     if (collection.files.length === 0) continue
     parts.push(`## ${collection.name}\n`)
     for (const file of collection.files) {
-      parts.push(`<!-- rness: ${collection.name}/${file.rel} -->\n${file.body.trim()}\n`)
+      parts.push(`<!-- rness: ${collection.name}/${file.rel} -->\n${file.content.trim()}\n`)
     }
   }
   return `${parts.join('\n')}\n`

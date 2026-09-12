@@ -10,7 +10,10 @@ export interface MarkdownItem {
   /** Parse error message when the front matter block is invalid. */
   fieldsError: string | null
   title: string | null
+  /** The whole file, front matter included. */
   body: string
+  /** The file with its leading front-matter block removed — what gets rendered. */
+  content: string
 }
 
 export interface RepoEntry {
@@ -40,7 +43,10 @@ export interface ContextFile {
   rel: string
   scope: string | null
   title: string | null
+  /** The whole file, front matter included. */
   body: string
+  /** The file with its leading front-matter block removed — what gets rendered. */
+  content: string
 }
 
 export interface ContextCollection {

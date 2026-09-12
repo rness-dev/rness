@@ -3,11 +3,11 @@ import assert from 'node:assert/strict'
 import { BEGIN, END, blockHash, bodyOf, parseHeader, renderBlock } from '../../src/core/block.ts'
 import type { Context } from '../../src/core/types.ts'
 
-function ctx(files: Array<{ rel: string; scope: string | null; body: string }>): Context {
+function ctx(files: Array<{ rel: string; scope: string | null; body: string; content?: string }>): Context {
   return {
     scope: 'web',
     collections: [
-      { name: 'standards', files: files.map((f) => ({ ...f, title: null })) },
+      { name: 'standards', files: files.map((f) => ({ ...f, title: null, content: f.content ?? f.body })) },
       { name: 'adr', files: [] },
       { name: 'specs', files: [] },
       { name: 'plans', files: [] },
@@ -73,6 +73,19 @@ test('depth drives the relative path', () => {
 test('no standards yields a placeholder line, never an empty Rules section', () => {
   const block = renderBlock({ scope: 'web', org: 'acme', depth: 2, context: ctx([]), version: '0.0.0-test' })
   assert.match(block.text, /## Rules\n_No standards apply to this scope yet\._\n<!-- END rness -->$/)
+})
+
+test('a standard with front matter renders its content only, never the --- fences', () => {
+  const block = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 2,
+    context: ctx([{ rel: 'web/seo.md', scope: 'web', body: '---\nrepo: api\n---\n\n# API rules\n', content: '# API rules\n' }]),
+    version: '0.0.0-test',
+  })
+  assert.match(block.text, /<!-- rness: standards\/web\/seo\.md -->\n# API rules\n<!-- END rness -->$/)
+  assert.doesNotMatch(block.text, /---/)
+  assert.doesNotMatch(block.text, /repo: api/)
 })
 
 test('the hash ignores line endings and changes with the content', () => {

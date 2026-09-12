@@ -38,6 +38,20 @@ export function parseFrontMatter(source: string): Fields | null {
   return doc as Fields
 }
 
+/**
+ * The document text with its leading `---` block removed, along with the blank
+ * lines that separated it from the body. Purely textual: a block whose YAML is
+ * invalid is still stripped, so a broken file never leaks `---` fences into a
+ * rendered block. Returns the (BOM-stripped) source unchanged when there is no
+ * front matter.
+ */
+export function stripFrontMatter(source: string): string {
+  const text = stripBom(source)
+  const match = text.match(FRONT_MATTER)
+  if (match === null) return text
+  return text.slice(match[0].length).replace(/^(?:[ \t]*\r?\n)+/, '')
+}
+
 export function extractTitle(source: string): string | null {
   return stripBom(source).match(/^# (.+)$/m)?.[1]?.trim() ?? null
 }
