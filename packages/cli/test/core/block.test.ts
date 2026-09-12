@@ -77,6 +77,26 @@ test('no standards yields a placeholder line, never an empty Rules section', () 
 
 test('the hash ignores line endings and changes with the content', () => {
   assert.equal(blockHash('a\r\nb'), blockHash('a\nb'))
+  assert.equal(blockHash('a\rb'), blockHash('a\nb'))
   assert.notEqual(blockHash('a'), blockHash('b'))
   assert.match(blockHash('x'), /^[0-9a-f]{12}$/)
+})
+
+test('CRLF and lone-CR standard bodies render as LF, and hash the same as their LF twin', () => {
+  const crlf = ctx([{ rel: 'coding.md', scope: null, body: '# Coding\r\n\r\nTwo-space indent.\r\n' }])
+  const cr = ctx([{ rel: 'coding.md', scope: null, body: '# Coding\r\rTwo-space indent.\r' }])
+  const lf = ctx([{ rel: 'coding.md', scope: null, body: '# Coding\n\nTwo-space indent.\n' }])
+  const [a, b, c] = [crlf, cr, lf].map((context) => renderBlock({ scope: 'web', org: 'acme', depth: 2, context, version: '0.0.0-test' }))
+  assert.doesNotMatch(a?.text ?? '', /\r/)
+  assert.doesNotMatch(b?.text ?? '', /\r/)
+  assert.equal(a?.text, c?.text)
+  assert.equal(b?.hash, c?.hash)
+})
+
+test('parseHeader rejects a line that only shares the header prefix', () => {
+  const block = renderBlock({ scope: 'web', org: 'acme', depth: 2, context: twoStandards, version: '0.0.0-test' })
+  const header = block.text.split('\n')[1] ?? ''
+  assert.notEqual(parseHeader(header), null)
+  assert.equal(parseHeader(`${header.slice(0, -3)} tampered -->`), null)
+  assert.equal(parseHeader(header.replace('never edit inside this block', 'edit freely')), null)
 })
