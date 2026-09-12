@@ -46,6 +46,26 @@ test('an H1 not followed by a blank line means insertion at the top', () => {
   assert.equal(result.text, `${BLOCK}\n\n# Title\nBody\n`)
 })
 
+test('a lone H1 with no blank line after it gets the block on top, idempotently', () => {
+  for (const existing of ['# Title', '# Title\n', '# Title\nBody\n']) {
+    const once = mergeBlock(existing, BLOCK)
+    assert.ok(once.ok, existing)
+    assert.equal(once.text, `${BLOCK}\n\n${existing}`)
+    const twice = mergeBlock(once.text, BLOCK)
+    assert.ok(twice.ok)
+    assert.equal(twice.changed, false)
+  }
+})
+
+test('an H1 followed only by a blank line takes the block after it, idempotently', () => {
+  const once = mergeBlock('# Title\n\n', BLOCK)
+  assert.ok(once.ok)
+  assert.equal(once.text, `# Title\n\n${BLOCK}\n\n`)
+  const twice = mergeBlock(once.text, BLOCK)
+  assert.ok(twice.ok)
+  assert.equal(twice.changed, false)
+})
+
 test('malformed spans are errors and leave the text alone', () => {
   assert.deepEqual(findBlock(['<!-- BEGIN rness -->', 'x']), { kind: 'error', message: 'expected exactly one <!-- BEGIN rness --> … <!-- END rness --> span, found 1 BEGIN and 0 END' })
   assert.equal(findBlock(['<!-- END rness -->', '<!-- BEGIN rness -->']).kind, 'error')

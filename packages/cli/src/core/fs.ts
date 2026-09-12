@@ -30,7 +30,7 @@ export async function writeFileAtomic(p: string, text: string): Promise<void> {
   try {
     await rename(tmp, p)
   } catch (e) {
-    await rm(tmp, { force: true })
+    await rm(tmp, { force: true }).catch(() => undefined)
     throw e
   }
 }

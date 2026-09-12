@@ -51,7 +51,7 @@ export function mergeBlock(existing: string | null, block: string): MergeResult 
     const endLine = lines[found.end] ?? ''
     const afterEnd = lineStart(found.end) + endLine.length
     text = `${existing.slice(0, lineStart(found.begin))}${rendered}${existing.slice(afterEnd)}`
-  } else if ((lines[0] ?? '').startsWith('# ') && (lines[1] ?? '') === '') {
+  } else if (lines.length >= 3 && (lines[0] ?? '').startsWith('# ') && lines[1] === '') {
     const at = lineStart(2)
     text = `${existing.slice(0, at)}${rendered}${eol}${eol}${existing.slice(at)}`
   } else {
