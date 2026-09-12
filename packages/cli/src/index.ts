@@ -11,3 +11,7 @@ export { assembleContext, COLLECTIONS, type AssembleInput } from './core/context
 export { checkContract, STATUSES } from './core/contract.ts'
 export { scaffoldDir, SCAFFOLD_FILES } from './core/scaffold.ts'
 export type * from './core/types.ts'
+export { syncCommand, type SyncOptions } from './commands/sync.ts'
+export { renderBlock, blockHash, parseHeader, bodyOf, BEGIN, END, BLOCK_SIZE_WARNING, type BlockInput, type RenderedBlock, type BlockHeader } from './core/block.ts'
+export { mergeBlock, findBlock, ensureClaudeMd, type MergeResult, type FindResult } from './core/merge.ts'
+export { exists, readOrNull, writeFileAtomic } from './core/fs.ts'

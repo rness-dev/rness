@@ -2,6 +2,7 @@ import { Command, CommanderError, Option } from 'commander'
 import { VERSION } from './version.ts'
 import { contextCommand, type ContextOptions } from './commands/context.ts'
 import { validateCommand, type ValidateOptions } from './commands/validate.ts'
+import { syncCommand, type SyncOptions } from './commands/sync.ts'
 
 interface RunState {
   code: number
@@ -39,6 +40,18 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: ValidateOptions) => {
       state.code = await validateCommand(opts)
+    })
+
+  program
+    .command('sync')
+    .description('Clone missing repositories and write the rness block into every AGENTS.md')
+    .option('--scope <name>', 'only this scope (the root block is skipped)')
+    .option('--check', 'render and compare only; exit 1 when a block is out of date')
+    .option('--pull', 'git pull --ff-only in every clean clone')
+    .option('-y, --yes', 'do not ask for confirmation')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (opts: SyncOptions) => {
+      state.code = await syncCommand(opts)
     })
 
   return program

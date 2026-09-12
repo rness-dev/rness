@@ -1,0 +1,54 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+
+const execFileP = promisify(execFile)
+
+async function git(args: readonly string[], cwd?: string): Promise<string> {
+  try {
+    const { stdout } = await execFileP('git', [...args], {
+      ...(cwd === undefined ? {} : { cwd }),
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      maxBuffer: 16 * 1024 * 1024,
+    })
+    return stdout
+  } catch (e) {
+    const err = e as { stderr?: string; message?: string }
+    const text = err.stderr !== undefined && err.stderr !== '' ? err.stderr : (err.message ?? 'unknown error')
+    const first = text.split('\n').find((l) => l.trim() !== '') ?? 'unknown error'
+    throw new Error(`git ${args[0] ?? ''} failed: ${first.trim()}`)
+  }
+}
+
+/** Reject a value git could parse as an option (e.g. a `rness.json` URL starting with `-`). */
+function positional(value: string, what: string): string {
+  if (value.startsWith('-')) throw new Error(`refusing suspicious ${what}: ${value}`)
+  return value
+}
+
+/** `git clone <url> <dir>`; `dir` must not exist. */
+export async function clone(url: string, dir: string): Promise<void> {
+  await git(['clone', '--quiet', '--', positional(url, 'repository url'), positional(dir, 'directory')])
+}
+
+/**
+ * True when `git status --porcelain` prints nothing, ignoring the paths in
+ * `ignore` (rness-managed files such as `AGENTS.md`/`CLAUDE.md` that sync
+ * itself writes into every clone and that should never veto an auto-pull).
+ */
+export async function isClean(dir: string, ignore: readonly string[] = []): Promise<boolean> {
+  const pathspec = ignore.map((p) => `:!${p}`)
+  return (await git(['status', '--porcelain', ...(pathspec.length > 0 ? ['--', ...pathspec] : [])], dir)).trim() === ''
+}
+
+export async function pullFastForward(dir: string): Promise<void> {
+  await git(['pull', '--ff-only', '--quiet'], dir)
+}
+
+/** The `origin` URL, or null when `dir` is not a clone with an origin. */
+export async function originUrl(dir: string): Promise<string | null> {
+  try {
+    return (await git(['remote', 'get-url', 'origin'], dir)).trim()
+  } catch {
+    return null
+  }
+}
