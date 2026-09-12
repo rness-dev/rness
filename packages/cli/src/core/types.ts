@@ -24,6 +24,7 @@ export interface ScopeEntry {
 
 export interface Manifest {
   contract: 1
+  org: string | null
   repos: Record<string, RepoEntry>
   scopes: Record<string, ScopeEntry>
 }

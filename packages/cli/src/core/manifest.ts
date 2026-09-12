@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type { Manifest, RepoEntry, ScopeEntry } from './types.ts'
 
 export const NAME = /^[a-z0-9][a-z0-9-]*$/
@@ -17,6 +17,21 @@ function checkPath(scope: string, path: unknown): string {
   if (path.startsWith('/')) fail(`scope "${scope}" path must be relative`)
   if (path.split('/').includes('..')) fail(`scope "${scope}" path must not contain ".."`)
   return path
+}
+
+function readOrg(value: unknown): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string' || !NAME.test(value)) {
+    fail(`"org" must be a name matching [a-z0-9-] (got ${JSON.stringify(value)})`)
+  }
+  return value
+}
+
+/** The organisation name every block and `add` use: `org`, else the root directory's name. */
+export function resolveOrg(manifest: Manifest, root: string): { org: string; warning: string | null } {
+  if (manifest.org !== null) return { org: manifest.org, warning: null }
+  const name = basename(root)
+  return { org: name, warning: `rness.json: no "org"; using the directory name "${name}"` }
 }
 
 function readRepos(value: unknown): Record<string, RepoEntry> {
@@ -69,5 +84,5 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
   }
   if (!isRecord(data)) fail('must be a JSON object')
   if (data.contract !== 1) fail(`unsupported contract: ${JSON.stringify(data.contract)} (expected 1)`)
-  return { contract: 1, repos: readRepos(data.repos), scopes: readScopes(data.scopes) }
+  return { contract: 1, org: readOrg(data.org), repos: readRepos(data.repos), scopes: readScopes(data.scopes) }
 }

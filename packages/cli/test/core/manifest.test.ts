@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { loadManifest } from '../../src/core/manifest.ts'
+import { loadManifest, resolveOrg } from '../../src/core/manifest.ts'
 
 async function fixture(json: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'rness-'))
@@ -79,4 +79,21 @@ test('rejects genuinely malformed JSON with a prefixed error', async (t) => {
   const d = await fixture('{ not valid json')
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   await assert.rejects(() => loadManifest(d), /rness\.json:.*invalid JSON/)
+})
+
+test('org is optional, validated like a scope name', async () => {
+  const withOrg = await loadManifest(await fixture({ contract: 1, org: 'acme-dev', repos: {}, scopes: {} }))
+  assert.equal(withOrg.org, 'acme-dev')
+  const without = await loadManifest(await fixture({ contract: 1, repos: {}, scopes: {} }))
+  assert.equal(without.org, null)
+  await assert.rejects(async () => loadManifest(await fixture({ contract: 1, org: 'Acme Inc', repos: {}, scopes: {} })), /rness\.json:.*"org"/)
+})
+
+test('resolveOrg falls back to the root directory name with a warning', async () => {
+  const manifest = await loadManifest(await fixture({ contract: 1, repos: {}, scopes: {} }))
+  const { org, warning } = resolveOrg(manifest, '/tmp/workspaces/acme')
+  assert.equal(org, 'acme')
+  assert.match(warning ?? '', /no "org"; using the directory name "acme"/)
+  const pinned = resolveOrg({ ...manifest, org: 'acme-dev' }, '/tmp/workspaces/acme')
+  assert.deepEqual(pinned, { org: 'acme-dev', warning: null })
 })

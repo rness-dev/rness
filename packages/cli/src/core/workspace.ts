@@ -2,7 +2,7 @@ import { access } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
 import type { Workspace } from './types.ts'
 
-async function exists(p: string): Promise<boolean> {
+export async function exists(p: string): Promise<boolean> {
   try {
     await access(p)
     return true
@@ -18,6 +18,11 @@ export async function findWorkspace(startDir: string): Promise<Workspace> {
   while (true) {
     if (await exists(join(dir, '.rness', 'rness.json'))) {
       return { root: dir, rnessDir: join(dir, '.rness') }
+    }
+    // Inside the context repository itself (a standalone checkout, CI): this
+    // directory is `.rness/`, its parent is the workspace root.
+    if (await exists(join(dir, 'rness.json'))) {
+      return { root: dirname(dir), rnessDir: dir }
     }
     if (dir === fsRoot) break
     dir = dirname(dir)

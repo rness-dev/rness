@@ -79,6 +79,12 @@ test('delegates to the workspace-pinned @rness/cli when versions differ', async 
   assert.equal(notOne.code, 7, 'RNESS_NO_DELEGATE=0 still delegates')
   assert.match(notOne.stdout, /^DELEGATED 9\.9\.9/)
 
+  const traced = await execFileP(process.execPath, [binPath, 'validate'], {
+    cwd,
+    env: { ...process.env, RNESS_DEBUG: '1' },
+  }).catch((e: { code: number; stdout: string; stderr: string }) => e)
+  assert.match(traced.stderr, /^rness: delegating to @rness\/cli 9\.9\.9 \(.*dist\/index\.js\)\n/)
+
   const create = (await execFileP(process.execPath, [binPath, 'create', 'acme'], { cwd }).catch(
     (e: { code: number; stdout: string; stderr: string }) => e,
   )) as { code: number; stdout: string; stderr: string }

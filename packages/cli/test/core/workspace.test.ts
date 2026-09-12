@@ -42,3 +42,20 @@ test('resolves a relative startDir instead of looping', async (t) => {
     process.chdir(cwd)
   }
 })
+
+test('inside the context repository itself: that directory is .rness, its parent the root', async (t) => {
+  const parent = await realpath(await mkdtemp(join(tmpdir(), 'rness-ctx-')))
+  t.after(() => rm(parent, { recursive: true, force: true }))
+  const checkout = join(parent, 'context-checkout')
+  await mkdir(join(checkout, 'standards'), { recursive: true })
+  await writeFile(join(checkout, 'rness.json'), '{"contract":1,"repos":{},"scopes":{}}')
+  const ws = await findWorkspace(join(checkout, 'standards'))
+  assert.deepEqual(ws, { root: parent, rnessDir: checkout })
+})
+
+test('a proper workspace wins over the inside-.rness rule at the same level', async (t) => {
+  const root = await workspace()
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const ws = await findWorkspace(join(root, '.rness'))
+  assert.deepEqual(ws, { root, rnessDir: join(root, '.rness') })
+})

@@ -29,6 +29,9 @@ async function main(): Promise<number> {
   if (delegate !== null) {
     const broken = (reason: string): Error =>
       new Error(`@rness/cli ${delegate.version} pinned in ${delegate.root}/.rness is not installed correctly (${reason}); reinstall in .rness/`)
+    if (process.env['RNESS_DEBUG'] === '1') {
+      process.stderr.write(`rness: delegating to @rness/cli ${delegate.version} (${delegate.entry})\n`)
+    }
     let mod: Record<string, unknown>
     try {
       mod = (await import(pathToFileURL(delegate.entry).href)) as Record<string, unknown>

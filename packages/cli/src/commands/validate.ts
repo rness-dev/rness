@@ -1,5 +1,5 @@
 import { findWorkspace } from '../core/workspace.ts'
-import { loadManifest } from '../core/manifest.ts'
+import { loadManifest, resolveOrg } from '../core/manifest.ts'
 import { scopeChain } from '../core/scope.ts'
 import { checkContract } from '../core/contract.ts'
 import { reportError } from '../report.ts'
@@ -16,6 +16,8 @@ export async function validateCommand(opts: ValidateOptions): Promise<number> {
     const ws = await findWorkspace(cwd)
     const rnessDir = ws.rnessDir
     const manifest = await loadManifest(rnessDir)
+    const { warning } = resolveOrg(manifest, ws.root)
+    if (warning !== null) process.stderr.write(`warning: ${warning}\n`)
     // loadManifest only checks that extends targets exist; walk every scope so
     // an extends cycle is reported here rather than breaking `context` later.
     for (const s of Object.keys(manifest.scopes)) scopeChain(manifest, s)
