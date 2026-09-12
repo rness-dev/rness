@@ -53,5 +53,33 @@ test('a manifest without "org" validates with a warning on stderr, exit 0', asyn
   c.restore()
   assert.equal(code, 0)
   assert.equal(c.out().trim(), 'context ok')
-  assert.match(c.err(), /^warning: rness\.json: no "org"; using the directory name "ws-scoped"\n/)
+  assert.match(c.err(), /warning: rness\.json: no "org"; using the directory name "ws-scoped"\n/)
+})
+
+test('validate reports a stale block as a problem and a missing one as a warning', async (t) => {
+  const { makeWorkspace } = await import('../helpers/workspace.ts')
+  const { writeFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/web' } },
+    files: { 'standards/web/seo.md': '# SEO\n' },
+    dirs: ['org/web'],
+  })
+  let c = capture()
+  let code = await run(['validate', '--cwd', root])
+  c.restore()
+  assert.equal(code, 0)
+  assert.match(c.err(), /warning: AGENTS\.md: no rness block yet/)
+  assert.match(c.err(), /warning: org\/web\/AGENTS\.md: no rness block yet/)
+
+  c = capture()
+  assert.equal(await run(['sync', '--yes', '--cwd', root]), 0)
+  c.restore()
+  await writeFile(join(root, '.rness', 'standards', 'web', 'seo.md'), '# SEO\n\nChanged.\n')
+  c = capture()
+  code = await run(['validate', '--cwd', root])
+  c.restore()
+  assert.equal(code, 1)
+  assert.match(c.err(), /^org\/web\/AGENTS\.md: stale rness block \(run rness sync\)\n/)
 })
