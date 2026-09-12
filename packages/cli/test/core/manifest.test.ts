@@ -81,16 +81,26 @@ test('rejects genuinely malformed JSON with a prefixed error', async (t) => {
   await assert.rejects(() => loadManifest(d), /rness\.json:.*invalid JSON/)
 })
 
-test('org is optional, validated like a scope name', async () => {
-  const withOrg = await loadManifest(await fixture({ contract: 1, org: 'acme-dev', repos: {}, scopes: {} }))
+test('org is optional, validated like a scope name', async (t) => {
+  const withOrgDir = await fixture({ contract: 1, org: 'acme-dev', repos: {}, scopes: {} })
+  t.after(() => rm(dirname(withOrgDir), { recursive: true, force: true }))
+  const withOrg = await loadManifest(withOrgDir)
   assert.equal(withOrg.org, 'acme-dev')
-  const without = await loadManifest(await fixture({ contract: 1, repos: {}, scopes: {} }))
+
+  const withoutDir = await fixture({ contract: 1, repos: {}, scopes: {} })
+  t.after(() => rm(dirname(withoutDir), { recursive: true, force: true }))
+  const without = await loadManifest(withoutDir)
   assert.equal(without.org, null)
-  await assert.rejects(async () => loadManifest(await fixture({ contract: 1, org: 'Acme Inc', repos: {}, scopes: {} })), /rness\.json:.*"org"/)
+
+  const badDir = await fixture({ contract: 1, org: 'Acme Inc', repos: {}, scopes: {} })
+  t.after(() => rm(dirname(badDir), { recursive: true, force: true }))
+  await assert.rejects(() => loadManifest(badDir), /rness\.json:.*"org"/)
 })
 
-test('resolveOrg falls back to the root directory name with a warning', async () => {
-  const manifest = await loadManifest(await fixture({ contract: 1, repos: {}, scopes: {} }))
+test('resolveOrg falls back to the root directory name with a warning', async (t) => {
+  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const manifest = await loadManifest(d)
   const { org, warning } = resolveOrg(manifest, '/tmp/workspaces/acme')
   assert.equal(org, 'acme')
   assert.match(warning ?? '', /no "org"; using the directory name "acme"/)

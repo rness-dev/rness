@@ -53,9 +53,18 @@ test('inside the context repository itself: that directory is .rness, its parent
   assert.deepEqual(ws, { root: parent, rnessDir: checkout })
 })
 
-test('a proper workspace wins over the inside-.rness rule at the same level', async (t) => {
+test('a directory holding both .rness/rness.json and a bare rness.json is a workspace root', async (t) => {
   const root = await workspace()
   t.after(() => rm(root, { recursive: true, force: true }))
-  const ws = await findWorkspace(join(root, '.rness'))
-  assert.deepEqual(ws, { root, rnessDir: join(root, '.rness') })
+  await writeFile(join(root, 'rness.json'), '{"contract":1,"repos":{},"scopes":{}}')
+  assert.deepEqual(await findWorkspace(join(root, 'org', 'web')), { root, rnessDir: join(root, '.rness') })
+})
+
+test('a bare rness.json below a real workspace never shadows it (e.g. the shipped scaffold/)', async (t) => {
+  const root = await workspace()
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const shallow = join(root, 'org', 'tool', 'scaffold')
+  await mkdir(join(shallow, 'sub'), { recursive: true })
+  await writeFile(join(shallow, 'rness.json'), '{"contract":1,"repos":{},"scopes":{}}')
+  assert.deepEqual(await findWorkspace(join(shallow, 'sub')), { root, rnessDir: join(root, '.rness') })
 })

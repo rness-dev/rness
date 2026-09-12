@@ -11,21 +11,20 @@ export async function exists(p: string): Promise<boolean> {
   }
 }
 
-/** Walk up from `startDir`; the first directory holding `.rness/rness.json` is the root. */
+/** Walk up from `startDir`: a directory holding `.rness/rness.json` is the root. Only when none exists anywhere above does a directory that itself holds `rness.json` count — a standalone checkout of the context repository (CI): that directory is `.rness/`, its parent the root. */
 export async function findWorkspace(startDir: string): Promise<Workspace> {
-  let dir = resolve(startDir)
-  const { root: fsRoot } = parse(dir)
-  while (true) {
-    if (await exists(join(dir, '.rness', 'rness.json'))) {
-      return { root: dir, rnessDir: join(dir, '.rness') }
-    }
-    // Inside the context repository itself (a standalone checkout, CI): this
-    // directory is `.rness/`, its parent is the workspace root.
-    if (await exists(join(dir, 'rness.json'))) {
-      return { root: dirname(dir), rnessDir: dir }
-    }
+  const start = resolve(startDir)
+  const { root: fsRoot } = parse(start)
+  const ancestors: string[] = []
+  for (let dir = start; ; dir = dirname(dir)) {
+    ancestors.push(dir)
     if (dir === fsRoot) break
-    dir = dirname(dir)
+  }
+  for (const dir of ancestors) {
+    if (await exists(join(dir, '.rness', 'rness.json'))) return { root: dir, rnessDir: join(dir, '.rness') }
+  }
+  for (const dir of ancestors) {
+    if (await exists(join(dir, 'rness.json'))) return { root: dirname(dir), rnessDir: dir }
   }
   throw new Error(`no rness workspace found above ${startDir}`)
 }
