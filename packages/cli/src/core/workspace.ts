@@ -1,15 +1,6 @@
-import { access } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
+import { exists } from './fs.ts'
 import type { Workspace } from './types.ts'
-
-export async function exists(p: string): Promise<boolean> {
-  try {
-    await access(p)
-    return true
-  } catch {
-    return false
-  }
-}
 
 /** Walk up from `startDir`: a directory holding `.rness/rness.json` is the root. Only when none exists anywhere above does a directory that itself holds `rness.json` count — a standalone checkout of the context repository (CI): that directory is `.rness/`, its parent the root. */
 export async function findWorkspace(startDir: string): Promise<Workspace> {
