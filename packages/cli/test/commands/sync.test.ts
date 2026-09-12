@@ -118,6 +118,7 @@ test('clones missing repositories, pulls with --pull, skips dirty trees, and END
   await commitTo(url, 'NEW.md', 'new\n')
   const pulled = await sync(['--yes', '--pull', '--cwd', root])
   assert.match(pulled.out, /^pulled {3}org\/api\n/)
+  assert.equal(pulled.code, 0, pulled.err)
   assert.equal(await readOrNull(join(root, 'org', 'api', 'NEW.md')), 'new\n')
 
   await writeFile(join(root, 'org', 'api', 'dirty.txt'), 'x')
@@ -127,6 +128,21 @@ test('clones missing repositories, pulls with --pull, skips dirty trees, and END
 
   const check = await sync(['--check', '--cwd', root])
   assert.equal(check.code, 0, check.out)
+})
+
+test('--pull on a directory that is not a clone is a reported problem; other output survives', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    repos: { web: { url: 'file:///unused/web.git' } },
+    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    files: { 'standards/web/seo.md': seo, 'standards/coding.md': coding },
+    dirs: ['org/web'],
+  })
+  await sync(['--yes', '--cwd', root])
+  const r = await sync(['--yes', '--pull', '--cwd', root])
+  assert.equal(r.code, 1)
+  assert.match(r.err, /org\/web: git status failed: /)
+  assert.match(r.out, /unchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md/)
 })
 
 test('a clone failure is reported, the manifest is untouched, other work continues', async (t) => {

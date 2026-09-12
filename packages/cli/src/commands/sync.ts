@@ -30,7 +30,9 @@ interface Target {
   label: string
 }
 
-/** Files sync itself writes into every clone; untracked, they must never veto an auto-pull. */
+// Excluded from the cleanliness check whatever their status: sync writes them itself. A
+// user's uncommitted edit to a tracked AGENTS.md is therefore not a veto — git pull
+// --ff-only still refuses to overwrite it and that surfaces as a problem.
 const MANAGED_FILES = ['AGENTS.md', 'CLAUDE.md']
 
 function targetsOf(manifest: Manifest, root: string, only: string | undefined): Target[] {
@@ -79,76 +81,79 @@ export async function syncCommand(opts: SyncOptions): Promise<number> {
     const lines: string[] = []
     const problems: string[] = []
 
-    // 1. Repositories: clone what is missing; pull only on request, only clean trees.
-    for (const [name, repo] of Object.entries(manifest.repos)) {
-      const dir = join(ws.root, 'org', name)
-      const label = `org/${name}`
-      if (!(await exists(dir))) {
-        if (check) {
-          lines.push(`missing  ${label} (would clone ${repo.url})`)
-          continue
-        }
-        try {
-          await clone(repo.url, dir)
-          lines.push(`cloned   ${label}`)
-        } catch (e) {
-          problems.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
-        }
-      } else if (opts.pull === true && !check) {
-        if (!(await isClean(dir, MANAGED_FILES))) {
-          lines.push(`skipped  ${label} (working tree not clean)`)
-          continue
-        }
-        try {
-          await pullFastForward(dir)
-          lines.push(`pulled   ${label}`)
-        } catch (e) {
-          problems.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
+    try {
+      // 1. Repositories: clone what is missing; pull only on request, only clean trees.
+      for (const [name, repo] of Object.entries(manifest.repos)) {
+        const dir = join(ws.root, 'org', name)
+        const label = `org/${name}`
+        if (!(await exists(dir))) {
+          if (check) {
+            lines.push(`missing  ${label} (would clone ${repo.url})`)
+            continue
+          }
+          try {
+            await clone(repo.url, dir)
+            lines.push(`cloned   ${label}`)
+          } catch (e) {
+            problems.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
+          }
+        } else if (opts.pull === true && !check) {
+          try {
+            if (!(await isClean(dir, MANAGED_FILES))) {
+              lines.push(`skipped  ${label} (working tree not clean)`)
+              continue
+            }
+            await pullFastForward(dir)
+            lines.push(`pulled   ${label}`)
+          } catch (e) {
+            problems.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
+          }
         }
       }
-    }
 
-    // 2. Blocks — only where repositories live; a standalone context checkout has no org/.
-    if (!(await exists(join(ws.root, 'org')))) {
-      lines.push('skipped  blocks (no org/ directory here)')
-    } else {
-      let differences = 0
-      for (const t of targetsOf(manifest, ws.root, opts.scope)) {
-        if (!(await exists(t.dir))) {
-          lines.push(`skipped  ${t.label} (directory not present)`)
-          continue
+      // 2. Blocks — only where repositories live; a standalone context checkout has no org/.
+      if (!(await exists(join(ws.root, 'org')))) {
+        lines.push('skipped  blocks (no org/ directory here)')
+      } else {
+        let differences = 0
+        for (const t of targetsOf(manifest, ws.root, opts.scope)) {
+          if (!(await exists(t.dir))) {
+            lines.push(`skipped  ${t.label} (directory not present)`)
+            continue
+          }
+          const context = await assembleContext({ rnessDir: ws.rnessDir, manifest, scope: t.scope })
+          const block = renderBlock({ scope: t.scope, org, depth: t.depth, context, version: VERSION })
+          if (block.bytes > BLOCK_SIZE_WARNING) {
+            process.stderr.write(`warning: ${t.label}: block is ${Math.round(block.bytes / 1024)} KB (over 32 KB)\n`)
+          }
+          const file = join(t.dir, 'AGENTS.md')
+          const merged = mergeBlock(await readOrNull(file), block.text)
+          if (!merged.ok) {
+            problems.push(`${t.label}: ${merged.error}`)
+            continue
+          }
+          if (!merged.changed) {
+            lines.push(`unchanged ${t.label}`)
+            if (!check) await ensureClaudeMd(t.dir)
+            continue
+          }
+          if (check) {
+            lines.push(`stale    ${t.label}`)
+            differences += 1
+            continue
+          }
+          await writeFileAtomic(file, merged.text)
+          await ensureClaudeMd(t.dir)
+          lines.push(`updated  ${t.label}`)
         }
-        const context = await assembleContext({ rnessDir: ws.rnessDir, manifest, scope: t.scope })
-        const block = renderBlock({ scope: t.scope, org, depth: t.depth, context, version: VERSION })
-        if (block.bytes > BLOCK_SIZE_WARNING) {
-          process.stderr.write(`warning: ${t.label}: block is ${Math.round(block.bytes / 1024)} KB (over 32 KB)\n`)
-        }
-        const file = join(t.dir, 'AGENTS.md')
-        const merged = mergeBlock(await readOrNull(file), block.text)
-        if (!merged.ok) {
-          problems.push(`${t.label}: ${merged.error}`)
-          continue
-        }
-        if (!merged.changed) {
-          lines.push(`unchanged ${t.label}`)
-          if (!check) await ensureClaudeMd(t.dir)
-          continue
-        }
-        if (check) {
-          lines.push(`stale    ${t.label}`)
-          differences += 1
-          continue
-        }
-        await writeFileAtomic(file, merged.text)
-        await ensureClaudeMd(t.dir)
-        lines.push(`updated  ${t.label}`)
+        if (check && differences > 0) problems.push(`${differences} block(s) out of date — run rness sync`)
       }
-      if (check && differences > 0) problems.push(`${differences} block(s) out of date — run rness sync`)
-    }
 
-    for (const l of lines) process.stdout.write(`${l}\n`)
-    for (const p of problems) process.stderr.write(`${p}\n`)
-    return problems.length > 0 ? 1 : 0
+      for (const p of problems) process.stderr.write(`${p}\n`)
+      return problems.length > 0 ? 1 : 0
+    } finally {
+      for (const l of lines) process.stdout.write(`${l}\n`)
+    }
   } catch (e) {
     return reportError(e)
   }

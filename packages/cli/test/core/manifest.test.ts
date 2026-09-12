@@ -51,6 +51,12 @@ test('rejects a path with ..', async (t) => {
   await assert.rejects(() => loadManifest(d), /rness\.json:/)
 })
 
+test('rejects a path with an empty segment', async (t) => {
+  const d = await fixture({ contract: 1, repos: {}, scopes: { web: { path: 'org/web/' } } })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  await assert.rejects(() => loadManifest(d), /rness\.json:.*empty segments/)
+})
+
 test('rejects a repo without a string url', async (t) => {
   const d = await fixture({ contract: 1, repos: { web: {} }, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))

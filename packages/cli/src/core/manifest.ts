@@ -16,6 +16,7 @@ function checkPath(scope: string, path: unknown): string {
   if (typeof path !== 'string' || path === '') fail(`scope "${scope}" needs a string "path"`)
   if (path.startsWith('/')) fail(`scope "${scope}" path must be relative`)
   if (path.split('/').includes('..')) fail(`scope "${scope}" path must not contain ".."`)
+  if (path.split('/').some((segment) => segment === '')) fail(`scope "${scope}" path must not contain empty segments`)
   return path
 }
 
