@@ -1,12 +1,17 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+
 import { run } from '../../src/cli.ts'
 import { capture } from '../helpers/capture.ts'
 
-const scopedCwd = fileURLToPath(new URL('../fixtures/ws-scoped/org/web', import.meta.url))
+const scopedCwd = fileURLToPath(
+  new URL('../fixtures/ws-scoped/org/web', import.meta.url)
+)
 const cycleCwd = fileURLToPath(new URL('../fixtures/ws-cycle', import.meta.url))
-const badJsonCwd = fileURLToPath(new URL('../fixtures/ws-badjson', import.meta.url))
+const badJsonCwd = fileURLToPath(
+  new URL('../fixtures/ws-badjson', import.meta.url)
+)
 
 interface Emitted {
   scope: string | null
@@ -15,13 +20,23 @@ interface Emitted {
 
 test('--json emits the resolved scope and collections', async () => {
   const c = capture()
-  const code = await run(['context', '--scope', 'web', '--json', '--cwd', scopedCwd])
+  const code = await run([
+    'context',
+    '--scope',
+    'web',
+    '--json',
+    '--cwd',
+    scopedCwd,
+  ])
   c.restore()
   assert.equal(code, 0)
   const parsed = JSON.parse(c.out()) as Emitted
   assert.equal(parsed.scope, 'web')
   const standards = parsed.collections.find((x) => x.name === 'standards')
-  assert.deepEqual(standards?.files.map((f) => f.rel), ['web/seo.md', 'platform/deploy.md', 'global.md'])
+  assert.deepEqual(
+    standards?.files.map((f) => f.rel),
+    ['web/seo.md', 'platform/deploy.md', 'global.md']
+  )
 })
 
 test('resolves scope from --cwd when --scope is absent', async () => {
@@ -90,7 +105,7 @@ test('RNESS_DEBUG=0 prints the plain message, no stack', async () => {
     c.restore()
     assert.equal(code, 1)
     assert.match(c.err(), /^rness\.json:/)
-    assert.doesNotMatch(c.err(), /\n    at /)
+    assert.doesNotMatch(c.err(), /\n {4}at /)
   } finally {
     if (previous === undefined) delete process.env['RNESS_DEBUG']
     else process.env['RNESS_DEBUG'] = previous
@@ -107,7 +122,13 @@ test('outside any workspace is a handled error', async () => {
 
 test('a prototype-chain name is not a real scope', async () => {
   const c = capture()
-  const code = await run(['context', '--scope', 'constructor', '--cwd', scopedCwd])
+  const code = await run([
+    'context',
+    '--scope',
+    'constructor',
+    '--cwd',
+    scopedCwd,
+  ])
   c.restore()
   assert.equal(code, 1)
   assert.match(c.err(), /unknown scope/)
