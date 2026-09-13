@@ -1,7 +1,7 @@
 # rness workspace member — scope: rness
 
 <!-- BEGIN rness -->
-<!-- rness 0.3.0 · scope: rness · contract: 1 · hash: cdaf268f8464 · generated: run `rness sync`, never edit inside this block -->
+<!-- rness 0.3.0 · scope: rness · contract: 1 · hash: 3fdb69a3346d · generated: run `rness sync`, never edit inside this block -->
 This directory is scope `rness` of rness workspace `rness-dev`. Full context lives in
 `../../.rness/` — read `STATUS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
 live: `rness context --scope rness`. If `.rness/` is not reachable, this is a
@@ -23,6 +23,12 @@ This standard is how to apply that day to day.
   on their path. Interactive or heavy modules load lazily (`import()`).
 - Current runtime dependencies of `@rness/cli`: `commander`, `yaml`,
   `@clack/prompts`. Development: `typescript`, `tsup`, `@types/node`.
+- The repository root owns the code-quality tooling for every package:
+  `eslint` (`@eslint/js`, `typescript-eslint`, `eslint-config-prettier`) and
+  `prettier` (with `@trivago/prettier-plugin-sort-imports`). `pnpm lint` and
+  `pnpm format:check` run before typecheck, tests and build, locally and in CI.
+  Generated `AGENTS.md`/`CLAUDE.md`, the scaffold and the test fixtures are
+  never reformatted: their bytes are part of the contract.
 - `.rness/scripts/` — this workspace's context tooling (`STATUS.md`, the HTML
   dashboard for GitHub Pages) — stays dependency-free: it runs in git hooks
   and must never need an install to work.
