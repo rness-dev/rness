@@ -1,0 +1,20 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+pnpm-lock.yaml
+
+# Subagent scratch space (git-ignored)
+.superpowers/
+
+# Generated rness blocks: the body is hashed, a reformat makes it stale
+AGENTS.md
+CLAUDE.md
+
+# Copied verbatim into user workspaces by `rness create`
+packages/cli/scaffold/
+
+# Byte-exact inputs and expected outputs of the merge tests
+packages/cli/test/fixtures/
+
+# OS
+.DS_Store
