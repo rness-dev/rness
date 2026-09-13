@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
+import { writeFileAtomic } from './fs.ts'
+import { repoUrl } from './remote.ts'
 import type { Manifest, RepoEntry, ScopeEntry } from './types.ts'
 
 export const NAME = /^[a-z0-9][a-z0-9-]*$/
@@ -106,4 +108,68 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
     repos: readRepos(data.repos),
     scopes: readScopes(data.scopes),
   }
+}
+
+/** Serialise in the contract's key order; atomic write. */
+export async function writeManifest(
+  rnessDir: string,
+  manifest: Manifest
+): Promise<void> {
+  const repos = Object.entries(manifest.repos).map(
+    ([name, r]) =>
+      `    ${JSON.stringify(name)}: { "url": ${JSON.stringify(r.url)} }`
+  )
+  const scopes = Object.entries(manifest.scopes).map(([name, s]) => {
+    const ext =
+      s.extends.length === 0
+        ? ''
+        : `, "extends": [${s.extends.map((e) => JSON.stringify(e)).join(', ')}]`
+    return `    ${JSON.stringify(name)}: { "path": ${JSON.stringify(s.path)}${ext} }`
+  })
+  const lines = ['{', '  "contract": 1,']
+  if (manifest.org !== null)
+    lines.push(`  "org": ${JSON.stringify(manifest.org)},`)
+  lines.push(
+    '  "repos": {',
+    repos.join(',\n'),
+    '  },',
+    '  "scopes": {',
+    scopes.join(',\n'),
+    '  }',
+    '}'
+  )
+  const text = `${lines.filter((l) => l !== '').join('\n')}\n`
+  await writeFileAtomic(join(rnessDir, 'rness.json'), text)
+}
+
+const FULL_URL = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/
+
+/** `web` → `<host><org>/web.git`; `other/api` → `<host>other/api.git`; a full URL is kept. */
+export function parseRepoSpec(
+  spec: string,
+  org: string,
+  host: string
+): { name: string; url: string } {
+  let url: string
+  if (FULL_URL.test(spec)) {
+    url = spec
+  } else {
+    const parts = spec.split('/')
+    if (parts.length === 1) url = repoUrl(host, org, spec)
+    else if (
+      parts.length === 2 &&
+      parts[0] !== undefined &&
+      parts[1] !== undefined
+    )
+      url = repoUrl(host, parts[0], parts[1])
+    else
+      throw new Error(
+        `repository name "${spec}" is not [a-z0-9-] (use <repo>, <owner>/<repo>, or a URL)`
+      )
+  }
+  const last = url.replace(/\/+$/, '').split(/[/:]/).at(-1) ?? ''
+  const name = last.endsWith('.git') ? last.slice(0, -4) : last
+  if (!NAME.test(name))
+    throw new Error(`repository name "${name}" is not [a-z0-9-]`)
+  return { name, url }
 }

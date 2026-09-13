@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
-import { loadManifest, resolveOrg } from '../../src/core/manifest.ts'
+import {
+  loadManifest,
+  parseRepoSpec,
+  resolveOrg,
+  writeManifest,
+} from '../../src/core/manifest.ts'
 
 async function fixture(json: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'rness-'))
@@ -148,4 +153,73 @@ test('resolveOrg falls back to the root directory name with a warning', async (t
     '/tmp/workspaces/acme'
   )
   assert.deepEqual(pinned, { org: 'acme-dev', warning: null })
+})
+
+test('writeManifest keeps the key order and omits empty extends and a null org', async (t) => {
+  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  await writeManifest(d, {
+    contract: 1,
+    org: null,
+    repos: { web: { url: 'https://github.com/acme/web.git' } },
+    scopes: {
+      web: { path: 'org/web', extends: [] },
+      ui: { path: 'org/web/packages/ui', extends: ['web'] },
+    },
+  })
+  const text = await readFile(join(d, 'rness.json'), 'utf8')
+  assert.equal(
+    text,
+    `{
+  "contract": 1,
+  "repos": {
+    "web": { "url": "https://github.com/acme/web.git" }
+  },
+  "scopes": {
+    "web": { "path": "org/web" },
+    "ui": { "path": "org/web/packages/ui", "extends": ["web"] }
+  }
+}
+`
+  )
+  await writeManifest(d, { contract: 1, org: 'acme', repos: {}, scopes: {} })
+  assert.match(
+    await readFile(join(d, 'rness.json'), 'utf8'),
+    /^\{\n {2}"contract": 1,\n {2}"org": "acme",\n/
+  )
+  assert.deepEqual(await loadManifest(d), {
+    contract: 1,
+    org: 'acme',
+    repos: {},
+    scopes: {},
+  })
+})
+
+test('parseRepoSpec accepts repo, owner/repo and full URLs, and validates the name', () => {
+  const host = 'https://github.com/'
+  assert.deepEqual(parseRepoSpec('web', 'acme', host), {
+    name: 'web',
+    url: 'https://github.com/acme/web.git',
+  })
+  assert.deepEqual(parseRepoSpec('other/api', 'acme', host), {
+    name: 'api',
+    url: 'https://github.com/other/api.git',
+  })
+  assert.deepEqual(parseRepoSpec('git@github.com:acme/sdk.git', 'acme', host), {
+    name: 'sdk',
+    url: 'git@github.com:acme/sdk.git',
+  })
+  assert.deepEqual(
+    parseRepoSpec('file:///tmp/gh/acme/tools.git', 'acme', host),
+    { name: 'tools', url: 'file:///tmp/gh/acme/tools.git' }
+  )
+  assert.deepEqual(parseRepoSpec('https://github.com/acme/web', 'acme', host), {
+    name: 'web',
+    url: 'https://github.com/acme/web',
+  })
+  assert.throws(
+    () => parseRepoSpec('Bad_Name', 'acme', host),
+    /repository name "Bad_Name" is not \[a-z0-9-\]/
+  )
+  assert.throws(() => parseRepoSpec('a/b/c', 'acme', host), /repository name/)
 })
