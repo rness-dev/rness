@@ -14,18 +14,29 @@ export interface WorkspaceSpec {
 }
 
 /** A temporary workspace, removed when the test ends. Returns its (realpath) root. */
-export async function makeWorkspace(t: TestContext, spec: WorkspaceSpec): Promise<string> {
+export async function makeWorkspace(
+  t: TestContext,
+  spec: WorkspaceSpec
+): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'rness-ws-')))
   t.after(() => rm(root, { recursive: true, force: true }))
   await mkdir(join(root, '.rness'), { recursive: true })
-  const manifest: Record<string, unknown> = { contract: 1, repos: spec.repos ?? {}, scopes: spec.scopes ?? {} }
+  const manifest: Record<string, unknown> = {
+    contract: 1,
+    repos: spec.repos ?? {},
+    scopes: spec.scopes ?? {},
+  }
   if (spec.org !== undefined) manifest['org'] = spec.org
-  await writeFile(join(root, '.rness', 'rness.json'), JSON.stringify(manifest, null, 2))
+  await writeFile(
+    join(root, '.rness', 'rness.json'),
+    JSON.stringify(manifest, null, 2)
+  )
   for (const [rel, content] of Object.entries(spec.files ?? {})) {
     const file = join(root, '.rness', ...rel.split('/'))
     await mkdir(dirname(file), { recursive: true })
     await writeFile(file, content)
   }
-  for (const dir of spec.dirs ?? []) await mkdir(join(root, ...dir.split('/')), { recursive: true })
+  for (const dir of spec.dirs ?? [])
+    await mkdir(join(root, ...dir.split('/')), { recursive: true })
   return root
 }

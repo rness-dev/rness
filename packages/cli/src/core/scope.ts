@@ -5,7 +5,10 @@ function isPrefix(prefix: string, target: string): boolean {
 }
 
 /** The scope whose `path` is the longest path-segment prefix of `relDir`; null = global. */
-export function resolveScope(manifest: Manifest, relDir: string): string | null {
+export function resolveScope(
+  manifest: Manifest,
+  relDir: string
+): string | null {
   let best: string | null = null
   let bestLen = -1
   for (const [name, entry] of Object.entries(manifest.scopes)) {
@@ -28,7 +31,9 @@ export function scopeChain(manifest: Manifest, scope: string | null): string[] {
     seen.add(name)
     chain.push(name)
     stack.add(name)
-    const entry = Object.hasOwn(manifest.scopes, name) ? manifest.scopes[name] : undefined
+    const entry = Object.hasOwn(manifest.scopes, name)
+      ? manifest.scopes[name]
+      : undefined
     for (const target of entry?.extends ?? []) visit(target, stack)
     stack.delete(name)
   }

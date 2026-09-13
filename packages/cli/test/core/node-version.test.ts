@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { isSupportedNode, nodeMajor } from '../../src/core/node-version.ts'
 
 test('nodeMajor reads the major component', () => {

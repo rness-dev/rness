@@ -1,13 +1,35 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { BEGIN, END, blockHash, bodyOf, parseHeader, renderBlock } from '../../src/core/block.ts'
+import { test } from 'node:test'
+
+import {
+  BEGIN,
+  END,
+  blockHash,
+  bodyOf,
+  parseHeader,
+  renderBlock,
+} from '../../src/core/block.ts'
 import type { Context } from '../../src/core/types.ts'
 
-function ctx(files: Array<{ rel: string; scope: string | null; body: string; content?: string }>): Context {
+function ctx(
+  files: Array<{
+    rel: string
+    scope: string | null
+    body: string
+    content?: string
+  }>
+): Context {
   return {
     scope: 'web',
     collections: [
-      { name: 'standards', files: files.map((f) => ({ ...f, title: null, content: f.content ?? f.body })) },
+      {
+        name: 'standards',
+        files: files.map((f) => ({
+          ...f,
+          title: null,
+          content: f.content ?? f.body,
+        })),
+      },
       { name: 'adr', files: [] },
       { name: 'specs', files: [] },
       { name: 'plans', files: [] },
@@ -17,16 +39,33 @@ function ctx(files: Array<{ rel: string; scope: string | null; body: string; con
 }
 
 const twoStandards = ctx([
-  { rel: 'web/seo.md', scope: 'web', body: '# SEO\n\nEvery page sets a title.\n' },
-  { rel: 'coding.md', scope: null, body: '\n# Coding\n\nTwo-space indent.\n\n' },
+  {
+    rel: 'web/seo.md',
+    scope: 'web',
+    body: '# SEO\n\nEvery page sets a title.\n',
+  },
+  {
+    rel: 'coding.md',
+    scope: null,
+    body: '\n# Coding\n\nTwo-space indent.\n\n',
+  },
 ])
 
 test('renders the scope block: markers, header, intro, rules in resolution order', () => {
-  const block = renderBlock({ scope: 'web', org: 'acme', depth: 2, context: twoStandards, version: '0.0.0-test' })
+  const block = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 2,
+    context: twoStandards,
+    version: '0.0.0-test',
+  })
   const lines = block.text.split('\n')
   assert.equal(lines[0], BEGIN)
   assert.equal(lines.at(-1), END)
-  assert.match(lines[1] ?? '', /^<!-- rness 0\.0\.0-test · scope: web · contract: 1 · hash: [0-9a-f]{12} · generated: run `rness sync`, never edit inside this block -->$/)
+  assert.match(
+    lines[1] ?? '',
+    /^<!-- rness 0\.0\.0-test · scope: web · contract: 1 · hash: [0-9a-f]{12} · generated: run `rness sync`, never edit inside this block -->$/
+  )
   const expectedBody = [
     'This directory is scope `web` of rness workspace `acme`. Full context lives in',
     '`../../.rness/` — read `STATUS.md`, then task-relevant `adr/`, `specs/`, `plans/`;',
@@ -50,29 +89,63 @@ test('renders the scope block: markers, header, intro, rules in resolution order
 })
 
 test('the header carries the body hash and parses back', () => {
-  const block = renderBlock({ scope: 'web', org: 'acme', depth: 2, context: twoStandards, version: '0.0.0-test' })
+  const block = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 2,
+    context: twoStandards,
+    version: '0.0.0-test',
+  })
   const header = parseHeader(block.text.split('\n')[1] ?? '')
-  assert.deepEqual(header, { version: '0.0.0-test', scope: 'web', hash: block.hash })
+  assert.deepEqual(header, {
+    version: '0.0.0-test',
+    scope: 'web',
+    hash: block.hash,
+  })
   assert.equal(parseHeader('<!-- something else -->'), null)
 })
 
 test('the global block names the root, has no relative path, and says where the scoped blocks are', () => {
-  const block = renderBlock({ scope: null, org: 'acme', depth: 0, context: ctx([{ rel: 'coding.md', scope: null, body: '# Coding\n' }]), version: '0.0.0-test' })
+  const block = renderBlock({
+    scope: null,
+    org: 'acme',
+    depth: 0,
+    context: ctx([{ rel: 'coding.md', scope: null, body: '# Coding\n' }]),
+    version: '0.0.0-test',
+  })
   const body = bodyOf(block.text.split('\n'))
   assert.match(block.text.split('\n')[1] ?? '', /· scope: global ·/)
-  assert.match(body, /^This is the root of rness workspace `acme`\. Full context lives in `\.rness\/` —/)
+  assert.match(
+    body,
+    /^This is the root of rness workspace `acme`\. Full context lives in `\.rness\/` —/
+  )
   assert.match(body, /Every `org\/<repo>\/` carries its own block/)
   assert.doesNotMatch(body, /\.\.\//)
 })
 
 test('depth drives the relative path', () => {
-  const deep = renderBlock({ scope: 'web', org: 'acme', depth: 4, context: twoStandards, version: '0.0.0-test' })
+  const deep = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 4,
+    context: twoStandards,
+    version: '0.0.0-test',
+  })
   assert.match(deep.text, /`\.\.\/\.\.\/\.\.\/\.\.\/\.rness\/`/)
 })
 
 test('no standards yields a placeholder line, never an empty Rules section', () => {
-  const block = renderBlock({ scope: 'web', org: 'acme', depth: 2, context: ctx([]), version: '0.0.0-test' })
-  assert.match(block.text, /## Rules\n_No standards apply to this scope yet\._\n<!-- END rness -->$/)
+  const block = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 2,
+    context: ctx([]),
+    version: '0.0.0-test',
+  })
+  assert.match(
+    block.text,
+    /## Rules\n_No standards apply to this scope yet\._\n<!-- END rness -->$/
+  )
 })
 
 test('a standard with front matter renders its content only, never the --- fences', () => {
@@ -80,10 +153,20 @@ test('a standard with front matter renders its content only, never the --- fence
     scope: 'web',
     org: 'acme',
     depth: 2,
-    context: ctx([{ rel: 'web/seo.md', scope: 'web', body: '---\nrepo: api\n---\n\n# API rules\n', content: '# API rules\n' }]),
+    context: ctx([
+      {
+        rel: 'web/seo.md',
+        scope: 'web',
+        body: '---\nrepo: api\n---\n\n# API rules\n',
+        content: '# API rules\n',
+      },
+    ]),
     version: '0.0.0-test',
   })
-  assert.match(block.text, /<!-- rness: standards\/web\/seo\.md -->\n# API rules\n<!-- END rness -->$/)
+  assert.match(
+    block.text,
+    /<!-- rness: standards\/web\/seo\.md -->\n# API rules\n<!-- END rness -->$/
+  )
   assert.doesNotMatch(block.text, /---/)
   assert.doesNotMatch(block.text, /repo: api/)
 })
@@ -96,10 +179,28 @@ test('the hash ignores line endings and changes with the content', () => {
 })
 
 test('CRLF and lone-CR standard bodies render as LF, and hash the same as their LF twin', () => {
-  const crlf = ctx([{ rel: 'coding.md', scope: null, body: '# Coding\r\n\r\nTwo-space indent.\r\n' }])
-  const cr = ctx([{ rel: 'coding.md', scope: null, body: '# Coding\r\rTwo-space indent.\r' }])
-  const lf = ctx([{ rel: 'coding.md', scope: null, body: '# Coding\n\nTwo-space indent.\n' }])
-  const [a, b, c] = [crlf, cr, lf].map((context) => renderBlock({ scope: 'web', org: 'acme', depth: 2, context, version: '0.0.0-test' }))
+  const crlf = ctx([
+    {
+      rel: 'coding.md',
+      scope: null,
+      body: '# Coding\r\n\r\nTwo-space indent.\r\n',
+    },
+  ])
+  const cr = ctx([
+    { rel: 'coding.md', scope: null, body: '# Coding\r\rTwo-space indent.\r' },
+  ])
+  const lf = ctx([
+    { rel: 'coding.md', scope: null, body: '# Coding\n\nTwo-space indent.\n' },
+  ])
+  const [a, b, c] = [crlf, cr, lf].map((context) =>
+    renderBlock({
+      scope: 'web',
+      org: 'acme',
+      depth: 2,
+      context,
+      version: '0.0.0-test',
+    })
+  )
   assert.doesNotMatch(a?.text ?? '', /\r/)
   assert.doesNotMatch(b?.text ?? '', /\r/)
   assert.equal(a?.text, c?.text)
@@ -107,9 +208,18 @@ test('CRLF and lone-CR standard bodies render as LF, and hash the same as their 
 })
 
 test('parseHeader rejects a line that only shares the header prefix', () => {
-  const block = renderBlock({ scope: 'web', org: 'acme', depth: 2, context: twoStandards, version: '0.0.0-test' })
+  const block = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 2,
+    context: twoStandards,
+    version: '0.0.0-test',
+  })
   const header = block.text.split('\n')[1] ?? ''
   assert.notEqual(parseHeader(header), null)
   assert.equal(parseHeader(`${header.slice(0, -3)} tampered -->`), null)
-  assert.equal(parseHeader(header.replace('never edit inside this block', 'edit freely')), null)
+  assert.equal(
+    parseHeader(header.replace('never edit inside this block', 'edit freely')),
+    null
+  )
 })

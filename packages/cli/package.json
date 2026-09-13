@@ -4,19 +4,27 @@
   "description": "Configuration-plane CLI for rness workspaces: resolve, validate and sync org-level context for AI coding agents",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/rness-dev/rness.git",
     "directory": "packages/cli"
   },
   "homepage": "https://github.com/rness-dev/rness",
-  "bin": { "rness": "dist/bin/rness.js" },
+  "bin": {
+    "rness": "dist/bin/rness.js"
+  },
   "exports": {
     ".": "./dist/index.js",
     "./package.json": "./package.json"
   },
-  "files": ["dist", "scaffold", "README.md"],
+  "files": [
+    "dist",
+    "scaffold",
+    "README.md"
+  ],
   "scripts": {
     "test": "node --test 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit",

@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { run } from '../src/cli.ts'
 import { VERSION } from '../src/version.ts'
 import { capture } from './helpers/capture.ts'

@@ -1,4 +1,5 @@
 import { parse } from 'yaml'
+
 import type { Fields } from './types.ts'
 
 // The inner group is optional so that `---\n---\n` (an empty block with no line
@@ -31,10 +32,15 @@ export function parseFrontMatter(source: string): Fields | null {
     // without silencing real parse errors — `logLevel: 'silent'` would do that too.
     doc = parse(block, { logLevel: 'error' })
   } catch (e) {
-    fail(e instanceof Error ? (e.message.split('\n')[0] ?? 'invalid YAML').replace(/:$/, '') : 'invalid YAML')
+    fail(
+      e instanceof Error
+        ? (e.message.split('\n')[0] ?? 'invalid YAML').replace(/:$/, '')
+        : 'invalid YAML'
+    )
   }
   if (doc === null || doc === undefined) return {}
-  if (typeof doc !== 'object' || Array.isArray(doc)) fail('block must be a mapping of keys to values')
+  if (typeof doc !== 'object' || Array.isArray(doc))
+    fail('block must be a mapping of keys to values')
   return doc as Fields
 }
 
@@ -53,5 +59,9 @@ export function stripFrontMatter(source: string): string {
 }
 
 export function extractTitle(source: string): string | null {
-  return stripBom(source).match(/^# (.+)$/m)?.[1]?.trim() ?? null
+  return (
+    stripBom(source)
+      .match(/^# (.+)$/m)?.[1]
+      ?.trim() ?? null
+  )
 }

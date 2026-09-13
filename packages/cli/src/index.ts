@@ -1,18 +1,47 @@
 export { run } from './cli.ts'
 export { VERSION } from './version.ts'
-export { contextCommand, renderMarkdown, type ContextOptions } from './commands/context.ts'
+export {
+  contextCommand,
+  renderMarkdown,
+  type ContextOptions,
+} from './commands/context.ts'
 export { validateCommand, type ValidateOptions } from './commands/validate.ts'
 export { parseFrontMatter, extractTitle } from './core/frontmatter.ts'
 export { collectMarkdown } from './core/collect.ts'
 export { loadManifest, NAME } from './core/manifest.ts'
 export { findWorkspace } from './core/workspace.ts'
 export { resolveScope, scopeChain } from './core/scope.ts'
-export { assembleContext, COLLECTIONS, type AssembleInput } from './core/context.ts'
+export {
+  assembleContext,
+  COLLECTIONS,
+  type AssembleInput,
+} from './core/context.ts'
 export { checkContract, STATUSES } from './core/contract.ts'
 export { scaffoldDir, SCAFFOLD_FILES } from './core/scaffold.ts'
 export type * from './core/types.ts'
 export { syncCommand, type SyncOptions } from './commands/sync.ts'
-export { renderBlock, blockHash, parseHeader, bodyOf, BEGIN, END, BLOCK_SIZE_WARNING, type BlockInput, type RenderedBlock, type BlockHeader } from './core/block.ts'
-export { mergeBlock, findBlock, ensureClaudeMd, type MergeResult, type FindResult } from './core/merge.ts'
+export {
+  renderBlock,
+  blockHash,
+  parseHeader,
+  bodyOf,
+  BEGIN,
+  END,
+  BLOCK_SIZE_WARNING,
+  type BlockInput,
+  type RenderedBlock,
+  type BlockHeader,
+} from './core/block.ts'
+export {
+  mergeBlock,
+  findBlock,
+  ensureClaudeMd,
+  type MergeResult,
+  type FindResult,
+} from './core/merge.ts'
 export { exists, readOrNull, writeFileAtomic } from './core/fs.ts'
-export { checkBlocks, type CheckBlocksInput, type CheckBlocksResult } from './core/blocks.ts'
+export {
+  checkBlocks,
+  type CheckBlocksInput,
+  type CheckBlocksResult,
+} from './core/blocks.ts'

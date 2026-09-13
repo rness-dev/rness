@@ -1,11 +1,17 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { test } from 'node:test'
 import { promisify } from 'node:util'
-import { clone, isClean, originUrl, pullFastForward } from '../../src/core/git.ts'
+
+import {
+  clone,
+  isClean,
+  originUrl,
+  pullFastForward,
+} from '../../src/core/git.ts'
 import { commitTo, makeBareRepo } from '../helpers/git.ts'
 
 const execFileP = promisify(execFile)
@@ -29,7 +35,10 @@ test('clone, originUrl, isClean, pullFastForward against a local bare repository
 test('failures are one-line errors naming the verb', async (t) => {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-clone-')))
   t.after(() => rm(base, { recursive: true, force: true }))
-  await assert.rejects(clone('file:///no/such/repo.git', join(base, 'x')), /^Error: git clone failed: /)
+  await assert.rejects(
+    clone('file:///no/such/repo.git', join(base, 'x')),
+    /^Error: git clone failed: /
+  )
   assert.equal(await originUrl(base), null)
 })
 
@@ -37,7 +46,9 @@ test('a plain directory inside a repository is not a clone: git never walks up t
   const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-ceiling-')))
   t.after(() => rm(base, { recursive: true, force: true }))
   await execFileP('git', ['init', '-q', '-b', 'main', base])
-  await execFileP('git', ['remote', 'add', 'origin', 'file:///ancestor.git'], { cwd: base })
+  await execFileP('git', ['remote', 'add', 'origin', 'file:///ancestor.git'], {
+    cwd: base,
+  })
   await writeFile(join(base, 'tracked.txt'), 'x')
   const sub = join(base, 'org', 'web')
   await mkdir(sub, { recursive: true })
@@ -50,6 +61,12 @@ test('a plain directory inside a repository is not a clone: git never walks up t
 test('a repository url or directory starting with - is refused, never handed to git', async (t) => {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-argv-')))
   t.after(() => rm(base, { recursive: true, force: true }))
-  await assert.rejects(clone('--upload-pack=touch /tmp/pwned', join(base, 'x')), /refusing suspicious repository url/)
-  await assert.rejects(clone('file:///tmp/nowhere.git', '-C'), /refusing suspicious directory/)
+  await assert.rejects(
+    clone('--upload-pack=touch /tmp/pwned', join(base, 'x')),
+    /refusing suspicious repository url/
+  )
+  await assert.rejects(
+    clone('file:///tmp/nowhere.git', '-C'),
+    /refusing suspicious directory/
+  )
 })

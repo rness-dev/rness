@@ -1,4 +1,11 @@
-import { access, lstat, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  lstat,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 export async function exists(p: string): Promise<boolean> {

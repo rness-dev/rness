@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+
 import { findWorkspace } from './workspace.ts'
 
 export interface Delegate {
@@ -15,7 +16,10 @@ export interface Delegate {
  * `.rness/node_modules`), when it exists and is not the running version. The
  * pinned copy is the only one that should ever act on a workspace.
  */
-export async function findDelegate(cwd: string, ownVersion: string): Promise<Delegate | null> {
+export async function findDelegate(
+  cwd: string,
+  ownVersion: string
+): Promise<Delegate | null> {
   let root: string
   let rnessDir: string
   try {
@@ -28,7 +32,11 @@ export async function findDelegate(cwd: string, ownVersion: string): Promise<Del
   const pkgDir = join(rnessDir, 'node_modules', '@rness', 'cli')
   let version: unknown
   try {
-    version = (JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf8')) as { version?: unknown }).version
+    version = (
+      JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf8')) as {
+        version?: unknown
+      }
+    ).version
   } catch {
     return null
   }

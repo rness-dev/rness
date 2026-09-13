@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+
 import type { Context } from './types.ts'
 
 export const BEGIN = '<!-- BEGIN rness -->'
@@ -29,7 +30,8 @@ export interface BlockHeader {
   hash: string
 }
 
-const HEADER = /^<!-- rness (\S+) · scope: (\S+) · contract: 1 · hash: ([0-9a-f]{12}) · generated: run `rness sync`, never edit inside this block -->$/
+const HEADER =
+  /^<!-- rness (\S+) · scope: (\S+) · contract: 1 · hash: ([0-9a-f]{12}) · generated: run `rness sync`, never edit inside this block -->$/
 
 function toLf(s: string): string {
   return s.replace(/\r\n?/g, '\n')
@@ -37,7 +39,10 @@ function toLf(s: string): string {
 
 /** SHA-256 of the LF-normalised body, first 12 hex characters. */
 export function blockHash(body: string): string {
-  return createHash('sha256').update(toLf(body), 'utf8').digest('hex').slice(0, 12)
+  return createHash('sha256')
+    .update(toLf(body), 'utf8')
+    .digest('hex')
+    .slice(0, 12)
 }
 
 function intro(scope: string | null, org: string, depth: number): string {
@@ -62,12 +67,21 @@ function header(version: string, scope: string | null, hash: string): string {
 }
 
 /** Render the block for one scope (or the root) from an already resolved context. */
-export function renderBlock({ scope, org, depth, context, version }: BlockInput): RenderedBlock {
-  const standards = context.collections.find((c) => c.name === 'standards')?.files ?? []
+export function renderBlock({
+  scope,
+  org,
+  depth,
+  context,
+  version,
+}: BlockInput): RenderedBlock {
+  const standards =
+    context.collections.find((c) => c.name === 'standards')?.files ?? []
   const rules =
     standards.length === 0
       ? ['_No standards apply to this scope yet._']
-      : standards.map((f) => `<!-- rness: standards/${f.rel} -->\n${toLf(f.content).trim()}`)
+      : standards.map(
+          (f) => `<!-- rness: standards/${f.rel} -->\n${toLf(f.content).trim()}`
+        )
   const body = `${intro(scope, org, depth)}\n\n## Rules\n${rules.join('\n\n')}`
   const hash = blockHash(body)
   const text = [BEGIN, header(version, scope, hash), body, END].join('\n')

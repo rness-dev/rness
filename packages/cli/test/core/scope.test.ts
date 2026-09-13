@@ -1,5 +1,6 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
 import { resolveScope, scopeChain } from '../../src/core/scope.ts'
 import type { Manifest } from '../../src/core/types.ts'
 
@@ -38,7 +39,10 @@ test('scopeChain is nearest-first and deduped', () => {
 test('scopeChain detects a cycle', () => {
   const cyclic: Manifest = {
     ...manifest,
-    scopes: { a: { path: 'a', extends: ['b'] }, b: { path: 'b', extends: ['a'] } },
+    scopes: {
+      a: { path: 'a', extends: ['b'] },
+      b: { path: 'b', extends: ['a'] },
+    },
   }
   assert.throws(() => scopeChain(cyclic, 'a'), /cycle/)
 })

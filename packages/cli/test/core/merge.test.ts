@@ -1,11 +1,12 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
-import { mkdtemp, readFile, rm, writeFile, realpath } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+import { readOrNull, writeFileAtomic } from '../../src/core/fs.ts'
 import { ensureClaudeMd, findBlock, mergeBlock } from '../../src/core/merge.ts'
-import { writeFileAtomic, readOrNull } from '../../src/core/fs.ts'
 
 const BLOCK = '<!-- BEGIN rness -->\nBLOCK\n<!-- END rness -->'
 const fixtures = fileURLToPath(new URL('../fixtures/blocks/', import.meta.url))
@@ -37,7 +38,10 @@ test('merging is idempotent', async () => {
 test('CRLF files keep CRLF, including inside the block', () => {
   const result = mergeBlock('# Title\r\n\r\nBody\r\n', BLOCK)
   assert.ok(result.ok)
-  assert.equal(result.text, '# Title\r\n\r\n<!-- BEGIN rness -->\r\nBLOCK\r\n<!-- END rness -->\r\n\r\nBody\r\n')
+  assert.equal(
+    result.text,
+    '# Title\r\n\r\n<!-- BEGIN rness -->\r\nBLOCK\r\n<!-- END rness -->\r\n\r\nBody\r\n'
+  )
 })
 
 test('an H1 not followed by a blank line means insertion at the top', () => {
@@ -67,8 +71,15 @@ test('an H1 followed only by a blank line takes the block after it, idempotently
 })
 
 test('malformed spans are errors and leave the text alone', () => {
-  assert.deepEqual(findBlock(['<!-- BEGIN rness -->', 'x']), { kind: 'error', message: 'expected exactly one <!-- BEGIN rness --> … <!-- END rness --> span, found 1 BEGIN and 0 END' })
-  assert.equal(findBlock(['<!-- END rness -->', '<!-- BEGIN rness -->']).kind, 'error')
+  assert.deepEqual(findBlock(['<!-- BEGIN rness -->', 'x']), {
+    kind: 'error',
+    message:
+      'expected exactly one <!-- BEGIN rness --> … <!-- END rness --> span, found 1 BEGIN and 0 END',
+  })
+  assert.equal(
+    findBlock(['<!-- END rness -->', '<!-- BEGIN rness -->']).kind,
+    'error'
+  )
   assert.equal(findBlock([BLOCK, BLOCK].join('\n').split('\n')).kind, 'error')
   const result = mergeBlock('<!-- BEGIN rness -->\nno end\n', BLOCK)
   assert.equal(result.ok, false)
@@ -78,18 +89,32 @@ test('a file mixing LF and CRLF keeps every separator outside the span', () => {
   const mixed = '# Title\r\n\r\nline one\nline two\r\n'
   const inserted = mergeBlock(mixed, BLOCK)
   assert.ok(inserted.ok)
-  assert.equal(inserted.text, `# Title\r\n\r\n${BLOCK.split('\n').join('\r\n')}\r\n\r\nline one\nline two\r\n`)
-  const replaced = mergeBlock('a\nb\r\n<!-- BEGIN rness -->\r\nold\r\n<!-- END rness -->\r\nc\nd\r\n', BLOCK)
+  assert.equal(
+    inserted.text,
+    `# Title\r\n\r\n${BLOCK.split('\n').join('\r\n')}\r\n\r\nline one\nline two\r\n`
+  )
+  const replaced = mergeBlock(
+    'a\nb\r\n<!-- BEGIN rness -->\r\nold\r\n<!-- END rness -->\r\nc\nd\r\n',
+    BLOCK
+  )
   assert.ok(replaced.ok)
-  assert.equal(replaced.text, `a\nb\r\n${BLOCK.split('\n').join('\r\n')}\r\nc\nd\r\n`)
+  assert.equal(
+    replaced.text,
+    `a\nb\r\n${BLOCK.split('\n').join('\r\n')}\r\nc\nd\r\n`
+  )
 })
 
-test('ensureClaudeMd prepends with the file\'s own line ending', async (t) => {
-  const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-claude-crlf-')))
+test("ensureClaudeMd prepends with the file's own line ending", async (t) => {
+  const dir = await realpath(
+    await mkdtemp(join(tmpdir(), 'rness-claude-crlf-'))
+  )
   t.after(() => rm(dir, { recursive: true, force: true }))
   await writeFile(join(dir, 'CLAUDE.md'), '# Local\r\n\r\nNotes.\r\n')
   assert.equal(await ensureClaudeMd(dir), 'prepended')
-  assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '@AGENTS.md\r\n# Local\r\n\r\nNotes.\r\n')
+  assert.equal(
+    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+    '@AGENTS.md\r\n# Local\r\n\r\nNotes.\r\n'
+  )
 })
 
 test('ensureClaudeMd creates, prepends, or leaves alone', async (t) => {
@@ -100,7 +125,10 @@ test('ensureClaudeMd creates, prepends, or leaves alone', async (t) => {
   assert.equal(await ensureClaudeMd(dir), 'unchanged')
   await writeFile(join(dir, 'CLAUDE.md'), '# Local\n\nNotes.\n')
   assert.equal(await ensureClaudeMd(dir), 'prepended')
-  assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '@AGENTS.md\n# Local\n\nNotes.\n')
+  assert.equal(
+    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+    '@AGENTS.md\n# Local\n\nNotes.\n'
+  )
   assert.equal(await ensureClaudeMd(dir), 'unchanged')
 })
 

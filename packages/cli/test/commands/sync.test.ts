@@ -1,13 +1,14 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { lstat, readFile, readlink, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { test } from 'node:test'
+
 import { run } from '../../src/cli.ts'
-import { capture } from '../helpers/capture.ts'
-import { makeWorkspace } from '../helpers/workspace.ts'
-import { commitTo, makeBareRepo } from '../helpers/git.ts'
-import { readOrNull } from '../../src/core/fs.ts'
 import { BEGIN, END } from '../../src/core/block.ts'
+import { readOrNull } from '../../src/core/fs.ts'
+import { capture } from '../helpers/capture.ts'
+import { commitTo, makeBareRepo } from '../helpers/git.ts'
+import { makeWorkspace } from '../helpers/workspace.ts'
 
 const seo = '# SEO\n\nEvery page sets a title.\n'
 const coding = '# Coding\n\nTwo-space indent.\n'
@@ -32,13 +33,19 @@ test('writes the root and scope blocks and the CLAUDE.md pointers; skips scopes 
   const root = await basic(t)
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
-  assert.match(r.out, /^updated {2}AGENTS\.md\nupdated {2}org\/web\/AGENTS\.md\nskipped {2}org\/api\/AGENTS\.md \(directory not present\)\n$/)
+  assert.match(
+    r.out,
+    /^updated {2}AGENTS\.md\nupdated {2}org\/web\/AGENTS\.md\nskipped {2}org\/api\/AGENTS\.md \(directory not present\)\n$/
+  )
   const web = await readFile(join(root, 'org', 'web', 'AGENTS.md'), 'utf8')
   assert.match(web, /^<!-- BEGIN rness -->\n<!-- rness \S+ · scope: web ·/)
   assert.match(web, /<!-- rness: standards\/web\/seo\.md -->\n# SEO/)
   assert.match(web, /<!-- rness: standards\/coding\.md -->\n# Coding/)
   assert.match(web, /rness workspace `acme`/)
-  assert.equal(await readFile(join(root, 'org', 'web', 'CLAUDE.md'), 'utf8'), '@AGENTS.md\n')
+  assert.equal(
+    await readFile(join(root, 'org', 'web', 'CLAUDE.md'), 'utf8'),
+    '@AGENTS.md\n'
+  )
   const rootBlock = await readFile(join(root, 'AGENTS.md'), 'utf8')
   assert.match(rootBlock, /· scope: global ·/)
   assert.doesNotMatch(rootBlock, /standards\/web\/seo\.md/)
@@ -50,27 +57,46 @@ test('a second run changes nothing; --check agrees; editing a standard makes --c
   await sync(['--yes', '--cwd', root])
   const again = await sync(['--yes', '--cwd', root])
   assert.equal(again.code, 0)
-  assert.match(again.out, /^unchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md\n/)
+  assert.match(
+    again.out,
+    /^unchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md\n/
+  )
   const check = await sync(['--check', '--cwd', root])
   assert.equal(check.code, 0)
-  await writeFile(join(root, '.rness', 'standards', 'web', 'seo.md'), '# SEO\n\nChanged.\n')
+  await writeFile(
+    join(root, '.rness', 'standards', 'web', 'seo.md'),
+    '# SEO\n\nChanged.\n'
+  )
   const stale = await sync(['--check', '--cwd', root])
   assert.equal(stale.code, 1)
   assert.match(stale.out, /stale {4}org\/web\/AGENTS\.md/)
   assert.match(stale.err, /1 block\(s\) out of date — run rness sync/)
-  assert.doesNotMatch(await readFile(join(root, 'org', 'web', 'AGENTS.md'), 'utf8'), /Changed\./)
+  assert.doesNotMatch(
+    await readFile(join(root, 'org', 'web', 'AGENTS.md'), 'utf8'),
+    /Changed\./
+  )
 })
 
 test('an existing AGENTS.md keeps its title and foreign blocks; a malformed one is refused', async (t) => {
   const root = await basic(t)
   const file = join(root, 'org', 'web', 'AGENTS.md')
-  await writeFile(file, '# web\n\n<!-- BEGIN:nextjs-agent-rules -->\nkeep me\n<!-- END:nextjs-agent-rules -->\n')
+  await writeFile(
+    file,
+    '# web\n\n<!-- BEGIN:nextjs-agent-rules -->\nkeep me\n<!-- END:nextjs-agent-rules -->\n'
+  )
   const r = await sync(['--yes', '--scope', 'web', '--cwd', root])
   assert.equal(r.code, 0, r.err)
   const text = await readFile(file, 'utf8')
   assert.match(text, /^# web\n\n<!-- BEGIN rness -->\n/)
-  assert.match(text, /<!-- END rness -->\n\n<!-- BEGIN:nextjs-agent-rules -->\nkeep me\n<!-- END:nextjs-agent-rules -->\n$/)
-  assert.equal(await readOrNull(join(root, 'AGENTS.md')), null, '--scope web leaves the root alone')
+  assert.match(
+    text,
+    /<!-- END rness -->\n\n<!-- BEGIN:nextjs-agent-rules -->\nkeep me\n<!-- END:nextjs-agent-rules -->\n$/
+  )
+  assert.equal(
+    await readOrNull(join(root, 'AGENTS.md')),
+    null,
+    '--scope web leaves the root alone'
+  )
 
   await writeFile(file, `${BEGIN}\nno end here\n`)
   const bad = await sync(['--yes', '--scope', 'web', '--cwd', root])
@@ -95,7 +121,10 @@ test('unknown --scope and a workspace without org/ are handled', async (t) => {
   const unknown = await sync(['--yes', '--scope', 'ghost', '--cwd', root])
   assert.equal(unknown.code, 1)
   assert.match(unknown.err, /unknown scope: ghost/)
-  const bare = await makeWorkspace(t, { org: 'acme', scopes: { web: { path: 'org/web' } } })
+  const bare = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/web' } },
+  })
   const r = await sync(['--yes', '--cwd', bare])
   assert.equal(r.code, 0)
   assert.match(r.out, /^skipped {2}blocks \(no org\/ directory here\)\n$/)
@@ -111,7 +140,10 @@ test('clones missing repositories, pulls with --pull, skips dirty trees, and END
   })
   const first = await sync(['--yes', '--cwd', root])
   assert.equal(first.code, 0, first.err)
-  assert.match(first.out, /^cloned {3}org\/api\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n$/)
+  assert.match(
+    first.out,
+    /^cloned {3}org\/api\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n$/
+  )
   const agents = await readFile(join(root, 'org', 'api', 'AGENTS.md'), 'utf8')
   assert.equal(agents.trimEnd().endsWith(END), true)
 
@@ -161,11 +193,25 @@ for (const [link, target] of [
 
     const r = await sync(['--yes', '--cwd', root])
     assert.equal(r.code, 0, r.err)
-    assert.match(r.out, /^updated {2}AGENTS\.md\nskipped {2}org\/web\/AGENTS\.md \(symlink\)\n/)
-    assert.equal(await readFile(join(dir, target), 'utf8'), real, `${target} untouched`)
-    assert.equal((await lstat(join(dir, link))).isSymbolicLink(), true, `${link} is still a symlink`)
+    assert.match(
+      r.out,
+      /^updated {2}AGENTS\.md\nskipped {2}org\/web\/AGENTS\.md \(symlink\)\n/
+    )
+    assert.equal(
+      await readFile(join(dir, target), 'utf8'),
+      real,
+      `${target} untouched`
+    )
+    assert.equal(
+      (await lstat(join(dir, link))).isSymbolicLink(),
+      true,
+      `${link} is still a symlink`
+    )
     assert.equal(await readlink(join(dir, link)), target)
-    assert.doesNotMatch(await readFile(join(dir, target), 'utf8'), /BEGIN rness/)
+    assert.doesNotMatch(
+      await readFile(join(dir, target), 'utf8'),
+      /BEGIN rness/
+    )
 
     const check = await sync(['--check', '--cwd', root])
     assert.equal(check.code, 0, check.err)

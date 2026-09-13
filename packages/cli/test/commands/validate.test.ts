@@ -1,11 +1,16 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+
 import { run } from '../../src/cli.ts'
 import { capture } from '../helpers/capture.ts'
 
-const brokenCwd = fileURLToPath(new URL('../fixtures/ws-broken', import.meta.url))
-const scopedCwd = fileURLToPath(new URL('../fixtures/ws-scoped', import.meta.url))
+const brokenCwd = fileURLToPath(
+  new URL('../fixtures/ws-broken', import.meta.url)
+)
+const scopedCwd = fileURLToPath(
+  new URL('../fixtures/ws-scoped', import.meta.url)
+)
 const cycleCwd = fileURLToPath(new URL('../fixtures/ws-cycle', import.meta.url))
 
 test('returns 1 on a broken tree and lists every problem', async () => {
@@ -53,7 +58,10 @@ test('a manifest without "org" validates with a warning on stderr, exit 0', asyn
   c.restore()
   assert.equal(code, 0)
   assert.equal(c.out().trim(), 'context ok')
-  assert.match(c.err(), /warning: rness\.json: no "org"; using the directory name "ws-scoped"\n/)
+  assert.match(
+    c.err(),
+    /warning: rness\.json: no "org"; using the directory name "ws-scoped"\n/
+  )
 })
 
 test('validate reports a stale block as a problem and a missing one as a warning', async (t) => {
@@ -76,10 +84,16 @@ test('validate reports a stale block as a problem and a missing one as a warning
   c = capture()
   assert.equal(await run(['sync', '--yes', '--cwd', root]), 0)
   c.restore()
-  await writeFile(join(root, '.rness', 'standards', 'web', 'seo.md'), '# SEO\n\nChanged.\n')
+  await writeFile(
+    join(root, '.rness', 'standards', 'web', 'seo.md'),
+    '# SEO\n\nChanged.\n'
+  )
   c = capture()
   code = await run(['validate', '--cwd', root])
   c.restore()
   assert.equal(code, 1)
-  assert.match(c.err(), /^org\/web\/AGENTS\.md: stale rness block \(run rness sync\)\n/)
+  assert.match(
+    c.err(),
+    /^org\/web\/AGENTS\.md: stale rness block \(run rness sync\)\n/
+  )
 })

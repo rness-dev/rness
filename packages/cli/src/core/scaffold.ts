@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
  * Files shipped in `scaffold/`, POSIX-relative. `_gitignore` is renamed to

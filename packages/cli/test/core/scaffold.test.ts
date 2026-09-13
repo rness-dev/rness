@@ -1,13 +1,15 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { SCAFFOLD_FILES, scaffoldDir } from '../../src/core/scaffold.ts'
-import { loadManifest } from '../../src/core/manifest.ts'
+import { test } from 'node:test'
+
 import { checkContract } from '../../src/core/contract.ts'
+import { loadManifest } from '../../src/core/manifest.ts'
+import { SCAFFOLD_FILES, scaffoldDir } from '../../src/core/scaffold.ts'
 
 test('every scaffold file exists', async () => {
-  for (const rel of SCAFFOLD_FILES) await access(join(scaffoldDir(), ...rel.split('/')))
+  for (const rel of SCAFFOLD_FILES)
+    await access(join(scaffoldDir(), ...rel.split('/')))
 })
 
 test('the scaffold ships _gitignore, never .gitignore', async () => {
@@ -29,6 +31,9 @@ test('package.json and the workflow carry the tokens create replaces', async () 
   assert.match(raw, /"@rness\/cli": "__RNESS_VERSION__"/)
   assert.match(raw, /"packageManager": "__RNESS_PM__"/)
   assert.doesNotThrow(() => JSON.parse(raw))
-  const workflow = await readFile(join(scaffoldDir(), '.github', 'workflows', 'validate.yml'), 'utf8')
+  const workflow = await readFile(
+    join(scaffoldDir(), '.github', 'workflows', 'validate.yml'),
+    'utf8'
+  )
   assert.match(workflow, /@rness\/cli@__RNESS_VERSION__ validate/)
 })

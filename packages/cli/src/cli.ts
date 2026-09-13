@@ -1,8 +1,9 @@
 import { Command, CommanderError, Option } from 'commander'
+
+import { type ContextOptions, contextCommand } from './commands/context.ts'
+import { type SyncOptions, syncCommand } from './commands/sync.ts'
+import { type ValidateOptions, validateCommand } from './commands/validate.ts'
 import { VERSION } from './version.ts'
-import { contextCommand, type ContextOptions } from './commands/context.ts'
-import { validateCommand, type ValidateOptions } from './commands/validate.ts'
-import { syncCommand, type SyncOptions } from './commands/sync.ts'
 
 interface RunState {
   code: number
@@ -27,7 +28,10 @@ function buildProgram(state: RunState): Command {
   program
     .command('context')
     .description('Resolve and print the context for a scope')
-    .option('--scope <name>', 'scope to resolve (default: the scope owning the current directory)')
+    .option(
+      '--scope <name>',
+      'scope to resolve (default: the scope owning the current directory)'
+    )
     .option('--json', 'print JSON instead of Markdown')
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: ContextOptions) => {
@@ -36,7 +40,9 @@ function buildProgram(state: RunState): Command {
 
   program
     .command('validate')
-    .description('Check the .rness/ tree against the contract and every generated block')
+    .description(
+      'Check the .rness/ tree against the contract and every generated block'
+    )
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: ValidateOptions) => {
       state.code = await validateCommand(opts)
@@ -44,9 +50,14 @@ function buildProgram(state: RunState): Command {
 
   program
     .command('sync')
-    .description('Clone missing repositories and write the rness block into every AGENTS.md')
+    .description(
+      'Clone missing repositories and write the rness block into every AGENTS.md'
+    )
     .option('--scope <name>', 'only this scope (the root block is skipped)')
-    .option('--check', 'render and compare only; exit 1 when a block is out of date')
+    .option(
+      '--check',
+      'render and compare only; exit 1 when a block is out of date'
+    )
     .option('--pull', 'git pull --ff-only in every clean clone')
     .option('-y, --yes', 'do not ask for confirmation')
     .addOption(new Option('--cwd <dir>').hideHelp())

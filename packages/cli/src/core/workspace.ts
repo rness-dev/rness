@@ -1,4 +1,5 @@
 import { dirname, join, parse, resolve } from 'node:path'
+
 import { exists } from './fs.ts'
 import type { Workspace } from './types.ts'
 
@@ -12,10 +13,12 @@ export async function findWorkspace(startDir: string): Promise<Workspace> {
     if (dir === fsRoot) break
   }
   for (const dir of ancestors) {
-    if (await exists(join(dir, '.rness', 'rness.json'))) return { root: dir, rnessDir: join(dir, '.rness') }
+    if (await exists(join(dir, '.rness', 'rness.json')))
+      return { root: dir, rnessDir: join(dir, '.rness') }
   }
   for (const dir of ancestors) {
-    if (await exists(join(dir, 'rness.json'))) return { root: dirname(dir), rnessDir: dir }
+    if (await exists(join(dir, 'rness.json')))
+      return { root: dirname(dir), rnessDir: dir }
   }
   throw new Error(`no rness workspace found above ${startDir}`)
 }

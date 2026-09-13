@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+
 import { collectMarkdown } from './collect.ts'
 import { COLLECTIONS } from './context.ts'
 import type { CollectionName } from './types.ts'
@@ -6,7 +7,14 @@ import type { CollectionName } from './types.ts'
 /** Collections whose files must carry front matter with a `status`. */
 export const STATUSES: Partial<Record<CollectionName, readonly string[]>> = {
   adr: ['Proposed', 'Accepted', 'Rejected', 'Superseded'],
-  specs: ['Draft', 'Proposed', 'Approved', 'Implemented', 'Superseded', 'Rejected'],
+  specs: [
+    'Draft',
+    'Proposed',
+    'Approved',
+    'Implemented',
+    'Superseded',
+    'Rejected',
+  ],
   plans: ['Draft', 'Ready', 'In progress', 'Blocked', 'Completed', 'Abandoned'],
 }
 const SKIP = new Set(['adr/0000-template.md'])
@@ -29,7 +37,9 @@ export async function checkContract(rnessDir: string): Promise<string[]> {
       if (item.fields !== null) {
         for (const key of PLACEMENT_KEYS) {
           if (Object.hasOwn(item.fields, key)) {
-            problems.push(`${where}: front matter "${key}" is not supported — the directory decides the scope; move the file`)
+            problems.push(
+              `${where}: front matter "${key}" is not supported — the directory decides the scope; move the file`
+            )
           }
         }
       }
@@ -43,7 +53,9 @@ export async function checkContract(rnessDir: string): Promise<string[]> {
       if (status === undefined || status === null || status === '') {
         problems.push(`${where}: missing "status"`)
       } else if (typeof status !== 'string' || !allowed.includes(status)) {
-        problems.push(`${where}: unknown status ${JSON.stringify(status)} (expected ${allowed.join(', ')})`)
+        problems.push(
+          `${where}: unknown status ${JSON.stringify(status)} (expected ${allowed.join(', ')})`
+        )
       }
     }
   }

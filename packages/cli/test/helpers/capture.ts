@@ -15,9 +15,13 @@ export function capture(): Captured {
   const w = process.stdout.write.bind(process.stdout)
   const e = process.stderr.write.bind(process.stderr)
   process.stdout.write = ((...args: Parameters<typeof w>) =>
-    typeof args[0] === 'string' ? (out.push(args[0]), true) : w(...args)) as typeof process.stdout.write
+    typeof args[0] === 'string'
+      ? (out.push(args[0]), true)
+      : w(...args)) as typeof process.stdout.write
   process.stderr.write = ((...args: Parameters<typeof e>) =>
-    typeof args[0] === 'string' ? (err.push(args[0]), true) : e(...args)) as typeof process.stderr.write
+    typeof args[0] === 'string'
+      ? (err.push(args[0]), true)
+      : e(...args)) as typeof process.stderr.write
   return {
     restore: () => {
       process.stdout.write = w

@@ -1,9 +1,10 @@
 import { posix, relative, sep } from 'node:path'
-import { findWorkspace } from '../core/workspace.ts'
+
+import { assembleContext } from '../core/context.ts'
 import { loadManifest } from '../core/manifest.ts'
 import { resolveScope } from '../core/scope.ts'
-import { assembleContext } from '../core/context.ts'
 import type { Context } from '../core/types.ts'
+import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 
 export interface ContextOptions {
@@ -21,7 +22,9 @@ export function renderMarkdown(ctx: Context): string {
     if (collection.files.length === 0) continue
     parts.push(`## ${collection.name}\n`)
     for (const file of collection.files) {
-      parts.push(`<!-- rness: ${collection.name}/${file.rel} -->\n${file.content.trim()}\n`)
+      parts.push(
+        `<!-- rness: ${collection.name}/${file.rel} -->\n${file.content.trim()}\n`
+      )
     }
   }
   return `${parts.join('\n')}\n`
@@ -46,8 +49,14 @@ export async function contextCommand(opts: ContextOptions): Promise<number> {
       scope = resolveScope(manifest, rel)
     }
 
-    const ctx = await assembleContext({ rnessDir: ws.rnessDir, manifest, scope })
-    process.stdout.write(opts.json ? `${JSON.stringify(ctx, null, 2)}\n` : renderMarkdown(ctx))
+    const ctx = await assembleContext({
+      rnessDir: ws.rnessDir,
+      manifest,
+      scope,
+    })
+    process.stdout.write(
+      opts.json ? `${JSON.stringify(ctx, null, 2)}\n` : renderMarkdown(ctx)
+    )
     return 0
   } catch (e) {
     return reportError(e)
