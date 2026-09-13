@@ -1,0 +1,4 @@
+# pnpm 12 refuses versions published less than 24 h ago (minimumReleaseAge).
+# The pinned CLI is our own package, released the day it is pinned.
+minimumReleaseAgeExclude:
+  - '@rness/cli'

@@ -90,3 +90,14 @@ export async function originUrl(dir: string): Promise<string | null> {
     return null
   }
 }
+
+/** `git init -q -b main <dir>` (the directory must exist). */
+export async function init(dir: string): Promise<void> {
+  await git(['init', '-q', '-b', 'main'], dir)
+}
+
+/** `git add -A && git commit -q -m <message>` in `dir`. */
+export async function commitAll(dir: string, message: string): Promise<void> {
+  await git(['add', '-A'], dir)
+  await git(['commit', '-q', '-m', message], dir)
+}

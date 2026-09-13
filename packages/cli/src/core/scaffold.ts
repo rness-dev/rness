@@ -16,6 +16,7 @@ export const SCAFFOLD_FILES: readonly string[] = [
   '_gitignore',
   '.githooks/pre-commit',
   '.github/workflows/validate.yml',
+  'pnpm-workspace.yaml',
   'adr/0000-template.md',
   'standards/.gitkeep',
   'specs/.gitkeep',

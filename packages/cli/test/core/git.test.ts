@@ -8,11 +8,18 @@ import { promisify } from 'node:util'
 
 import {
   clone,
+  commitAll,
+  init,
   isClean,
   originUrl,
   pullFastForward,
 } from '../../src/core/git.ts'
 import { commitTo, makeBareRepo } from '../helpers/git.ts'
+
+process.env['GIT_AUTHOR_NAME'] = 'rness-test'
+process.env['GIT_AUTHOR_EMAIL'] = 'test@rness.invalid'
+process.env['GIT_COMMITTER_NAME'] = 'rness-test'
+process.env['GIT_COMMITTER_EMAIL'] = 'test@rness.invalid'
 
 const execFileP = promisify(execFile)
 
@@ -69,4 +76,20 @@ test('a repository url or directory starting with - is refused, never handed to 
     clone('file:///tmp/nowhere.git', '-C'),
     /refusing suspicious directory/
   )
+})
+
+test('init and commitAll create a repository on main with one commit', async (t) => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-init-')))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  await init(base)
+  await writeFile(join(base, 'a.txt'), 'a\n')
+  await commitAll(base, 'chore: first')
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const { stdout } = await promisify(execFile)(
+    'git',
+    ['log', '--oneline', 'main'],
+    { cwd: base }
+  )
+  assert.equal(stdout.trim().split('\n').length, 1)
 })
