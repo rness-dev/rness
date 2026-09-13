@@ -38,8 +38,8 @@ export async function packageManagerVersion(
   try {
     const { stdout } = await execFileP(pm, ['--version'])
     return stdout.trim()
-  } catch {
-    throw new Error(`${pm} is not available on PATH`)
+  } catch (e) {
+    throw new Error(`${pm} is not available on PATH`, { cause: e })
   }
 }
 
