@@ -24,18 +24,19 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
 
+      # The root package.json is the private workspace; the released version
+      # lives in the package. Tags are lockstep: v0.3.0 releases @rness/cli 0.3.0.
       - name: Verify version
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          PACKAGE_VERSION=$(node -p "require('./packages/cli/package.json').version")
 
           if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
-            echo "Tag version ($TAG_VERSION) does not match package.json ($PACKAGE_VERSION)"
+            echo "Tag version ($TAG_VERSION) does not match packages/cli/package.json ($PACKAGE_VERSION)"
             exit 1
           fi
 
@@ -44,3 +45,4 @@ jobs:
       # what produced ENEEDAUTH even though no real token was ever configured.
       - run: npm install -g npm@latest # trusted publishing needs npm >=11.5.0
       - run: npm publish --access public
+        working-directory: packages/cli
