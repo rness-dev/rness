@@ -23,7 +23,8 @@
   "files": [
     "dist",
     "scaffold",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "node --test 'test/**/*.test.ts'",
