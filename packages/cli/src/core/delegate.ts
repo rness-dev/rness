@@ -11,6 +11,49 @@ export interface Delegate {
   root: string
 }
 
+export interface PinnedCli {
+  /** Absolute path of `<rnessDir>/node_modules/@rness/cli`. */
+  dir: string
+  /** `bin.rness` as the package declares it (package-relative, POSIX). */
+  bin: string
+  version: string | null
+}
+
+/** A published `@rness/cli` whose `package.json` has no usable `bin`. */
+const DEFAULT_BIN = 'dist/bin/rness.js'
+
+/**
+ * The `@rness/cli` installed under `<rnessDir>/node_modules`, or null when
+ * nothing is installed there. Reading the package's own `package.json` is what
+ * makes the launcher and `create` agree on which copy owns a workspace.
+ */
+export async function readPinnedCli(
+  rnessDir: string
+): Promise<PinnedCli | null> {
+  const dir = join(rnessDir, 'node_modules', '@rness', 'cli')
+  let pkg: { version?: unknown; bin?: unknown }
+  try {
+    pkg = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8')) as {
+      version?: unknown
+      bin?: unknown
+    }
+  } catch {
+    return null
+  }
+  const declared = pkg.bin
+  let bin = DEFAULT_BIN
+  if (typeof declared === 'string') bin = declared
+  else if (declared !== null && typeof declared === 'object') {
+    const named = (declared as Record<string, unknown>)['rness']
+    if (typeof named === 'string') bin = named
+  }
+  return {
+    dir,
+    bin,
+    version: typeof pkg.version === 'string' ? pkg.version : null,
+  }
+}
+
 /**
  * The `@rness/cli` pinned in `<workspace>/.rness/package.json` (installed under
  * `.rness/node_modules`), when it exists and is not the running version. The
@@ -29,17 +72,9 @@ export async function findDelegate(
   } catch {
     return null
   }
-  const pkgDir = join(rnessDir, 'node_modules', '@rness', 'cli')
-  let version: unknown
-  try {
-    version = (
-      JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf8')) as {
-        version?: unknown
-      }
-    ).version
-  } catch {
-    return null
-  }
-  if (typeof version !== 'string' || version === ownVersion) return null
-  return { entry: join(pkgDir, 'dist', 'index.js'), version, root }
+  const pinned = await readPinnedCli(rnessDir)
+  if (pinned === null) return null
+  const { version } = pinned
+  if (version === null || version === ownVersion) return null
+  return { entry: join(pinned.dir, 'dist', 'index.js'), version, root }
 }
