@@ -17,7 +17,8 @@
     "create": "index.js"
   },
   "files": [
-    "index.js"
+    "index.js",
+    "LICENSE"
   ],
   "dependencies": {
     "@rness/cli": "0.4.0"

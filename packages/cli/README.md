@@ -25,8 +25,8 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 confirmation in a terminal; pass `-y`/`--yes` in scripts. `sync --check`
 writes nothing and exits 1 when a block is out of date — use it in CI.
 
-Exit codes: 0 success, 1 failure, 2 usage or refusal. `RNESS_DEBUG=1` adds
-stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
+`RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
 ## 0.4.0 — create, add, the shims
 
