@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, readdir } from 'node:fs/promises'
+import { mkdir, readdir, rm } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -72,7 +72,7 @@ async function syncPinned(root: string): Promise<number> {
   )
   if (!(await exists(pinned))) return syncCommand({ yes: true, cwd: root })
   try {
-    const { stdout } = await execFileP(
+    const { stdout, stderr } = await execFileP(
       process.execPath,
       [pinned, 'sync', '--yes'],
       {
@@ -81,6 +81,7 @@ async function syncPinned(root: string): Promise<number> {
       }
     )
     process.stdout.write(stdout)
+    if (stderr !== '') process.stderr.write(stderr)
     return 0
   } catch (e) {
     const err = e as { code?: number; stdout?: string; stderr?: string }
@@ -127,9 +128,17 @@ export async function createCommand(
     }
     const root = resolve(cwd, opts.dir ?? org)
     const shown = relative(cwd, root) || '.'
-    if ((await exists(root)) && !(await isEmptyDir(root))) {
-      process.stderr.write(`${shown} is not empty\n`)
-      return 1
+    if (await exists(root)) {
+      if (await exists(join(root, '.rness', 'rness.json'))) {
+        process.stderr.write(
+          `${shown} already holds an rness workspace (.rness/); run rness add inside it to add repositories\n`
+        )
+        return 1
+      }
+      if (!(await isEmptyDir(root))) {
+        process.stderr.write(`${shown} is not empty\n`)
+        return 1
+      }
     }
     if (opts.yes !== true && !isTty()) {
       process.stderr.write(
@@ -158,11 +167,13 @@ export async function createCommand(
       }
     }
 
-    await mkdir(root, { recursive: true })
     const rnessDir = join(root, '.rness')
 
     if (joining) {
+      await mkdir(root, { recursive: true })
       await clone(contextUrl, rnessDir)
+      // Validates that the clone is a workspace context: throws on a
+      // malformed or absent rness.json.
       await loadManifest(rnessDir)
       process.stdout.write(`cloned   ${shown}/.rness (joined ${org})\n`)
       if (opts.skipInstall === true)
@@ -175,20 +186,75 @@ export async function createCommand(
       return syncPinned(root)
     }
 
+    // Resolved before anything touches the filesystem: a missing package
+    // manager binary must not leave an empty `<shown>/` behind.
     const pmVersion = await packageManagerVersion(pm)
-    await copyScaffold(rnessDir, {
-      version: VERSION,
-      packageManager: `${pm}@${pmVersion}`,
-    })
-    let manifest: Manifest = { contract: 1, org, repos: {}, scopes: {} }
-    await writeManifest(rnessDir, manifest)
-    process.stdout.write(`created  ${shown}/.rness (new workspace)\n`)
-    if (opts.skipInstall === true)
-      process.stdout.write('skipped  install (--skip-install)\n')
-    else {
-      await installDependencies(pm, rnessDir)
-      process.stdout.write(`installed dependencies with ${pm}\n`)
+    await mkdir(root, { recursive: true })
+    try {
+      await copyScaffold(rnessDir, {
+        version: VERSION,
+        packageManager: `${pm}@${pmVersion}`,
+      })
+      let manifest: Manifest = { contract: 1, org, repos: {}, scopes: {} }
+      await writeManifest(rnessDir, manifest)
+      process.stdout.write(`created  ${shown}/.rness (new workspace)\n`)
+      if (opts.skipInstall === true)
+        process.stdout.write('skipped  install (--skip-install)\n')
+      else {
+        await installDependencies(pm, rnessDir)
+        process.stdout.write(`installed dependencies with ${pm}\n`)
+      }
+      await mkdir(join(root, 'org'), { recursive: true })
+
+      let repos = (opts.repos ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s !== '')
+      if (opts.repos === undefined && opts.yes !== true) {
+        const { text } = await import('@clack/prompts')
+        const answer = await text({
+          message:
+            'Repositories to add now (owner/repo, comma-separated; empty for none)',
+          defaultValue: '',
+        })
+        // clack's `isCancel` narrows only the unique cancel symbol, not the
+        // broader `symbol` half of `text()`'s `string | symbol` return type, so
+        // a `typeof` check is what actually narrows here.
+        if (typeof answer === 'string')
+          repos = answer
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s !== '')
+      }
+      for (const spec of repos) {
+        const result = await addRepository({
+          root,
+          rnessDir,
+          manifest,
+          spec,
+          org,
+          host,
+          scopes: [],
+        })
+        manifest = result.manifest
+        process.stdout.write(
+          `${result.action === 'cloned' ? 'cloned  ' : 'adopted '} org/${result.name}\ndeclared scope ${result.name} (org/${result.name})\n`
+        )
+      }
+    } catch (e) {
+      // Everything under `rnessDir` was written by this call; nothing of the
+      // user's is inside yet, so removing it is safe. The original error is
+      // what the outer catch reports below — this call never replaces it, so
+      // a failing `rm` is swallowed rather than thrown.
+      await rm(rnessDir, { recursive: true, force: true }).catch(
+        () => undefined
+      )
+      process.stderr.write(
+        `removed ${shown}/.rness after the failure; fix it and retry\n`
+      )
+      throw e
     }
+
     await init(rnessDir)
     try {
       await commitAll(rnessDir, 'chore: rness workspace context')
@@ -196,43 +262,6 @@ export async function createCommand(
     } catch (e) {
       process.stderr.write(
         `warning: ${e instanceof Error ? e.message : String(e)} — commit ${shown}/.rness yourself\n`
-      )
-    }
-    await mkdir(join(root, 'org'), { recursive: true })
-
-    let repos = (opts.repos ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s !== '')
-    if (opts.repos === undefined && opts.yes !== true) {
-      const { text } = await import('@clack/prompts')
-      const answer = await text({
-        message:
-          'Repositories to add now (owner/repo, comma-separated; empty for none)',
-        defaultValue: '',
-      })
-      // clack's `isCancel` narrows only the unique cancel symbol, not the
-      // broader `symbol` half of `text()`'s `string | symbol` return type, so
-      // a `typeof` check is what actually narrows here.
-      if (typeof answer === 'string')
-        repos = answer
-          .split(',')
-          .map((s) => s.trim())
-          .filter((s) => s !== '')
-    }
-    for (const spec of repos) {
-      const result = await addRepository({
-        root,
-        rnessDir,
-        manifest,
-        spec,
-        org,
-        host,
-        scopes: [],
-      })
-      manifest = result.manifest
-      process.stdout.write(
-        `${result.action === 'cloned' ? 'cloned  ' : 'adopted '} org/${result.name}\ndeclared scope ${result.name} (org/${result.name})\n`
       )
     }
 

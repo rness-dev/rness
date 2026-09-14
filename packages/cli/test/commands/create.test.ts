@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -67,7 +68,7 @@ test('new: scaffolds .rness with org and tokens, commits it, adds --repos, write
   const root = join(cwd, 'acme')
   assert.match(
     r.out,
-    /^created {2}acme\/\.rness \(new workspace\)\nskipped {2}install \(--skip-install\)\ncommitted acme\/\.rness\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n/
+    /^created {2}acme\/\.rness \(new workspace\)\nskipped {2}install \(--skip-install\)\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncommitted acme\/\.rness\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n/
   )
   assert.match(r.out, /Next:\n[\s\S]*acme\/\.rness/)
   const m = await loadManifest(join(root, '.rness'))
@@ -88,6 +89,16 @@ test('new: scaffolds .rness with org and tokens, commits it, adds --repos, write
     'exactly one commit'
   )
   assert.match(stdout, /chore: rness workspace context/)
+  const { stdout: committed } = await execFileP(
+    'git',
+    ['show', 'main:rness.json'],
+    { cwd: join(root, '.rness') }
+  )
+  assert.match(
+    committed,
+    /"api"/,
+    'the --repos addition is part of the one commit, not left uncommitted'
+  )
   await access(join(root, 'AGENTS.md'))
   await access(join(root, 'CLAUDE.md'))
   await access(join(root, 'org', 'api', 'AGENTS.md'))
@@ -200,4 +211,80 @@ test('guards: inside a workspace, non-empty target, --template, bad org, no TTY'
   ])
   assert.equal(r6.code, 2)
   assert.match(r6.err, /--pm must be one of npm, pnpm, yarn, bun/)
+})
+
+test('a failed install after the scaffold copy is rolled back, not left dirty', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const cwd = await scratch(t)
+
+  // A fake `bun` on PATH: `--version` succeeds (create needs it for the
+  // package.json token before install ever runs), `install` fails offline
+  // and deterministically, like a real registry outage would.
+  const binDir = await mkdtemp(join(tmpdir(), 'rness-bin-'))
+  t.after(() => rm(binDir, { recursive: true, force: true }))
+  const bunPath = join(binDir, 'bun')
+  await writeFile(
+    bunPath,
+    [
+      '#!/bin/sh',
+      'if [ "$1" = "--version" ]; then',
+      '  echo "1.0.0"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "install" ]; then',
+      '  echo "bun install failed: network unreachable" 1>&2',
+      '  exit 1',
+      'fi',
+      'exit 0',
+      '',
+    ].join('\n')
+  )
+  await chmod(bunPath, 0o755)
+  const originalPath = process.env['PATH']
+  process.env['PATH'] = `${binDir}:${originalPath ?? ''}`
+  t.after(() => {
+    if (originalPath === undefined) delete process.env['PATH']
+    else process.env['PATH'] = originalPath
+  })
+
+  const r = await create([
+    'acme',
+    '--yes',
+    '--pm',
+    'bun',
+    '--host',
+    remote.host,
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 1)
+  assert.match(r.err, /bun install failed/)
+  assert.match(r.err, /removed acme\/\.rness/)
+  await assert.rejects(access(join(cwd, 'acme', '.rness')))
+})
+
+test('re-running create against an existing workspace points at rness add', async (t) => {
+  const { host } = await makeRemoteOrg(t, 'acme')
+  const cwd = await scratch(t)
+  const first = await create([
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--host',
+    host,
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(first.code, 0, first.err)
+  const again = await create([
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--host',
+    host,
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(again.code, 1)
+  assert.match(again.err, /already holds an rness workspace/)
 })
