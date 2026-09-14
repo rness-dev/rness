@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import {
@@ -74,4 +77,54 @@ test('probeRemote against local bare repositories', async (t) => {
   assert.deepEqual(await probeRemote('file:///no/such/place/nothing.git'), {
     kind: 'not-found',
   })
+})
+
+test('probeRemote refuses a url git would read as an option', async () => {
+  await assert.rejects(
+    () => probeRemote('--upload-pack=x'),
+    /refusing suspicious repository url/
+  )
+})
+
+test('probeRemote times out even while a grandchild holds stderr open', async (t) => {
+  // A fake `git` that hangs *and* leaves a background child holding the stderr
+  // pipe — what a stuck credential helper does. Waiting for `'close'` would
+  // never return; the timeout kills the whole process group instead.
+  const binDir = await mkdtemp(join(tmpdir(), 'rness-bin-'))
+  const pidFile = join(binDir, 'pid')
+  const gitPath = join(binDir, 'git')
+  await writeFile(
+    gitPath,
+    [
+      '#!/bin/sh',
+      `echo $$ > "${pidFile}"`,
+      'sleep 30 >&2 &',
+      'sleep 30',
+      '',
+    ].join('\n')
+  )
+  await chmod(gitPath, 0o755)
+  const originalPath = process.env['PATH']
+  process.env['PATH'] = `${binDir}:${originalPath ?? ''}`
+  t.after(async () => {
+    if (originalPath === undefined) delete process.env['PATH']
+    else process.env['PATH'] = originalPath
+    try {
+      const pid = Number((await readFile(pidFile, 'utf8')).trim())
+      if (Number.isInteger(pid)) process.kill(-pid, 'SIGKILL')
+    } catch {
+      // already gone: the timeout killed the group
+    }
+    await rm(binDir, { recursive: true, force: true })
+  })
+
+  const started = Date.now()
+  const probe = await probeRemote('file:///x.git', 500)
+  const elapsed = Date.now() - started
+  assert.equal(probe.kind, 'error')
+  assert.match(
+    probe.kind === 'error' ? probe.message : '',
+    /cannot reach file:\/\/\/x\.git: timed out after 1s/
+  )
+  assert.ok(elapsed < 2000, `resolved in ${elapsed}ms, expected under 2000ms`)
 })

@@ -1,7 +1,6 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
 
-const execFileP = promisify(execFile)
+import { positional } from './git.ts'
 
 export const DEFAULT_HOST = 'https://github.com/'
 export const SSH_HOST = 'git@github.com:'
@@ -55,19 +54,77 @@ export function classifyProbe(
   return { kind: 'error', message: `cannot reach ${url}: ${firstLine(stderr)}` }
 }
 
-export async function probeRemote(url: string): Promise<Probe> {
-  try {
-    await execFileP('git', ['ls-remote', '--exit-code', url, 'HEAD'], {
+/**
+ * How long, after the child has exited, the stderr pipe may still deliver what
+ * git wrote before exiting. `'exit'` can precede the last `'data'` event, and
+ * an empty stderr would be classified as an unreachable remote — but a
+ * grandchild (a credential helper) can hold the pipe open for as long as it
+ * likes, so the wait is bounded and `'close'` is never awaited.
+ */
+const STDERR_FLUSH_MS = 200
+
+/**
+ * `git ls-remote --exit-code <url> HEAD`, classified (see `classifyProbe`).
+ * Never hangs: the child runs in its own process group and the whole group is
+ * killed after `timeoutMs`.
+ */
+export async function probeRemote(
+  url: string,
+  timeoutMs = 60_000
+): Promise<Probe> {
+  // Before anything spawns, and outside the promise: a url git would read as
+  // an option must fail loudly rather than reach the command line.
+  positional(url, 'repository url')
+  return new Promise<Probe>((resolve) => {
+    const child = spawn('git', ['ls-remote', '--exit-code', url, 'HEAD'], {
+      stdio: ['ignore', 'ignore', 'pipe'],
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      // Its own process group, so the timeout below can take any grandchild
+      // (an askpass or credential helper) with it.
+      detached: true,
     })
-    return { kind: 'found' }
-  } catch (e) {
-    const err = e as {
-      code?: number | string
-      stderr?: string
-      message: string
+    const chunks: string[] = []
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string) => chunks.push(chunk))
+
+    let settled = false
+    const settle = (probe: Probe): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      // Release the pipe: a grandchild still holding it open would otherwise
+      // keep the event loop alive long after the answer is known.
+      child.stderr?.destroy()
+      resolve(probe)
     }
-    const code = typeof err.code === 'number' ? err.code : 1
-    return classifyProbe(url, code, err.stderr ?? err.message)
-  }
+    const timer = setTimeout(() => {
+      const pid = child.pid
+      try {
+        if (pid === undefined) throw new Error('the child has no pid')
+        process.kill(-pid, 'SIGKILL')
+      } catch {
+        child.kill('SIGKILL')
+      }
+      settle({
+        kind: 'error',
+        message: `cannot reach ${url}: timed out after ${Math.round(timeoutMs / 1000)}s`,
+      })
+    }, timeoutMs)
+
+    child.on('error', (e: Error) => settle(classifyProbe(url, 1, e.message)))
+    child.on('exit', (code) => {
+      const finish = (): void =>
+        settle(classifyProbe(url, code ?? 1, chunks.join('')))
+      const stderr = child.stderr
+      if (stderr === null || stderr.readableEnded || stderr.destroyed)
+        return finish()
+      const flush = setTimeout(finish, STDERR_FLUSH_MS)
+      const done = (): void => {
+        clearTimeout(flush)
+        finish()
+      }
+      stderr.once('end', done)
+      stderr.once('error', done)
+    })
+  })
 }

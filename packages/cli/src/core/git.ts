@@ -37,7 +37,7 @@ async function git(args: readonly string[], cwd?: string): Promise<string> {
 }
 
 /** Reject a value git could parse as an option (e.g. a `rness.json` URL starting with `-`). */
-function positional(value: string, what: string): string {
+export function positional(value: string, what: string): string {
   if (value.startsWith('-'))
     throw new Error(`refusing suspicious ${what}: ${value}`)
   return value
