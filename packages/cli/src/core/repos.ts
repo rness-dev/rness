@@ -1,4 +1,4 @@
-import { glob, readFile } from 'node:fs/promises'
+import { glob, readFile, rm } from 'node:fs/promises'
 import { join, posix, sep } from 'node:path'
 
 import { exists } from './fs.ts'
@@ -33,6 +33,34 @@ export async function addRepository(
 ): Promise<AddRepositoryResult> {
   const { name, url } = parseRepoSpec(input.spec, input.org, input.host)
   const dir = join(input.root, 'org', name)
+
+  // Validate every sub-scope before touching the filesystem: a malformed
+  // request must never leave a clone behind that the manifest doesn't know
+  // about. Only the per-sub directory-existence check needs the clone (or
+  // adoption) to have happened, so it waits until after.
+  const scopes: Record<string, ScopeEntry> = {
+    ...input.manifest.scopes,
+    [name]: { path: `org/${name}`, extends: [] },
+  }
+  const subs: { path: string; base: string }[] = []
+  for (const sub of input.scopes) {
+    const clean = sub.replace(/^\/+|\/+$/g, '')
+    const segments = clean.split('/')
+    if (segments.some((s) => s === '' || s === '.' || s === '..'))
+      throw new Error(
+        `sub-scope "${clean}" must be a relative path inside the repository`
+      )
+    const base = segments.at(-1) ?? ''
+    const path = `org/${name}/${clean}`
+    if (!NAME.test(base))
+      throw new Error(`sub-scope "${clean}" needs a [a-z0-9-] last segment`)
+    const existing = scopes[base]
+    if (existing !== undefined && existing.path !== path)
+      throw new Error(`scope "${base}" already points at ${existing.path}`)
+    scopes[base] = { path, extends: [name] }
+    subs.push({ path, base })
+  }
+
   let action: AddRepositoryResult['action']
   if (await exists(dir)) {
     const origin = await originUrl(dir)
@@ -46,25 +74,18 @@ export async function addRepository(
     action = 'cloned'
   }
 
-  const scopes: Record<string, ScopeEntry> = {
-    ...input.manifest.scopes,
-    [name]: { path: `org/${name}`, extends: [] },
-  }
   const declared = [name]
-  for (const sub of input.scopes) {
-    const clean = sub.replace(/^\/+|\/+$/g, '')
-    const base = clean.split('/').at(-1) ?? ''
-    const path = `org/${name}/${clean}`
-    if (!NAME.test(base))
-      throw new Error(`sub-scope "${clean}" needs a [a-z0-9-] last segment`)
-    if (!(await exists(join(input.root, ...path.split('/')))))
+  for (const { path, base } of subs) {
+    if (!(await exists(join(input.root, ...path.split('/'))))) {
+      // Only a clone this call just made is ours to remove: it isn't in the
+      // manifest yet, so nothing is lost. An adopted directory predates this
+      // call and is left alone.
+      if (action === 'cloned') await rm(dir, { recursive: true, force: true })
       throw new Error(`${path} does not exist`)
-    const existing = scopes[base]
-    if (existing !== undefined && existing.path !== path)
-      throw new Error(`scope "${base}" already points at ${existing.path}`)
-    scopes[base] = { path, extends: [name] }
+    }
     declared.push(base)
   }
+
   const manifest: Manifest = {
     ...input.manifest,
     repos: { ...input.manifest.repos, [name]: { url } },

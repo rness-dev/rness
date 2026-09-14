@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { exists } from '../../src/core/fs.ts'
 import { originUrl } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import { addRepository, workspaceDirs } from '../../src/core/repos.ts'
@@ -96,6 +97,64 @@ test('adopts an existing clone of the same URL; refuses a different origin or a 
   )
 })
 
+test('a malformed sub-scope is rejected before cloning: no partial clone is left behind', async (t) => {
+  const url = await makeBareRepo(t, 'bad')
+  const { root, rnessDir, manifest } = await ws(t)
+  await assert.rejects(
+    addRepository({
+      root,
+      rnessDir,
+      manifest,
+      spec: url,
+      org: 'acme',
+      host: 'file:///unused/',
+      scopes: ['apps/Bad_Name'],
+    }),
+    /needs a \[a-z0-9-\] last segment/
+  )
+  assert.equal(await exists(join(root, 'org', 'bad')), false)
+  await assert.rejects(
+    addRepository({
+      root,
+      rnessDir,
+      manifest,
+      spec: url,
+      org: 'acme',
+      host: 'file:///unused/',
+      scopes: ['../outside'],
+    }),
+    /must be a relative path/
+  )
+  assert.equal(await exists(join(root, 'org', 'bad')), false)
+})
+
+test('a fresh clone is removed when a sub-scope directory does not exist', async (t) => {
+  const url = await makeBareRepo(t, 'fresh')
+  const { root, rnessDir, manifest } = await ws(t)
+  await assert.rejects(
+    addRepository({
+      root,
+      rnessDir,
+      manifest,
+      spec: url,
+      org: 'acme',
+      host: 'file:///unused/',
+      scopes: ['apps/missing'],
+    }),
+    /org\/fresh\/apps\/missing does not exist/
+  )
+  assert.equal(
+    await exists(join(root, 'org', 'fresh')),
+    false,
+    'the clone this call made is rolled back'
+  )
+  assert.deepEqual(
+    Object.keys((await loadManifest(rnessDir)).repos),
+    [],
+    'the manifest still has no repos entry'
+  )
+})
+
 test('declares sub-scopes that extend the repository scope; missing dirs and collisions are errors', async (t) => {
   const url = await makeBareRepo(t, 'platform')
   const { root, rnessDir, manifest } = await ws(t)
@@ -137,6 +196,11 @@ test('declares sub-scopes that extend the repository scope; missing dirs and col
       scopes: ['apps/missing'],
     }),
     /org\/platform\/apps\/missing does not exist/
+  )
+  assert.equal(
+    await exists(join(root, 'org', 'platform')),
+    true,
+    'a missing sub-scope on an adopted repository leaves the adopted clone in place'
   )
   await mkdir(join(root, 'org', 'platform', 'tools', 'web'), {
     recursive: true,
