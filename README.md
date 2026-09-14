@@ -25,4 +25,17 @@ polyrepo. rness never runs an LLM loop and is not an agent.
     pnpm lint:fix && pnpm format                  # apply the fixes
     RNESS_NO_DELEGATE=1 node packages/cli/src/bin/rness.ts --help     # run the CLI from source
 
+Try a release before publishing it, through a local npm registry
+([verdaccio](https://verdaccio.org), state in `.verdaccio/`):
+
+    pnpm verdaccio start     # registry on http://127.0.0.1:4873 (VERDACCIO_PORT to change)
+    pnpm verdaccio deploy    # build, then publish every package to it (never to npmjs)
+    export npm_config_userconfig="$PWD/.verdaccio/npmrc"
+    cd "$(mktemp -d)" && npm create rness demo       # the published shim, as a user runs it
+    unset npm_config_userconfig
+    pnpm verdaccio stop      # or `clean` to also delete what it stored
+
+`deploy` replaces a version already deployed, so it can run again after a
+change.
+
 Node ≥ 24, pnpm, TypeScript. MIT licence.

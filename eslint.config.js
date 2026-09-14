@@ -7,6 +7,7 @@ export default defineConfig([
   globalIgnores([
     '**/dist/**',
     '.superpowers/**',
+    '.verdaccio/**',
     // Copied verbatim into user workspaces by `rness create`: not ours to lint.
     'packages/cli/scaffold/**',
     // Byte-exact inputs and expected outputs of the merge tests.
@@ -28,7 +29,12 @@ export default defineConfig([
     // needs Node's globals declared explicitly.
     files: ['**/*.{js,mjs}'],
     languageOptions: {
-      globals: { console: 'readonly', process: 'readonly' },
+      globals: {
+        AbortSignal: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        process: 'readonly',
+      },
     },
   },
   // Last: turns off every rule that would fight the formatter.
