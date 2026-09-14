@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { lstat, readFile, readlink, symlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  lstat,
+  readFile,
+  readlink,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -130,7 +137,44 @@ test('unknown --scope and a workspace without org/ are handled', async (t) => {
   assert.match(r.out, /^skipped {2}blocks \(no org\/ directory here\)\n$/)
 })
 
-test('clones missing repositories, pulls with --pull, skips dirty trees, and END stays last', async (t) => {
+test('a missing clone is reported, not cloned; --check agrees; no per-scope line under it', async (t) => {
+  const url = await makeBareRepo(t, 'api')
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    repos: { api: { url } },
+    scopes: {
+      api: { path: 'org/api' },
+      'api-docs': { path: 'org/api/docs', extends: ['api'] },
+    },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org'],
+  })
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.equal(
+    r.out,
+    'not cloned: api (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\n'
+  )
+  await assert.rejects(access(join(root, 'org', 'api')))
+
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 0, check.err)
+  assert.equal(
+    check.out,
+    'not cloned: api (rness add <name>, or rness sync --all)\nunchanged AGENTS.md\n'
+  )
+  assert.doesNotMatch(check.out, /missing/)
+
+  // With --all, the scope directory absent from a present clone keeps its line.
+  const all = await sync(['--yes', '--all', '--cwd', root])
+  assert.equal(all.code, 0, all.err)
+  assert.equal(
+    all.out,
+    'cloned   org/api\nunchanged AGENTS.md\nupdated  org/api/AGENTS.md\nskipped  org/api/docs/AGENTS.md (directory not present)\n'
+  )
+})
+
+test('--all clones missing repositories, pulls with --pull, skips dirty trees, and END stays last', async (t) => {
   const url = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {
     org: 'acme',
@@ -138,7 +182,7 @@ test('clones missing repositories, pulls with --pull, skips dirty trees, and END
     scopes: { api: { path: 'org/api' } },
     files: { 'standards/coding.md': coding },
   })
-  const first = await sync(['--yes', '--cwd', root])
+  const first = await sync(['--yes', '--all', '--cwd', root])
   assert.equal(first.code, 0, first.err)
   assert.match(
     first.out,
@@ -221,7 +265,7 @@ for (const [link, target] of [
   })
 }
 
-test('a clone failure is reported, the manifest is untouched, other work continues', async (t) => {
+test('with --all, a clone failure is reported, the manifest is untouched, other work continues', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
     repos: { ghost: { url: 'file:///no/such/ghost.git' } },
@@ -229,7 +273,7 @@ test('a clone failure is reported, the manifest is untouched, other work continu
     files: { 'standards/coding.md': coding },
     dirs: ['org'],
   })
-  const r = await sync(['--yes', '--cwd', root])
+  const r = await sync(['--yes', '--all', '--cwd', root])
   assert.equal(r.code, 1)
   assert.match(r.err, /org\/ghost: git clone failed: /)
   assert.match(r.out, /updated {2}AGENTS\.md/)

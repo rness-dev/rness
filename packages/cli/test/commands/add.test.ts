@@ -104,3 +104,25 @@ test('a clone failure leaves the manifest untouched and exits 1', async (t) => {
   assert.match(r.err, /git clone failed/)
   assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {})
 })
+
+test("add's sync clones nothing else from the catalogue", async (t) => {
+  const webUrl = await makeBareRepo(t, 'web')
+  const apiUrl = await makeBareRepo(t, 'api')
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    repos: { web: { url: webUrl } },
+    scopes: { web: { path: 'org/web' } },
+    dirs: ['org'],
+  })
+  const r = await add(['--yes', '--cwd', root, apiUrl])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^cloned {3}org\/api\ndeclared scope api \(org\/api\)\nnot cloned: web \(rness add <name>, or rness sync --all\)\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n$/
+  )
+  await assert.rejects(access(join(root, 'org', 'web')))
+  assert.deepEqual(
+    Object.keys((await loadManifest(join(root, '.rness'))).repos),
+    ['web', 'api']
+  )
+})

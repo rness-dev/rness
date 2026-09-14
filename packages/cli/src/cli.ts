@@ -54,7 +54,7 @@ function buildProgram(state: RunState): Command {
   program
     .command('sync')
     .description(
-      'Clone missing repositories and write the rness block into every AGENTS.md'
+      'Write the rness block into every AGENTS.md of the cloned repositories'
     )
     .option('--scope <name>', 'only this scope (the root block is skipped)')
     .option(
@@ -62,6 +62,7 @@ function buildProgram(state: RunState): Command {
       'render and compare only; exit 1 when a block is out of date'
     )
     .option('--pull', 'git pull --ff-only in every clean clone')
+    .option('--all', 'clone every rness.json repository missing from org/')
     .option('-y, --yes', 'do not ask for confirmation')
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: SyncOptions) => {
@@ -91,12 +92,14 @@ function buildProgram(state: RunState): Command {
     .description(
       'Create a workspace for a GitHub organization, or join its existing .rness'
     )
-    .argument('[workspace]', 'directory of the new workspace')
     .option(
       '--org <name>',
       'the GitHub organization, exact name (github.com/<name>)'
     )
-    .option('--repos <list>', 'comma-separated repositories to add right away')
+    .option(
+      '--repos <list>',
+      'comma-separated repositories for your workspace (catalogue entries are cloned, others added)'
+    )
     .option(
       '--pm <name>',
       `package manager for .rness/ (${PACKAGE_MANAGERS.join(', ')}; default: the one running this command)`
@@ -108,8 +111,8 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--host <base>').hideHelp())
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(async (workspace: string | undefined, opts: CreateOptions) => {
-      state.code = await createCommand(workspace, opts)
+    .action(async (opts: CreateOptions) => {
+      state.code = await createCommand(opts)
     })
 
   return program

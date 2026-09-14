@@ -18,6 +18,8 @@ export interface SyncOptions {
   check?: boolean
   /** `git pull --ff-only` in every clean clone. */
   pull?: boolean
+  /** Clone every catalogue repository missing from `org/`; by default none is cloned. */
+  all?: boolean
   /** Skip the confirmation prompt. */
   yes?: boolean
   /** Internal (tests): directory to resolve from; default `process.cwd()`. */
@@ -57,7 +59,10 @@ function targetsOf(
   return targets
 }
 
-async function confirmOrExit(org: string): Promise<number | null> {
+async function confirmOrExit(
+  org: string,
+  all: boolean
+): Promise<number | null> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     process.stderr.write(
       'rness sync writes files; pass --yes to run without a prompt\n'
@@ -66,7 +71,9 @@ async function confirmOrExit(org: string): Promise<number | null> {
   }
   const { confirm, isCancel } = await import('@clack/prompts')
   const answer = await confirm({
-    message: `Sync workspace \`${org}\`: clone missing repositories and rewrite the rness blocks?`,
+    message: all
+      ? `Sync workspace \`${org}\`: clone missing repositories and rewrite the rness blocks?`
+      : `Sync workspace \`${org}\`: rewrite the rness blocks?`,
   })
   if (isCancel(answer) || answer !== true) {
     process.stderr.write('cancelled\n')
@@ -75,7 +82,11 @@ async function confirmOrExit(org: string): Promise<number | null> {
   return null
 }
 
-/** `rness sync`: clone missing repositories, write every block (spec 0003 §4). Returns the exit code. */
+/**
+ * `rness sync`: write every block (spec 0003 §4). `rness.json` is the
+ * organization's catalogue and `org/` the user's selection of it, so a missing
+ * clone is reported, not cloned — unless `--all`. Returns the exit code.
+ */
 export async function syncCommand(opts: SyncOptions): Promise<number> {
   const cwd = opts.cwd ?? process.cwd()
   const check = opts.check === true
@@ -92,7 +103,7 @@ export async function syncCommand(opts: SyncOptions): Promise<number> {
       return 1
     }
     if (!check && opts.yes !== true) {
-      const refused = await confirmOrExit(org)
+      const refused = await confirmOrExit(org, opts.all === true)
       if (refused !== null) return refused
     }
 
@@ -100,13 +111,15 @@ export async function syncCommand(opts: SyncOptions): Promise<number> {
     const problems: string[] = []
 
     try {
-      // 1. Repositories: clone what is missing; pull only on request, only clean trees.
+      // 1. Repositories: clone what is missing only with --all; pull only on
+      // request, only clean trees.
+      const notCloned = new Set<string>()
       for (const [name, repo] of Object.entries(manifest.repos)) {
         const dir = join(ws.root, 'org', name)
         const label = `org/${name}`
         if (!(await exists(dir))) {
-          if (check) {
-            lines.push(`missing  ${label} (would clone ${repo.url})`)
+          if (check || opts.all !== true) {
+            notCloned.add(name)
             continue
           }
           try {
@@ -133,6 +146,11 @@ export async function syncCommand(opts: SyncOptions): Promise<number> {
         }
       }
 
+      if (notCloned.size > 0)
+        lines.push(
+          `not cloned: ${[...notCloned].join(', ')} (rness add <name>, or rness sync --all)`
+        )
+
       // 2. Blocks — only where repositories live; a standalone context checkout has no org/.
       if (!(await exists(join(ws.root, 'org')))) {
         lines.push('skipped  blocks (no org/ directory here)')
@@ -140,7 +158,16 @@ export async function syncCommand(opts: SyncOptions): Promise<number> {
         let differences = 0
         for (const t of targetsOf(manifest, ws.root, opts.scope)) {
           if (!(await exists(t.dir))) {
-            lines.push(`skipped  ${t.label} (directory not present)`)
+            // A scope inside a repository that is not cloned is covered by
+            // the `not cloned:` line; only a directory missing from a present
+            // clone (or from no repository at all) is worth its own line.
+            const repo = t.label.split('/')[1]
+            if (
+              !t.label.startsWith('org/') ||
+              repo === undefined ||
+              !notCloned.has(repo)
+            )
+              lines.push(`skipped  ${t.label} (directory not present)`)
             continue
           }
           // One of the pair symlinked to the other (the common `CLAUDE.md →

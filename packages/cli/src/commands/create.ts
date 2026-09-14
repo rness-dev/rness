@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
-import { mkdir, readdir, rm, stat } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import type {
@@ -23,6 +24,7 @@ import {
   NAME,
   ORG_NAME,
   loadManifest,
+  parseRepoSpec,
   writeManifest,
 } from '../core/manifest.ts'
 import {
@@ -47,7 +49,7 @@ const execFileP = promisify(execFile)
 export interface CreateOptions {
   /** The GitHub organization, exact name (`github.com/<org>`); prompted for when absent. */
   org?: string
-  /** Comma-separated repositories to add right away (`<repo>` or `<owner>/<repo>`). */
+  /** Comma-separated repositories for the workspace (`<repo>` or `<owner>/<repo>`): catalogue entries are cloned, others added. */
   repos?: string
   pm?: string
   ssh?: boolean
@@ -155,57 +157,77 @@ function cancelled(): number {
 }
 
 /**
- * The organization's repositories as picker options, then the picked names.
- * A listing that fails or leaves nothing to pick is a warning, not a failure:
- * the workspace is worth finishing, and `rness add` adds repositories later.
- * `null` when the user cancels.
+ * The repositories to offer: the organization's, listed from the GitHub API,
+ * plus every catalogue repository the API did not return (a private one
+ * listed anonymously). Catalogue repositories are pre-selected. A listing that
+ * fails is a warning: the catalogue is still offered, and `rness add` adds
+ * repositories later. `null` when the user cancels; `prompted` tells whether
+ * the picker was shown at all.
  */
-async function pickRepositories(
-  org: string,
-  apiBase: string,
+async function pickRepositories(input: {
+  org: string
+  apiBase: string
   prompts: Prompts
-): Promise<string[] | null> {
+  catalogue: Readonly<Record<string, unknown>>
+}): Promise<{ picked: string[]; prompted: boolean } | null> {
+  const { org, prompts } = input
   const token =
     process.env['GITHUB_TOKEN'] || process.env['GH_TOKEN'] || undefined
   process.stdout.write(`listing  ${org} repositories…\n`)
-  let listing
+  let listed: { name: string; private: boolean; archived: boolean }[] = []
+  let failed = false
   try {
-    listing = await listRepositories(org, { token, apiBase })
+    const listing = await listRepositories(org, {
+      token,
+      apiBase: input.apiBase,
+    })
+    listed = listing.repositories
+    if (listing.owner === 'user')
+      process.stdout.write(
+        `only public repositories of ${org} are listed; add private ones later with rness add <repo>\n`
+      )
+    else if (token === undefined)
+      process.stdout.write(
+        'only public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\n'
+      )
+    if (listing.truncated)
+      process.stdout.write(
+        `listed the first ${MAX_PAGES * PER_PAGE} repositories of ${org}\n`
+      )
   } catch (e) {
+    failed = true
     process.stderr.write(
       `warning: ${firstLine(e instanceof Error ? e.message : String(e))}\n`
     )
-    return []
   }
-  if (listing.owner === 'user')
-    process.stdout.write(
-      `only public repositories of ${org} are listed; add private ones later with rness add <repo>\n`
-    )
-  else if (token === undefined)
-    process.stdout.write(
-      'only public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\n'
-    )
-  if (listing.truncated)
-    process.stdout.write(
-      `listed the first ${MAX_PAGES * PER_PAGE} repositories of ${org}\n`
-    )
+  const inCatalogue = (name: string): boolean =>
+    Object.hasOwn(input.catalogue, name)
   // Archived repositories and the context repository itself are never
   // candidates. GitHub names are case-insensitive, so a name that differs
   // from `NAME` only by case is offered — and declared — in lowercase, as
   // `rness add` would; any other name is shown but cannot be picked yet.
   const byLabel = (a: { label: string }, b: { label: string }): number =>
     a.label.localeCompare(b.label, 'en', { sensitivity: 'base' })
-  const candidates = listing.repositories.filter(
+  const candidates = listed.filter(
     (r) => !r.archived && r.name.toLowerCase() !== '.rness'
   )
+  const hint = (isPrivate: boolean, catalogued: boolean): string | null =>
+    [isPrivate ? 'private' : null, catalogued ? 'in .rness' : null]
+      .filter((h) => h !== null)
+      .join(' · ') || null
   const declarable = candidates
     .filter((r) => NAME.test(r.name.toLowerCase()))
-    .map((r) => ({
-      value: r.name.toLowerCase(),
-      label: r.name,
-      ...(r.private ? { hint: 'private' } : {}),
-    }))
-    .sort(byLabel)
+    .map((r) => {
+      const value = r.name.toLowerCase()
+      const h = hint(r.private, inCatalogue(value))
+      return { value, label: r.name, ...(h === null ? {} : { hint: h }) }
+    })
+  const offered = new Set(declarable.map((o) => o.value))
+  for (const name of Object.keys(input.catalogue)) {
+    if (!offered.has(name))
+      declarable.push({ value: name, label: name, hint: 'in .rness' })
+  }
+  declarable.sort(byLabel)
   const unsupported = candidates
     .filter((r) => !NAME.test(r.name.toLowerCase()))
     .map((r) => ({
@@ -228,27 +250,27 @@ async function pickRepositories(
     )
   }
   if (declarable.length === 0) {
-    process.stderr.write(`warning: no repositories to list for ${org}\n`)
-    return []
+    // After a failed listing its own warning already says why.
+    if (!failed)
+      process.stderr.write(`warning: no repositories to list for ${org}\n`)
+    return { picked: [], prompted: false }
   }
+  const initialValues = Object.keys(input.catalogue)
   // Disabled options go last: clack focuses the first option before any key
   // is pressed, and Tab would select it even when it is disabled.
   const answer = await prompts.autocompleteMultiselect<string>({
-    message: 'Which repositories do you want to add?',
+    message: 'Which repositories do you want in your workspace?',
     options: [...declarable, ...unsupported],
+    ...(initialValues.length > 0 ? { initialValues } : {}),
     required: false,
     placeholder: 'Type to filter',
   })
   if (prompts.isCancel(answer)) return null
   const allowed = new Set(declarable.map((o) => o.value))
-  return Array.isArray(answer) ? answer.filter((v) => allowed.has(v)) : []
-}
-
-/** `name` as one shell word: quoted when a shell would split or expand it. */
-function shellWord(name: string): string {
-  return /^[A-Za-z0-9._/@%+=:,-]+$/.test(name)
-    ? name
-    : `'${name.replaceAll("'", `'\\''`)}'`
+  return {
+    picked: Array.isArray(answer) ? answer.filter((v) => allowed.has(v)) : [],
+    prompted: true,
+  }
 }
 
 interface Failure {
@@ -257,11 +279,14 @@ interface Failure {
 }
 
 /**
- * Add each repository, in order. A failure is reported on one line and the
- * next entry still runs: a typo in `--repos` must not cost the workspace the
+ * Bring each selected repository into `org/`, in order. A catalogue
+ * repository is cloned from its catalogue URL and `rness.json` is left alone;
+ * any other goes through `addRepository` (declared, then cloned), as
+ * `rness add` would. A failure is reported on one line and the next entry
+ * still runs: a typo in `--repos` must not cost the workspace the
  * repositories that do exist, nor the commit and sync that follow.
  */
-async function addRepositories(input: {
+async function cloneSelection(input: {
   root: string
   rnessDir: string
   manifest: Manifest
@@ -271,8 +296,20 @@ async function addRepositories(input: {
 }): Promise<Failure[]> {
   let manifest = input.manifest
   const failures: Failure[] = []
-  for (const spec of input.specs) {
+  for (const spec of new Set(input.specs)) {
     try {
+      let name: string | null = null
+      try {
+        name = parseRepoSpec(spec, input.org, input.host).name
+      } catch {
+        // `addRepository` reports the malformed spec below.
+      }
+      const entry = name === null ? undefined : manifest.repos[name]
+      if (name !== null && entry !== undefined) {
+        await clone(entry.url, join(input.root, 'org', name))
+        process.stdout.write(`cloned   org/${name}\n`)
+        continue
+      }
       const result = await addRepository({
         root: input.root,
         rnessDir: input.rnessDir,
@@ -293,6 +330,24 @@ async function addRepositories(input: {
     }
   }
   return failures
+}
+
+/**
+ * Move the staged `.rness` clone into the workspace. A rename is atomic and
+ * keeps the clone's origin; across filesystems (`EXDEV`: the temporary
+ * directory on another volume) the context is cloned a second time instead.
+ */
+async function placeContext(
+  staged: string,
+  rnessDir: string,
+  url: string
+): Promise<void> {
+  try {
+    await rename(staged, rnessDir)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e
+    await clone(url, rnessDir)
+  }
 }
 
 /** Run `sync --yes` through the copy installed in `.rness/` when there is one, else in place. */
@@ -332,12 +387,12 @@ async function syncPinned(root: string, shown: string): Promise<number> {
 }
 
 /**
- * `rness create [workspace]`: join the organization's `.rness` or start a new
- * one (spec 0003 §2.1). The workspace names the directory only; the
- * organization is `--org` or a prompt, used exactly as typed.
+ * `rness create`: join the organization's `.rness` or start a new one in
+ * `./<org>` (spec 0003 §2.1). `rness.json` is the organization's catalogue;
+ * the workspace is the selection of it cloned into `org/`. Every prompt comes
+ * before the first write, so a cancel leaves nothing behind.
  */
 export async function createCommand(
-  workspace: string | undefined,
   opts: CreateOptions,
   deps: CreateDeps = defaultDeps
 ): Promise<number> {
@@ -366,6 +421,7 @@ export async function createCommand(
   let loaded: Prompts | undefined
   const prompts = async (): Promise<Prompts> =>
     (loaded ??= await deps.prompts())
+  let staging: string | undefined
   try {
     // In a terminal, before the first question: no answer could fix it.
     if (interactive && (await insideWorkspace(cwd))) {
@@ -375,36 +431,7 @@ export async function createCommand(
       return 1
     }
 
-    let name = workspace?.trim() ?? ''
-    if (name === '') {
-      if (!interactive) {
-        process.stderr.write(
-          'rness create needs a workspace directory: rness create <workspace> --org <name>\n'
-        )
-        return 2
-      }
-      const p = await prompts()
-      const answer = await p.text({
-        message: 'What is your workspace named?',
-        placeholder: 'my-workspace',
-        validate: async (value) => {
-          const v = value?.trim() ?? ''
-          if (v === '') return 'the workspace needs a directory name'
-          return (await targetProblem(cwd, resolve(cwd, v), pm)) ?? undefined
-        },
-      })
-      if (p.isCancel(answer) || typeof answer !== 'string') return cancelled()
-      name = answer.trim()
-    } else if (interactive) {
-      // Before the next question: an argument naming an unusable target
-      // would otherwise be refused only after the organization is typed.
-      const problem = await targetProblem(cwd, resolve(cwd, name), pm)
-      if (problem !== null) {
-        process.stderr.write(`${problem}\n`)
-        return 1
-      }
-    }
-
+    let prompted = false
     let org = opts.org
     if (org === undefined) {
       if (!interactive) {
@@ -426,9 +453,11 @@ export async function createCommand(
       })
       if (p.isCancel(answer) || typeof answer !== 'string') return cancelled()
       org = answer.trim()
+      prompted = true
     }
 
-    const root = resolve(cwd, name)
+    // The organization is the workspace: its directory carries the exact name.
+    const root = resolve(cwd, org)
     const shown = relative(cwd, root) || '.'
     const problem = await targetProblem(cwd, root, pm)
     if (problem !== null) {
@@ -449,37 +478,55 @@ export async function createCommand(
       return 1
     }
     const joining = probe.kind === 'found'
+    process.stdout.write(
+      joining
+        ? `found    ${org}/.rness — joining\n`
+        : `not found ${org}/.rness — starting a new workspace\n`
+    )
 
-    if (interactive) {
-      const p = await prompts()
-      const message = joining
-        ? `Join organization \`${org}\`: clone ${contextUrl} into ${shown}/.rness and sync its repositories?`
-        : `No ${contextUrl} found (or no access to it). Start a new workspace for \`${org}\` in ${shown}/?`
-      const ok = await p.confirm({ message })
-      if (p.isCancel(ok) || ok !== true) return cancelled()
+    // Joining: the catalogue is read from a clone staged outside the target,
+    // so the picker can offer it before anything is written there.
+    let catalogue: Manifest = { contract: 1, org, repos: {}, scopes: {} }
+    const staged = async (): Promise<string> => {
+      staging ??= await mkdtemp(join(tmpdir(), 'rness-join-'))
+      return join(staging, '.rness')
+    }
+    if (joining) {
+      await clone(contextUrl, await staged())
+      // Validates that the clone is a workspace context: throws on a
+      // malformed or absent rness.json.
+      catalogue = await loadManifest(await staged())
     }
 
-    // New workspace, in a terminal, without `--repos`: pick before anything
-    // is written, so that a cancel (Escape) leaves nothing half-built.
-    let picked: string[] | undefined
-    if (!joining && interactive && opts.repos === undefined) {
-      const answer = await pickRepositories(
+    let specs: string[]
+    if (opts.repos !== undefined) specs = splitSpecs(opts.repos)
+    else if (interactive) {
+      const result = await pickRepositories({
         org,
-        opts.githubApi ?? DEFAULT_GITHUB_API,
-        await prompts()
-      )
-      if (answer === null) return cancelled()
-      picked = answer
+        apiBase: opts.githubApi ?? DEFAULT_GITHUB_API,
+        prompts: await prompts(),
+        catalogue: catalogue.repos,
+      })
+      if (result === null) return cancelled()
+      specs = result.picked
+      prompted ||= result.prompted
+    } else {
+      // Scripts and CI: a join takes the whole catalogue, a new workspace nothing.
+      specs = Object.keys(catalogue.repos)
+    }
+    if (interactive && !prompted) {
+      const p = await prompts()
+      const ok = await p.confirm({
+        message: `Create workspace ${org} in ./${shown}?`,
+      })
+      if (p.isCancel(ok) || ok !== true) return cancelled()
     }
 
     const rnessDir = join(root, '.rness')
 
     if (joining) {
       await mkdir(root, { recursive: true })
-      await clone(contextUrl, rnessDir)
-      // Validates that the clone is a workspace context: throws on a
-      // malformed or absent rness.json.
-      const manifest = await loadManifest(rnessDir)
+      await placeContext(await staged(), rnessDir, contextUrl)
       process.stdout.write(`cloned   ${shown}/.rness (joined ${org})\n`)
       if (opts.skipInstall === true)
         process.stdout.write('skipped  install (--skip-install)\n')
@@ -488,16 +535,13 @@ export async function createCommand(
         process.stdout.write(`installed dependencies with ${pm}\n`)
       }
       await mkdir(join(root, 'org'), { recursive: true })
-      // `--repos` only: the organization's manifest is what a join follows, so
-      // nothing is prompted for here. Each addition edits the cloned
-      // `rness.json`, exactly as `rness add` would leave it.
-      const failures = await addRepositories({
+      const failures = await cloneSelection({
         root,
         rnessDir,
-        manifest,
+        manifest: catalogue,
         org,
         host,
-        specs: splitSpecs(opts.repos ?? ''),
+        specs,
       })
       const code = await syncPinned(root, shown)
       if (code !== 0) return code
@@ -508,7 +552,6 @@ export async function createCommand(
     // manager binary must not leave an empty `<shown>/` behind.
     const pmVersion = await packageManagerVersion(pm)
     await mkdir(root, { recursive: true })
-    const manifest: Manifest = { contract: 1, org, repos: {}, scopes: {} }
     // Phase 1 — creating the workspace itself. Only these steps are rolled
     // back: past them the workspace exists and is worth keeping, whatever a
     // repository does next.
@@ -517,7 +560,7 @@ export async function createCommand(
         version: VERSION,
         packageManager: `${pm}@${pmVersion}`,
       })
-      await writeManifest(rnessDir, manifest)
+      await writeManifest(rnessDir, catalogue)
       process.stdout.write(`created  ${shown}/.rness (new workspace)\n`)
       if (opts.skipInstall === true)
         process.stdout.write('skipped  install (--skip-install)\n')
@@ -530,16 +573,14 @@ export async function createCommand(
       // then the rollback note. Everything under `rnessDir` was written by
       // this call, so removing it is safe; `root` goes too when it is left
       // empty (this call created it, or found it empty), or the retry the
-      // message asks for would be refused with "<shown> is not empty" — but
-      // never the directory the command was run from (`create .`), whose
-      // removal would pull the ground from under the user's shell. A failing
-      // `rm` is swallowed rather than thrown, since it must never mask the
-      // original error.
+      // message asks for would be refused with "<shown> is not empty". A
+      // failing `rm` is swallowed rather than thrown, since it must never
+      // mask the original error.
       reportError(e)
       await rm(rnessDir, { recursive: true, force: true }).catch(
         () => undefined
       )
-      if (root !== resolve(cwd) && (await isEmptyDir(root).catch(() => false)))
+      if (await isEmptyDir(root).catch(() => false))
         await rm(root, { recursive: true, force: true }).catch(() => undefined)
       process.stderr.write(
         `removed ${shown}/.rness after the failure; fix it and retry\n`
@@ -549,11 +590,10 @@ export async function createCommand(
 
     // Phase 2 — the repositories. Nothing here is rolled back.
     await mkdir(join(root, 'org'), { recursive: true })
-    const specs = picked ?? splitSpecs(opts.repos ?? '')
-    const failures = await addRepositories({
+    const failures = await cloneSelection({
       root,
       rnessDir,
-      manifest,
+      manifest: catalogue,
       org,
       host,
       specs,
@@ -588,12 +628,16 @@ export async function createCommand(
         gh
           ? `  gh repo create ${org}/.rness --private --source . --push`
           : `  git remote add origin ${contextUrl} && git push -u origin main`,
-        `  # then, for every teammate: npm create rness ${shellWord(basename(root))} -- --org ${org}`,
+        `  # then, for every teammate: npm create rness -- --org ${org}`,
         '',
       ].join('\n')
     )
     return failures.length > 0 ? 1 : 0
   } catch (e) {
     return reportError(e)
+  } finally {
+    // The staged context is either moved into place or no longer needed.
+    if (staging !== undefined)
+      await rm(staging, { recursive: true, force: true }).catch(() => undefined)
   }
 }
