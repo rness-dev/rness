@@ -1,7 +1,7 @@
 {
   "name": "create-rness",
-  "version": "0.4.0",
-  "description": "npm create rness <org> — start or join an rness workspace",
+  "version": "0.5.0",
+  "description": "npm create rness <workspace> — start or join an rness workspace",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -21,6 +21,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@rness/cli": "0.4.0"
+    "@rness/cli": "0.5.0"
   }
 }

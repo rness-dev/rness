@@ -153,13 +153,13 @@ importers:
   packages/create:
     dependencies:
       '@rness/cli':
-        specifier: 0.4.0
+        specifier: 0.5.0
         version: link:../cli
 
   packages/create-rness:
     dependencies:
       '@rness/cli':
-        specifier: 0.4.0
+        specifier: 0.5.0
         version: link:../cli
 
 packages:
