@@ -38,9 +38,6 @@ jobs:
       # Either defeats OIDC by forcing npm onto token auth instead, which is
       # what produced ENEEDAUTH even though no real token was ever configured.
       - run: npm install -g npm@latest # trusted publishing needs npm >=11.5.0
-      - run: npm publish --access public
-        working-directory: packages/cli
-      - run: npm publish --access public
-        working-directory: packages/create
-      - run: npm publish --access public
-        working-directory: packages/create-rness
+      # cli, then create, then create-rness; a version already on npm is skipped,
+      # so a re-run after a partial release (or a hand publish) goes green.
+      - run: node scripts/publish.mjs
