@@ -137,9 +137,10 @@ test('delegates to the workspace-pinned @rness/cli when versions differ', async 
   }
   assert.equal(
     create.code,
-    2,
-    'create never delegates; 0.2.0 has no create command so it is bad usage'
+    1,
+    'create never delegates; it runs the local command, which refuses (cwd is already inside a workspace)'
   )
+  assert.match(create.stderr, /already inside an rness workspace/)
   assert.doesNotMatch(create.stdout, /DELEGATED/)
 })
 

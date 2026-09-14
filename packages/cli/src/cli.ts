@@ -2,8 +2,10 @@ import { Command, CommanderError, Option } from 'commander'
 
 import { type AddOptions, addCommand } from './commands/add.ts'
 import { type ContextOptions, contextCommand } from './commands/context.ts'
+import { type CreateOptions, createCommand } from './commands/create.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
+import { PACKAGE_MANAGERS } from './core/pm.ts'
 import { VERSION } from './version.ts'
 
 interface RunState {
@@ -82,6 +84,28 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (repo: string, opts: AddOptions) => {
       state.code = await addCommand(repo, opts)
+    })
+
+  program
+    .command('create')
+    .description(
+      'Start a workspace for a GitHub organisation, or join its existing .rness'
+    )
+    .argument('<org>', 'the GitHub organisation (github.com/<org>)')
+    .option('--dir <path>', 'target directory (default: ./<org>)')
+    .option('--repos <list>', 'comma-separated repositories to add right away')
+    .option(
+      '--pm <name>',
+      `package manager for .rness/ (${PACKAGE_MANAGERS.join(', ')}; default: the one running this command)`
+    )
+    .option('--ssh', 'use git@github.com: instead of https://github.com/')
+    .option('--skip-install', 'do not install .rness/ dependencies')
+    .option('-y, --yes', 'do not ask for confirmation')
+    .option('--template <name>', 'reserved')
+    .addOption(new Option('--host <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (org: string, opts: CreateOptions) => {
+      state.code = await createCommand(org, opts)
     })
 
   return program

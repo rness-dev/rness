@@ -7,6 +7,7 @@ export {
 } from './commands/context.ts'
 export { validateCommand, type ValidateOptions } from './commands/validate.ts'
 export { addCommand, type AddOptions } from './commands/add.ts'
+export { createCommand, type CreateOptions } from './commands/create.ts'
 export { parseFrontMatter, extractTitle } from './core/frontmatter.ts'
 export { collectMarkdown } from './core/collect.ts'
 export {

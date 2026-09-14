@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { TestContext } from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -48,7 +48,9 @@ export async function commitTo(
   try {
     await git(['clone', '-q', bareUrl, 'w'], work)
     const clone = join(work, 'w')
-    await writeFile(join(clone, file), content)
+    const target = join(clone, file)
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, content)
     await git(['add', '-A'], clone)
     await git(['commit', '-q', '-m', `add ${file}`], clone)
     await git(['push', '-q', 'origin', 'HEAD:main'], clone)
