@@ -150,6 +150,18 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/create:
+    dependencies:
+      '@rness/cli':
+        specifier: 0.4.0
+        version: link:../cli
+
+  packages/create-rness:
+    dependencies:
+      '@rness/cli':
+        specifier: 0.4.0
+        version: link:../cli
+
 packages:
 
   '@babel/code-frame@7.29.7':

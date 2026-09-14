@@ -30,6 +30,8 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+      - run: pnpm check:versions
+
       # The root package.json is the private workspace; the released version
       # lives in the package. Tags are lockstep: v0.3.0 releases @rness/cli 0.3.0.
       - name: Verify version
@@ -48,3 +50,7 @@ jobs:
       - run: npm install -g npm@latest # trusted publishing needs npm >=11.5.0
       - run: npm publish --access public
         working-directory: packages/cli
+      - run: npm publish --access public
+        working-directory: packages/create
+      - run: npm publish --access public
+        working-directory: packages/create-rness

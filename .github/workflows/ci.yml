@@ -27,7 +27,13 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      - name: Smoke the built CLI
+      - run: pnpm check:versions
+      - name: Smoke the built CLI and the shims
         run: |
           node packages/cli/dist/bin/rness.js --version
-          cd packages/cli && npm pack --dry-run
+          node packages/create-rness/index.js --help | grep -q 'Usage: rness create'
+          node packages/create/index.js --help | grep -q 'Usage: rness create'
+          PACK=$(cd packages/cli && npm pack --dry-run 2>&1)
+          echo "$PACK"
+          echo "$PACK" | grep -q 'scaffold/.githooks/pre-commit'
+          echo "$PACK" | grep -q 'scaffold/pnpm-workspace.yaml'

@@ -1,0 +1,25 @@
+{
+  "name": "create-rness",
+  "version": "0.4.0",
+  "description": "npm create rness <org> — start or join an rness workspace",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rness-dev/rness.git",
+    "directory": "packages/create-rness"
+  },
+  "homepage": "https://github.com/rness-dev/rness",
+  "bin": {
+    "create-rness": "index.js"
+  },
+  "files": [
+    "index.js"
+  ],
+  "dependencies": {
+    "@rness/cli": "0.4.0"
+  }
+}

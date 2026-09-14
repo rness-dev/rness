@@ -22,6 +22,15 @@ export default defineConfig([
       ],
     },
   },
+  {
+    // typescript-eslint disables no-undef only for TypeScript files (the
+    // compiler already checks names there); plain JS keeps the rule and
+    // needs Node's globals declared explicitly.
+    files: ['**/*.{js,mjs}'],
+    languageOptions: {
+      globals: { console: 'readonly', process: 'readonly' },
+    },
+  },
   // Last: turns off every rule that would fight the formatter.
   prettier,
 ])
