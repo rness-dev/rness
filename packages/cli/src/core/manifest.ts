@@ -7,6 +7,14 @@ import type { Manifest, RepoEntry, ScopeEntry } from './types.ts'
 
 export const NAME = /^[a-z0-9][a-z0-9-]*$/
 
+/**
+ * A GitHub organization (or user) name: alphanumerics and single hyphens, not
+ * at either end, at most 39 characters. Used exactly as typed — GitHub
+ * resolves names case-insensitively, but the URLs and `rness.json` keep the
+ * spelling the user chose.
+ */
+export const ORG_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/
+
 /** Every top-level key contract 1 defines. */
 const KEYS = ['contract', 'org', 'repos', 'scopes']
 
@@ -31,9 +39,9 @@ function checkPath(scope: string, path: unknown): string {
 
 function readOrg(value: unknown): string | null {
   if (value === undefined || value === null) return null
-  if (typeof value !== 'string' || !NAME.test(value)) {
+  if (typeof value !== 'string' || !ORG_NAME.test(value)) {
     fail(
-      `"org" must be a name matching [a-z0-9-] (got ${JSON.stringify(value)})`
+      `"org" must be a GitHub organization name (got ${JSON.stringify(value)})`
     )
   }
   return value

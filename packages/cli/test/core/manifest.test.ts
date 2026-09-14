@@ -129,7 +129,7 @@ test('rejects an unknown top-level key', async (t) => {
   )
 })
 
-test('org is optional, validated like a scope name', async (t) => {
+test('org is optional, validated as a GitHub organization name', async (t) => {
   const withOrgDir = await fixture({
     contract: 1,
     org: 'acme-dev',
@@ -153,6 +153,23 @@ test('org is optional, validated like a scope name', async (t) => {
   })
   t.after(() => rm(dirname(badDir), { recursive: true, force: true }))
   await assert.rejects(() => loadManifest(badDir), /rness\.json:.*"org"/)
+})
+
+test('org follows GitHub: case kept, single inner hyphens, at most 39 characters', async (t) => {
+  const org = async (value: string) => {
+    const d = await fixture({ contract: 1, org: value, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    return loadManifest(d)
+  }
+  assert.equal((await org('Acme-Corp')).org, 'Acme-Corp')
+  assert.equal((await org('a'.repeat(39))).org, 'a'.repeat(39))
+  for (const bad of ['-acme', 'acme-', 'ac--me', 'a'.repeat(40)]) {
+    await assert.rejects(
+      () => org(bad),
+      /^Error: rness\.json: "org" must be a GitHub organization name \(got "/,
+      bad
+    )
+  }
 })
 
 test('resolveOrg falls back to the root directory name with a warning', async (t) => {

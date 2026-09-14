@@ -89,10 +89,13 @@ function buildProgram(state: RunState): Command {
   program
     .command('create')
     .description(
-      'Start a workspace for a GitHub organisation, or join its existing .rness'
+      'Create a workspace for a GitHub organization, or join its existing .rness'
     )
-    .argument('<org>', 'the GitHub organisation (github.com/<org>)')
-    .option('--dir <path>', 'target directory (default: ./<org>)')
+    .argument('[workspace]', 'directory of the new workspace')
+    .option(
+      '--org <name>',
+      'the GitHub organization, exact name (github.com/<name>)'
+    )
     .option('--repos <list>', 'comma-separated repositories to add right away')
     .option(
       '--pm <name>',
@@ -103,9 +106,10 @@ function buildProgram(state: RunState): Command {
     .option('-y, --yes', 'do not ask for confirmation')
     .option('--template <name>', 'reserved')
     .addOption(new Option('--host <base>').hideHelp())
+    .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(async (org: string, opts: CreateOptions) => {
-      state.code = await createCommand(org, opts)
+    .action(async (workspace: string | undefined, opts: CreateOptions) => {
+      state.code = await createCommand(workspace, opts)
     })
 
   return program

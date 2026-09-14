@@ -1,12 +1,25 @@
 import { execFile } from 'node:child_process'
-import { mkdir, readdir, rm } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
+
+import type {
+  autocompleteMultiselect,
+  confirm,
+  isCancel,
+  text,
+} from '@clack/prompts'
 
 import { readPinnedCli } from '../core/delegate.ts'
 import { exists } from '../core/fs.ts'
 import { clone, commitAll, init } from '../core/git.ts'
-import { NAME, loadManifest, writeManifest } from '../core/manifest.ts'
+import { DEFAULT_GITHUB_API, listRepositories } from '../core/github.ts'
+import {
+  NAME,
+  ORG_NAME,
+  loadManifest,
+  writeManifest,
+} from '../core/manifest.ts'
 import {
   PACKAGE_MANAGERS,
   type PackageManager,
@@ -27,7 +40,8 @@ import { syncCommand } from './sync.ts'
 const execFileP = promisify(execFile)
 
 export interface CreateOptions {
-  dir?: string
+  /** The GitHub organization, exact name (`github.com/<org>`); prompted for when absent. */
+  org?: string
   /** Comma-separated repositories to add right away (`<repo>` or `<owner>/<repo>`). */
   repos?: string
   pm?: string
@@ -40,10 +54,28 @@ export interface CreateOptions {
   template?: string
   /** Internal (tests): directory to resolve from. */
   cwd?: string
+  /** Internal (tests): GitHub REST API base. */
+  githubApi?: string
 }
 
-function isTty(): boolean {
-  return process.stdin.isTTY === true && process.stdout.isTTY === true
+/** The `@clack/prompts` functions create uses. */
+export interface Prompts {
+  text: typeof text
+  confirm: typeof confirm
+  autocompleteMultiselect: typeof autocompleteMultiselect
+  isCancel: typeof isCancel
+}
+
+/** What create needs from the terminal; tests replace it with scripted answers. */
+export interface CreateDeps {
+  isTty(): boolean
+  prompts(): Promise<Prompts>
+}
+
+const defaultDeps: CreateDeps = {
+  isTty: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
+  // Lazy: the prompt library stays off every non-interactive path.
+  prompts: () => import('@clack/prompts'),
 }
 
 async function isEmptyDir(dir: string): Promise<boolean> {
@@ -82,6 +114,94 @@ function splitSpecs(list: string): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s !== '')
+}
+
+/**
+ * Why `root` cannot receive a new workspace, as the one-line message the
+ * guards print; `null` when it can. Both ends of the operation count: the
+ * directory create runs in, and the parent of the target — either one inside
+ * a workspace would nest a second `.rness` under the first.
+ */
+async function targetProblem(
+  cwd: string,
+  root: string,
+  pm: PackageManager
+): Promise<string | null> {
+  const shown = relative(cwd, root) || '.'
+  if ((await insideWorkspace(cwd)) || (await insideWorkspace(dirname(root))))
+    return 'already inside an rness workspace; create runs from outside one'
+  if (!(await exists(root))) return null
+  if (await exists(join(root, '.rness', 'rness.json'))) {
+    // A join whose install failed leaves exactly this: a context clone and
+    // no dependencies. Re-running create cannot help — point at the install
+    // that finishes the job instead of at `rness add`.
+    if (!(await exists(join(root, '.rness', 'node_modules'))))
+      return `${shown} holds an rness workspace whose dependencies are not installed; cd ${shown}/.rness && ${pm} install, then rness sync`
+    return `${shown} already holds an rness workspace (.rness/); run rness add inside it to add repositories`
+  }
+  if (!(await stat(root)).isDirectory()) return `${shown} is not a directory`
+  if (!(await isEmptyDir(root))) return `${shown} is not empty`
+  return null
+}
+
+function cancelled(): number {
+  process.stderr.write('cancelled\n')
+  return 1
+}
+
+/**
+ * The organization's repositories as picker options, then the picked names.
+ * A listing that fails or leaves nothing to pick is a warning, not a failure:
+ * the workspace is worth finishing, and `rness add` adds repositories later.
+ * `null` when the user cancels.
+ */
+async function pickRepositories(
+  org: string,
+  apiBase: string,
+  prompts: Prompts
+): Promise<string[] | null> {
+  const token =
+    process.env['GITHUB_TOKEN'] || process.env['GH_TOKEN'] || undefined
+  let listed
+  try {
+    listed = await listRepositories(org, { token, apiBase })
+  } catch (e) {
+    process.stderr.write(
+      `warning: ${firstLine(e instanceof Error ? e.message : String(e))}\n`
+    )
+    return []
+  }
+  // Archived repositories and the context repository itself are never
+  // candidates; a name `NAME` refuses is one rness cannot declare.
+  const candidates = listed.filter((r) => !r.archived && r.name !== '.rness')
+  const declarable = candidates
+    .filter((r) => NAME.test(r.name))
+    .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
+  const skipped = candidates.length - declarable.length
+  if (token === undefined)
+    process.stdout.write(
+      'only public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\n'
+    )
+  if (skipped > 0)
+    process.stdout.write(
+      `skipped  ${skipped} ${skipped === 1 ? 'repository' : 'repositories'} whose names rness cannot declare yet\n`
+    )
+  if (declarable.length === 0) {
+    process.stderr.write(`warning: no repositories to list for ${org}\n`)
+    return []
+  }
+  const answer = await prompts.autocompleteMultiselect<string>({
+    message: 'Which repositories do you want to add?',
+    options: declarable.map((r) => ({
+      value: r.name,
+      label: r.name,
+      ...(r.private ? { hint: 'private' } : {}),
+    })),
+    required: false,
+    placeholder: 'Type to filter',
+  })
+  if (prompts.isCancel(answer)) return null
+  return Array.isArray(answer) ? answer : []
 }
 
 interface Failure {
@@ -164,22 +284,30 @@ async function syncPinned(root: string, shown: string): Promise<number> {
   }
 }
 
-/** `rness create <org>`: join the organisation's `.rness` or start a new one (spec 0003 §2.1). */
+/**
+ * `rness create [workspace]`: join the organization's `.rness` or start a new
+ * one (spec 0003 §2.1). The workspace names the directory only; the
+ * organization is `--org` or a prompt, used exactly as typed.
+ */
 export async function createCommand(
-  org: string,
-  opts: CreateOptions
+  workspace: string | undefined,
+  opts: CreateOptions,
+  deps: CreateDeps = defaultDeps
 ): Promise<number> {
   const cwd = opts.cwd ?? process.cwd()
   if (opts.template !== undefined) {
     process.stderr.write('--template is reserved for a later version\n')
     return 2
   }
-  if (!NAME.test(org)) {
-    process.stderr.write(`organisation name "${org}" is not [a-z0-9-]\n`)
-    return 2
-  }
   if (opts.pm !== undefined && !isPackageManager(opts.pm)) {
     process.stderr.write(`--pm must be one of ${PACKAGE_MANAGERS.join(', ')}\n`)
+    return 2
+  }
+  // A malformed flag is refused before any question is asked about the rest.
+  if (opts.org !== undefined && !ORG_NAME.test(opts.org)) {
+    process.stderr.write(
+      `organization name "${opts.org}" is not a valid GitHub organization name\n`
+    )
     return 2
   }
   const pm: PackageManager =
@@ -187,43 +315,72 @@ export async function createCommand(
       ? opts.pm
       : detectPackageManager()
   const host = opts.host ?? (opts.ssh === true ? SSH_HOST : DEFAULT_HOST)
+  const interactive = opts.yes !== true && deps.isTty()
+  let loaded: Prompts | undefined
+  const prompts = async (): Promise<Prompts> =>
+    (loaded ??= await deps.prompts())
   try {
-    const root = resolve(cwd, opts.dir ?? org)
-    const shown = relative(cwd, root) || '.'
-    // Both ends of the operation: the directory create runs in, and the parent
-    // of the target `--dir` points at. Either one inside a workspace would
-    // nest a second `.rness` under the first.
-    if (
-      (await insideWorkspace(cwd)) ||
-      (await insideWorkspace(dirname(root)))
-    ) {
+    // In a terminal, before the first question: no answer could fix it.
+    if (interactive && (await insideWorkspace(cwd))) {
       process.stderr.write(
         'already inside an rness workspace; create runs from outside one\n'
       )
       return 1
     }
-    if (await exists(root)) {
-      if (await exists(join(root, '.rness', 'rness.json'))) {
-        // A join whose install failed leaves exactly this: a context clone and
-        // no dependencies. Re-running create cannot help — point at the
-        // install that finishes the job instead of at `rness add`.
-        if (!(await exists(join(root, '.rness', 'node_modules')))) {
-          process.stderr.write(
-            `${shown} holds an rness workspace whose dependencies are not installed; cd ${shown}/.rness && ${pm} install, then rness sync\n`
-          )
-          return 1
-        }
+
+    let name = workspace?.trim() ?? ''
+    if (name === '') {
+      if (!interactive) {
         process.stderr.write(
-          `${shown} already holds an rness workspace (.rness/); run rness add inside it to add repositories\n`
+          'rness create needs a workspace directory: rness create <workspace> --org <name>\n'
         )
-        return 1
+        return 2
       }
-      if (!(await isEmptyDir(root))) {
-        process.stderr.write(`${shown} is not empty\n`)
-        return 1
-      }
+      const p = await prompts()
+      const answer = await p.text({
+        message: 'What is your workspace named?',
+        placeholder: 'my-workspace',
+        validate: async (value) => {
+          const v = value?.trim() ?? ''
+          if (v === '') return 'the workspace needs a directory name'
+          return (await targetProblem(cwd, resolve(cwd, v), pm)) ?? undefined
+        },
+      })
+      if (p.isCancel(answer) || typeof answer !== 'string') return cancelled()
+      name = answer.trim()
     }
-    if (opts.yes !== true && !isTty()) {
+
+    let org = opts.org
+    if (org === undefined) {
+      if (!interactive) {
+        process.stderr.write(
+          'rness create needs --org <name> without a prompt\n'
+        )
+        return 2
+      }
+      const p = await prompts()
+      const answer = await p.text({
+        message: 'What is your GitHub organization named?',
+        placeholder: 'acme',
+        validate: (value) => {
+          const v = value?.trim() ?? ''
+          return ORG_NAME.test(v)
+            ? undefined
+            : `"${v}" is not a valid GitHub organization name`
+        },
+      })
+      if (p.isCancel(answer) || typeof answer !== 'string') return cancelled()
+      org = answer.trim()
+    }
+
+    const root = resolve(cwd, name)
+    const shown = relative(cwd, root) || '.'
+    const problem = await targetProblem(cwd, root, pm)
+    if (problem !== null) {
+      process.stderr.write(`${problem}\n`)
+      return 1
+    }
+    if (opts.yes !== true && !deps.isTty()) {
       process.stderr.write(
         'rness create writes files; pass --yes to run without a prompt\n'
       )
@@ -238,16 +395,13 @@ export async function createCommand(
     }
     const joining = probe.kind === 'found'
 
-    if (opts.yes !== true) {
-      const { confirm, isCancel } = await import('@clack/prompts')
+    if (interactive) {
+      const p = await prompts()
       const message = joining
-        ? `Join organisation \`${org}\`: clone ${contextUrl} into ${shown}/.rness and sync its repositories?`
-        : `No ${contextUrl} found (or no access to it). Start a new workspace \`${org}\` in ${shown}/?`
-      const ok = await confirm({ message })
-      if (isCancel(ok) || ok !== true) {
-        process.stderr.write('cancelled\n')
-        return 1
-      }
+        ? `Join organization \`${org}\`: clone ${contextUrl} into ${shown}/.rness and sync its repositories?`
+        : `No ${contextUrl} found (or no access to it). Start a new workspace for \`${org}\` in ${shown}/?`
+      const ok = await p.confirm({ message })
+      if (p.isCancel(ok) || ok !== true) return cancelled()
     }
 
     const rnessDir = join(root, '.rness')
@@ -266,7 +420,7 @@ export async function createCommand(
         process.stdout.write(`installed dependencies with ${pm}\n`)
       }
       await mkdir(join(root, 'org'), { recursive: true })
-      // `--repos` only: the organisation's manifest is what a join follows, so
+      // `--repos` only: the organization's manifest is what a join follows, so
       // nothing is prompted for here. Each addition edits the cloned
       // `rness.json`, exactly as `rness add` would leave it.
       const failures = await addRepositories({
@@ -309,7 +463,7 @@ export async function createCommand(
       // this call, so removing it is safe; `root` goes too when it is left
       // empty (this call created it, or found it empty), or the retry the
       // message asks for would be refused with "<shown> is not empty" — but
-      // never the directory the command was run from (`--dir .`), whose
+      // never the directory the command was run from (`create .`), whose
       // removal would pull the ground from under the user's shell. A failing
       // `rm` is swallowed rather than thrown, since it must never mask the
       // original error.
@@ -328,21 +482,14 @@ export async function createCommand(
     // Phase 2 — the repositories. Nothing here is rolled back.
     await mkdir(join(root, 'org'), { recursive: true })
     let specs = splitSpecs(opts.repos ?? '')
-    if (opts.repos === undefined && opts.yes !== true) {
-      const { isCancel, text } = await import('@clack/prompts')
-      const answer = await text({
-        message:
-          'Repositories to add now (owner/repo, comma-separated; empty for none)',
-        defaultValue: '',
-      })
-      if (isCancel(answer)) {
-        process.stderr.write('cancelled\n')
-        return 1
-      }
-      // `isCancel` narrows only the unique cancel symbol, not the broader
-      // `symbol` half of `text()`'s `string | symbol` return type, so a
-      // `typeof` check is what narrows the rest.
-      if (typeof answer === 'string') specs = splitSpecs(answer)
+    if (opts.repos === undefined && interactive) {
+      const picked = await pickRepositories(
+        org,
+        opts.githubApi ?? DEFAULT_GITHUB_API,
+        await prompts()
+      )
+      if (picked === null) return cancelled()
+      specs = picked
     }
     const failures = await addRepositories({
       root,
@@ -370,7 +517,7 @@ export async function createCommand(
     process.stdout.write(
       [
         '',
-        `Workspace \`${org}\` is ready in ${shown}/.`,
+        `Workspace for \`${org}\` is ready in ${shown}/.`,
         '',
         'Next:',
         `  cd ${shown}/.rness`,
@@ -382,7 +529,7 @@ export async function createCommand(
         gh
           ? `  gh repo create ${org}/.rness --private --source . --push`
           : `  git remote add origin ${contextUrl} && git push -u origin main`,
-        `  # then, for every teammate: npm create rness ${org}`,
+        `  # then, for every teammate: npm create rness ${basename(root)} -- --org ${org}`,
         '',
       ].join('\n')
     )

@@ -128,7 +128,7 @@ test('delegates to the workspace-pinned @rness/cli when versions differ', async 
 
   const create = (await execFileP(
     process.execPath,
-    [binPath, 'create', 'acme'],
+    [binPath, 'create', 'acme', '--org', 'acme'],
     { cwd }
   ).catch((e: { code: number; stdout: string; stderr: string }) => e)) as {
     code: number

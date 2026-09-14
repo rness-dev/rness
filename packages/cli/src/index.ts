@@ -13,6 +13,7 @@ export { collectMarkdown } from './core/collect.ts'
 export {
   loadManifest,
   NAME,
+  ORG_NAME,
   parseRepoSpec,
   writeManifest,
 } from './core/manifest.ts'

@@ -10,12 +10,23 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
+import {
+  type IncomingMessage,
+  type ServerResponse,
+  createServer,
+} from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { type TestContext, test } from 'node:test'
 import { promisify } from 'node:util'
 
 import { run } from '../../src/cli.ts'
+import {
+  type CreateDeps,
+  type Prompts,
+  createCommand,
+} from '../../src/commands/create.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import { VERSION } from '../../src/version.ts'
 import { capture } from '../helpers/capture.ts'
@@ -75,6 +86,8 @@ test('new: scaffolds .rness with org and tokens, commits it, adds --repos, write
   await remote.addRepo('api', { 'README.md': '# api\n' })
   const cwd = await scratch(t)
   const r = await create([
+    'my-ws',
+    '--org',
     'acme',
     '--yes',
     '--skip-install',
@@ -88,12 +101,18 @@ test('new: scaffolds .rness with org and tokens, commits it, adds --repos, write
     cwd,
   ])
   assert.equal(r.code, 0, r.err)
-  const root = join(cwd, 'acme')
+  const root = join(cwd, 'my-ws')
+  await assert.rejects(
+    access(join(cwd, 'acme')),
+    'nothing is named after the org'
+  )
   assert.match(
     r.out,
-    /^created {2}acme\/\.rness \(new workspace\)\nskipped {2}install \(--skip-install\)\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncommitted acme\/\.rness\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n/
+    /^created {2}my-ws\/\.rness \(new workspace\)\nskipped {2}install \(--skip-install\)\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncommitted my-ws\/\.rness\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n/
   )
-  assert.match(r.out, /Next:\n[\s\S]*acme\/\.rness/)
+  assert.match(r.out, /Workspace for `acme` is ready in my-ws\/\./)
+  assert.match(r.out, /Next:\n {2}cd my-ws\/\.rness\n/)
+  assert.match(r.out, /npm create rness my-ws -- --org acme\n/)
   const m = await loadManifest(join(root, '.rness'))
   assert.equal(m.org, 'acme')
   assert.deepEqual(Object.keys(m.repos), ['api'])
@@ -127,7 +146,7 @@ test('new: scaffolds .rness with org and tokens, commits it, adds --repos, write
   await access(join(root, 'org', 'api', 'AGENTS.md'))
 })
 
-test('join: clones the organisation .rness and syncs its repositories', async (t) => {
+test('join: clones the organization .rness and syncs its repositories', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   const apiUrl = await remote.addRepo('api', { 'README.md': '# api\n' })
   const manifest = {
@@ -142,6 +161,8 @@ test('join: clones the organisation .rness and syncs its repositories', async (t
   })
   const cwd = await scratch(t)
   const r = await create([
+    'my-ws',
+    '--org',
     'acme',
     '--yes',
     '--skip-install',
@@ -155,9 +176,9 @@ test('join: clones the organisation .rness and syncs its repositories', async (t
   assert.equal(r.code, 0, r.err)
   assert.match(
     r.out,
-    /^cloned {3}acme\/\.rness \(joined acme\)\nskipped {2}install \(--skip-install\)\ncloned {3}org\/api\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n$/
+    /^cloned {3}my-ws\/\.rness \(joined acme\)\nskipped {2}install \(--skip-install\)\ncloned {3}org\/api\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n$/
   )
-  const root = join(cwd, 'acme')
+  const root = join(cwd, 'my-ws')
   const { stdout } = await execFileP('git', ['remote', 'get-url', 'origin'], {
     cwd: join(root, '.rness'),
   })
@@ -177,6 +198,8 @@ test('join: --repos adds repositories the organisation has not declared yet', as
   })
   const cwd = await scratch(t)
   const r = await create([
+    'acme',
+    '--org',
     'acme',
     '--yes',
     '--skip-install',
@@ -224,6 +247,8 @@ test('join: a pinned @rness/cli without its bin is an error, not a fallback', as
   ])
   const r = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--pm',
     'bun',
@@ -244,6 +269,8 @@ test('guards: inside a workspace, non-empty target, --template, bad org, no TTY'
   const inside = await makeWorkspace(t, { org: 'acme' })
   const r1 = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--skip-install',
     '--host',
@@ -254,17 +281,17 @@ test('guards: inside a workspace, non-empty target, --template, bad org, no TTY'
   assert.equal(r1.code, 1)
   assert.match(r1.err, /already inside an rness workspace/)
 
-  // The target is checked too: a `--dir` pointing into a workspace would nest
+  // The target is checked too: a workspace directory pointing into a workspace would nest
   // a second `.rness` under the first, however innocent the current directory.
   const outside = await scratch(t)
   const r1b = await create([
+    join(inside, 'nested'),
+    '--org',
     'acme',
     '--yes',
     '--skip-install',
     '--host',
     host,
-    '--dir',
-    join(inside, 'nested'),
     '--cwd',
     outside,
   ])
@@ -276,6 +303,8 @@ test('guards: inside a workspace, non-empty target, --template, bad org, no TTY'
   await mkdir(join(cwd, 'acme'))
   await writeFile(join(cwd, 'acme', 'stuff.txt'), 'x')
   const r2 = await create([
+    'acme',
+    '--org',
     'acme',
     '--yes',
     '--skip-install',
@@ -289,6 +318,8 @@ test('guards: inside a workspace, non-empty target, --template, bad org, no TTY'
 
   const r3 = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--template',
     'saas',
@@ -298,11 +329,23 @@ test('guards: inside a workspace, non-empty target, --template, bad org, no TTY'
   assert.equal(r3.code, 2)
   assert.match(r3.err, /--template is reserved/)
 
-  const r4 = await create(['Acme Inc', '--yes', '--cwd', await scratch(t)])
+  const r4 = await create([
+    'my-ws',
+    '--org',
+    'Acme Inc',
+    '--yes',
+    '--cwd',
+    await scratch(t),
+  ])
   assert.equal(r4.code, 2)
-  assert.match(r4.err, /organisation name/)
+  assert.equal(
+    r4.err,
+    'organization name "Acme Inc" is not a valid GitHub organization name\n'
+  )
 
   const r5 = await create([
+    'acme',
+    '--org',
     'acme',
     '--skip-install',
     '--host',
@@ -314,6 +357,8 @@ test('guards: inside a workspace, non-empty target, --template, bad org, no TTY'
   assert.match(r5.err, /pass --yes/)
 
   const r6 = await create([
+    'acme',
+    '--org',
     'acme',
     '--yes',
     '--pm',
@@ -347,6 +392,8 @@ test('a failed install after the scaffold copy is rolled back, not left dirty', 
 
   const r = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--pm',
     'bun',
@@ -368,19 +415,19 @@ test('a failed install after the scaffold copy is rolled back, not left dirty', 
     'the target directory this call created goes too, so the retry is not refused as non-empty'
   )
 
-  // `--dir .`: the target is the directory the command runs in. The rollback
+  // `create .`: the target is the directory the command runs in. The rollback
   // must not pull the ground from under the user's shell.
   const here = join(cwd, 'here')
   await mkdir(here)
   const inPlace = await create([
+    '.',
+    '--org',
     'acme',
     '--yes',
     '--pm',
     'bun',
     '--host',
     remote.host,
-    '--dir',
-    '.',
     '--cwd',
     here,
   ])
@@ -408,6 +455,8 @@ test('a successful install is reported and the workspace is complete', async (t)
   ])
   const r = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--pm',
     'bun',
@@ -434,6 +483,8 @@ test('a probe that cannot access the remote exits 1 and creates nothing', async 
   ])
   const r = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--skip-install',
     '--host',
@@ -451,6 +502,8 @@ test('a repository that fails is reported and skipped; the workspace is still fi
   await remote.addRepo('api', { 'README.md': '# api\n' })
   const cwd = await scratch(t)
   const r = await create([
+    'acme',
+    '--org',
     'acme',
     '--yes',
     '--skip-install',
@@ -491,6 +544,8 @@ test('a repository that fails is reported and skipped; the workspace is still fi
   await mkdir(join(root, '.rness', 'node_modules'))
   const again = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--skip-install',
     '--host',
@@ -507,6 +562,8 @@ test('re-running create points at rness add, or at the install a failed join lef
   const cwd = await scratch(t)
   const first = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--skip-install',
     '--host',
@@ -519,6 +576,8 @@ test('re-running create points at rness add, or at the install a failed join lef
   // What a join whose install failed leaves behind: a context clone with no
   // dependencies. `rness add` would only fail again — the install is the fix.
   const notInstalled = await create([
+    'acme',
+    '--org',
     'acme',
     '--yes',
     '--skip-install',
@@ -538,6 +597,8 @@ test('re-running create points at rness add, or at the install a failed join lef
   await mkdir(join(cwd, 'acme', '.rness', 'node_modules'))
   const again = await create([
     'acme',
+    '--org',
+    'acme',
     '--yes',
     '--skip-install',
     '--host',
@@ -547,4 +608,379 @@ test('re-running create points at rness add, or at the install a failed join lef
   ])
   assert.equal(again.code, 1)
   assert.match(again.err, /already holds an rness workspace/)
+})
+
+test('guards without a prompt: the workspace and --org are required, --dir is gone', async (t) => {
+  const noWorkspace = await create([
+    '--org',
+    'acme',
+    '--yes',
+    '--cwd',
+    await scratch(t),
+  ])
+  assert.equal(noWorkspace.code, 2)
+  assert.equal(
+    noWorkspace.err,
+    'rness create needs a workspace directory: rness create <workspace> --org <name>\n'
+  )
+
+  const noOrg = await create(['my-ws', '--yes', '--cwd', await scratch(t)])
+  assert.equal(noOrg.code, 2)
+  assert.equal(noOrg.err, 'rness create needs --org <name> without a prompt\n')
+
+  // Without a TTY and without --yes, the missing org is still what is named.
+  const noOrgNoYes = await create(['my-ws', '--cwd', await scratch(t)])
+  assert.equal(noOrgNoYes.code, 2)
+  assert.match(noOrgNoYes.err, /needs --org <name>/)
+
+  for (const bad of ['-acme', 'acme-', 'ac--me', 'a'.repeat(40)]) {
+    const r = await create(['my-ws', '--org', bad, '--yes'])
+    assert.equal(r.code, 2, bad)
+    assert.match(r.err, /is not a valid GitHub organization name/)
+  }
+
+  const dir = await create([
+    'my-ws',
+    '--org',
+    'acme',
+    '--dir',
+    'elsewhere',
+    '--yes',
+  ])
+  assert.equal(dir.code, 2)
+  assert.match(dir.err, /unknown option '--dir'/)
+})
+
+test('an organization name keeps its case in the URLs and rness.json', async (t) => {
+  const remote = await makeRemoteOrg(t, 'Acme-Corp')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const cwd = await scratch(t)
+  const r = await create([
+    'my-ws',
+    '--org',
+    'Acme-Corp',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    remote.host,
+    '--repos',
+    'api',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /Workspace for `Acme-Corp` is ready in my-ws\/\./)
+  const m = await loadManifest(join(cwd, 'my-ws', '.rness'))
+  assert.equal(m.org, 'Acme-Corp')
+  assert.deepEqual(m.repos, {
+    api: { url: `${remote.host}Acme-Corp/api.git` },
+  })
+  assert.match(
+    await readFile(join(cwd, 'my-ws', '.rness', 'rness.json'), 'utf8'),
+    /"org": "Acme-Corp"/
+  )
+})
+
+// --- the wizard, through the CreateDeps seam ---------------------------------
+
+type Handler = (req: IncomingMessage, res: ServerResponse) => void
+
+/** A local stand-in for api.github.com on 127.0.0.1, closed after the test. */
+async function githubApi(
+  t: TestContext,
+  handler: Handler
+): Promise<{ base: string; requests: IncomingMessage[] }> {
+  const requests: IncomingMessage[] = []
+  const server = createServer((req, res) => {
+    requests.push(req)
+    handler(req, res)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections()
+        server.close(() => resolve())
+      })
+  )
+  const { port } = server.address() as AddressInfo
+  return { base: `http://127.0.0.1:${port}`, requests }
+}
+
+function reposOf(
+  list: { name: string; private?: boolean; archived?: boolean }[]
+): Handler {
+  return (_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(
+      JSON.stringify(
+        list.map((r) => ({
+          name: r.name,
+          private: r.private ?? false,
+          archived: r.archived ?? false,
+        }))
+      )
+    )
+  }
+}
+
+/** Set (or, with `undefined`, unset) environment variables for the rest of the test. */
+function withEnv(
+  t: TestContext,
+  vars: Record<string, string | undefined>
+): void {
+  for (const [key, value] of Object.entries(vars)) {
+    const original = process.env[key]
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+    t.after(() => {
+      if (original === undefined) delete process.env[key]
+      else process.env[key] = original
+    })
+  }
+}
+
+const CANCEL = Symbol('cancel')
+
+interface Script {
+  text?: string[]
+  confirm?: boolean[]
+  pick?: (string[] | typeof CANCEL)[]
+}
+
+/**
+ * A terminal with scripted answers. Every question is recorded; a text answer
+ * its `validate` refuses is recorded as an error and the next answer is used,
+ * as a user retyping would.
+ */
+function terminal(script: Script) {
+  const asked: string[] = []
+  const refused: string[] = []
+  const offered: unknown[] = []
+  const next = <T>(queue: T[] | undefined, message: string): T => {
+    const answer = queue?.shift()
+    if (answer === undefined)
+      throw new Error(`no scripted answer for: ${message}`)
+    return answer
+  }
+  const prompts = {
+    async text(opts: Parameters<Prompts['text']>[0]) {
+      asked.push(opts.message)
+      for (;;) {
+        const answer = next(script.text, opts.message)
+        const error =
+          typeof opts.validate === 'function'
+            ? await opts.validate(answer)
+            : undefined
+        if (error === undefined) return answer
+        refused.push(error instanceof Error ? error.message : error)
+      }
+    },
+    async confirm(opts: Parameters<Prompts['confirm']>[0]) {
+      asked.push(opts.message)
+      return next(script.confirm, opts.message)
+    },
+    async autocompleteMultiselect(opts: { message: string; options: unknown }) {
+      asked.push(opts.message)
+      offered.push(opts.options)
+      return next(script.pick, opts.message)
+    },
+    isCancel: (value: unknown) => value === CANCEL,
+  } as unknown as Prompts
+  const deps: CreateDeps = { isTty: () => true, prompts: async () => prompts }
+  return { deps, asked, refused, offered }
+}
+
+async function wizard(
+  workspace: string | undefined,
+  opts: Parameters<typeof createCommand>[1],
+  deps: CreateDeps
+) {
+  const c = capture()
+  try {
+    const code = await createCommand(workspace, opts, deps)
+    return { code, out: c.out(), err: c.err() }
+  } finally {
+    c.restore()
+  }
+}
+
+const WORKSPACE_Q = 'What is your workspace named?'
+const ORG_Q = 'What is your GitHub organization named?'
+const REPOS_Q = 'Which repositories do you want to add?'
+
+test('wizard: asks the workspace, the organization, the confirm, then picks from the listed repositories', async (t) => {
+  withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('web', { 'README.md': '# web\n' })
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const { base, requests } = await githubApi(
+    t,
+    reposOf([
+      { name: 'web' },
+      { name: 'old', archived: true },
+      { name: '.rness' },
+      { name: '.github' },
+      { name: 'Website' },
+      { name: 'api', private: true },
+    ])
+  )
+  const cwd = await scratch(t)
+  await mkdir(join(cwd, 'taken'))
+  await writeFile(join(cwd, 'taken', 'stuff.txt'), 'x')
+  const term = terminal({
+    text: ['  ', 'taken', 'my-ws', 'Acme Inc', 'acme'],
+    confirm: [true],
+    pick: [['api', 'web']],
+  })
+  const r = await wizard(
+    undefined,
+    { skipInstall: true, pm: 'npm', host: remote.host, githubApi: base, cwd },
+    term.deps
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    WORKSPACE_Q,
+    ORG_Q,
+    `No ${remote.host}acme/.rness.git found (or no access to it). Start a new workspace for \`acme\` in my-ws/?`,
+    REPOS_Q,
+  ])
+  assert.deepEqual(term.refused, [
+    'the workspace needs a directory name',
+    'taken is not empty',
+    '"Acme Inc" is not a valid GitHub organization name',
+  ])
+  assert.deepEqual(term.offered, [
+    [
+      { value: 'api', label: 'api', hint: 'private' },
+      { value: 'web', label: 'web' },
+    ],
+  ])
+  assert.equal(requests[0]?.headers['authorization'], undefined)
+  assert.match(
+    r.out,
+    /skipped {2}install \(--skip-install\)\nonly public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\nskipped {2}2 repositories whose names rness cannot declare yet\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncloned {3}org\/web\ndeclared scope web \(org\/web\)\ncommitted my-ws\/\.rness\n/
+  )
+  const root = join(cwd, 'my-ws')
+  const m = await loadManifest(join(root, '.rness'))
+  assert.equal(m.org, 'acme')
+  assert.deepEqual(m.repos, {
+    api: { url: `${remote.host}acme/api.git` },
+    web: { url: `${remote.host}acme/web.git` },
+  })
+  await access(join(root, 'org', 'web', 'AGENTS.md'))
+  await access(join(root, 'org', 'api', 'AGENTS.md'))
+})
+
+test('wizard: a cancelled picker exits 1; a token lists private repositories without the note', async (t) => {
+  withEnv(t, { GITHUB_TOKEN: 'ghp_test', GH_TOKEN: undefined })
+  const remote = await makeRemoteOrg(t, 'acme')
+  const { base, requests } = await githubApi(t, reposOf([{ name: 'web' }]))
+  const term = terminal({ confirm: [true], pick: [CANCEL] })
+  const r = await wizard(
+    'my-ws',
+    {
+      org: 'acme',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      githubApi: base,
+      cwd: await scratch(t),
+    },
+    term.deps
+  )
+  assert.equal(r.code, 1)
+  assert.equal(r.err, 'cancelled\n')
+  assert.doesNotMatch(r.out, /only public repositories/)
+  assert.equal(requests[0]?.headers['authorization'], 'Bearer ghp_test')
+  assert.equal(term.asked.at(-1), REPOS_Q)
+  assert.ok(!term.asked.includes(WORKSPACE_Q) && !term.asked.includes(ORG_Q))
+})
+
+test('wizard: a listing that fails or is empty is a warning; the workspace is still committed', async (t) => {
+  withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
+  const remote = await makeRemoteOrg(t, 'acme')
+  const { base: failing } = await githubApi(t, (_req, res) => {
+    res.writeHead(500)
+    res.end()
+  })
+  const cwd = await scratch(t)
+  const term = terminal({ confirm: [true] })
+  const r = await wizard(
+    'my-ws',
+    {
+      org: 'acme',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      githubApi: failing,
+      cwd,
+    },
+    term.deps
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.equal(r.err, 'warning: GitHub API answered 500 for /orgs/acme/repos\n')
+  assert.ok(!term.asked.includes(REPOS_Q))
+  assert.match(r.out, /committed my-ws\/\.rness\n/)
+  await access(join(cwd, 'my-ws', 'AGENTS.md'))
+
+  const { base: empty } = await githubApi(
+    t,
+    reposOf([{ name: 'old', archived: true }, { name: '.rness' }])
+  )
+  const again = terminal({ confirm: [true] })
+  const r2 = await wizard(
+    'other-ws',
+    {
+      org: 'acme',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      githubApi: empty,
+      cwd,
+    },
+    again.deps
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.equal(r2.err, 'warning: no repositories to list for acme\n')
+  assert.ok(!again.asked.includes(REPOS_Q))
+  assert.match(r2.out, /committed other-ws\/\.rness\n/)
+})
+
+test('wizard: joining never lists repositories; the organization manifest is authoritative', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('.rness', {
+    'rness.json': `${JSON.stringify({ contract: 1, org: 'acme', repos: {}, scopes: {} }, null, 2)}\n`,
+  })
+  const { base, requests } = await githubApi(t, reposOf([{ name: 'web' }]))
+  const term = terminal({ text: ['acme'], confirm: [true] })
+  const r = await wizard(
+    'my-ws',
+    {
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      githubApi: base,
+      cwd: await scratch(t),
+    },
+    term.deps
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    ORG_Q,
+    `Join organization \`acme\`: clone ${remote.host}acme/.rness.git into my-ws/.rness and sync its repositories?`,
+  ])
+  assert.equal(requests.length, 0)
+  assert.match(r.out, /^cloned {3}my-ws\/\.rness \(joined acme\)\n/)
+})
+
+test('wizard: inside a workspace, nothing is asked', async (t) => {
+  const inside = await makeWorkspace(t, { org: 'acme' })
+  const term = terminal({})
+  const r = await wizard(undefined, { cwd: inside }, term.deps)
+  assert.equal(r.code, 1)
+  assert.match(r.err, /already inside an rness workspace/)
+  assert.deepEqual(term.asked, [])
 })
