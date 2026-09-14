@@ -308,14 +308,16 @@ export async function createCommand(
       // then the rollback note. Everything under `rnessDir` was written by
       // this call, so removing it is safe; `root` goes too when it is left
       // empty (this call created it, or found it empty), or the retry the
-      // message asks for would be refused with "<shown> is not empty". A
-      // failing `rm` is swallowed rather than thrown, since it must never
-      // mask the original error.
+      // message asks for would be refused with "<shown> is not empty" — but
+      // never the directory the command was run from (`--dir .`), whose
+      // removal would pull the ground from under the user's shell. A failing
+      // `rm` is swallowed rather than thrown, since it must never mask the
+      // original error.
       reportError(e)
       await rm(rnessDir, { recursive: true, force: true }).catch(
         () => undefined
       )
-      if (await isEmptyDir(root).catch(() => false))
+      if (root !== resolve(cwd) && (await isEmptyDir(root).catch(() => false)))
         await rm(root, { recursive: true, force: true }).catch(() => undefined)
       process.stderr.write(
         `removed ${shown}/.rness after the failure; fix it and retry\n`

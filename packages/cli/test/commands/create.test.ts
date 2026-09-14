@@ -367,6 +367,27 @@ test('a failed install after the scaffold copy is rolled back, not left dirty', 
     access(join(cwd, 'acme')),
     'the target directory this call created goes too, so the retry is not refused as non-empty'
   )
+
+  // `--dir .`: the target is the directory the command runs in. The rollback
+  // must not pull the ground from under the user's shell.
+  const here = join(cwd, 'here')
+  await mkdir(here)
+  const inPlace = await create([
+    'acme',
+    '--yes',
+    '--pm',
+    'bun',
+    '--host',
+    remote.host,
+    '--dir',
+    '.',
+    '--cwd',
+    here,
+  ])
+  assert.equal(inPlace.code, 1)
+  assert.match(inPlace.err, /removed \.\/\.rness after the failure/)
+  await assert.rejects(access(join(here, '.rness')))
+  await access(here)
 })
 
 test('a successful install is reported and the workspace is complete', async (t) => {

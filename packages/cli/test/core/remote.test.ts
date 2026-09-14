@@ -88,8 +88,9 @@ test('probeRemote refuses a url git would read as an option', async () => {
 
 test('probeRemote times out even while a grandchild holds stderr open', async (t) => {
   // A fake `git` that hangs *and* leaves a background child holding the stderr
-  // pipe — what a stuck credential helper does. Waiting for `'close'` would
-  // never return; the timeout kills the whole process group instead.
+  // pipe — what a stuck credential helper does. Killing the child git does not
+  // reap that grandchild, so this is what proves the answer never waits on
+  // `'close'`. Both pids are recorded and killed afterwards.
   const binDir = await mkdtemp(join(tmpdir(), 'rness-bin-'))
   const pidFile = join(binDir, 'pid')
   const gitPath = join(binDir, 'git')
@@ -97,9 +98,11 @@ test('probeRemote times out even while a grandchild holds stderr open', async (t
     gitPath,
     [
       '#!/bin/sh',
-      `echo $$ > "${pidFile}"`,
       'sleep 30 >&2 &',
-      'sleep 30',
+      `echo "$! $$" > "${pidFile}"`,
+      // `exec`, so that the hanging process *is* this pid: killing the child
+      // then leaves no orphaned foreground sleep behind.
+      'exec sleep 30',
       '',
     ].join('\n')
   )
@@ -110,10 +113,16 @@ test('probeRemote times out even while a grandchild holds stderr open', async (t
     if (originalPath === undefined) delete process.env['PATH']
     else process.env['PATH'] = originalPath
     try {
-      const pid = Number((await readFile(pidFile, 'utf8')).trim())
-      if (Number.isInteger(pid)) process.kill(-pid, 'SIGKILL')
+      for (const field of (await readFile(pidFile, 'utf8')).trim().split(' ')) {
+        const pid = Number(field)
+        try {
+          if (Number.isInteger(pid) && pid > 0) process.kill(pid, 'SIGKILL')
+        } catch {
+          // already gone
+        }
+      }
     } catch {
-      // already gone: the timeout killed the group
+      // the fake git never ran
     }
     await rm(binDir, { recursive: true, force: true })
   })

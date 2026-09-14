@@ -65,8 +65,10 @@ const STDERR_FLUSH_MS = 200
 
 /**
  * `git ls-remote --exit-code <url> HEAD`, classified (see `classifyProbe`).
- * Never hangs: the child runs in its own process group and the whole group is
- * killed after `timeoutMs`.
+ * Never hangs: the child is killed after `timeoutMs`, and the answer never
+ * waits on `'close'`, so a credential helper left holding the stderr pipe
+ * cannot keep the caller pending. The child stays in this process's group so
+ * that Ctrl-C in the terminal reaches it too.
  */
 export async function probeRemote(
   url: string,
@@ -79,9 +81,6 @@ export async function probeRemote(
     const child = spawn('git', ['ls-remote', '--exit-code', url, 'HEAD'], {
       stdio: ['ignore', 'ignore', 'pipe'],
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      // Its own process group, so the timeout below can take any grandchild
-      // (an askpass or credential helper) with it.
-      detached: true,
     })
     const chunks: string[] = []
     child.stderr?.setEncoding('utf8')
@@ -98,13 +97,10 @@ export async function probeRemote(
       resolve(probe)
     }
     const timer = setTimeout(() => {
-      const pid = child.pid
-      try {
-        if (pid === undefined) throw new Error('the child has no pid')
-        process.kill(-pid, 'SIGKILL')
-      } catch {
-        child.kill('SIGKILL')
-      }
+      // Only the child git itself: a grandchild it orphaned is harmless, and
+      // killing a whole process group would mean detaching from ours, which
+      // costs the terminal's Ctrl-C.
+      child.kill('SIGKILL')
       settle({
         kind: 'error',
         message: `cannot reach ${url}: timed out after ${Math.round(timeoutMs / 1000)}s`,
