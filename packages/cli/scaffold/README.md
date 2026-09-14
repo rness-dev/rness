@@ -13,7 +13,7 @@ specifications, plans, standards and skills, resolved per repository by the
 
     npm run validate     # rness validate — check this tree against the contract
     npm run context      # rness context — print the resolved context for a scope
-    npm run sync         # rness sync — clone repositories, regenerate blocks
+    npm run sync         # rness sync — regenerate blocks (--all clones missing repositories)
 
 The CLI is pinned in `package.json`; any `rness` you run inside the workspace
 delegates to that copy.

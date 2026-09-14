@@ -6,8 +6,8 @@ Not an agent — no LLM loop.
 
 ## Install
 
-    npm create rness my-workspace   # prompts for the organization and, for a new workspace, the repositories to add
-    npm i -g @rness/cli             # the command is `rness`
+    npm create rness           # prompts for the organization, then the repositories for your workspace
+    npm i -g @rness/cli        # the command is `rness`
     npx @rness/cli --help
 
 Inside a workspace, every `rness` delegates to the copy pinned in
@@ -15,9 +15,9 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 
 ## Commands
 
-    rness create [workspace] [--org <name>] [--repos a,b] [--pm npm|pnpm|yarn|bun] [--ssh] [--skip-install] -y
+    rness create [--org <name>] [--repos a,b] [--pm npm|pnpm|yarn|bun] [--ssh] [--skip-install] -y
     rness add <repo> [--scopes apps/web,packages/ui] [--ssh] -y
-    rness sync [--scope <name>] [--check] [--pull] -y
+    rness sync [--all] [--scope <name>] [--check] [--pull] -y
     rness context [--scope <name>] [--json]
     rness validate
 
@@ -28,19 +28,32 @@ writes nothing and exits 1 when a block is out of date — use it in CI.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## 0.5.0 — create asks for the workspace and the organization
+## 0.5.0 — the organization is the workspace; rness.json is its catalogue
 
-- `create <org>` became `create <workspace> --org <org>`: the argument names
-  the workspace directory only, and the GitHub organization is its own,
-  exact value. In a terminal, both are asked for when missing; in a script,
-  pass both (with `npm create`, flags go after `--`:
-  `npm create rness my-workspace -- --org acme --yes`).
-- `--dir` is removed: the workspace argument is the directory.
-- A new workspace no longer asks for a comma-separated list: it lists the
-  organization's repositories to search and pick from. Without a
-  `GITHUB_TOKEN` (or `GH_TOKEN`) only public repositories are listed — and a
-  personal account always lists only its public ones; add the others later
-  with `rness add <repo>`. `--repos` still skips the picker.
+- `create <org>` became `create --org <org>` (or the prompt "What is your
+  GitHub organization named?"). The workspace directory is `./<org>`, with
+  the organization's exact name; `--dir` is removed. With `npm create`,
+  flags go after `--`: `npm create rness -- --org acme --yes`.
+- `.rness/rness.json` is the organization's catalogue — every repository
+  rness knows about, shared by the team. Your workspace is the part of it
+  you cloned into `org/`; two teammates can clone different repositories,
+  and nothing but `org/` records the choice. A choice never removes a
+  repository from the catalogue.
+- `create` lists the organization's repositories to search and pick from,
+  with every catalogue repository pre-selected when joining (a catalogue
+  repository the listing does not return is still offered, marked
+  `in .rness`). A picked catalogue repository is cloned; a picked new one is
+  added to the catalogue, as `rness add` does. Without a picker, `--repos`
+  is the selection; a join without `--repos` clones the whole catalogue. A
+  cancelled prompt writes nothing.
+- The listing needs no credentials. Without a `GITHUB_TOKEN` (or `GH_TOKEN`)
+  only public repositories are listed — and a personal account always lists
+  only its public ones; add the others later with `rness add <repo>`.
+- `rness sync` clones nothing: a catalogue repository missing from `org/` is
+  reported on one `not cloned:` line (also by `--check`, which no longer
+  fails on it). `rness sync --all` clones them all, as 0.4.0 did.
+- A workspace pinned to 0.4.x clones every catalogue repository on sync —
+  `create` runs the pinned copy's sync after joining.
 - Repository names that differ only by case are declared in lowercase;
   names with `_` or `.` cannot be declared yet and are shown disabled.
 - Organization names follow GitHub's rule — letters, digits and single

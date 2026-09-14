@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Thin shim: `npm create rness <workspace>` is `rness create <workspace>` from the pinned @rness/cli.
+// Thin shim: `npm create rness [-- <options>]` is `rness create [<options>]` from the pinned @rness/cli.
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'

@@ -10,8 +10,8 @@ polyrepo. rness never runs an LLM loop and is not an agent.
 | Path                    | npm                                                                                     | Status  |
 | ----------------------- | --------------------------------------------------------------------------------------- | ------- |
 | `packages/cli`          | `@rness/cli` — the CLI, command `rness`: `create`, `add`, `sync`, `context`, `validate` | 0.5.0   |
-| `packages/create`       | `@rness/create` — `npm create @rness <workspace>`                                       | 0.5.0   |
-| `packages/create-rness` | `create-rness` — `npm create rness <workspace>`                                         | 0.5.0   |
+| `packages/create`       | `@rness/create` — `npm create @rness`                                                   | 0.5.0   |
+| `packages/create-rness` | `create-rness` — `npm create rness`                                                     | 0.5.0   |
 | `packages/mcp`          | `@rness/mcp` — MCP server                                                               | planned |
 | `plugins/claude-code`   | Claude Code plugin; this repository is its marketplace                                  | planned |
 | `templates/`, `action/` | demo apps, GitHub projection Action                                                     | planned |
@@ -31,7 +31,7 @@ Try a release before publishing it, through a local npm registry
     pnpm verdaccio start     # registry on http://127.0.0.1:4873 (VERDACCIO_PORT to change)
     pnpm verdaccio deploy    # build, then publish every package to it (never to npmjs)
     export npm_config_userconfig="$PWD/.verdaccio/npmrc"
-    cd "$(mktemp -d)" && npm create rness demo       # the published shim, as a user runs it
+    cd "$(mktemp -d)" && npm create rness -- --org <org>   # the published shim, as a user runs it
     unset npm_config_userconfig
     pnpm verdaccio stop      # or `clean` to also delete what it stored
 
