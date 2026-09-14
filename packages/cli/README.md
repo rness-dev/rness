@@ -27,14 +27,16 @@ writes nothing and exits 1 when a block is out of date — use it in CI.
 
 ## 0.4.0 — create, add, the shims
 
-`npm create rness <org>` starts a new workspace for `github.com/<org>` or
-joins its existing `.rness`; `rness add <repo>` clones (or adopts) a
-repository under `org/`, declares it and any `--scopes` sub-directories, then
-syncs. `create-rness` and `@rness/create` are two-file shims pinned to the
-exact same version as `@rness/cli`, so the short `npm create` commands run
-this CLI. A new workspace's scaffold ships a `pnpm-workspace.yaml`
-(`minimumReleaseAgeExclude: ['@rness/cli']`) — pnpm 12 otherwise refuses a
-version published less than 24h earlier.
+- `npm create rness <org>` starts a new workspace for `github.com/<org>` or
+  joins its existing `.rness`.
+- `rness add <repo>` clones (or adopts) a repository under `org/`, declares
+  it and any `--scopes` sub-directories, then syncs.
+- `create-rness` and `@rness/create` are two-file shims pinned to the exact
+  same version as `@rness/cli`, so the short `npm create` commands run this
+  CLI.
+- A new workspace's scaffold ships a `pnpm-workspace.yaml`
+  (`minimumReleaseAgeExclude: ['@rness/cli']`) — pnpm 12 otherwise refuses a
+  version published less than 24h earlier.
 
 ## 0.3.0 — what changed for a 0.2.0 workspace
 
