@@ -13,7 +13,12 @@ import type {
 import { readPinnedCli } from '../core/delegate.ts'
 import { exists } from '../core/fs.ts'
 import { clone, commitAll, init } from '../core/git.ts'
-import { DEFAULT_GITHUB_API, listRepositories } from '../core/github.ts'
+import {
+  DEFAULT_GITHUB_API,
+  MAX_PAGES,
+  PER_PAGE,
+  listRepositories,
+} from '../core/github.ts'
 import {
   NAME,
   ORG_NAME,
@@ -162,46 +167,88 @@ async function pickRepositories(
 ): Promise<string[] | null> {
   const token =
     process.env['GITHUB_TOKEN'] || process.env['GH_TOKEN'] || undefined
-  let listed
+  process.stdout.write(`listing  ${org} repositories…\n`)
+  let listing
   try {
-    listed = await listRepositories(org, { token, apiBase })
+    listing = await listRepositories(org, { token, apiBase })
   } catch (e) {
     process.stderr.write(
       `warning: ${firstLine(e instanceof Error ? e.message : String(e))}\n`
     )
     return []
   }
-  // Archived repositories and the context repository itself are never
-  // candidates; a name `NAME` refuses is one rness cannot declare.
-  const candidates = listed.filter((r) => !r.archived && r.name !== '.rness')
-  const declarable = candidates
-    .filter((r) => NAME.test(r.name))
-    .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
-  const skipped = candidates.length - declarable.length
-  if (token === undefined)
+  if (listing.owner === 'user')
+    process.stdout.write(
+      `only public repositories of ${org} are listed; add private ones later with rness add <repo>\n`
+    )
+  else if (token === undefined)
     process.stdout.write(
       'only public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\n'
     )
-  if (skipped > 0)
+  if (listing.truncated)
     process.stdout.write(
-      `skipped  ${skipped} ${skipped === 1 ? 'repository' : 'repositories'} whose names rness cannot declare yet\n`
+      `listed the first ${MAX_PAGES * PER_PAGE} repositories of ${org}\n`
     )
+  // Archived repositories and the context repository itself are never
+  // candidates. GitHub names are case-insensitive, so a name that differs
+  // from `NAME` only by case is offered — and declared — in lowercase, as
+  // `rness add` would; any other name is shown but cannot be picked yet.
+  const byLabel = (a: { label: string }, b: { label: string }): number =>
+    a.label.localeCompare(b.label, 'en', { sensitivity: 'base' })
+  const candidates = listing.repositories.filter(
+    (r) => !r.archived && r.name.toLowerCase() !== '.rness'
+  )
+  const declarable = candidates
+    .filter((r) => NAME.test(r.name.toLowerCase()))
+    .map((r) => ({
+      value: r.name.toLowerCase(),
+      label: r.name,
+      ...(r.private ? { hint: 'private' } : {}),
+    }))
+    .sort(byLabel)
+  const unsupported = candidates
+    .filter((r) => !NAME.test(r.name.toLowerCase()))
+    .map((r) => ({
+      value: r.name,
+      label: r.name,
+      hint: 'name not supported yet',
+      disabled: true,
+    }))
+    .sort(byLabel)
+  // clack renders a disabled option struck through but never its hint, so
+  // the reason is printed here.
+  if (unsupported.length > 0) {
+    const names = unsupported.slice(0, 5).map((o) => o.label)
+    const more =
+      unsupported.length > names.length
+        ? ` and ${unsupported.length - names.length} more`
+        : ''
+    process.stdout.write(
+      `names rness cannot declare yet (struck through): ${names.join(', ')}${more}\n`
+    )
+  }
   if (declarable.length === 0) {
     process.stderr.write(`warning: no repositories to list for ${org}\n`)
     return []
   }
+  // Disabled options go last: clack focuses the first option before any key
+  // is pressed, and Tab would select it even when it is disabled.
   const answer = await prompts.autocompleteMultiselect<string>({
     message: 'Which repositories do you want to add?',
-    options: declarable.map((r) => ({
-      value: r.name,
-      label: r.name,
-      ...(r.private ? { hint: 'private' } : {}),
-    })),
+    options: [...declarable, ...unsupported],
     required: false,
     placeholder: 'Type to filter',
   })
   if (prompts.isCancel(answer)) return null
-  return Array.isArray(answer) ? answer : []
+  const allowed = new Set(declarable.map((o) => o.value))
+  return Array.isArray(answer) ? answer.filter((v) => allowed.has(v)) : []
+}
+
+/** `name` as one shell word: quoted when a shell would split or expand it. */
+function shellWord(name: string): string {
+  return /^[A-Za-z0-9._/@%+=:,-]+$/.test(name)
+    ? name
+    : `'${name.replaceAll("'", `'\\''`)}'`
 }
 
 interface Failure {
@@ -348,6 +395,14 @@ export async function createCommand(
       })
       if (p.isCancel(answer) || typeof answer !== 'string') return cancelled()
       name = answer.trim()
+    } else if (interactive) {
+      // Before the next question: an argument naming an unusable target
+      // would otherwise be refused only after the organization is typed.
+      const problem = await targetProblem(cwd, resolve(cwd, name), pm)
+      if (problem !== null) {
+        process.stderr.write(`${problem}\n`)
+        return 1
+      }
     }
 
     let org = opts.org
@@ -402,6 +457,19 @@ export async function createCommand(
         : `No ${contextUrl} found (or no access to it). Start a new workspace for \`${org}\` in ${shown}/?`
       const ok = await p.confirm({ message })
       if (p.isCancel(ok) || ok !== true) return cancelled()
+    }
+
+    // New workspace, in a terminal, without `--repos`: pick before anything
+    // is written, so that a cancel (Escape) leaves nothing half-built.
+    let picked: string[] | undefined
+    if (!joining && interactive && opts.repos === undefined) {
+      const answer = await pickRepositories(
+        org,
+        opts.githubApi ?? DEFAULT_GITHUB_API,
+        await prompts()
+      )
+      if (answer === null) return cancelled()
+      picked = answer
     }
 
     const rnessDir = join(root, '.rness')
@@ -481,16 +549,7 @@ export async function createCommand(
 
     // Phase 2 — the repositories. Nothing here is rolled back.
     await mkdir(join(root, 'org'), { recursive: true })
-    let specs = splitSpecs(opts.repos ?? '')
-    if (opts.repos === undefined && interactive) {
-      const picked = await pickRepositories(
-        org,
-        opts.githubApi ?? DEFAULT_GITHUB_API,
-        await prompts()
-      )
-      if (picked === null) return cancelled()
-      specs = picked
-    }
+    const specs = picked ?? splitSpecs(opts.repos ?? '')
     const failures = await addRepositories({
       root,
       rnessDir,
@@ -529,7 +588,7 @@ export async function createCommand(
         gh
           ? `  gh repo create ${org}/.rness --private --source . --push`
           : `  git remote add origin ${contextUrl} && git push -u origin main`,
-        `  # then, for every teammate: npm create rness ${basename(root)} -- --org ${org}`,
+        `  # then, for every teammate: npm create rness ${shellWord(basename(root))} -- --org ${org}`,
         '',
       ].join('\n')
     )

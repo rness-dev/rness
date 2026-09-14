@@ -6,8 +6,8 @@ Not an agent — no LLM loop.
 
 ## Install
 
-    npm create rness my-workspace   # prompts for the organization and the repositories
-    npm i -g @rness/cli        # the command is `rness`
+    npm create rness my-workspace   # prompts for the organization and, for a new workspace, the repositories to add
+    npm i -g @rness/cli             # the command is `rness`
     npx @rness/cli --help
 
 Inside a workspace, every `rness` delegates to the copy pinned in
@@ -38,11 +38,16 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - `--dir` is removed: the workspace argument is the directory.
 - A new workspace no longer asks for a comma-separated list: it lists the
   organization's repositories to search and pick from. Without a
-  `GITHUB_TOKEN` (or `GH_TOKEN`) only public repositories are listed; add the
-  others later with `rness add <repo>`. `--repos` still skips the picker.
+  `GITHUB_TOKEN` (or `GH_TOKEN`) only public repositories are listed — and a
+  personal account always lists only its public ones; add the others later
+  with `rness add <repo>`. `--repos` still skips the picker.
+- Repository names that differ only by case are declared in lowercase;
+  names with `_` or `.` cannot be declared yet and are shown disabled.
 - Organization names follow GitHub's rule — letters, digits and single
   hyphens, not at either end, at most 39 characters — in `--org` and in
   `rness.json`'s `"org"`; the case is kept as typed.
+- `"org"` in `rness.json` now accepts uppercase letters: a 0.4.0 CLI rejects
+  a workspace whose `"org"` has any, so upgrade every copy together.
 
 ## 0.4.0 — create, add, the shims
 

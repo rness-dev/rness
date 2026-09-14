@@ -1,13 +1,27 @@
 /** The public GitHub REST API; `--github-api` overrides it in tests. */
 export const DEFAULT_GITHUB_API = 'https://api.github.com'
 
-/** Guards against a server that always answers `rel="next"`: 5 000 repositories. */
-const MAX_PAGES = 50
+/** Guards against a server that always answers `rel="next"`. */
+export const MAX_PAGES = 50
+export const PER_PAGE = 100
+
+const ADD_LATER = '; add repositories later with rness add <repo>'
 
 export interface OrgRepository {
   name: string
   private: boolean
   archived: boolean
+}
+
+export interface RepositoryListing {
+  repositories: OrgRepository[]
+  /**
+   * Which endpoint answered. `/users/<name>/repos` lists a personal account's
+   * public repositories only, whatever the token.
+   */
+  owner: 'org' | 'user'
+  /** `MAX_PAGES` stopped the listing while GitHub still announced a next page. */
+  truncated: boolean
 }
 
 export interface ListRepositoriesOptions {
@@ -80,27 +94,35 @@ function httpError(page: Page, path: string): Error {
   const cause = { status: page.status, path }
   if (page.status === 401)
     return new Error('GitHub rejected the token (401)', { cause })
+  // GitHub signals a primary rate limit with 403 and no remaining requests,
+  // a secondary one with 403 or 429 and `retry-after`.
   if (
-    page.status === 403 &&
-    page.headers.get('x-ratelimit-remaining') === '0'
+    page.status === 429 ||
+    (page.status === 403 &&
+      (page.headers.get('x-ratelimit-remaining') === '0' ||
+        page.headers.has('retry-after')))
   ) {
     return new Error(
       'GitHub API rate limit reached; set GITHUB_TOKEN or add repositories later with rness add',
       { cause }
     )
   }
-  return new Error(`GitHub API answered ${page.status} for ${path}`, { cause })
+  return new Error(
+    `GitHub API answered ${page.status} for ${path}${ADD_LATER}`,
+    { cause }
+  )
 }
 
 /**
  * Every repository of the organization `owner` — or, when GitHub knows no
- * such organization, of the personal account — following the `Link` header
- * page by page. Errors are one line, each with its `cause`.
+ * such organization, the public ones of the personal account — following the
+ * `Link` header page by page, up to `MAX_PAGES`. Errors are one line, each
+ * with its `cause`.
  */
 export async function listRepositories(
   owner: string,
   options: ListRepositoriesOptions
-): Promise<OrgRepository[]> {
+): Promise<RepositoryListing> {
   const base = (options.apiBase ?? DEFAULT_GITHUB_API).replace(/\/+$/, '')
   const timeoutMs = options.timeoutMs ?? 15_000
   const headers: Record<string, string> = {
@@ -118,7 +140,7 @@ export async function listRepositories(
   ] as const
   type Kind = (typeof kinds)[number]
   const url = (k: Kind, n: number): string =>
-    `${base}${k.path}?type=${k.type}&per_page=100&page=${n}`
+    `${base}${k.path}?type=${k.type}&per_page=${PER_PAGE}&page=${n}`
   let kind: Kind = kinds[0]
   const repositories: OrgRepository[] = []
   for (let n = 1; n <= MAX_PAGES; n++) {
@@ -129,7 +151,7 @@ export async function listRepositories(
       page = await getPage(url(kind, n), headers, timeoutMs)
       if (page.status === 404) {
         throw new Error(
-          `GitHub has no organization or user named "${owner}" (or it is not visible to you)`,
+          `GitHub has no organization or user named "${owner}" (or it is not visible to you)${ADD_LATER}`,
           { cause: { status: 404, path: kind.path } }
         )
       }
@@ -150,7 +172,16 @@ export async function listRepositories(
         private: r.private,
         archived: r.archived,
       })
-    if (!NEXT.test(page.headers.get('link') ?? '')) break
+    if (!NEXT.test(page.headers.get('link') ?? ''))
+      return {
+        repositories,
+        owner: kind === kinds[0] ? 'org' : 'user',
+        truncated: false,
+      }
   }
-  return repositories
+  return {
+    repositories,
+    owner: kind === kinds[0] ? 'org' : 'user',
+    truncated: true,
+  }
 }

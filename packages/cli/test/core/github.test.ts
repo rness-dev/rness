@@ -69,13 +69,17 @@ test('follows the Link header page by page', async (t) => {
       link: '<https://api.github.com/organizations/1/repos?page=2>; rel="prev"',
     })
   })
-  const repos = await listRepositories('Acme-Corp', { apiBase: base })
-  assert.deepEqual(repos, [
-    { name: 'web', private: false, archived: false },
-    { name: 'api', private: true, archived: false },
-    { name: 'old', private: false, archived: true },
-    { name: 'docs', private: false, archived: false },
-  ])
+  const listing = await listRepositories('Acme-Corp', { apiBase: base })
+  assert.deepEqual(listing, {
+    repositories: [
+      { name: 'web', private: false, archived: false },
+      { name: 'api', private: true, archived: false },
+      { name: 'old', private: false, archived: true },
+      { name: 'docs', private: false, archived: false },
+    ],
+    owner: 'org',
+    truncated: false,
+  })
   assert.deepEqual(
     requests.map((r) => r.url),
     [1, 2, 3].map(
@@ -101,9 +105,14 @@ test('a 404 organization falls back to the personal account', async (t) => {
       return json(res, 200, [repo('dotfiles')])
     return json(res, 404, { message: 'Not Found' })
   })
-  const repos = await listRepositories('octo', { apiBase: base })
+  const listing = await listRepositories('octo', { apiBase: base })
+  assert.equal(
+    listing.owner,
+    'user',
+    'a personal account lists public repositories only'
+  )
   assert.deepEqual(
-    repos.map((r) => r.name),
+    listing.repositories.map((r) => r.name),
     ['dotfiles']
   )
   assert.deepEqual(
@@ -121,8 +130,36 @@ test('404 on both paths names the owner', async (t) => {
   )
   await assert.rejects(listRepositories('ghost', { apiBase: base }), {
     message:
-      'GitHub has no organization or user named "ghost" (or it is not visible to you)',
+      'GitHub has no organization or user named "ghost" (or it is not visible to you); add repositories later with rness add <repo>',
   })
+})
+
+test('a 404 after the first page is an error, not the personal-account fallback', async (t) => {
+  const { base, requests } = await api(t, (req, res) => {
+    if (req.url?.endsWith('&page=1'))
+      return json(res, 200, [repo('web')], {
+        link: '<https://api.github.com/organizations/1/repos?page=2>; rel="next"',
+      })
+    return json(res, 404, { message: 'Not Found' })
+  })
+  await assert.rejects(listRepositories('acme', { apiBase: base }), {
+    message:
+      'GitHub API answered 404 for /orgs/acme/repos; add repositories later with rness add <repo>',
+  })
+  assert.ok(requests.every((r) => r.url?.startsWith('/orgs/')))
+})
+
+test('the page cap stops a listing that always announces a next page', async (t) => {
+  const { base, requests } = await api(t, (req, res) => {
+    const page = new URL(req.url ?? '/', 'http://x').searchParams.get('page')
+    json(res, 200, [repo(`r${page}`)], {
+      link: '<https://api.github.com/organizations/1/repos?page=999>; rel="next"',
+    })
+  })
+  const listing = await listRepositories('acme', { apiBase: base })
+  assert.equal(requests.length, 50)
+  assert.equal(listing.repositories.length, 50)
+  assert.equal(listing.truncated, true)
 })
 
 test('401, a rate limit, and any other status are one-line errors', async (t) => {
@@ -153,16 +190,31 @@ test('401, a rate limit, and any other status are one-line errors', async (t) =>
       'GitHub API rate limit reached; set GITHUB_TOKEN or add repositories later with rness add',
   })
 
+  const rateLimitMessage =
+    'GitHub API rate limit reached; set GITHUB_TOKEN or add repositories later with rness add'
+  const { base: tooMany } = await api(t, (_req, res) => json(res, 429, {}))
+  await assert.rejects(listRepositories('acme', { apiBase: tooMany }), {
+    message: rateLimitMessage,
+  })
+  const { base: secondary } = await api(t, (_req, res) =>
+    json(res, 403, {}, { 'retry-after': '60', 'x-ratelimit-remaining': '42' })
+  )
+  await assert.rejects(listRepositories('acme', { apiBase: secondary }), {
+    message: rateLimitMessage,
+  })
+
   const { base: forbidden } = await api(t, (_req, res) =>
     json(res, 403, { message: 'Forbidden' }, { 'x-ratelimit-remaining': '42' })
   )
   await assert.rejects(listRepositories('acme', { apiBase: forbidden }), {
-    message: 'GitHub API answered 403 for /orgs/acme/repos',
+    message:
+      'GitHub API answered 403 for /orgs/acme/repos; add repositories later with rness add <repo>',
   })
 
   const { base: broken } = await api(t, (_req, res) => json(res, 502, {}))
   await assert.rejects(listRepositories('acme', { apiBase: broken }), {
-    message: 'GitHub API answered 502 for /orgs/acme/repos',
+    message:
+      'GitHub API answered 502 for /orgs/acme/repos; add repositories later with rness add <repo>',
   })
 })
 

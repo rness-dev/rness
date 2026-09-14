@@ -651,12 +651,12 @@ test('guards without a prompt: the workspace and --org are required, --dir is go
   assert.match(dir.err, /unknown option '--dir'/)
 })
 
-test('an organization name keeps its case in the URLs and rness.json', async (t) => {
+test('an organization name keeps its case in the URLs and rness.json; a spaced workspace is quoted in the hint', async (t) => {
   const remote = await makeRemoteOrg(t, 'Acme-Corp')
   await remote.addRepo('api', { 'README.md': '# api\n' })
   const cwd = await scratch(t)
   const r = await create([
-    'my-ws',
+    'my ws',
     '--org',
     'Acme-Corp',
     '--yes',
@@ -671,14 +671,15 @@ test('an organization name keeps its case in the URLs and rness.json', async (t)
     cwd,
   ])
   assert.equal(r.code, 0, r.err)
-  assert.match(r.out, /Workspace for `Acme-Corp` is ready in my-ws\/\./)
-  const m = await loadManifest(join(cwd, 'my-ws', '.rness'))
+  assert.match(r.out, /Workspace for `Acme-Corp` is ready in my ws\/\./)
+  assert.match(r.out, /npm create rness 'my ws' -- --org Acme-Corp\n/)
+  const m = await loadManifest(join(cwd, 'my ws', '.rness'))
   assert.equal(m.org, 'Acme-Corp')
   assert.deepEqual(m.repos, {
     api: { url: `${remote.host}Acme-Corp/api.git` },
   })
   assert.match(
-    await readFile(join(cwd, 'my-ws', '.rness', 'rness.json'), 'utf8'),
+    await readFile(join(cwd, 'my ws', '.rness', 'rness.json'), 'utf8'),
     /"org": "Acme-Corp"/
   )
 })
@@ -816,14 +817,16 @@ test('wizard: asks the workspace, the organization, the confirm, then picks from
   const remote = await makeRemoteOrg(t, 'acme')
   await remote.addRepo('web', { 'README.md': '# web\n' })
   await remote.addRepo('api', { 'README.md': '# api\n' })
+  await remote.addRepo('website', { 'README.md': '# website\n' })
   const { base, requests } = await githubApi(
     t,
     reposOf([
       { name: 'web' },
       { name: 'old', archived: true },
       { name: '.rness' },
+      { name: 'my_lib' },
       { name: '.github' },
-      { name: 'Website' },
+      { name: 'WebSite' },
       { name: 'api', private: true },
     ])
   )
@@ -833,7 +836,7 @@ test('wizard: asks the workspace, the organization, the confirm, then picks from
   const term = terminal({
     text: ['  ', 'taken', 'my-ws', 'Acme Inc', 'acme'],
     confirm: [true],
-    pick: [['api', 'web']],
+    pick: [['api', 'website']],
   })
   const r = await wizard(
     undefined,
@@ -852,33 +855,49 @@ test('wizard: asks the workspace, the organization, the confirm, then picks from
     'taken is not empty',
     '"Acme Inc" is not a valid GitHub organization name',
   ])
+  // A name differing from NAME only by case is offered in lowercase (GitHub
+  // names are case-insensitive); any other is shown disabled, last.
   assert.deepEqual(term.offered, [
     [
       { value: 'api', label: 'api', hint: 'private' },
       { value: 'web', label: 'web' },
+      { value: 'website', label: 'WebSite' },
+      {
+        value: '.github',
+        label: '.github',
+        hint: 'name not supported yet',
+        disabled: true,
+      },
+      {
+        value: 'my_lib',
+        label: 'my_lib',
+        hint: 'name not supported yet',
+        disabled: true,
+      },
     ],
   ])
   assert.equal(requests[0]?.headers['authorization'], undefined)
   assert.match(
     r.out,
-    /skipped {2}install \(--skip-install\)\nonly public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\nskipped {2}2 repositories whose names rness cannot declare yet\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncloned {3}org\/web\ndeclared scope web \(org\/web\)\ncommitted my-ws\/\.rness\n/
+    /^listing {2}acme repositories…\nonly public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\nnames rness cannot declare yet \(struck through\): \.github, my_lib\ncreated {2}my-ws\/\.rness \(new workspace\)\nskipped {2}install \(--skip-install\)\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncloned {3}org\/website\ndeclared scope website \(org\/website\)\ncommitted my-ws\/\.rness\n/
   )
   const root = join(cwd, 'my-ws')
   const m = await loadManifest(join(root, '.rness'))
   assert.equal(m.org, 'acme')
   assert.deepEqual(m.repos, {
     api: { url: `${remote.host}acme/api.git` },
-    web: { url: `${remote.host}acme/web.git` },
+    website: { url: `${remote.host}acme/website.git` },
   })
-  await access(join(root, 'org', 'web', 'AGENTS.md'))
+  await access(join(root, 'org', 'website', 'AGENTS.md'))
   await access(join(root, 'org', 'api', 'AGENTS.md'))
 })
 
-test('wizard: a cancelled picker exits 1; a token lists private repositories without the note', async (t) => {
+test('wizard: a cancelled picker exits 1 and writes nothing; a token lists private repositories without the note', async (t) => {
   withEnv(t, { GITHUB_TOKEN: 'ghp_test', GH_TOKEN: undefined })
   const remote = await makeRemoteOrg(t, 'acme')
   const { base, requests } = await githubApi(t, reposOf([{ name: 'web' }]))
   const term = terminal({ confirm: [true], pick: [CANCEL] })
+  const cwd = await scratch(t)
   const r = await wizard(
     'my-ws',
     {
@@ -887,12 +906,17 @@ test('wizard: a cancelled picker exits 1; a token lists private repositories wit
       pm: 'npm',
       host: remote.host,
       githubApi: base,
-      cwd: await scratch(t),
+      cwd,
     },
     term.deps
   )
   assert.equal(r.code, 1)
   assert.equal(r.err, 'cancelled\n')
+  assert.equal(r.out, 'listing  acme repositories…\n')
+  await assert.rejects(
+    access(join(cwd, 'my-ws')),
+    'a cancel before anything is written leaves no half-built workspace'
+  )
   assert.doesNotMatch(r.out, /only public repositories/)
   assert.equal(requests[0]?.headers['authorization'], 'Bearer ghp_test')
   assert.equal(term.asked.at(-1), REPOS_Q)
@@ -921,7 +945,10 @@ test('wizard: a listing that fails or is empty is a warning; the workspace is st
     term.deps
   )
   assert.equal(r.code, 0, r.err)
-  assert.equal(r.err, 'warning: GitHub API answered 500 for /orgs/acme/repos\n')
+  assert.equal(
+    r.err,
+    'warning: GitHub API answered 500 for /orgs/acme/repos; add repositories later with rness add <repo>\n'
+  )
   assert.ok(!term.asked.includes(REPOS_Q))
   assert.match(r.out, /committed my-ws\/\.rness\n/)
   await access(join(cwd, 'my-ws', 'AGENTS.md'))
@@ -947,6 +974,51 @@ test('wizard: a listing that fails or is empty is a warning; the workspace is st
   assert.equal(r2.err, 'warning: no repositories to list for acme\n')
   assert.ok(!again.asked.includes(REPOS_Q))
   assert.match(r2.out, /committed other-ws\/\.rness\n/)
+})
+
+test('wizard: a personal account lists public repositories only, token or not; the page cap is reported', async (t) => {
+  withEnv(t, { GITHUB_TOKEN: 'ghp_test', GH_TOKEN: undefined })
+  const remote = await makeRemoteOrg(t, 'octo')
+  const { base } = await githubApi(t, (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x')
+    if (url.pathname.startsWith('/orgs/')) {
+      res.writeHead(404)
+      return res.end()
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      link: '<https://api.github.com/user/1/repos?page=999>; rel="next"',
+    })
+    res.end(
+      JSON.stringify([
+        {
+          name: `repo-${url.searchParams.get('page')}`,
+          private: false,
+          archived: false,
+        },
+      ])
+    )
+  })
+  const term = terminal({ confirm: [true], pick: [[]] })
+  const r = await wizard(
+    'my-ws',
+    {
+      org: 'octo',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      githubApi: base,
+      cwd: await scratch(t),
+    },
+    term.deps
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^listing {2}octo repositories…\nonly public repositories of octo are listed; add private ones later with rness add <repo>\nlisted the first 5000 repositories of octo\ncreated {2}my-ws\/\.rness/
+  )
+  assert.doesNotMatch(r.out, /set GITHUB_TOKEN/)
+  assert.equal((term.offered[0] as unknown[]).length, 50)
 })
 
 test('wizard: joining never lists repositories; the organization manifest is authoritative', async (t) => {
@@ -976,11 +1048,20 @@ test('wizard: joining never lists repositories; the organization manifest is aut
   assert.match(r.out, /^cloned {3}my-ws\/\.rness \(joined acme\)\n/)
 })
 
-test('wizard: inside a workspace, nothing is asked', async (t) => {
+test('wizard: inside a workspace, or with an unusable workspace argument, nothing is asked', async (t) => {
   const inside = await makeWorkspace(t, { org: 'acme' })
   const term = terminal({})
   const r = await wizard(undefined, { cwd: inside }, term.deps)
   assert.equal(r.code, 1)
   assert.match(r.err, /already inside an rness workspace/)
   assert.deepEqual(term.asked, [])
+
+  const cwd = await scratch(t)
+  await mkdir(join(cwd, 'taken'))
+  await writeFile(join(cwd, 'taken', 'stuff.txt'), 'x')
+  const taken = terminal({})
+  const r2 = await wizard('taken', { cwd }, taken.deps)
+  assert.equal(r2.code, 1)
+  assert.equal(r2.err, 'taken is not empty\n')
+  assert.deepEqual(taken.asked, [], 'refused before the organization question')
 })
