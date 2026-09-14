@@ -260,6 +260,10 @@ test('a failed install after the scaffold copy is rolled back, not left dirty', 
   assert.equal(r.code, 1)
   assert.match(r.err, /bun install failed/)
   assert.match(r.err, /removed acme\/\.rness/)
+  assert.ok(
+    r.err.indexOf('bun install failed') < r.err.indexOf('removed acme/.rness'),
+    'the cause (the install failure) is reported before the consequence (the rollback)'
+  )
   await assert.rejects(access(join(cwd, 'acme', '.rness')))
 })
 

@@ -242,17 +242,18 @@ export async function createCommand(
         )
       }
     } catch (e) {
-      // Everything under `rnessDir` was written by this call; nothing of the
-      // user's is inside yet, so removing it is safe. The original error is
-      // what the outer catch reports below — this call never replaces it, so
-      // a failing `rm` is swallowed rather than thrown.
+      // Report the cause before the consequence: the original error first,
+      // then the rollback note. Everything under `rnessDir` was written by
+      // this call, so removing it is safe; a failing `rm` is swallowed
+      // rather than thrown, since it must never mask the original error.
+      reportError(e)
       await rm(rnessDir, { recursive: true, force: true }).catch(
         () => undefined
       )
       process.stderr.write(
         `removed ${shown}/.rness after the failure; fix it and retry\n`
       )
-      throw e
+      return 1
     }
 
     await init(rnessDir)
