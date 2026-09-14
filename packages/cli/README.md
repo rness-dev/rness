@@ -6,6 +6,7 @@ Not an agent — no LLM loop.
 
 ## Install
 
+    npm create rness <org>     # start a workspace for github.com/<org>, or join its .rness
     npm i -g @rness/cli        # the command is `rness`
     npx @rness/cli --help
 
@@ -14,14 +15,26 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 
 ## Commands
 
-    rness context [--scope <name>] [--json]           Resolve the context for a scope
-    rness validate                                    Check .rness/ and every generated block
-    rness sync [--scope <name>] [--check] [--pull] -y Clone repositories, write the blocks
+    rness create <org> [--dir <path>] [--repos a,b] [--pm npm|pnpm|yarn|bun] [--ssh] [--skip-install] -y
+    rness add <repo> [--scopes apps/web,packages/ui] [--ssh] -y
+    rness sync [--scope <name>] [--check] [--pull] -y
+    rness context [--scope <name>] [--json]
+    rness validate
 
-Exit codes: 0 success, 1 handled error, 2 bad usage. `RNESS_DEBUG=1` adds
-stack traces; `RNESS_NO_DELEGATE=1` skips the delegation. `sync` asks for
-confirmation in a terminal; pass `-y`/`--yes` in scripts. `--check` writes
-nothing and exits 1 when a block is out of date — use it in CI.
+`create` never runs inside a workspace. `add`, `sync` and `create` ask for
+confirmation in a terminal; pass `-y`/`--yes` in scripts. `sync --check`
+writes nothing and exits 1 when a block is out of date — use it in CI.
+
+## 0.4.0 — create, add, the shims
+
+`npm create rness <org>` starts a new workspace for `github.com/<org>` or
+joins its existing `.rness`; `rness add <repo>` clones (or adopts) a
+repository under `org/`, declares it and any `--scopes` sub-directories, then
+syncs. `create-rness` and `@rness/create` are two-file shims pinned to the
+exact same version as `@rness/cli`, so the short `npm create` commands run
+this CLI. A new workspace's scaffold ships a `pnpm-workspace.yaml`
+(`minimumReleaseAgeExclude: ['@rness/cli']`) — pnpm 12 otherwise refuses a
+version published less than 24h earlier.
 
 ## 0.3.0 — what changed for a 0.2.0 workspace
 

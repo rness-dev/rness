@@ -7,14 +7,14 @@ polyrepo. rness never runs an LLM loop and is not an agent.
 
 ## Packages
 
-| Path                    | npm                                                                    | Status        |
-| ----------------------- | ---------------------------------------------------------------------- | ------------- |
-| `packages/cli`          | `@rness/cli` — the CLI, command `rness`: `context`, `validate`, `sync` | 0.3.0         |
-| `packages/create`       | `@rness/create` — `npm create @rness <org>`                            | planned       |
-| `packages/create-rness` | `create-rness` — `npm create rness <org>`                              | name reserved |
-| `packages/mcp`          | `@rness/mcp` — MCP server                                              | planned       |
-| `plugins/claude-code`   | Claude Code plugin; this repository is its marketplace                 | planned       |
-| `templates/`, `action/` | demo apps, GitHub projection Action                                    | planned       |
+| Path                    | npm                                                                                     | Status  |
+| ----------------------- | --------------------------------------------------------------------------------------- | ------- |
+| `packages/cli`          | `@rness/cli` — the CLI, command `rness`: `create`, `add`, `sync`, `context`, `validate` | 0.4.0   |
+| `packages/create`       | `@rness/create` — `npm create @rness <org>`                                             | 0.4.0   |
+| `packages/create-rness` | `create-rness` — `npm create rness <org>`                                               | 0.4.0   |
+| `packages/mcp`          | `@rness/mcp` — MCP server                                                               | planned |
+| `plugins/claude-code`   | Claude Code plugin; this repository is its marketplace                                  | planned |
+| `templates/`, `action/` | demo apps, GitHub projection Action                                                     | planned |
 
 ## Develop
 
