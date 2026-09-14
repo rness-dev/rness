@@ -219,6 +219,73 @@ test('declares sub-scopes that extend the repository scope; missing dirs and col
   )
 })
 
+test('refuses a repository scope already pointing elsewhere, and keeps a hand-added extends', async (t) => {
+  const url = await makeBareRepo(t, 'api')
+  const taken = await makeWorkspace(t, {
+    org: 'acme',
+    dirs: ['org'],
+    scopes: {
+      other: { path: 'org/other' },
+      api: { path: 'org/other/apps/api', extends: ['other'] },
+    },
+  })
+  await assert.rejects(
+    addRepository({
+      root: taken,
+      rnessDir: join(taken, '.rness'),
+      manifest: await loadManifest(join(taken, '.rness')),
+      spec: url,
+      org: 'acme',
+      host: 'file:///unused/',
+      scopes: [],
+    }),
+    /scope "api" already points at org\/other\/apps\/api/
+  )
+  assert.equal(
+    await exists(join(taken, 'org', 'api')),
+    false,
+    'the collision is caught before anything is cloned'
+  )
+
+  const { root, rnessDir, manifest } = await ws(t)
+  const cloned = await addRepository({
+    root,
+    rnessDir,
+    manifest,
+    spec: url,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: [],
+  })
+  // What a maintainer would hand-edit into rness.json: the repository scope
+  // extends a shared parent scope.
+  const edited = {
+    ...cloned.manifest,
+    scopes: {
+      shared: { path: '.rness/shared', extends: [] },
+      api: { path: 'org/api', extends: ['shared'] },
+    },
+  }
+  const adopted = await addRepository({
+    root,
+    rnessDir,
+    manifest: edited,
+    spec: url,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: [],
+  })
+  assert.equal(adopted.action, 'adopted')
+  assert.deepEqual(adopted.manifest.scopes['api'], {
+    path: 'org/api',
+    extends: ['shared'],
+  })
+  assert.deepEqual((await loadManifest(rnessDir)).scopes['api'], {
+    path: 'org/api',
+    extends: ['shared'],
+  })
+})
+
 test('workspaceDirs lists the package directories declared in package.json#workspaces', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',

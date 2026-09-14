@@ -34,13 +34,21 @@ export async function addRepository(
   const { name, url } = parseRepoSpec(input.spec, input.org, input.host)
   const dir = join(input.root, 'org', name)
 
-  // Validate every sub-scope before touching the filesystem: a malformed
-  // request must never leave a clone behind that the manifest doesn't know
-  // about. Only the per-sub directory-existence check needs the clone (or
-  // adoption) to have happened, so it waits until after.
+  // Validate every scope before touching the filesystem: a malformed request
+  // must never leave a clone behind that the manifest doesn't know about. Only
+  // the per-sub directory-existence check needs the clone (or adoption) to have
+  // happened, so it waits until after.
+  const repoPath = `org/${name}`
+  // The repository scope gets the same protection as a sub-scope: a name
+  // already taken by another path is a collision, not something to overwrite.
+  // At the same path the entry keeps its `extends` — a hand-added shared
+  // parent scope survives every later `add` of the repository.
+  const current = input.manifest.scopes[name]
+  if (current !== undefined && current.path !== repoPath)
+    throw new Error(`scope "${name}" already points at ${current.path}`)
   const scopes: Record<string, ScopeEntry> = {
     ...input.manifest.scopes,
-    [name]: { path: `org/${name}`, extends: [] },
+    [name]: { path: repoPath, extends: current?.extends ?? [] },
   }
   const subs: { path: string; base: string }[] = []
   for (const sub of input.scopes) {

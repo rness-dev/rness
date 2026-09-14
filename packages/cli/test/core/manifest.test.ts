@@ -115,6 +115,20 @@ test('rejects genuinely malformed JSON with a prefixed error', async (t) => {
   await assert.rejects(() => loadManifest(d), /rness\.json:.*invalid JSON/)
 })
 
+test('rejects an unknown top-level key', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    repos: {},
+    scopes: {},
+    scope: { web: { path: 'org/web' } },
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  await assert.rejects(
+    () => loadManifest(d),
+    /rness\.json: unknown key "scope"/
+  )
+})
+
 test('org is optional, validated like a scope name', async (t) => {
   const withOrgDir = await fixture({
     contract: 1,

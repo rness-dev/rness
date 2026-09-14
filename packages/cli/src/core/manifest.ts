@@ -7,6 +7,9 @@ import type { Manifest, RepoEntry, ScopeEntry } from './types.ts'
 
 export const NAME = /^[a-z0-9][a-z0-9-]*$/
 
+/** Every top-level key contract 1 defines. */
+const KEYS = ['contract', 'org', 'repos', 'scopes']
+
 function fail(message: string): never {
   throw new Error(`rness.json: ${message}`)
 }
@@ -102,6 +105,11 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
   if (!isRecord(data)) fail('must be a JSON object')
   if (data.contract !== 1)
     fail(`unsupported contract: ${JSON.stringify(data.contract)} (expected 1)`)
+  // Refuse what this contract does not define: a typo (`scope`, `repo`) or a
+  // key from a later contract would otherwise be read as nothing at all.
+  for (const key of Object.keys(data)) {
+    if (!KEYS.includes(key)) fail(`unknown key ${JSON.stringify(key)}`)
+  }
   return {
     contract: 1,
     org: readOrg(data.org),
