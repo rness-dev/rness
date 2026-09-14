@@ -6,9 +6,15 @@ export {
   type ContextOptions,
 } from './commands/context.ts'
 export { validateCommand, type ValidateOptions } from './commands/validate.ts'
+export { addCommand, type AddOptions } from './commands/add.ts'
 export { parseFrontMatter, extractTitle } from './core/frontmatter.ts'
 export { collectMarkdown } from './core/collect.ts'
-export { loadManifest, NAME } from './core/manifest.ts'
+export {
+  loadManifest,
+  NAME,
+  parseRepoSpec,
+  writeManifest,
+} from './core/manifest.ts'
 export { findWorkspace } from './core/workspace.ts'
 export { resolveScope, scopeChain } from './core/scope.ts'
 export {
@@ -45,3 +51,26 @@ export {
   type CheckBlocksInput,
   type CheckBlocksResult,
 } from './core/blocks.ts'
+export {
+  addRepository,
+  workspaceDirs,
+  type AddRepositoryInput,
+  type AddRepositoryResult,
+} from './core/repos.ts'
+export { copyScaffold, type ScaffoldTokens } from './core/scaffold-copy.ts'
+export {
+  detectPackageManager,
+  isPackageManager,
+  packageManagerVersion,
+  installDependencies,
+  PACKAGE_MANAGERS,
+  type PackageManager,
+} from './core/pm.ts'
+export {
+  repoUrl,
+  probeRemote,
+  classifyProbe,
+  DEFAULT_HOST,
+  SSH_HOST,
+  type Probe,
+} from './core/remote.ts'

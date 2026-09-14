@@ -1,5 +1,6 @@
 import { Command, CommanderError, Option } from 'commander'
 
+import { type AddOptions, addCommand } from './commands/add.ts'
 import { type ContextOptions, contextCommand } from './commands/context.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
@@ -63,6 +64,24 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: SyncOptions) => {
       state.code = await syncCommand(opts)
+    })
+
+  program
+    .command('add')
+    .description(
+      'Clone (or adopt) a repository under org/ and declare it in rness.json'
+    )
+    .argument('<repo>', '<repo>, <owner>/<repo>, or a clone URL')
+    .option(
+      '--scopes <list>',
+      'comma-separated sub-directories to declare as scopes extending the repository'
+    )
+    .option('--ssh', 'use git@github.com: instead of https://github.com/')
+    .option('-y, --yes', 'do not ask for confirmation')
+    .addOption(new Option('--host <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (repo: string, opts: AddOptions) => {
+      state.code = await addCommand(repo, opts)
     })
 
   return program
