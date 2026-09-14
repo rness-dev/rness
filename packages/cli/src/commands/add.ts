@@ -3,7 +3,11 @@ import { join } from 'node:path'
 import { exists } from '../core/fs.ts'
 import { loadManifest, parseRepoSpec, resolveOrg } from '../core/manifest.ts'
 import { DEFAULT_HOST, SSH_HOST } from '../core/remote.ts'
-import { addRepository, workspaceDirs } from '../core/repos.ts'
+import {
+  type AddRepositoryResult,
+  addRepository,
+  workspaceDirs,
+} from '../core/repos.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 import { syncCommand } from './sync.ts'
@@ -21,6 +25,21 @@ export interface AddOptions {
 
 function isTty(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true
+}
+
+/** One `declared scope …` line per scope of `result` not named in `already`. */
+function printDeclared(
+  result: AddRepositoryResult,
+  already: ReadonlySet<string>
+): void {
+  for (const name of result.declared) {
+    if (already.has(name)) continue
+    const entry = result.manifest.scopes[name]
+    if (entry === undefined) continue
+    const ext =
+      entry.extends.length === 0 ? '' : `, extends ${entry.extends.join(', ')}`
+    process.stdout.write(`declared scope ${name} (${entry.path}${ext})\n`)
+  }
 }
 
 /** `rness add <repo>`: clone or adopt, declare, sync (spec 0003 §3). Returns the exit code. */
@@ -44,7 +63,7 @@ export async function addCommand(
       return 2
     }
 
-    let scopes = (opts.scopes ?? '')
+    const scopes = (opts.scopes ?? '')
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s !== '')
@@ -58,7 +77,7 @@ export async function addCommand(
         )
         return 2
       }
-      const { confirm, isCancel, multiselect } = await import('@clack/prompts')
+      const { confirm, isCancel } = await import('@clack/prompts')
       const plan = present
         ? `adopt org/${parsed.name}`
         : `clone ${parsed.url} into org/${parsed.name}`
@@ -69,23 +88,9 @@ export async function addCommand(
         process.stderr.write('cancelled\n')
         return 1
       }
-      if (scopes.length === 0 && present) {
-        const candidates = await workspaceDirs(dir)
-        if (candidates.length > 0) {
-          const picked = await multiselect({
-            message: 'Declare these workspace packages as scopes?',
-            options: candidates.map((c) => ({ value: c, label: c })),
-            required: false,
-          })
-          // `isCancel`'s guard narrows only the unique cancel symbol, not the
-          // broader `symbol` half of clack's `Value[] | symbol` return type,
-          // so an array check is what actually narrows here.
-          if (Array.isArray(picked)) scopes = picked
-        }
-      }
     }
 
-    const result = await addRepository({
+    let result = await addRepository({
       root: ws.root,
       rnessDir: ws.rnessDir,
       manifest,
@@ -97,14 +102,41 @@ export async function addCommand(
     process.stdout.write(
       `${result.action === 'cloned' ? 'cloned  ' : 'adopted '} org/${result.name}\n`
     )
-    for (const name of result.declared) {
-      const entry = result.manifest.scopes[name]
-      if (entry === undefined) continue
-      const ext =
-        entry.extends.length === 0
-          ? ''
-          : `, extends ${entry.extends.join(', ')}`
-      process.stdout.write(`declared scope ${name} (${entry.path}${ext})\n`)
+    const announced = new Set<string>()
+    printDeclared(result, announced)
+    for (const name of result.declared) announced.add(name)
+
+    // A monorepo's workspace packages are only knowable once the clone is on
+    // disk, so the offer comes after it and adds to what is already declared.
+    if (opts.yes !== true && scopes.length === 0) {
+      const candidates = await workspaceDirs(dir)
+      if (candidates.length > 0) {
+        const { isCancel, multiselect } = await import('@clack/prompts')
+        const picked = await multiselect({
+          message: 'Declare these workspace packages as scopes?',
+          options: candidates.map((c) => ({ value: c, label: c })),
+          required: false,
+        })
+        if (isCancel(picked)) {
+          process.stderr.write('cancelled\n')
+          return 1
+        }
+        // `isCancel` narrows only the unique cancel symbol, not the broader
+        // `symbol` half of clack's `Value[] | symbol` return type, so an array
+        // check is what narrows the rest.
+        if (Array.isArray(picked) && picked.length > 0) {
+          result = await addRepository({
+            root: ws.root,
+            rnessDir: ws.rnessDir,
+            manifest: result.manifest,
+            spec,
+            org,
+            host,
+            scopes: picked,
+          })
+          printDeclared(result, announced)
+        }
+      }
     }
     return syncCommand({ yes: true, cwd: ws.root })
   } catch (e) {
