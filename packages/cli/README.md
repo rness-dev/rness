@@ -49,9 +49,14 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - The listing needs no credentials. Without a `GITHUB_TOKEN` (or `GH_TOKEN`)
   only public repositories are listed — and a personal account always lists
   only its public ones; add the others later with `rness add <repo>`.
-- `rness sync` clones nothing: a catalogue repository missing from `org/` is
-  reported on one `not cloned:` line (also by `--check`, which no longer
-  fails on it). `rness sync --all` clones them all, as 0.4.0 did.
+- `rness sync` works on your clones: it writes the blocks of the repositories
+  in `org/`, never of `rness.json` as a whole. In a terminal it asks "Do you
+  want to sync as well?" with the catalogue repositories you have not cloned
+  ("Select all", or pick some); what you pick is cloned first. With `--yes`,
+  or `--check`, nothing is cloned and one `not cloned:` line names them
+  (`--check` does not fail on it). `rness sync --all` clones them all without
+  asking. A clone `rness.json` does not know gets no block and a
+  `not in rness.json:` line pointing at `rness add`.
 - A workspace pinned to 0.4.x clones every catalogue repository on sync —
   `create` runs the pinned copy's sync after joining.
 - Repository names that differ only by case are declared in lowercase;

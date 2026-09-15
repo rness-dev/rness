@@ -11,8 +11,10 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { run } from '../../src/cli.ts'
+import { type SyncOptions, syncCommand } from '../../src/commands/sync.ts'
 import { BEGIN, END } from '../../src/core/block.ts'
 import { readOrNull } from '../../src/core/fs.ts'
+import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import { capture } from '../helpers/capture.ts'
 import { commitTo, makeBareRepo } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
@@ -277,4 +279,147 @@ test('with --all, a clone failure is reported, the manifest is untouched, other 
   assert.equal(r.code, 1)
   assert.match(r.err, /org\/ghost: git clone failed: /)
   assert.match(r.out, /updated {2}AGENTS\.md/)
+})
+
+// --- in a terminal, through the Terminal seam --------------------------------
+
+const CANCEL = Symbol('cancel')
+
+interface Asked {
+  kind: 'picker' | 'confirm'
+  message: string
+  values?: string[]
+  labels?: string[]
+}
+
+/** Scripted prompts: an unexpected question fails the test. */
+function scripted(answers: { pick?: unknown; confirm?: unknown }) {
+  const asked: Asked[] = []
+  const prompts = {
+    async autocompleteMultiselect(o: {
+      message: string
+      options: { value: string; label?: string }[]
+    }) {
+      asked.push({
+        kind: 'picker',
+        message: o.message,
+        values: o.options.map((x) => x.value),
+        labels: o.options.map((x) => x.label ?? x.value),
+      })
+      if (!('pick' in answers)) throw new Error('unexpected picker')
+      return answers.pick
+    },
+    async confirm(o: { message: string }) {
+      asked.push({ kind: 'confirm', message: o.message })
+      if (!('confirm' in answers)) throw new Error('unexpected confirm')
+      return answers.confirm
+    },
+    async text() {
+      throw new Error('unexpected text prompt')
+    },
+    isCancel: (v: unknown) => v === CANCEL,
+  } as unknown as Prompts
+  const terminal: Terminal = { isTty: () => true, prompts: async () => prompts }
+  return { asked, terminal }
+}
+
+async function syncIn(opts: SyncOptions, terminal: Terminal) {
+  const c = capture()
+  const code = await syncCommand(opts, terminal)
+  c.restore()
+  return { code, out: c.out(), err: c.err() }
+}
+
+async function catalogueWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
+  const api = await makeBareRepo(t, 'api')
+  const docs = await makeBareRepo(t, 'docs')
+  return makeWorkspace(t, {
+    org: 'acme',
+    repos: { api: { url: api }, docs: { url: docs } },
+    scopes: { api: { path: 'org/api' }, docs: { path: 'org/docs' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org'],
+  })
+}
+
+test('terminal: catalogue repositories not cloned are offered; picked ones are cloned, the rest named', async (t) => {
+  const root = await catalogueWorkspace(t)
+  const { asked, terminal } = scripted({ pick: ['api'] })
+  const r = await syncIn({ cwd: root }, terminal)
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(asked, [
+    {
+      kind: 'picker',
+      message: 'Do you want to sync as well?',
+      values: ['*', 'api', 'docs'],
+      labels: ['Select all', 'api', 'docs'],
+    },
+  ])
+  assert.equal(
+    r.out,
+    'cloned   org/api\nnot cloned: docs (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n'
+  )
+  await assert.rejects(access(join(root, 'org', 'docs')))
+})
+
+test('terminal: "Select all" clones every catalogue repository that is missing', async (t) => {
+  const root = await catalogueWorkspace(t)
+  const { terminal } = scripted({ pick: ['*'] })
+  const r = await syncIn({ cwd: root }, terminal)
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^cloned {3}org\/api\ncloned {3}org\/docs\n/)
+  assert.doesNotMatch(r.out, /not cloned/)
+})
+
+test('terminal: cancelling the picker writes nothing', async (t) => {
+  const root = await catalogueWorkspace(t)
+  const { terminal } = scripted({ pick: CANCEL })
+  const r = await syncIn({ cwd: root }, terminal)
+  assert.equal(r.code, 1)
+  assert.equal(r.err, 'cancelled\n')
+  assert.equal(r.out, '')
+  assert.equal(await readOrNull(join(root, 'AGENTS.md')), null)
+  await assert.rejects(access(join(root, 'org', 'api')))
+})
+
+test('terminal: nothing to offer asks for confirmation; a clone rness.json does not know is named', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/web' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org/web', 'org/extra'],
+  })
+  const { asked, terminal } = scripted({ confirm: true })
+  const r = await syncIn({ cwd: root }, terminal)
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(
+    asked.map((a) => a.kind),
+    ['confirm']
+  )
+  assert.match(
+    r.out,
+    /^not in rness\.json: extra \(rness add <name> declares it\)\n/
+  )
+  assert.match(r.out, /updated {2}org\/web\/AGENTS\.md/)
+})
+
+test('terminal: --scope and --all skip the picker and only confirm', async (t) => {
+  const root = await catalogueWorkspace(t)
+  const scoped = scripted({ confirm: true })
+  const r = await syncIn({ cwd: root, scope: 'api' }, scoped.terminal)
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(
+    scoped.asked.map((a) => a.kind),
+    ['confirm']
+  )
+  assert.match(r.out, /not cloned: api, docs/)
+
+  const all = scripted({ confirm: true })
+  const r2 = await syncIn({ cwd: root, all: true }, all.terminal)
+  assert.equal(r2.code, 0, r2.err)
+  assert.deepEqual(
+    all.asked.map((a) => a.kind),
+    ['confirm']
+  )
+  assert.match(r2.out, /^cloned {3}org\/api\ncloned {3}org\/docs\n/)
 })

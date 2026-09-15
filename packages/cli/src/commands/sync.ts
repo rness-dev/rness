@@ -1,3 +1,4 @@
+import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { BLOCK_SIZE_WARNING, renderBlock } from '../core/block.ts'
@@ -6,6 +7,7 @@ import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
 import { ensureClaudeMd, mergeBlock } from '../core/merge.ts'
+import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -59,35 +61,82 @@ function targetsOf(
   return targets
 }
 
-async function confirmOrExit(
-  org: string,
-  all: boolean
-): Promise<number | null> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+/** The picker's "select all" entry; no repository name can take this value. */
+const SELECT_ALL = '*'
+
+/** The directories under `org/` — the user's workspace (ADR 0008). */
+async function clonesIn(root: string): Promise<Set<string>> {
+  try {
+    const entries = await readdir(join(root, 'org'), { withFileTypes: true })
+    return new Set(
+      entries
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+        .map((e) => e.name)
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+/**
+ * In a terminal: offer the catalogue repositories that are not cloned, or
+ * confirm when there are none. Returns the repositories to clone, or an exit
+ * code when the run stops here.
+ */
+async function askWhatToSync(input: {
+  org: string
+  missing: readonly string[]
+  offer: boolean
+  terminal: Terminal
+}): Promise<string[] | number> {
+  if (!input.terminal.isTty()) {
     process.stderr.write(
       'rness sync writes files; pass --yes to run without a prompt\n'
     )
     return 2
   }
-  const { confirm, isCancel } = await import('@clack/prompts')
-  const answer = await confirm({
-    message: all
-      ? `Sync workspace \`${org}\`: clone missing repositories and rewrite the rness blocks?`
-      : `Sync workspace \`${org}\`: rewrite the rness blocks?`,
-  })
-  if (isCancel(answer) || answer !== true) {
+  const p = await input.terminal.prompts()
+  const cancelled = (): number => {
     process.stderr.write('cancelled\n')
     return 1
   }
-  return null
+  if (input.offer && input.missing.length > 0) {
+    const answer = await p.autocompleteMultiselect({
+      message: 'Do you want to sync as well?',
+      options: [
+        {
+          value: SELECT_ALL,
+          label: 'Select all',
+          hint: `${input.missing.length} repositories from rness.json`,
+        },
+        ...input.missing.map((name) => ({ value: name, label: name })),
+      ],
+      required: false,
+      placeholder: 'Type to filter',
+    })
+    if (p.isCancel(answer) || !Array.isArray(answer)) return cancelled()
+    return answer.includes(SELECT_ALL)
+      ? [...input.missing]
+      : answer.filter((name) => name !== SELECT_ALL)
+  }
+  const ok = await p.confirm({
+    message: `Sync workspace \`${input.org}\`: rewrite the rness blocks of your clones?`,
+  })
+  if (p.isCancel(ok) || ok !== true) return cancelled()
+  return []
 }
 
 /**
- * `rness sync`: write every block (spec 0003 §4). `rness.json` is the
- * organization's catalogue and `org/` the user's selection of it, so a missing
- * clone is reported, not cloned — unless `--all`. Returns the exit code.
+ * `rness sync`: write the blocks of the repositories cloned in `org/` (spec
+ * 0003 §4). The clones are the workspace; `rness.json` is the organization's
+ * catalogue, so a catalogue repository that is not cloned is offered (in a
+ * terminal) or named, never cloned silently — `--all` clones them all.
+ * Returns the exit code.
  */
-export async function syncCommand(opts: SyncOptions): Promise<number> {
+export async function syncCommand(
+  opts: SyncOptions,
+  terminal: Terminal = defaultTerminal
+): Promise<number> {
   const cwd = opts.cwd ?? process.cwd()
   const check = opts.check === true
   try {
@@ -102,23 +151,34 @@ export async function syncCommand(opts: SyncOptions): Promise<number> {
       process.stderr.write(`unknown scope: ${opts.scope}\n`)
       return 1
     }
+
+    const clones = await clonesIn(ws.root)
+    const missing = Object.keys(manifest.repos).filter((n) => !clones.has(n))
+    let toClone = new Set<string>(opts.all === true && !check ? missing : [])
     if (!check && opts.yes !== true) {
-      const refused = await confirmOrExit(org, opts.all === true)
-      if (refused !== null) return refused
+      const answer = await askWhatToSync({
+        org,
+        missing,
+        // `--all` already answers; `--scope` is about one block, not the workspace.
+        offer: opts.all !== true && opts.scope === undefined,
+        terminal,
+      })
+      if (typeof answer === 'number') return answer
+      if (opts.all !== true) toClone = new Set(answer)
     }
 
     const lines: string[] = []
     const problems: string[] = []
 
     try {
-      // 1. Repositories: clone what is missing only with --all; pull only on
-      // request, only clean trees.
+      // 1. Repositories: clone only what was asked for; pull only on request,
+      // only clean trees.
       const notCloned = new Set<string>()
       for (const [name, repo] of Object.entries(manifest.repos)) {
         const dir = join(ws.root, 'org', name)
         const label = `org/${name}`
         if (!(await exists(dir))) {
-          if (check || opts.all !== true) {
+          if (!toClone.has(name)) {
             notCloned.add(name)
             continue
           }
@@ -149,6 +209,18 @@ export async function syncCommand(opts: SyncOptions): Promise<number> {
       if (notCloned.size > 0)
         lines.push(
           `not cloned: ${[...notCloned].join(', ')} (rness add <name>, or rness sync --all)`
+        )
+      // A clone the catalogue does not know gets no block: no scope declares
+      // its rules. Say how to bring it in rather than skipping it silently.
+      const scoped = new Set(
+        Object.values(manifest.scopes).map((s) => s.path.split('/')[1])
+      )
+      const undeclared = [...clones].filter(
+        (n) => !Object.hasOwn(manifest.repos, n) && !scoped.has(n)
+      )
+      if (undeclared.length > 0)
+        lines.push(
+          `not in rness.json: ${undeclared.join(', ')} (rness add <name> declares it)`
         )
 
       // 2. Blocks — only where repositories live; a standalone context checkout has no org/.

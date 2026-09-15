@@ -4,13 +4,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
-import type {
-  autocompleteMultiselect,
-  confirm,
-  isCancel,
-  text,
-} from '@clack/prompts'
-
 import { readPinnedCli } from '../core/delegate.ts'
 import { exists } from '../core/fs.ts'
 import { clone, commitAll, init } from '../core/git.ts'
@@ -38,6 +31,11 @@ import {
 import { DEFAULT_HOST, SSH_HOST, probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { copyScaffold } from '../core/scaffold-copy.ts'
+import {
+  type Prompts,
+  type Terminal,
+  defaultTerminal,
+} from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -65,25 +63,12 @@ export interface CreateOptions {
   githubApi?: string
 }
 
-/** The `@clack/prompts` functions create uses. */
-export interface Prompts {
-  text: typeof text
-  confirm: typeof confirm
-  autocompleteMultiselect: typeof autocompleteMultiselect
-  isCancel: typeof isCancel
-}
+export type { Prompts }
 
 /** What create needs from the terminal; tests replace it with scripted answers. */
-export interface CreateDeps {
-  isTty(): boolean
-  prompts(): Promise<Prompts>
-}
+export type CreateDeps = Terminal
 
-const defaultDeps: CreateDeps = {
-  isTty: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
-  // Lazy: the prompt library stays off every non-interactive path.
-  prompts: () => import('@clack/prompts'),
-}
+const defaultDeps: CreateDeps = defaultTerminal
 
 async function isEmptyDir(dir: string): Promise<boolean> {
   return (await readdir(dir)).length === 0
