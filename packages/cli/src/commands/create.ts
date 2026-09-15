@@ -481,7 +481,7 @@ export async function createCommand(
     process.stdout.write(
       joining
         ? `found    ${org}/.rness — joining\n`
-        : `not found ${org}/.rness — starting a new workspace\n`
+        : `not found ${org}/.rness (or not visible to you) — starting a new workspace\n`
     )
 
     // Joining: the catalogue is read from a clone staged outside the target,
