@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
-import { readPinnedCli } from '../core/delegate.ts'
 import { exists } from '../core/fs.ts'
 import { clone, commitAll, init } from '../core/git.ts'
 import {
@@ -20,6 +19,7 @@ import {
   parseRepoSpec,
   writeManifest,
 } from '../core/manifest.ts'
+import { syncPinned } from '../core/pinned.ts'
 import {
   PACKAGE_MANAGERS,
   type PackageManager,
@@ -351,42 +351,6 @@ async function placeContext(
   }
 }
 
-/** Run `sync --yes` through the copy installed in `.rness/` when there is one, else in place. */
-async function syncPinned(root: string, shown: string): Promise<number> {
-  const rnessDir = join(root, '.rness')
-  const installed = await readPinnedCli(rnessDir)
-  if (installed === null) return syncCommand({ yes: true, cwd: root })
-  // Installed but unusable: the launcher's own code must never stand in for a
-  // pinned copy (spec 0003 §2.2), so say what is missing and stop.
-  const pinned = join(installed.dir, ...installed.bin.split('/'))
-  if (!(await exists(pinned))) {
-    process.stderr.write(
-      `@rness/cli in ${shown}/.rness is not installed correctly (missing ${installed.bin}); reinstall in .rness/\n`
-    )
-    return 1
-  }
-  try {
-    const { stdout, stderr } = await execFileP(
-      process.execPath,
-      [pinned, 'sync', '--yes'],
-      {
-        cwd: root,
-        maxBuffer: 16 * 1024 * 1024,
-      }
-    )
-    process.stdout.write(stdout)
-    if (stderr !== '') process.stderr.write(stderr)
-    return 0
-  } catch (e) {
-    const err = e as { code?: number; stdout?: string; stderr?: string }
-    if (err.stdout !== undefined && err.stdout !== '')
-      process.stdout.write(err.stdout)
-    if (err.stderr !== undefined && err.stderr !== '')
-      process.stderr.write(err.stderr)
-    return typeof err.code === 'number' ? err.code : 1
-  }
-}
-
 /**
  * `rness create`: join the organization's `.rness` or start a new one in
  * `./<org>` (spec 0003 §2.1). `rness.json` is the organization's catalogue;
@@ -583,7 +547,9 @@ export async function createCommand(
         host,
         specs,
       })
-      const code = await syncPinned(root, shown)
+      const code = await syncPinned(root, shown, () =>
+        syncCommand({ yes: true, cwd: root })
+      )
       if (code !== 0) return code
       return failures.length > 0 ? 1 : 0
     }
@@ -649,7 +615,9 @@ export async function createCommand(
       )
     }
 
-    const code = await syncPinned(root, shown)
+    const code = await syncPinned(root, shown, () =>
+      syncCommand({ yes: true, cwd: root })
+    )
     if (code !== 0) return code
 
     const gh = await ghAvailable()
