@@ -4,6 +4,7 @@ import { join, posix, sep } from 'node:path'
 import { exists } from './fs.ts'
 import { clone, originUrl } from './git.ts'
 import { NAME, parseRepoSpec, writeManifest } from './manifest.ts'
+import type { GitCredentials } from './provider.ts'
 import type { Manifest, ScopeEntry } from './types.ts'
 
 export interface AddRepositoryInput {
@@ -16,6 +17,8 @@ export interface AddRepositoryInput {
   host: string
   /** Sub-scopes relative to the repository (`apps/web`); each becomes scope `<basename>` extending `<repo>`. */
   scopes: readonly string[]
+  /** HTTPS credentials for the URL the spec resolves to, when there are any. */
+  credentialsFor?: (url: string) => GitCredentials | null
 }
 
 export interface AddRepositoryResult {
@@ -78,7 +81,7 @@ export async function addRepository(
       throw new Error(`org/${name} is a clone of ${origin}, not ${url}`)
     action = 'adopted'
   } else {
-    await clone(url, dir)
+    await clone(url, dir, input.credentialsFor?.(url) ?? null)
     action = 'cloned'
   }
 

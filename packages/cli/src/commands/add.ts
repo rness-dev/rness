@@ -2,8 +2,10 @@ import { join } from 'node:path'
 
 import type { CommandDeps } from '../core/deps.ts'
 import { exists } from '../core/fs.ts'
+import { githubProvider } from '../core/github-oauth-provider.ts'
 import { loadManifest, parseRepoSpec, resolveOrg } from '../core/manifest.ts'
 import { step } from '../core/progress.ts'
+import type { GitCredentials } from '../core/provider.ts'
 import {
   type AddRepositoryResult,
   addRepository,
@@ -69,6 +71,9 @@ export async function addCommand(
 ): Promise<number> {
   const terminal = deps.terminal ?? defaultTerminal
   const transport = deps.transport ?? defaultTransport
+  let provider = deps.provider
+  const credentialsFor = async (url: string): Promise<GitCredentials | null> =>
+    (provider ??= await githubProvider()).credentialsFor(url)
   const cwd = opts.cwd ?? process.cwd()
   if (opts.ssh === true && opts.https === true) {
     process.stderr.write('--ssh and --https cannot be combined\n')
@@ -152,6 +157,7 @@ export async function addCommand(
       }
     }
 
+    const credentials = await credentialsFor(parsed.url)
     let result = await step(
       {
         label: `${present ? 'adopting' : 'cloning '} org/${parsed.name}`,
@@ -166,6 +172,7 @@ export async function addCommand(
           org,
           host,
           scopes,
+          credentialsFor: () => credentials,
         })
     )
     process.stdout.write(`${status(result.action, `org/${result.name}`)}\n`)
@@ -200,6 +207,7 @@ export async function addCommand(
             org,
             host,
             scopes: picked,
+            credentialsFor: () => credentials,
           })
           printDeclared(result, announced)
         }

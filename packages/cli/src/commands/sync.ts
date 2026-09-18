@@ -10,9 +10,11 @@ import { assembleContext } from '../core/context.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
+import { githubProvider } from '../core/github-oauth-provider.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
 import { ensureClaudeMd, findBlock, mergeBlock } from '../core/merge.ts'
 import { step } from '../core/progress.ts'
+import type { GitCredentials } from '../core/provider.ts'
 import { status, warn } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
@@ -152,6 +154,10 @@ export async function syncCommand(
 ): Promise<number> {
   const terminal = deps.terminal ?? defaultTerminal
   const transport = deps.transport ?? defaultTransport
+  // Only a clone or a pull needs it, and it reads the stored login.
+  let provider = deps.provider
+  const credentialsFor = async (url: string): Promise<GitCredentials | null> =>
+    (provider ??= await githubProvider()).credentialsFor(url)
   const cwd = opts.cwd ?? process.cwd()
   const check = opts.check === true
   try {
@@ -216,8 +222,9 @@ export async function syncCommand(
             continue
           }
           try {
+            const credentials = await credentialsFor(repo.url)
             await step({ label: `cloning  ${label}`, animate: false }, () =>
-              clone(repo.url, dir)
+              clone(repo.url, dir, credentials)
             )
             lines.push(status('cloned', `${label}`))
           } catch (e) {
@@ -231,8 +238,9 @@ export async function syncCommand(
               lines.push(status('skipped', `${label} (working tree not clean)`))
               continue
             }
+            const credentials = await credentialsFor(repo.url)
             await step({ label: `pulling  ${label}`, animate: false }, () =>
-              pullFastForward(dir)
+              pullFastForward(dir, credentials)
             )
             lines.push(status('pulled', `${label}`))
           } catch (e) {

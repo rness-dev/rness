@@ -26,7 +26,7 @@ import {
   packageManagerVersion,
 } from '../core/pm.ts'
 import { step } from '../core/progress.ts'
-import type { GitProvider } from '../core/provider.ts'
+import type { GitCredentials, GitProvider } from '../core/provider.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { copyScaffold } from '../core/scaffold-copy.ts'
@@ -286,6 +286,7 @@ async function cloneSelection(input: {
   org: string
   host: string
   specs: readonly string[]
+  provider: GitProvider
 }): Promise<Failure[]> {
   let manifest = input.manifest
   const failures: Failure[] = []
@@ -300,7 +301,11 @@ async function cloneSelection(input: {
       const entry = name === null ? undefined : manifest.repos[name]
       if (name !== null && entry !== undefined) {
         await step({ label: `cloning  org/${name}`, animate: false }, () =>
-          clone(entry.url, join(input.root, 'org', name))
+          clone(
+            entry.url,
+            join(input.root, 'org', name),
+            input.provider.credentialsFor(entry.url)
+          )
         )
         process.stdout.write(`${status('cloned', `org/${name}`)}\n`)
         continue
@@ -313,6 +318,7 @@ async function cloneSelection(input: {
         org: input.org,
         host: input.host,
         scopes: [],
+        credentialsFor: (url) => input.provider.credentialsFor(url),
       })
       manifest = result.manifest
       process.stdout.write(
@@ -335,13 +341,14 @@ async function cloneSelection(input: {
 async function placeContext(
   staged: string,
   rnessDir: string,
-  url: string
+  url: string,
+  credentials: GitCredentials | null
 ): Promise<void> {
   try {
     await rename(staged, rnessDir)
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e
-    await clone(url, rnessDir)
+    await clone(url, rnessDir, credentials)
   }
 }
 
@@ -462,7 +469,12 @@ export async function createCommand(
 
     const host = await chooseHost()
     const contextUrl = repoUrl(host, org, '.rness')
-    const probe = await probeRemote(contextUrl)
+    const gitProvider = await getProvider()
+    const probe = await probeRemote(
+      contextUrl,
+      undefined,
+      gitProvider.credentialsFor(contextUrl)
+    )
     if (probe.kind === 'error') {
       process.stderr.write(`${probe.message}\n`)
       return 1
@@ -484,7 +496,7 @@ export async function createCommand(
     if (joining) {
       const stagedDir = await staged()
       await step({ label: `cloning  ${org}/.rness`, animate: false }, () =>
-        clone(contextUrl, stagedDir)
+        clone(contextUrl, stagedDir, gitProvider.credentialsFor(contextUrl))
       )
       // Validates that the clone is a workspace context: throws on a
       // malformed or absent rness.json.
@@ -511,7 +523,7 @@ export async function createCommand(
     else if (interactive) {
       const result = await pickRepositories({
         org,
-        provider: await getProvider(),
+        provider: gitProvider,
         prompts: await prompts(),
         catalogue: catalogue.repos,
       })
@@ -534,7 +546,12 @@ export async function createCommand(
 
     if (joining) {
       await mkdir(root, { recursive: true })
-      await placeContext(await staged(), rnessDir, contextUrl)
+      await placeContext(
+        await staged(),
+        rnessDir,
+        contextUrl,
+        gitProvider.credentialsFor(contextUrl)
+      )
       process.stdout.write(
         `${status('cloned', `${shown}/.rness (joined ${org})`)}\n`
       )
@@ -559,6 +576,7 @@ export async function createCommand(
         org,
         host,
         specs,
+        provider: gitProvider,
       })
       const code = await step(
         { label: 'syncing  the blocks', animate: false },
@@ -627,6 +645,7 @@ export async function createCommand(
       org,
       host,
       specs,
+      provider: gitProvider,
     })
 
     await init(rnessDir)

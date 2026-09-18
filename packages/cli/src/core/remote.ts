@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 
-import { positional } from './git.ts'
+import { positional, withCredentials } from './git.ts'
+import type { GitCredentials } from './provider.ts'
 
 export const DEFAULT_HOST = 'https://github.com/'
 export const SSH_HOST = 'git@github.com:'
@@ -72,16 +73,22 @@ const STDERR_FLUSH_MS = 200
  */
 export async function probeRemote(
   url: string,
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
+  credentials?: GitCredentials | null
 ): Promise<Probe> {
   // Before anything spawns, and outside the promise: a url git would read as
   // an option must fail loudly rather than reach the command line.
   positional(url, 'repository url')
   return new Promise<Probe>((resolve) => {
-    const child = spawn('git', ['ls-remote', '--exit-code', url, 'HEAD'], {
-      stdio: ['ignore', 'ignore', 'pipe'],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    })
+    const auth = withCredentials(credentials)
+    const child = spawn(
+      'git',
+      [...auth.args, 'ls-remote', '--exit-code', url, 'HEAD'],
+      {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        env: { ...process.env, ...auth.env, GIT_TERMINAL_PROMPT: '0' },
+      }
+    )
     const chunks: string[] = []
     child.stderr?.setEncoding('utf8')
     child.stderr?.on('data', (chunk: string) => chunks.push(chunk))

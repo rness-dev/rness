@@ -2,14 +2,49 @@ import { execFile } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
+import type { GitCredentials } from './provider.ts'
+
 const execFileP = promisify(execFile)
 
-async function git(args: readonly string[], cwd?: string): Promise<string> {
+// Answers git's `get` with what the environment holds. The token is never in
+// an argument, a URL or a config file: only in the child's environment.
+const ENV_HELPER =
+  '!f() { test "$1" = get && printf "username=%s\\npassword=%s\\n" "$RNESS_GIT_USERNAME" "$RNESS_GIT_TOKEN"; }; f'
+
+/**
+ * How one git command is given credentials (spec 0004 §4): the helpers git
+ * would otherwise consult are cleared, and one that lives for this command
+ * only reads the child's environment. Nothing when there are none.
+ */
+export function withCredentials(
+  credentials: GitCredentials | null | undefined
+): {
+  args: string[]
+  env: Record<string, string>
+} {
+  if (credentials === null || credentials === undefined)
+    return { args: [], env: {} }
+  return {
+    args: ['-c', 'credential.helper=', '-c', `credential.helper=${ENV_HELPER}`],
+    env: {
+      RNESS_GIT_USERNAME: credentials.username,
+      RNESS_GIT_TOKEN: credentials.password,
+    },
+  }
+}
+
+async function git(
+  args: readonly string[],
+  cwd?: string,
+  credentials?: GitCredentials | null
+): Promise<string> {
+  const auth = withCredentials(credentials)
   try {
-    const { stdout } = await execFileP('git', [...args], {
+    const { stdout } = await execFileP('git', [...auth.args, ...args], {
       ...(cwd === undefined ? {} : { cwd }),
       env: {
         ...process.env,
+        ...auth.env,
         GIT_TERMINAL_PROMPT: '0',
         // Pin the command to `cwd` itself: without a ceiling, git walks up and
         // a plain directory under `org/` would report — or be pulled into —
@@ -44,14 +79,22 @@ export function positional(value: string, what: string): string {
 }
 
 /** `git clone <url> <dir>`; `dir` must not exist. */
-export async function clone(url: string, dir: string): Promise<void> {
-  await git([
-    'clone',
-    '--quiet',
-    '--',
-    positional(url, 'repository url'),
-    positional(dir, 'directory'),
-  ])
+export async function clone(
+  url: string,
+  dir: string,
+  credentials?: GitCredentials | null
+): Promise<void> {
+  await git(
+    [
+      'clone',
+      '--quiet',
+      '--',
+      positional(url, 'repository url'),
+      positional(dir, 'directory'),
+    ],
+    undefined,
+    credentials
+  )
 }
 
 /**
@@ -78,8 +121,11 @@ export async function isClean(
   )
 }
 
-export async function pullFastForward(dir: string): Promise<void> {
-  await git(['pull', '--ff-only', '--quiet'], dir)
+export async function pullFastForward(
+  dir: string,
+  credentials?: GitCredentials | null
+): Promise<void> {
+  await git(['pull', '--ff-only', '--quiet'], dir, credentials)
 }
 
 /** The `origin` URL, or null when `dir` is not a clone with an origin. */
