@@ -809,7 +809,7 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
   // repositories (.rness, .github, …) and archived ones are not listed.
   assert.deepEqual(term.offered, [
     [
-      { value: 'api', label: 'api', hint: 'private' },
+      { value: 'api', label: 'api 🔒' },
       { value: 'web', label: 'web' },
       { value: 'website', label: 'WebSite' },
       {
@@ -875,7 +875,7 @@ test('wizard, join: the catalogue is pre-selected and completed; unpicked stays 
       { value: 'api', label: 'api', hint: 'in .rness' },
       { value: 'other', label: 'other' },
       { value: 'secret', label: 'secret', hint: 'in .rness' },
-      { value: 'web', label: 'web', hint: 'private · in .rness' },
+      { value: 'web', label: 'web 🔒', hint: 'in .rness' },
     ],
   ])
   assert.deepEqual(term.preselected, [['api', 'web', 'secret']])
@@ -1271,7 +1271,7 @@ test('logged in: the organization is picked from a list, access is stated, priva
   assert.deepEqual(term.offered[0], ['acme', 'other-org', 'octo', ''])
   assert.deepEqual(term.offered[1], [
     { value: 'site', label: 'site' },
-    { value: 'vault', label: 'vault', hint: 'private' },
+    { value: 'vault', label: 'vault 🔒' },
   ])
   assert.match(
     r.out,

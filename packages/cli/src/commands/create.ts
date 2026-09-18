@@ -30,7 +30,7 @@ import type { GitCredentials, GitProvider } from '../core/provider.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { copyScaffold } from '../core/scaffold-copy.ts'
-import { banner, status, warn } from '../core/style.ts'
+import { PRIVATE_MARK, banner, status, unicode, warn } from '../core/style.ts'
 import {
   type Prompts,
   type Terminal,
@@ -219,8 +219,12 @@ async function pickRepositories(input: {
   const candidates = listed.filter(
     (r) => !r.archived && !r.name.startsWith('.')
   )
+  // A private repository wears a padlock next to its name — visible on every
+  // line, where a hint shows on the focused one only. A terminal that cannot
+  // draw it falls back to the word, as a hint.
+  const padlock = unicode()
   const hint = (isPrivate: boolean, catalogued: boolean): string | null =>
-    [isPrivate ? 'private' : null, catalogued ? 'in .rness' : null]
+    [isPrivate && !padlock ? 'private' : null, catalogued ? 'in .rness' : null]
       .filter((h) => h !== null)
       .join(' · ') || null
   const declarable = candidates
@@ -228,7 +232,8 @@ async function pickRepositories(input: {
     .map((r) => {
       const value = r.name.toLowerCase()
       const h = hint(r.private, inCatalogue(value))
-      return { value, label: r.name, ...(h === null ? {} : { hint: h }) }
+      const label = r.private && padlock ? `${r.name} ${PRIVATE_MARK}` : r.name
+      return { value, label, ...(h === null ? {} : { hint: h }) }
     })
   const offered = new Set(declarable.map((o) => o.value))
   for (const name of Object.keys(input.catalogue)) {

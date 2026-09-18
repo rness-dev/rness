@@ -33,9 +33,9 @@
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
-    "@clack/prompts": "1.8.0",
+    "@clack/prompts": "1.8.1",
     "commander": "15.0.0",
-    "yaml": "2.9.0"
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/node": "24.13.4",

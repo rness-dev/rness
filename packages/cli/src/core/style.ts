@@ -82,6 +82,22 @@ export function bold(
   return styleText('bold', text, { stream, validateStream: true })
 }
 
+/**
+ * Can this terminal draw characters beyond ASCII? The rule `@clack/prompts`
+ * follows for its own symbols: everywhere but the Linux console and the
+ * legacy Windows console.
+ */
+export function unicode(): boolean {
+  if (process.platform !== 'win32') return process.env['TERM'] !== 'linux'
+  return (
+    process.env['WT_SESSION'] !== undefined ||
+    process.env['TERM_PROGRAM'] === 'vscode'
+  )
+}
+
+/** A private repository, said with a padlock; a public one says nothing. */
+export const PRIVATE_MARK = '🔒'
+
 /** `warning: …` for stderr, the prefix painted. */
 export function warn(text: string): string {
   return `${paint('warn', 'warning:', process.stderr)} ${text}`

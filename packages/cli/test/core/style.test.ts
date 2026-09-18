@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { type TestContext, test } from 'node:test'
 
-import { banner, paint, status, toneOf } from '../../src/core/style.ts'
+import { banner, paint, status, toneOf, unicode } from '../../src/core/style.ts'
 
 const ESC = `${String.fromCharCode(27)}[`
 
@@ -73,4 +73,12 @@ test('the banner: nothing off a terminal, a gradient only in true colour', () =>
   assert.match(plain, /rness v0\.5\.0/)
   assert.ok(!plain.includes(`${ESC}38;2;`), 'no 24-bit escape at 8 bits')
   assert.ok(banner('0.5.0', terminal(24)).includes(`${ESC}38;2;`))
+})
+
+test('unicode: everywhere but the Linux console (and a legacy Windows one)', (t) => {
+  if (process.platform === 'win32') return
+  withEnv(t, 'TERM', 'xterm-256color')
+  assert.equal(unicode(), true)
+  process.env['TERM'] = 'linux'
+  assert.equal(unicode(), false)
 })
