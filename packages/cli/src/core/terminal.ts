@@ -3,6 +3,7 @@ import type {
   confirm,
   isCancel,
   multiselect,
+  select,
   text,
 } from '@clack/prompts'
 
@@ -11,6 +12,7 @@ export interface Prompts {
   text: typeof text
   confirm: typeof confirm
   multiselect: typeof multiselect
+  select: typeof select
   autocompleteMultiselect: typeof autocompleteMultiselect
   isCancel: typeof isCancel
 }

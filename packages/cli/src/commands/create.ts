@@ -49,6 +49,7 @@ import type { Manifest } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 import { VERSION } from '../version.ts'
+import { loginCommand, revokeUrl } from './login.ts'
 import { syncCommand } from './sync.ts'
 
 const execFileP = promisify(execFile)
@@ -168,6 +169,20 @@ async function pickRepositories(input: {
   catalogue: Readonly<Record<string, unknown>>
 }): Promise<{ picked: string[]; prompted: boolean } | null> {
   const { org, prompts, provider } = input
+  // Logged in: say as whom rness looks at the organization, and when the
+  // organization hides its private repositories from OAuth apps (spec 0004 §3).
+  if (provider.authenticated) {
+    const access = await provider.organizationAccess(org)
+    const login = (await provider.identity())?.login
+    if (access === 'member')
+      process.stdout.write(
+        `${status('member', `${org}${login === undefined ? '' : ` (as ${login})`}`)}\n`
+      )
+    else if (access === 'restricted')
+      process.stderr.write(
+        `${warn(`${org} restricts OAuth apps, so its private repositories are hidden from rness`)}\nask an owner to approve it: ${revokeUrl()}\n`
+      )
+  }
   process.stdout.write(`${status('listing', `${org} repositories…`)}\n`)
   let listed: { name: string; private: boolean; archived: boolean }[] = []
   let failed = false
@@ -180,7 +195,7 @@ async function pickRepositories(input: {
       )
     else if (!provider.authenticated)
       process.stdout.write(
-        'only public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\n'
+        'only public repositories are listed; rness login lists the private ones you can access\n'
       )
     if (listing.truncated)
       process.stdout.write(
@@ -352,6 +367,39 @@ async function placeContext(
   }
 }
 
+const OTHER = Symbol('another organization')
+
+/**
+ * Logged in, the organization is picked from the user's own and their
+ * account rather than typed. `OTHER` leads to the text prompt — as does
+ * having nothing to offer; null is a cancel.
+ */
+async function chooseOrganization(
+  provider: GitProvider,
+  prompts: Prompts
+): Promise<string | typeof OTHER | null> {
+  if (!provider.authenticated) return OTHER
+  let names: string[]
+  try {
+    const self = (await provider.identity())?.login
+    names = (await provider.listOrganizations()).map((o) => o.login)
+    if (self !== undefined) names.push(self)
+  } catch {
+    return OTHER
+  }
+  if (names.length === 0) return OTHER
+  const answer = await prompts.select<string>({
+    message: 'Which GitHub organization?',
+    options: [
+      ...names.map((name) => ({ value: name, label: name })),
+      { value: '', label: 'another one…' },
+    ],
+  })
+  if (prompts.isCancel(answer)) return null
+  if (typeof answer !== 'string' || answer === '') return OTHER
+  return answer
+}
+
 /**
  * `rness create`: join the organization's `.rness` or start a new one in
  * `./<org>` (spec 0003 §2.1). `rness.json` is the organization's catalogue;
@@ -429,13 +477,44 @@ export async function createCommand(
 
     let prompted = false
     let org = opts.org
-    if (org === undefined) {
-      if (!interactive) {
-        process.stderr.write(
-          'rness create needs --org <name> without a prompt\n'
+    if (org === undefined && !interactive) {
+      process.stderr.write('rness create needs --org <name> without a prompt\n')
+      return 2
+    }
+    // Anonymous, and about to list repositories: offer the login first — it is
+    // what lists the private ones, and the user's organizations to pick from.
+    if (
+      interactive &&
+      opts.repos === undefined &&
+      !(await getProvider()).authenticated
+    ) {
+      const p = await prompts()
+      const login = await p.confirm({
+        message: 'Log in to GitHub to list private repositories?',
+        initialValue: true,
+      })
+      if (p.isCancel(login)) return cancelled()
+      if (login === true) {
+        const code = await loginCommand(
+          opts.githubApi === undefined ? {} : { githubApi: opts.githubApi },
+          { terminal }
         )
-        return 2
+        if (code !== 0) return code
+        provider = await githubProvider(opts.githubApi)
       }
+    }
+    if (org === undefined) {
+      const chosen = await chooseOrganization(
+        await getProvider(),
+        await prompts()
+      )
+      if (chosen === null) return cancelled()
+      if (chosen !== OTHER) {
+        org = chosen
+        prompted = true
+      }
+    }
+    if (org === undefined) {
       const p = await prompts()
       const answer = await p.text({
         message: 'What is your GitHub organization named?',

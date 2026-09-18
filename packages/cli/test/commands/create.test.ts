@@ -30,6 +30,7 @@ import {
 } from '../../src/commands/create.ts'
 import { originUrl } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
+import type { GitProvider } from '../../src/core/provider.ts'
 import {
   INSTEAD_OF_LINES,
   type Transport,
@@ -37,6 +38,8 @@ import {
 } from '../../src/core/transport.ts'
 import { VERSION } from '../../src/version.ts'
 import { capture } from '../helpers/capture.ts'
+import { fakeGithub, withEnv as withTestEnv } from '../helpers/fake-github.ts'
+import { fakeProvider } from '../helpers/provider.ts'
 import { makeRemoteOrg } from '../helpers/remote-org.ts'
 import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
@@ -673,6 +676,14 @@ interface Script {
   text?: string[]
   confirm?: (boolean | typeof CANCEL)[]
   pick?: (string[] | typeof CANCEL)[]
+  /** "Which GitHub organization?" answers. */
+  select?: string[]
+  /**
+   * The answer to "Log in to GitHub…?". Left out, the question is declined
+   * without being recorded: every wizard test that is not about the login
+   * reads as it did before there was one.
+   */
+  login?: boolean
 }
 
 /**
@@ -705,8 +716,15 @@ function terminal(script: Script) {
       }
     },
     async confirm(opts: Parameters<Prompts['confirm']>[0]) {
+      if (opts.message === LOGIN_Q && script.login === undefined) return false
       asked.push(opts.message)
+      if (opts.message === LOGIN_Q) return script.login
       return next(script.confirm, opts.message)
+    },
+    async select(opts: { message: string; options: { value: string }[] }) {
+      asked.push(opts.message)
+      offered.push(opts.options.map((o) => o.value))
+      return next(script.select, opts.message)
     },
     async autocompleteMultiselect(opts: {
       message: string
@@ -727,13 +745,15 @@ function terminal(script: Script) {
 async function wizard(
   opts: Parameters<typeof createCommand>[0],
   deps: CreateDeps,
-  transport?: Transport
+  transport?: Transport,
+  provider?: GitProvider
 ) {
   const c = capture()
   try {
     const code = await createCommand(opts, {
       terminal: deps,
       ...(transport === undefined ? {} : { transport }),
+      ...(provider === undefined ? {} : { provider }),
     })
     return { code, out: c.out(), err: c.err() }
   } finally {
@@ -746,9 +766,10 @@ async function stagedJoins(): Promise<string[]> {
 }
 
 const ORG_Q = 'What is your GitHub organization named?'
+const LOGIN_Q = 'Log in to GitHub to list private repositories?'
 const REPOS_Q = 'Which repositories do you want in your workspace?'
 const NO_TOKEN_NOTE =
-  'only public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\n'
+  'only public repositories are listed; rness login lists the private ones you can access\n'
 
 test('wizard, new: the organization, then the listed repositories; nothing pre-selected', async (t) => {
   withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
@@ -1219,4 +1240,194 @@ test('join of an SSH workspace without SSH access stops before anything is writt
   assert.equal(r3.err, expected)
   assert.deepEqual(denied.calls, [{ interactive: false }])
   await assert.rejects(access(join(cwd3, 'acme')))
+})
+
+// --- logged in to GitHub (spec 0004) -----------------------------------------
+
+const ORG_LIST_Q = 'Which GitHub organization?'
+
+test('logged in: the organization is picked from a list, access is stated, private repositories are listed and cloned with the login', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('vault', { 'README.md': '# vault\n' })
+  const gh = fakeProvider({
+    login: 'octo',
+    organizations: ['acme', 'other-org'],
+    access: 'member',
+    repositories: [
+      { name: 'vault', private: true, archived: false },
+      { name: 'site', private: false, archived: false },
+    ],
+  })
+  const cwd = await scratch(t)
+  const term = terminal({ select: ['acme'], pick: [['vault']] })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    gh.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [ORG_LIST_Q, REPOS_Q], 'no login question')
+  assert.deepEqual(term.offered[0], ['acme', 'other-org', 'octo', ''])
+  assert.deepEqual(term.offered[1], [
+    { value: 'site', label: 'site' },
+    { value: 'vault', label: 'vault', hint: 'private' },
+  ])
+  assert.match(
+    r.out,
+    /^member {3}acme \(as octo\)\nlisting {2}acme repositories…\n/m
+  )
+  assert.doesNotMatch(r.out, /only public repositories/)
+  assert.deepEqual(gh.listed, ['acme'])
+  // The probe of .rness and the clone were each offered the login.
+  assert.deepEqual(gh.asked, [
+    `${remote.host}acme/.rness.git`,
+    `${remote.host}acme/vault.git`,
+  ])
+  await access(join(cwd, 'acme', 'org', 'vault', 'README.md'))
+})
+
+test('"another one…" and an empty list lead to the text prompt; a restricted organization is said, verbatim', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const locked = fakeProvider({
+    login: 'octo',
+    organizations: ['other-org'],
+    access: 'restricted',
+    repositories: [{ name: 'site', private: false, archived: false }],
+  })
+  const term = terminal({ select: [''], text: ['acme'], pick: [[]] })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd: await scratch(t) },
+    term.deps,
+    undefined,
+    locked.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [ORG_LIST_Q, ORG_Q, REPOS_Q])
+  assert.match(
+    r.err,
+    /^warning: acme restricts OAuth apps, so its private repositories are hidden from rness\nask an owner to approve it: https:\/\/github\.com\/settings\/connections\/applications\/\S+\n/
+  )
+  assert.doesNotMatch(r.out, /^member /m)
+
+  const alone = fakeProvider({ login: null })
+  const anonymous = terminal({ text: ['acme'], confirm: [true] })
+  const r2 = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd: await scratch(t) },
+    anonymous.deps,
+    undefined,
+    alone.provider
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.equal(anonymous.asked[0], ORG_Q, 'anonymous: typed, as before')
+})
+
+test('anonymous in a terminal: the login is offered before anything is listed; --repos and --yes never ask', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const anonymous = fakeProvider({
+    repositories: [{ name: 'api', private: false, archived: false }],
+  })
+  const declined = terminal({ login: false, pick: [['api']] })
+  const r = await wizard(
+    {
+      org: 'acme',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      cwd: await scratch(t),
+    },
+    declined.deps,
+    undefined,
+    anonymous.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(declined.asked, [LOGIN_Q, REPOS_Q])
+  assert.match(r.out, new RegExp(NO_TOKEN_NOTE.trim()))
+
+  const flags = terminal({ confirm: [true] })
+  const r2 = await wizard(
+    {
+      org: 'acme',
+      repos: 'api',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      cwd: await scratch(t),
+    },
+    flags.deps,
+    undefined,
+    anonymous.provider
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.deepEqual(flags.asked, ['Create workspace acme in ./acme?'])
+})
+
+test('accepting the login runs the device flow in place; the listing that follows is the logged-in one', async (t) => {
+  const config = await realpath(await mkdtemp(join(tmpdir(), 'rness-cfg-')))
+  t.after(() => rm(config, { recursive: true, force: true }))
+  await writeFile(join(config, 'gitconfig'), '')
+  withTestEnv(t, {
+    XDG_CONFIG_HOME: config,
+    GIT_CONFIG_GLOBAL: join(config, 'gitconfig'),
+    GITHUB_TOKEN: undefined,
+    GH_TOKEN: undefined,
+    RNESS_GITHUB_CLIENT_ID: 'client-test',
+    // An SSH session: the wizard must not open a browser from a test.
+    SSH_CONNECTION: '10.0.0.1 22 10.0.0.2 22',
+  })
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('vault', { 'README.md': '# vault\n' })
+  const gh = await fakeGithub(t, (r) => {
+    if (r.path === '/login/device/code')
+      return {
+        json: {
+          device_code: 'd',
+          user_code: 'ABCD-1234',
+          verification_uri: 'https://github.com/login/device',
+          expires_in: 900,
+          interval: 0,
+        },
+      }
+    if (r.path === '/login/oauth/access_token')
+      return { json: { access_token: 'ghu_wizard', scope: 'repo,read:org' } }
+    if (r.path === '/user') return { json: { login: 'octo' } }
+    if (r.path === '/user/memberships/orgs/acme')
+      return { json: { state: 'active' } }
+    if (r.path.startsWith('/orgs/acme/repos'))
+      return { json: [{ name: 'vault', private: true, archived: false }] }
+    return { status: 404, json: {} }
+  })
+  const cwd = await scratch(t)
+  // Yes to the login, No to "use rness for git", then the picker.
+  const term = terminal({ login: true, confirm: [false], pick: [['vault']] })
+  const r = await wizard(
+    {
+      org: 'acme',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      githubApi: gh.base,
+      cwd,
+    },
+    term.deps
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    LOGIN_Q,
+    'Use rness to authenticate git over HTTPS for github.com?',
+    REPOS_Q,
+  ])
+  assert.match(
+    r.out,
+    /^open {5}https:\/\/github\.com\/login\/device\ncode {5}ABCD-1234\nwaiting {2}for you to approve rness on github\.com…\nlogged in as octo \(github\.com\)\n/
+  )
+  assert.match(r.out, /^member {3}acme \(as octo\)$/m)
+  assert.ok(
+    !`${r.out}${r.err}`.includes('ghu_wizard'),
+    'the token is never printed'
+  )
+  const listing = gh.requests.find((q) => q.path.startsWith('/orgs/acme/repos'))
+  assert.equal(listing?.headers['authorization'], 'Bearer ghu_wizard')
+  await access(join(cwd, 'acme', 'org', 'vault', 'README.md'))
 })
