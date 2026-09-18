@@ -7,6 +7,7 @@ import {
   addRepository,
   workspaceDirs,
 } from '../core/repos.ts'
+import { status, warn } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING_LINE,
@@ -46,7 +47,9 @@ function printDeclared(
     if (entry === undefined) continue
     const ext =
       entry.extends.length === 0 ? '' : `, extends ${entry.extends.join(', ')}`
-    process.stdout.write(`declared scope ${name} (${entry.path}${ext})\n`)
+    process.stdout.write(
+      `${status('declared', `scope ${name} (${entry.path}${ext})`)}\n`
+    )
   }
 }
 
@@ -73,7 +76,7 @@ export async function addCommand(
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
     const { org, warning } = resolveOrg(manifest, ws.root)
-    if (warning !== null) process.stderr.write(`warning: ${warning}\n`)
+    if (warning !== null) process.stderr.write(`${warn(warning)}\n`)
 
     // The name is checked before anything else runs; the host comes later.
     let parsed: { name: string; url: string }
@@ -156,9 +159,7 @@ export async function addCommand(
       host,
       scopes,
     })
-    process.stdout.write(
-      `${result.action === 'cloned' ? 'cloned  ' : 'adopted '} org/${result.name}\n`
-    )
+    process.stdout.write(`${status(result.action, `org/${result.name}`)}\n`)
     const announced = new Set<string>()
     printDeclared(result, announced)
     for (const name of result.declared) announced.add(name)

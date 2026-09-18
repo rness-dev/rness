@@ -13,6 +13,7 @@ import {
   writePin,
 } from '../core/pinned.ts'
 import { installDependencies } from '../core/pm.ts'
+import { status, warn } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -127,8 +128,8 @@ export async function upgradeCommand(
     const pm = await workspacePackageManager(ws.rnessDir)
     process.stdout.write(
       pin.spec === target
-        ? `install  @rness/cli ${target} in ${label} (${pm}) — ${installed ?? 'nothing'} is installed\n`
-        : `upgrade  @rness/cli ${pin.spec} → ${target} in ${label} (${pm})${downgrading ? ' — downgrading' : ''}\nnotes    ${NOTES}\n`
+        ? `${status('install', `@rness/cli ${target} in ${label} (${pm}) — ${installed ?? 'nothing'} is installed`)}\n`
+        : `${status('upgrade', `@rness/cli ${pin.spec} → ${target} in ${label} (${pm})${downgrading ? ' — downgrading' : ''}`)}\n${status('notes', NOTES)}\n`
     )
     if (interactive) {
       const p = await terminal.prompts()
@@ -162,14 +163,14 @@ export async function upgradeCommand(
           text.replace(OLD_WORKFLOW_RUN, () => WORKFLOW_RUN)
         )
         process.stdout.write(
-          `updated  ${shown} (it now reads the version from package.json)\n`
+          `${status('updated', `${shown} (it now reads the version from package.json)`)}\n`
         )
       } else if (
         pin.spec !== target &&
         text.includes(`@rness/cli@${pin.spec}`)
       ) {
         process.stderr.write(
-          `warning: ${shown} names @rness/cli@${pin.spec}; update it by hand\n`
+          `${warn(`${shown} names @rness/cli@${pin.spec}; update it by hand`)}\n`
         )
       }
     }
@@ -188,7 +189,7 @@ export async function upgradeCommand(
         )
       return 1
     }
-    process.stdout.write(`installed dependencies with ${pm}\n`)
+    process.stdout.write(`${status('installed', `dependencies with ${pm}`)}\n`)
     const now = (await readPinnedCli(ws.rnessDir))?.version ?? null
     if (now !== target) {
       process.stderr.write(
@@ -204,7 +205,7 @@ export async function upgradeCommand(
     process.stdout.write(
       [
         '',
-        `upgraded ${label} to @rness/cli ${target}`,
+        status('upgraded', `${label} to @rness/cli ${target}`),
         '',
         'Next:',
         `  git -C ${rel} add -A && git -C ${rel} commit -m "chore: rness ${target}"`,

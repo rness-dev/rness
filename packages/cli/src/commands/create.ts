@@ -31,6 +31,7 @@ import {
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { copyScaffold } from '../core/scaffold-copy.ts'
+import { status, warn } from '../core/style.ts'
 import {
   type Prompts,
   type Terminal,
@@ -173,7 +174,7 @@ async function pickRepositories(input: {
   const { org, prompts } = input
   const token =
     process.env['GITHUB_TOKEN'] || process.env['GH_TOKEN'] || undefined
-  process.stdout.write(`listing  ${org} repositories…\n`)
+  process.stdout.write(`${status('listing', `${org} repositories…`)}\n`)
   let listed: { name: string; private: boolean; archived: boolean }[] = []
   let failed = false
   try {
@@ -197,7 +198,7 @@ async function pickRepositories(input: {
   } catch (e) {
     failed = true
     process.stderr.write(
-      `warning: ${firstLine(e instanceof Error ? e.message : String(e))}\n`
+      `${warn(firstLine(e instanceof Error ? e.message : String(e)))}\n`
     )
   }
   const inCatalogue = (name: string): boolean =>
@@ -253,7 +254,7 @@ async function pickRepositories(input: {
   if (declarable.length === 0) {
     // After a failed listing its own warning already says why.
     if (!failed)
-      process.stderr.write(`warning: no repositories to list for ${org}\n`)
+      process.stderr.write(`${warn(`no repositories to list for ${org}`)}\n`)
     return { picked: [], prompted: false }
   }
   const initialValues = Object.keys(input.catalogue)
@@ -308,7 +309,7 @@ async function cloneSelection(input: {
       const entry = name === null ? undefined : manifest.repos[name]
       if (name !== null && entry !== undefined) {
         await clone(entry.url, join(input.root, 'org', name))
-        process.stdout.write(`cloned   org/${name}\n`)
+        process.stdout.write(`${status('cloned', `org/${name}`)}\n`)
         continue
       }
       const result = await addRepository({
@@ -322,7 +323,7 @@ async function cloneSelection(input: {
       })
       manifest = result.manifest
       process.stdout.write(
-        `${result.action === 'cloned' ? 'cloned  ' : 'adopted '} org/${result.name}\ndeclared scope ${result.name} (org/${result.name})\n`
+        `${status(result.action, `org/${result.name}`)}\n${status('declared', `scope ${result.name} (org/${result.name})`)}\n`
       )
     } catch (e) {
       const message = firstLine(e instanceof Error ? e.message : String(e))
@@ -469,8 +470,8 @@ export async function createCommand(
     const joining = probe.kind === 'found'
     process.stdout.write(
       joining
-        ? `found    ${org}/.rness — joining\n`
-        : `not found ${org}/.rness (or not visible to you) — starting a new workspace\n`
+        ? `${status('found', `${org}/.rness — joining`)}\n`
+        : `${status('not found', `${org}/.rness (or not visible to you) — starting a new workspace`)}\n`
     )
 
     // Joining: the catalogue is read from a clone staged outside the target,
@@ -531,12 +532,18 @@ export async function createCommand(
     if (joining) {
       await mkdir(root, { recursive: true })
       await placeContext(await staged(), rnessDir, contextUrl)
-      process.stdout.write(`cloned   ${shown}/.rness (joined ${org})\n`)
+      process.stdout.write(
+        `${status('cloned', `${shown}/.rness (joined ${org})`)}\n`
+      )
       if (opts.skipInstall === true)
-        process.stdout.write('skipped  install (--skip-install)\n')
+        process.stdout.write(
+          `${status('skipped', 'install (--skip-install)')}\n`
+        )
       else {
         await installDependencies(pm, rnessDir)
-        process.stdout.write(`installed dependencies with ${pm}\n`)
+        process.stdout.write(
+          `${status('installed', `dependencies with ${pm}`)}\n`
+        )
       }
       await mkdir(join(root, 'org'), { recursive: true })
       const failures = await cloneSelection({
@@ -567,12 +574,18 @@ export async function createCommand(
         packageManager: `${pm}@${pmVersion}`,
       })
       await writeManifest(rnessDir, catalogue)
-      process.stdout.write(`created  ${shown}/.rness (new workspace)\n`)
+      process.stdout.write(
+        `${status('created', `${shown}/.rness (new workspace)`)}\n`
+      )
       if (opts.skipInstall === true)
-        process.stdout.write('skipped  install (--skip-install)\n')
+        process.stdout.write(
+          `${status('skipped', 'install (--skip-install)')}\n`
+        )
       else {
         await installDependencies(pm, rnessDir)
-        process.stdout.write(`installed dependencies with ${pm}\n`)
+        process.stdout.write(
+          `${status('installed', `dependencies with ${pm}`)}\n`
+        )
       }
     } catch (e) {
       // Report the cause before the consequence: the original error first,
@@ -608,10 +621,10 @@ export async function createCommand(
     await init(rnessDir)
     try {
       await commitAll(rnessDir, 'chore: rness workspace context')
-      process.stdout.write(`committed ${shown}/.rness\n`)
+      process.stdout.write(`${status('committed', `${shown}/.rness`)}\n`)
     } catch (e) {
       process.stderr.write(
-        `warning: ${e instanceof Error ? e.message : String(e)} — commit ${shown}/.rness yourself\n`
+        `${warn(`${e instanceof Error ? e.message : String(e)} — commit ${shown}/.rness yourself`)}\n`
       )
     }
 

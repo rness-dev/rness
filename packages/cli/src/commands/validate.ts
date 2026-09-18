@@ -2,6 +2,7 @@ import { checkBlocks } from '../core/blocks.ts'
 import { checkContract } from '../core/contract.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
 import { scopeChain } from '../core/scope.ts'
+import { warn } from '../core/style.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 
@@ -31,7 +32,7 @@ export async function validateCommand(opts: ValidateOptions): Promise<number> {
     problems.push(...blocks.problems)
     warnings.push(...blocks.warnings)
     for (const p of problems) process.stderr.write(`${p}\n`)
-    for (const w of warnings) process.stderr.write(`warning: ${w}\n`)
+    for (const w of warnings) process.stderr.write(`${warn(w)}\n`)
     if (problems.length > 0) return 1
     process.stdout.write('context ok\n')
     return 0

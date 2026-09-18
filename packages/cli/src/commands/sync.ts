@@ -11,6 +11,7 @@ import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
 import { ensureClaudeMd, findBlock, mergeBlock } from '../core/merge.ts'
+import { status, warn } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING_LINE,
@@ -155,7 +156,7 @@ export async function syncCommand(
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
     const { org, warning } = resolveOrg(manifest, ws.root)
-    if (warning !== null) process.stderr.write(`warning: ${warning}\n`)
+    if (warning !== null) process.stderr.write(`${warn(warning)}\n`)
     if (
       opts.scope !== undefined &&
       !Object.hasOwn(manifest.scopes, opts.scope)
@@ -214,7 +215,7 @@ export async function syncCommand(
           }
           try {
             await clone(repo.url, dir)
-            lines.push(`cloned   ${label}`)
+            lines.push(status('cloned', `${label}`))
           } catch (e) {
             problems.push(
               `${label}: ${e instanceof Error ? e.message : String(e)}`
@@ -223,11 +224,11 @@ export async function syncCommand(
         } else if (opts.pull === true && !check) {
           try {
             if (!(await isClean(dir, MANAGED_FILES))) {
-              lines.push(`skipped  ${label} (working tree not clean)`)
+              lines.push(status('skipped', `${label} (working tree not clean)`))
               continue
             }
             await pullFastForward(dir)
-            lines.push(`pulled   ${label}`)
+            lines.push(status('pulled', `${label}`))
           } catch (e) {
             problems.push(
               `${label}: ${e instanceof Error ? e.message : String(e)}`
@@ -255,7 +256,7 @@ export async function syncCommand(
 
       // 2. Blocks — only where repositories live; a standalone context checkout has no org/.
       if (!(await exists(join(ws.root, 'org')))) {
-        lines.push('skipped  blocks (no org/ directory here)')
+        lines.push(status('skipped', 'blocks (no org/ directory here)'))
       } else {
         let differences = 0
         for (const t of targetsOf(manifest, ws.root, opts.scope)) {
@@ -269,7 +270,9 @@ export async function syncCommand(
               repo === undefined ||
               !notCloned.has(repo)
             )
-              lines.push(`skipped  ${t.label} (directory not present)`)
+              lines.push(
+                status('skipped', `${t.label} (directory not present)`)
+              )
             continue
           }
           // One of the pair symlinked to the other (the common `CLAUDE.md →
@@ -279,7 +282,7 @@ export async function syncCommand(
             MANAGED_FILES.map((f) => isSymlink(join(t.dir, f)))
           )
           if (linked.includes(true)) {
-            lines.push(`skipped  ${t.label} (symlink)`)
+            lines.push(status('skipped', `${t.label} (symlink)`))
             continue
           }
           const context = await assembleContext({
@@ -295,7 +298,7 @@ export async function syncCommand(
           })
           if (block.bytes > BLOCK_SIZE_WARNING) {
             process.stderr.write(
-              `warning: ${t.label}: block is ${Math.round(block.bytes / 1024)} KB (over 32 KB)\n`
+              `${warn(`${t.label}: block is ${Math.round(block.bytes / 1024)} KB (over 32 KB)`)}\n`
             )
           }
           const file = join(t.dir, 'AGENTS.md')
@@ -318,18 +321,18 @@ export async function syncCommand(
             continue
           }
           if (!merged.changed) {
-            lines.push(`unchanged ${t.label}`)
+            lines.push(status('unchanged', `${t.label}`))
             if (!check) await ensureClaudeMd(t.dir)
             continue
           }
           if (check) {
-            lines.push(`stale    ${t.label}`)
+            lines.push(status('stale', `${t.label}`))
             differences += 1
             continue
           }
           await writeFileAtomic(file, merged.text)
           await ensureClaudeMd(t.dir)
-          lines.push(`updated  ${t.label}`)
+          lines.push(status('updated', `${t.label}`))
         }
         if (check && differences > 0)
           problems.push(`${differences} block(s) out of date — run rness sync`)

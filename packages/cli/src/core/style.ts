@@ -74,7 +74,7 @@ export function status(
 }
 
 /** `warning: …` for stderr, the prefix painted. */
-export function warning(text: string): string {
+export function warn(text: string): string {
   return `${paint('warn', 'warning:', process.stderr)} ${text}`
 }
 

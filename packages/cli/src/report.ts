@@ -1,3 +1,5 @@
+import { paint } from './core/style.ts'
+
 /**
  * Shared CLI error contract: one line on stderr, and — only under
  * `RNESS_DEBUG=1` — the stack trace instead of the plain message (the stack
@@ -9,7 +11,7 @@ export function reportError(e: unknown): number {
     process.stderr.write(`${e.stack}\n`)
   } else {
     const message = e instanceof Error ? e.message : String(e)
-    process.stderr.write(`${message}\n`)
+    process.stderr.write(`${paint('error', message, process.stderr)}\n`)
   }
   return 1
 }

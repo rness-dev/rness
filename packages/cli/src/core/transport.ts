@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 
 import { DEFAULT_HOST, SSH_HOST } from './remote.ts'
+import { status } from './style.ts'
 
 /** The two bases a github.com URL can be written with (spec 0005). */
 export interface Hosts {
@@ -126,12 +127,15 @@ export function isSshUrl(url: string, hosts: Hosts): boolean {
 }
 
 /** Printed in a terminal before the test, which may ask for a passphrase. */
-export const CHECKING_LINE = 'checking ssh access to github.com…'
+export const CHECKING_LINE = status('checking', 'ssh access to github.com…')
 
 export function usingLine(access: SshAccess): string {
-  return access.ok
-    ? `using    ssh (github.com as ${access.login})`
-    : `using    https (ssh to github.com unavailable: ${access.reason})`
+  return status(
+    'using',
+    access.ok
+      ? `ssh (github.com as ${access.login})`
+      : `https (ssh to github.com unavailable: ${access.reason})`
+  )
 }
 
 /** Why an SSH workspace cannot be served, and how to fix it. */
