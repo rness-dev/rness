@@ -46,6 +46,14 @@ Without an agent, a protected key is asked for again by every `git clone`.
 Load it once per session: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` on
 macOS, `ssh-add ~/.ssh/id_ed25519` elsewhere.
 
+### Colour
+
+In a terminal the status column, the help and the banner are coloured, and a
+slow step shows a transient line (`cloning  org/api`) that is erased when it
+ends. Through a pipe, in CI, or with `NO_COLOR=1`, the output is plain text —
+the same bytes as before 0.5.0; `FORCE_COLOR=1` paints it anyway. No
+dependency does this: `util.styleText`, and a banner kept as a constant.
+
 ### Upgrade
 
     rness upgrade            # the latest release; `rness upgrade 0.5.0` for another
@@ -80,6 +88,8 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   over SSH is now found when joining. See "SSH or HTTPS" above.
 - `create` does not offer repositories whose name starts with a dot
   (`.github`, …).
+- Colour, a banner and progress lines in a terminal (see "Colour" above);
+  nothing changes for scripts.
 - `rness upgrade` is new (see "Upgrade" above). From 0.4.0:
   `npx @rness/cli@latest upgrade`.
 - The header of a generated block no longer names the CLI version

@@ -11,6 +11,7 @@ import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
 import { ensureClaudeMd, findBlock, mergeBlock } from '../core/merge.ts'
+import { step } from '../core/progress.ts'
 import { status, warn } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
@@ -214,7 +215,9 @@ export async function syncCommand(
             continue
           }
           try {
-            await clone(repo.url, dir)
+            await step({ label: `cloning  ${label}`, animate: false }, () =>
+              clone(repo.url, dir)
+            )
             lines.push(status('cloned', `${label}`))
           } catch (e) {
             problems.push(
@@ -227,7 +230,9 @@ export async function syncCommand(
               lines.push(status('skipped', `${label} (working tree not clean)`))
               continue
             }
-            await pullFastForward(dir)
+            await step({ label: `pulling  ${label}`, animate: false }, () =>
+              pullFastForward(dir)
+            )
             lines.push(status('pulled', `${label}`))
           } catch (e) {
             problems.push(

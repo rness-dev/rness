@@ -2,6 +2,7 @@ import { join } from 'node:path'
 
 import { exists } from '../core/fs.ts'
 import { loadManifest, parseRepoSpec, resolveOrg } from '../core/manifest.ts'
+import { step } from '../core/progress.ts'
 import {
   type AddRepositoryResult,
   addRepository,
@@ -150,15 +151,22 @@ export async function addCommand(
       }
     }
 
-    let result = await addRepository({
-      root: ws.root,
-      rnessDir: ws.rnessDir,
-      manifest,
-      spec,
-      org,
-      host,
-      scopes,
-    })
+    let result = await step(
+      {
+        label: `${present ? 'adopting' : 'cloning '} org/${parsed.name}`,
+        animate: false,
+      },
+      () =>
+        addRepository({
+          root: ws.root,
+          rnessDir: ws.rnessDir,
+          manifest,
+          spec,
+          org,
+          host,
+          scopes,
+        })
+    )
     process.stdout.write(`${status(result.action, `org/${result.name}`)}\n`)
     const announced = new Set<string>()
     printDeclared(result, announced)

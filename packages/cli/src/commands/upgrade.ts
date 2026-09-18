@@ -13,6 +13,7 @@ import {
   writePin,
 } from '../core/pinned.ts'
 import { installDependencies } from '../core/pm.ts'
+import { step } from '../core/progress.ts'
 import { status, warn } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import { findWorkspace } from '../core/workspace.ts'
@@ -176,7 +177,10 @@ export async function upgradeCommand(
     }
 
     try {
-      await installDependencies(pm, ws.rnessDir)
+      await step(
+        { label: `installing dependencies with ${pm}`, animate: true },
+        () => installDependencies(pm, ws.rnessDir)
+      )
     } catch (e) {
       for (const [file, text] of restore) await writeFileAtomic(file, text)
       const message = e instanceof Error ? e.message : String(e)
@@ -198,7 +202,10 @@ export async function upgradeCommand(
       return 1
     }
 
-    const code = await syncPinned(ws.root, basename(ws.root))
+    const code = await step(
+      { label: 'syncing  the blocks', animate: false },
+      () => syncPinned(ws.root, basename(ws.root))
+    )
     if (code !== 0) return code
 
     const rel = relative(cwd, ws.rnessDir) || '.'

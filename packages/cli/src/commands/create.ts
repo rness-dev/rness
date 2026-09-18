@@ -28,10 +28,11 @@ import {
   isPackageManager,
   packageManagerVersion,
 } from '../core/pm.ts'
+import { step } from '../core/progress.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { copyScaffold } from '../core/scaffold-copy.ts'
-import { status, warn } from '../core/style.ts'
+import { banner, status, warn } from '../core/style.ts'
 import {
   type Prompts,
   type Terminal,
@@ -308,7 +309,9 @@ async function cloneSelection(input: {
       }
       const entry = name === null ? undefined : manifest.repos[name]
       if (name !== null && entry !== undefined) {
-        await clone(entry.url, join(input.root, 'org', name))
+        await step({ label: `cloning  org/${name}`, animate: false }, () =>
+          clone(entry.url, join(input.root, 'org', name))
+        )
         process.stdout.write(`${status('cloned', `org/${name}`)}\n`)
         continue
       }
@@ -411,6 +414,8 @@ export async function createCommand(
   const prompts = async (): Promise<Prompts> =>
     (loaded ??= await deps.prompts())
   let staging: string | undefined
+  // '' off a terminal, so scripts and tests see nothing of it.
+  if (interactive) process.stdout.write(banner(VERSION))
   try {
     // In a terminal, before the first question: no answer could fix it.
     if (interactive && (await insideWorkspace(cwd))) {
@@ -482,7 +487,10 @@ export async function createCommand(
       return join(staging, '.rness')
     }
     if (joining) {
-      await clone(contextUrl, await staged())
+      const stagedDir = await staged()
+      await step({ label: `cloning  ${org}/.rness`, animate: false }, () =>
+        clone(contextUrl, stagedDir)
+      )
       // Validates that the clone is a workspace context: throws on a
       // malformed or absent rness.json.
       catalogue = await loadManifest(await staged())
@@ -540,7 +548,10 @@ export async function createCommand(
           `${status('skipped', 'install (--skip-install)')}\n`
         )
       else {
-        await installDependencies(pm, rnessDir)
+        await step(
+          { label: `installing dependencies with ${pm}`, animate: true },
+          () => installDependencies(pm, rnessDir)
+        )
         process.stdout.write(
           `${status('installed', `dependencies with ${pm}`)}\n`
         )
@@ -554,8 +565,10 @@ export async function createCommand(
         host,
         specs,
       })
-      const code = await syncPinned(root, shown, () =>
-        syncCommand({ yes: true, cwd: root })
+      const code = await step(
+        { label: 'syncing  the blocks', animate: false },
+        () =>
+          syncPinned(root, shown, () => syncCommand({ yes: true, cwd: root }))
       )
       if (code !== 0) return code
       return failures.length > 0 ? 1 : 0
@@ -582,7 +595,10 @@ export async function createCommand(
           `${status('skipped', 'install (--skip-install)')}\n`
         )
       else {
-        await installDependencies(pm, rnessDir)
+        await step(
+          { label: `installing dependencies with ${pm}`, animate: true },
+          () => installDependencies(pm, rnessDir)
+        )
         process.stdout.write(
           `${status('installed', `dependencies with ${pm}`)}\n`
         )
@@ -628,8 +644,9 @@ export async function createCommand(
       )
     }
 
-    const code = await syncPinned(root, shown, () =>
-      syncCommand({ yes: true, cwd: root })
+    const code = await step(
+      { label: 'syncing  the blocks', animate: false },
+      () => syncPinned(root, shown, () => syncCommand({ yes: true, cwd: root }))
     )
     if (code !== 0) return code
 
