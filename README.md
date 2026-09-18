@@ -31,7 +31,7 @@ Try a release before publishing it, through a local npm registry
     pnpm verdaccio start     # registry on http://127.0.0.1:4873 (VERDACCIO_PORT to change)
     pnpm verdaccio deploy    # build, then publish every package to it (never to npmjs)
     export npm_config_userconfig="$PWD/.verdaccio/npmrc"
-    cd "$(mktemp -d /tmp/rness-XXXX)" && npm create rness -- --org <org>   # the published shim, as a user runs it
+    cd "$(mktemp -d /tmp/rness-XXXX)" && npm create rness <org>   # the published shim, as a user runs it
     unset npm_config_userconfig
     pnpm verdaccio stop      # or `clean` to also delete what it stored
 

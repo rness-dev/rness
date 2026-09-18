@@ -7,6 +7,7 @@ Not an agent — no LLM loop.
 ## Install
 
     npm create rness           # prompts for the organization, then the repositories for your workspace
+    npm create rness acme      # the organization github.com/acme, no first prompt
     npm i -g @rness/cli        # the command is `rness`
     npx @rness/cli --help
 
@@ -15,8 +16,8 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 
 ## Commands
 
-    rness create [--org <name>] [--repos a,b] [--pm npm|pnpm|yarn|bun] [--ssh] [--skip-install] -y
-    rness add <repo> [--scopes apps/web,packages/ui] [--ssh] -y
+    rness create [<org>] [--repos a,b] [--pm npm|pnpm|yarn|bun] [--ssh|--https] [--skip-install] -y
+    rness add <repo> [--scopes apps/web,packages/ui] [--ssh|--https] -y
     rness sync [--all] [--scope <name>] [--check] [--pull] -y
     rness context [--scope <name>] [--json]
     rness validate
@@ -25,15 +26,41 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 confirmation in a terminal; pass `-y`/`--yes` in scripts. `sync --check`
 writes nothing and exits 1 when a block is out of date — use it in CI.
 
+### SSH or HTTPS
+
+`create` and `add` test your SSH access to github.com once
+(`ssh -T git@github.com`) and write `git@github.com:` URLs when GitHub accepts
+your key, `https://github.com/` ones otherwise; `--ssh` and `--https` decide
+without the test. In a terminal `ssh` may ask for your key's passphrase;
+without one (`--yes`, CI) it never prompts, so a key that needs a passphrase
+counts as no access unless an agent holds it.
+
+`rness.json` is authoritative: a URL written there is cloned as written, never
+converted. In a workspace whose catalogue clones over SSH, `create` (joining)
+and `sync` stop before the first clone when the SSH test fails and say how to
+set up a key; `add` offers "Clone <name> over HTTPS instead?" (or `--https`),
+which writes an HTTPS URL for that repository only.
+
+Without an agent, a protected key is asked for again by every `git clone`.
+Load it once per session: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` on
+macOS, `ssh-add ~/.ssh/id_ed25519` elsewhere.
+
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
 ## 0.5.0 — the organization is the workspace; rness.json is its catalogue
 
-- `create <org>` became `create --org <org>` (or the prompt "What is your
-  GitHub organization named?"). The workspace directory is `./<org>`, with
-  the organization's exact name; `--dir` is removed. With `npm create`,
-  flags go after `--`: `npm create rness -- --org acme --yes`.
+- `create <org>` names the organization, not a directory any more (`--org
+<org>` and the prompt "What is your GitHub organization named?" do the
+  same). The workspace directory is `./<org>`, with the organization's exact
+  name; `--dir` is removed. With `npm create`, flags go after `--`:
+  `npm create rness acme -- --yes`.
+- SSH first: `create` and `add` write `git@github.com:` URLs when
+  `ssh -T git@github.com` accepts your key, HTTPS ones otherwise (0.4.0
+  wrote HTTPS unless `--ssh`). `--https` is new. A private `.rness` you reach
+  over SSH is now found when joining. See "SSH or HTTPS" above.
+- `create` does not offer repositories whose name starts with a dot
+  (`.github`, …).
 - `.rness/rness.json` is the organization's catalogue — every repository
   rness knows about, shared by the team. Your workspace is the part of it
   you cloned into `org/`; two teammates can clone different repositories,
