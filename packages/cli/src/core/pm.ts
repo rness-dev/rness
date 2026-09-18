@@ -43,6 +43,22 @@ export async function packageManagerVersion(
   }
 }
 
+const BARE_NPM_CODE = /^npm (error|ERR!) code \S+$/
+
+/**
+ * The line of a failed install worth showing. npm leads with its error code
+ * (`npm error code ETARGET`) and says what is wrong on the next line
+ * (`…No matching version found for @rness/cli@0.4.0.`): that one is kept. The
+ * code is shown only when nothing follows it.
+ */
+export function installErrorLine(stderr: string): string {
+  const lines = stderr
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+  return lines.find((l) => !BARE_NPM_CODE.test(l)) ?? firstLine(stderr)
+}
+
 /** `<pm> install` in `dir`; output is swallowed, failure is one line. */
 export async function installDependencies(
   pm: PackageManager,
@@ -53,7 +69,7 @@ export async function installDependencies(
   } catch (e) {
     const err = e as { stderr?: string; message: string }
     throw new Error(
-      `${pm} install failed in ${dir}: ${firstLine(err.stderr ?? err.message)}`,
+      `${pm} install failed in ${dir}: ${installErrorLine(err.stderr ?? err.message)}`,
       { cause: e }
     )
   }

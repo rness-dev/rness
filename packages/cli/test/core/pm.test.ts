@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import {
   detectPackageManager,
+  installErrorLine,
   isPackageManager,
   packageManagerVersion,
 } from '../../src/core/pm.ts'
@@ -33,4 +34,32 @@ test('packageManagerVersion asks the binary; an absent one is a one-line error',
     packageManagerVersion('bun-does-not-exist' as 'bun'),
     /is not available on PATH/
   )
+})
+
+test("installErrorLine skips npm's bare error code for the line that says what is wrong", () => {
+  assert.equal(
+    installErrorLine(
+      'npm error code ETARGET\nnpm error notarget No matching version found for @rness/cli@0.4.0.\nnpm error notarget In most cases you or one of your dependencies are requesting\n'
+    ),
+    'npm error notarget No matching version found for @rness/cli@0.4.0.'
+  )
+  assert.equal(
+    installErrorLine(
+      'npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry/x\n'
+    ),
+    'npm ERR! 404 Not Found - GET https://registry/x'
+  )
+  // Nothing better than the code: keep it.
+  assert.equal(
+    installErrorLine('\nnpm error code EACCES\n'),
+    'npm error code EACCES'
+  )
+  // Other package managers lead with the useful line.
+  assert.equal(
+    installErrorLine(
+      ' ERR_PNPM_NO_MATCHING_VERSION  No matching version found for @rness/cli@0.4.0\n'
+    ),
+    'ERR_PNPM_NO_MATCHING_VERSION  No matching version found for @rness/cli@0.4.0'
+  )
+  assert.equal(installErrorLine(''), 'unknown error')
 })
