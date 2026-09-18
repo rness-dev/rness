@@ -14,7 +14,6 @@ export interface BlockInput {
   /** Path segments between the scope directory and the workspace root (`org/web` → 2; root → 0). */
   depth: number
   context: Context
-  version: string
 }
 
 export interface RenderedBlock {
@@ -25,13 +24,17 @@ export interface RenderedBlock {
 }
 
 export interface BlockHeader {
-  version: string
+  /** The CLI version a 0.2–0.4 header named; null for the current form. */
+  version: string | null
   scope: string
   hash: string
 }
 
+// The header names no CLI version (spec 0006 §1): nothing read it, and it
+// made every upgrade rewrite every block. The 0.2–0.4 form still parses, so a
+// block written by an older CLI stays current as long as its hash is.
 const HEADER =
-  /^<!-- rness (\S+) · scope: (\S+) · contract: 1 · hash: ([0-9a-f]{12}) · generated: run `rness sync`, never edit inside this block -->$/
+  /^<!-- rness (?:(\S+) )?· scope: (\S+) · contract: 1 · hash: ([0-9a-f]{12}) · generated: run `rness sync`, never edit inside this block -->$/
 
 function toLf(s: string): string {
   return s.replace(/\r\n?/g, '\n')
@@ -62,8 +65,8 @@ function intro(scope: string | null, org: string, depth: number): string {
   ].join('\n')
 }
 
-function header(version: string, scope: string | null, hash: string): string {
-  return `<!-- rness ${version} · scope: ${scope ?? 'global'} · contract: 1 · hash: ${hash} · generated: run \`rness sync\`, never edit inside this block -->`
+function header(scope: string | null, hash: string): string {
+  return `<!-- rness · scope: ${scope ?? 'global'} · contract: 1 · hash: ${hash} · generated: run \`rness sync\`, never edit inside this block -->`
 }
 
 /** Render the block for one scope (or the root) from an already resolved context. */
@@ -72,7 +75,6 @@ export function renderBlock({
   org,
   depth,
   context,
-  version,
 }: BlockInput): RenderedBlock {
   const standards =
     context.collections.find((c) => c.name === 'standards')?.files ?? []
@@ -84,7 +86,7 @@ export function renderBlock({
         )
   const body = `${intro(scope, org, depth)}\n\n## Rules\n${rules.join('\n\n')}`
   const hash = blockHash(body)
-  const text = [BEGIN, header(version, scope, hash), body, END].join('\n')
+  const text = [BEGIN, header(scope, hash), body, END].join('\n')
   return { text, hash, bytes: Buffer.byteLength(text, 'utf8') }
 }
 
@@ -92,10 +94,27 @@ export function renderBlock({
 export function parseHeader(line: string): BlockHeader | null {
   const m = HEADER.exec(line.trimEnd())
   if (m === null) return null
-  return { version: m[1] ?? '', scope: m[2] ?? '', hash: m[3] ?? '' }
+  return { version: m[1] ?? null, scope: m[2] ?? '', hash: m[3] ?? '' }
 }
 
 /** The hashed body of a block given its lines (BEGIN, header, body…, END). */
 export function bodyOf(blockLines: string[]): string {
   return blockLines.slice(2, -1).join('\n')
+}
+
+/**
+ * Is this block (BEGIN, header, body…, END) what a fresh render would write?
+ * By hash, never by text: the header's hash is the fresh one, and the body
+ * still hashes to it — a hand edit inside the block breaks the second half.
+ */
+export function isCurrentBlock(
+  blockLines: string[],
+  freshHash: string
+): boolean {
+  const header = parseHeader(blockLines[1] ?? '')
+  return (
+    header !== null &&
+    header.hash === freshHash &&
+    blockHash(bodyOf(blockLines)) === freshHash
+  )
 }

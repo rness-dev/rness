@@ -1,12 +1,16 @@
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { BLOCK_SIZE_WARNING, renderBlock } from '../core/block.ts'
+import {
+  BLOCK_SIZE_WARNING,
+  isCurrentBlock,
+  renderBlock,
+} from '../core/block.ts'
 import { assembleContext } from '../core/context.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
-import { ensureClaudeMd, mergeBlock } from '../core/merge.ts'
+import { ensureClaudeMd, findBlock, mergeBlock } from '../core/merge.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING_LINE,
@@ -19,7 +23,6 @@ import {
 import type { Manifest } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
-import { VERSION } from '../version.ts'
 
 export interface SyncOptions {
   /** Only this scope's block (the root block is skipped). */
@@ -289,7 +292,6 @@ export async function syncCommand(
             org,
             depth: t.depth,
             context,
-            version: VERSION,
           })
           if (block.bytes > BLOCK_SIZE_WARNING) {
             process.stderr.write(
@@ -297,7 +299,20 @@ export async function syncCommand(
             )
           }
           const file = join(t.dir, 'AGENTS.md')
-          const merged = mergeBlock(await readOrNull(file), block.text)
+          const existing = await readOrNull(file)
+          // Current by its hash, not by its text: a block an older CLI wrote,
+          // whose header still names that version, is left byte for byte.
+          const existingLines = existing === null ? [] : existing.split(/\r?\n/)
+          const span = findBlock(existingLines)
+          const current =
+            span.kind === 'one' &&
+            isCurrentBlock(
+              existingLines.slice(span.begin, span.end + 1),
+              block.hash
+            )
+          const merged = current
+            ? { ok: true as const, text: existing ?? '', changed: false }
+            : mergeBlock(existing, block.text)
           if (!merged.ok) {
             problems.push(`${t.label}: ${merged.error}`)
             continue

@@ -1,7 +1,6 @@
 import { join } from 'node:path'
 
-import { VERSION } from '../version.ts'
-import { blockHash, bodyOf, parseHeader, renderBlock } from './block.ts'
+import { isCurrentBlock, renderBlock } from './block.ts'
 import { assembleContext } from './context.ts'
 import { exists, readOrNull } from './fs.ts'
 import { findBlock } from './merge.ts'
@@ -66,7 +65,6 @@ export async function checkBlocks({
       problems.push(`${t.label}: ${found.message}`)
       continue
     }
-    const header = parseHeader(lines[found.begin + 1] ?? '')
     const context = await assembleContext({
       rnessDir,
       manifest,
@@ -77,16 +75,10 @@ export async function checkBlocks({
       org,
       depth: t.depth,
       context,
-      version: VERSION,
     })
     // Two ways to be stale: the header no longer matches a fresh render, or the
     // body no longer matches its own header — a hand edit inside the block.
-    const actual = blockHash(bodyOf(lines.slice(found.begin, found.end + 1)))
-    if (
-      header === null ||
-      header.hash !== fresh.hash ||
-      header.hash !== actual
-    ) {
+    if (!isCurrentBlock(lines.slice(found.begin, found.end + 1), fresh.hash)) {
       problems.push(`${t.label}: stale rness block (run rness sync)`)
     }
   }

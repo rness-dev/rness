@@ -52,7 +52,7 @@ test('writes the root and scope blocks and the CLAUDE.md pointers; skips scopes 
     /^updated {2}AGENTS\.md\nupdated {2}org\/web\/AGENTS\.md\nskipped {2}org\/api\/AGENTS\.md \(directory not present\)\n$/
   )
   const web = await readFile(join(root, 'org', 'web', 'AGENTS.md'), 'utf8')
-  assert.match(web, /^<!-- BEGIN rness -->\n<!-- rness \S+ · scope: web ·/)
+  assert.match(web, /^<!-- BEGIN rness -->\n<!-- rness · scope: web ·/)
   assert.match(web, /<!-- rness: standards\/web\/seo\.md -->\n# SEO/)
   assert.match(web, /<!-- rness: standards\/coding\.md -->\n# Coding/)
   assert.match(web, /rness workspace `acme`/)
@@ -501,4 +501,51 @@ test('with SSH access the git@ entry is cloned; the SSH test runs only when such
   // Everything is cloned now: no test.
   assert.equal((await run({ all: true })).code, 0)
   assert.equal(ok.calls.length, 1)
+})
+
+// --- a version written in one place (spec 0006 §1) ---------------------------
+
+test('a block whose header still names an older CLI is current by its hash: upgrading rewrites nothing', async (t) => {
+  const root = await basic(t)
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0)
+  const files = [join(root, 'AGENTS.md'), join(root, 'org', 'web', 'AGENTS.md')]
+  // What 0.3.0 wrote: the same block, its header naming the version.
+  for (const file of files) {
+    const text = await readFile(file, 'utf8')
+    await writeFile(
+      file,
+      text.replace('<!-- rness · scope:', '<!-- rness 0.3.0 · scope:')
+    )
+  }
+  const before = await Promise.all(files.map((f) => readFile(f, 'utf8')))
+  assert.match(before[1] ?? '', /<!-- rness 0\.3\.0 · scope: web ·/)
+
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 0, check.err)
+  const again = await sync(['--yes', '--cwd', root])
+  assert.equal(again.code, 0, again.err)
+  assert.match(
+    again.out,
+    /^unchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md\n/
+  )
+  assert.deepEqual(
+    await Promise.all(files.map((f) => readFile(f, 'utf8'))),
+    before
+  )
+
+  // The content changes: the block is rewritten, with the current header.
+  await writeFile(
+    join(root, '.rness', 'standards', 'coding.md'),
+    '# Coding\n\nNew rule.\n'
+  )
+  const changed = await sync(['--yes', '--cwd', root])
+  assert.equal(changed.code, 0, changed.err)
+  assert.match(
+    changed.out,
+    /^updated {2}AGENTS\.md\nupdated {2}org\/web\/AGENTS\.md\n/
+  )
+  assert.match(
+    await readFile(files[1] ?? '', 'utf8'),
+    /<!-- rness · scope: web · contract: 1 · hash: [0-9a-f]{12} ·/
+  )
 })

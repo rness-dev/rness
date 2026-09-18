@@ -6,6 +6,7 @@ import {
   END,
   blockHash,
   bodyOf,
+  isCurrentBlock,
   parseHeader,
   renderBlock,
 } from '../../src/core/block.ts'
@@ -57,14 +58,13 @@ test('renders the scope block: markers, header, intro, rules in resolution order
     org: 'acme',
     depth: 2,
     context: twoStandards,
-    version: '0.0.0-test',
   })
   const lines = block.text.split('\n')
   assert.equal(lines[0], BEGIN)
   assert.equal(lines.at(-1), END)
   assert.match(
     lines[1] ?? '',
-    /^<!-- rness 0\.0\.0-test · scope: web · contract: 1 · hash: [0-9a-f]{12} · generated: run `rness sync`, never edit inside this block -->$/
+    /^<!-- rness · scope: web · contract: 1 · hash: [0-9a-f]{12} · generated: run `rness sync`, never edit inside this block -->$/
   )
   const expectedBody = [
     'This directory is scope `web` of rness workspace `acme`. Full context lives in',
@@ -94,14 +94,17 @@ test('the header carries the body hash and parses back', () => {
     org: 'acme',
     depth: 2,
     context: twoStandards,
-    version: '0.0.0-test',
   })
   const header = parseHeader(block.text.split('\n')[1] ?? '')
   assert.deepEqual(header, {
-    version: '0.0.0-test',
+    version: null,
     scope: 'web',
     hash: block.hash,
   })
+  assert.equal(
+    block.text.split('\n')[1],
+    `<!-- rness · scope: web · contract: 1 · hash: ${block.hash} · generated: run \`rness sync\`, never edit inside this block -->`
+  )
   assert.equal(parseHeader('<!-- something else -->'), null)
 })
 
@@ -111,7 +114,6 @@ test('the global block names the root, has no relative path, and says where the 
     org: 'acme',
     depth: 0,
     context: ctx([{ rel: 'coding.md', scope: null, body: '# Coding\n' }]),
-    version: '0.0.0-test',
   })
   const body = bodyOf(block.text.split('\n'))
   assert.match(block.text.split('\n')[1] ?? '', /· scope: global ·/)
@@ -129,7 +131,6 @@ test('depth drives the relative path', () => {
     org: 'acme',
     depth: 4,
     context: twoStandards,
-    version: '0.0.0-test',
   })
   assert.match(deep.text, /`\.\.\/\.\.\/\.\.\/\.\.\/\.rness\/`/)
 })
@@ -140,7 +141,6 @@ test('no standards yields a placeholder line, never an empty Rules section', () 
     org: 'acme',
     depth: 2,
     context: ctx([]),
-    version: '0.0.0-test',
   })
   assert.match(
     block.text,
@@ -161,7 +161,6 @@ test('a standard with front matter renders its content only, never the --- fence
         content: '# API rules\n',
       },
     ]),
-    version: '0.0.0-test',
   })
   assert.match(
     block.text,
@@ -198,7 +197,6 @@ test('CRLF and lone-CR standard bodies render as LF, and hash the same as their 
       org: 'acme',
       depth: 2,
       context,
-      version: '0.0.0-test',
     })
   )
   assert.doesNotMatch(a?.text ?? '', /\r/)
@@ -213,7 +211,6 @@ test('parseHeader rejects a line that only shares the header prefix', () => {
     org: 'acme',
     depth: 2,
     context: twoStandards,
-    version: '0.0.0-test',
   })
   const header = block.text.split('\n')[1] ?? ''
   assert.notEqual(parseHeader(header), null)
@@ -222,4 +219,42 @@ test('parseHeader rejects a line that only shares the header prefix', () => {
     parseHeader(header.replace('never edit inside this block', 'edit freely')),
     null
   )
+})
+
+test('the 0.2–0.4 header, which named the CLI version, still parses', () => {
+  const block = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 2,
+    context: twoStandards,
+  })
+  const old = `<!-- rness 0.4.0 · scope: web · contract: 1 · hash: ${block.hash} · generated: run \`rness sync\`, never edit inside this block -->`
+  assert.deepEqual(parseHeader(old), {
+    version: '0.4.0',
+    scope: 'web',
+    hash: block.hash,
+  })
+})
+
+test('a block is current by its hash, whichever header form it has', () => {
+  const block = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 2,
+    context: twoStandards,
+  })
+  const lines = block.text.split('\n')
+  assert.equal(isCurrentBlock(lines, block.hash), true)
+
+  const old = [...lines]
+  old[1] = (old[1] ?? '').replace('<!-- rness · ', '<!-- rness 0.3.0 · ')
+  assert.equal(isCurrentBlock(old, block.hash), true)
+
+  assert.equal(isCurrentBlock(lines, '000000000000'), false, 'content changed')
+  const edited = [...lines]
+  edited[3] = `${edited[3] ?? ''} (hand edit)`
+  assert.equal(isCurrentBlock(edited, block.hash), false, 'hand edit')
+  const broken = [...lines]
+  broken[1] = '<!-- something else -->'
+  assert.equal(isCurrentBlock(broken, block.hash), false, 'no header')
 })
