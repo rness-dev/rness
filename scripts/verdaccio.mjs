@@ -24,6 +24,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -233,6 +234,23 @@ async function deploy() {
     // The build ran above; prepublishOnly (typecheck, tests, build) is skipped.
     npm(['publish', '--ignore-scripts'], cwd)
     console.log(`deployed ${name}@${version}`)
+  }
+  // `npm create rness` runs through npx, which keeps the first copy of a
+  // version it installed and never looks again: redeploying the same version
+  // would go on testing the old code. npx rebuilds the cache on demand.
+  let cache = join(homedir(), '.npm')
+  try {
+    cache = execFileSync('npm', ['config', 'get', 'cache'], {
+      env: cleanEnv(),
+      encoding: 'utf8',
+    }).trim()
+  } catch {
+    // npm's default location
+  }
+  const npx = join(cache, '_npx')
+  if (existsSync(npx)) {
+    rmSync(npx, { recursive: true, force: true })
+    console.log(`cleared the npx cache (${npx})`)
   }
   console.log(usageHint())
 }

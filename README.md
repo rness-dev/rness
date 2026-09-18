@@ -36,6 +36,7 @@ Try a release before publishing it, through a local npm registry
     pnpm verdaccio stop      # or `clean` to also delete what it stored
 
 `deploy` replaces a version already deployed, so it can run again after a
-change.
+change; it also clears the npx cache (`<npm cache>/_npx`), which would
+otherwise keep serving the first copy of that version to `npm create`.
 
 Node ≥ 24, pnpm, TypeScript. MIT licence.
