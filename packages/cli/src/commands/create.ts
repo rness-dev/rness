@@ -457,7 +457,11 @@ export async function createCommand(
     if (opts.ssh === true) return transport.hosts.ssh
     if (opts.https === true) return transport.hosts.https
     const access = await testSsh()
-    process.stdout.write(`${usingLine(access)}\n`)
+    const github = access.ok ? null : await getProvider()
+    const login = github?.authenticated
+      ? (await github.identity())?.login
+      : undefined
+    process.stdout.write(`${usingLine(access, login)}\n`)
     return access.ok ? transport.hosts.ssh : transport.hosts.https
   }
   let loaded: Prompts | undefined

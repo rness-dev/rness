@@ -20,12 +20,43 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness add <repo> [--scopes apps/web,packages/ui] [--ssh|--https] -y
     rness sync [--all] [--scope <name>] [--check] [--pull] -y
     rness upgrade [<version>] -y
+    rness login [--setup-git|--no-setup-git]
+    rness logout
     rness context [--scope <name>] [--json]
     rness validate
 
 `create` never runs inside a workspace. `add`, `sync` and `create` ask for
 confirmation in a terminal; pass `-y`/`--yes` in scripts. `sync --check`
 writes nothing and exits 1 when a block is out of date — use it in CI.
+
+### Log in
+
+    rness login     # shows a code and https://github.com/login/device
+    rness logout
+
+`rness login` connects rness to your GitHub account (OAuth device flow: you
+approve a code in a browser, on any machine). Logged in, `create` lists the
+private repositories you can access, offers your organizations to choose
+from, and says as whom it looks at one (`member   acme (as you)`). The
+`create` wizard offers the login itself when it would otherwise list
+anonymously.
+
+- The login is one file, `~/.config/rness/auth.json` (`$XDG_CONFIG_HOME`,
+  `%APPDATA%` on Windows), readable by you only. The access token lives 8
+  hours and is renewed on its own. `GITHUB_TOKEN`, then `GH_TOKEN`, win over
+  it — CI needs no login.
+- rness asks for `repo` and `read:org`: GitHub has no read-only scope for
+  private repositories. It only lists and clones.
+- An organization that restricts OAuth apps hides its private repositories
+  until an owner approves "Rness"; `create` says so, with the link.
+- Over HTTPS, rness's own clones and pulls carry the login — through the
+  environment of that one git command, never in a URL or `.git/config`. For
+  your own `git pull` and `git push`, `login` offers to make rness git's
+  credential helper for github.com (`--setup-git`, `--no-setup-git`);
+  `logout` undoes it. It needs a global install (`npm i -g @rness/cli`): a
+  copy run through `npx` lives in a cache. Over SSH none of this is needed.
+- `rness logout` forgets the login; revoke the authorization itself in
+  GitHub's settings (the command prints the link).
 
 ### SSH or HTTPS
 
@@ -90,6 +121,9 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   (`.github`, …).
 - Colour, a banner and progress lines in a terminal (see "Colour" above);
   nothing changes for scripts.
+- `rness login` / `rness logout` are new: private repositories are listed,
+  and cloned over HTTPS with the login (see "Log in" above). Without a login
+  the note reads `rness login lists the private ones you can access`.
 - `rness upgrade` is new (see "Upgrade" above). From 0.4.0:
   `npx @rness/cli@latest upgrade`.
 - The header of a generated block no longer names the CLI version

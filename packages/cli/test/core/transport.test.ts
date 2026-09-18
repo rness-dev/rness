@@ -141,6 +141,14 @@ test('the lines, verbatim', () => {
     usingLine({ ok: false, reason: 'Permission denied (publickey).' }),
     'using    https (ssh to github.com unavailable: Permission denied (publickey).)'
   )
+  assert.equal(
+    usingLine({ ok: false, reason: 'Permission denied.' }, 'octo'),
+    'using    https (ssh to github.com unavailable: Permission denied., logged in as octo)'
+  )
+  assert.equal(
+    usingLine({ ok: true, login: 'octo' }, 'octo'),
+    'using    ssh (github.com as octo)'
+  )
   assert.deepEqual(sshWorkspaceLines('Permission denied (publickey).'), [
     'this workspace clones over SSH (rness.json) but ssh to github.com fails: Permission denied (publickey).',
     'set up an SSH key: https://docs.github.com/authentication/connecting-to-github-with-ssh',

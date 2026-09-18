@@ -129,12 +129,15 @@ export function isSshUrl(url: string, hosts: Hosts): boolean {
 /** Printed in a terminal before the test, which may ask for a passphrase. */
 export const CHECKING_LINE = status('checking', 'ssh access to github.com…')
 
-export function usingLine(access: SshAccess): string {
+/** `login`: who rness is logged in as, which is what makes HTTPS reach private repositories. */
+export function usingLine(access: SshAccess, login?: string | null): string {
+  const as =
+    login === undefined || login === null ? '' : `, logged in as ${login}`
   return status(
     'using',
     access.ok
       ? `ssh (github.com as ${access.login})`
-      : `https (ssh to github.com unavailable: ${access.reason})`
+      : `https (ssh to github.com unavailable: ${access.reason}${as})`
   )
 }
 

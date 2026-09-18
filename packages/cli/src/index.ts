@@ -33,6 +33,19 @@ export { checkContract, STATUSES } from './core/contract.ts'
 export { scaffoldDir, SCAFFOLD_FILES } from './core/scaffold.ts'
 export type * from './core/types.ts'
 export { syncCommand, type SyncOptions } from './commands/sync.ts'
+export { loginCommand, type LoginOptions } from './commands/login.ts'
+export { logoutCommand } from './commands/logout.ts'
+export type { CommandDeps } from './core/deps.ts'
+export type {
+  GitCredentials,
+  GitProvider,
+  Organization,
+  OrganizationAccess,
+} from './core/provider.ts'
+export {
+  GitHubOAuthProvider,
+  githubProvider,
+} from './core/github-oauth-provider.ts'
 export { upgradeCommand, type UpgradeOptions } from './commands/upgrade.ts'
 export { defaultTerminal, type Terminal } from './core/terminal.ts'
 export {
