@@ -171,7 +171,7 @@ async function addWith(
 ) {
   const c = capture()
   try {
-    const code = await addCommand(spec, opts, terminal, transport)
+    const code = await addCommand(spec, opts, { terminal, transport })
     return { code, out: c.out(), err: c.err() }
   } finally {
     c.restore()

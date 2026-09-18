@@ -330,7 +330,7 @@ function scripted(answers: { pick?: unknown; confirm?: unknown }) {
 
 async function syncIn(opts: SyncOptions, terminal: Terminal) {
   const c = capture()
-  const code = await syncCommand(opts, terminal)
+  const code = await syncCommand(opts, { terminal })
   c.restore()
   return { code, out: c.out(), err: c.err() }
 }
@@ -450,8 +450,10 @@ test('a git@ catalogue entry is not cloned without SSH access: sync stops before
   const c = capture()
   const code = await syncCommand(
     { cwd: root, all: true, yes: true },
-    NO_TTY,
-    denied.transport
+    {
+      terminal: NO_TTY,
+      transport: denied.transport,
+    }
   )
   c.restore()
   assert.equal(code, 1)
@@ -482,8 +484,10 @@ test('with SSH access the git@ entry is cloned; the SSH test runs only when such
     const c = capture()
     const code = await syncCommand(
       { cwd: root, yes: true, ...opts },
-      NO_TTY,
-      ok.transport
+      {
+        terminal: NO_TTY,
+        transport: ok.transport,
+      }
     )
     c.restore()
     return { code, out: c.out(), err: c.err() }

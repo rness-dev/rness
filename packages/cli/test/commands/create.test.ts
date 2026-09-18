@@ -731,7 +731,10 @@ async function wizard(
 ) {
   const c = capture()
   try {
-    const code = await createCommand(opts, deps, transport)
+    const code = await createCommand(opts, {
+      terminal: deps,
+      ...(transport === undefined ? {} : { transport }),
+    })
     return { code, out: c.out(), err: c.err() }
   } finally {
     c.restore()

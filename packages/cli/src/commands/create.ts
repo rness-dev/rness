@@ -4,14 +4,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
+import type { CommandDeps } from '../core/deps.ts'
 import { exists } from '../core/fs.ts'
 import { clone, commitAll, init } from '../core/git.ts'
-import {
-  DEFAULT_GITHUB_API,
-  MAX_PAGES,
-  PER_PAGE,
-  listRepositories,
-} from '../core/github.ts'
+import { githubProvider } from '../core/github-oauth-provider.ts'
+import { MAX_PAGES, PER_PAGE } from '../core/github.ts'
 import {
   NAME,
   ORG_NAME,
@@ -29,6 +26,7 @@ import {
   packageManagerVersion,
 } from '../core/pm.ts'
 import { step } from '../core/progress.ts'
+import type { GitProvider } from '../core/provider.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { copyScaffold } from '../core/scaffold-copy.ts'
@@ -42,7 +40,6 @@ import {
   CHECKING_LINE,
   INSTEAD_OF_LINES,
   type SshAccess,
-  type Transport,
   defaultTransport,
   isSshUrl,
   sshWorkspaceLines,
@@ -82,8 +79,6 @@ export type { Prompts }
 
 /** What create needs from the terminal; tests replace it with scripted answers. */
 export type CreateDeps = Terminal
-
-const defaultDeps: CreateDeps = defaultTerminal
 
 async function isEmptyDir(dir: string): Promise<boolean> {
   return (await readdir(dir)).length === 0
@@ -168,27 +163,22 @@ function cancelled(): number {
  */
 async function pickRepositories(input: {
   org: string
-  apiBase: string
+  provider: GitProvider
   prompts: Prompts
   catalogue: Readonly<Record<string, unknown>>
 }): Promise<{ picked: string[]; prompted: boolean } | null> {
-  const { org, prompts } = input
-  const token =
-    process.env['GITHUB_TOKEN'] || process.env['GH_TOKEN'] || undefined
+  const { org, prompts, provider } = input
   process.stdout.write(`${status('listing', `${org} repositories…`)}\n`)
   let listed: { name: string; private: boolean; archived: boolean }[] = []
   let failed = false
   try {
-    const listing = await listRepositories(org, {
-      token,
-      apiBase: input.apiBase,
-    })
+    const listing = await provider.listRepositories(org)
     listed = listing.repositories
     if (listing.owner === 'user')
       process.stdout.write(
         `only public repositories of ${org} are listed; add private ones later with rness add <repo>\n`
       )
-    else if (token === undefined)
+    else if (!provider.authenticated)
       process.stdout.write(
         'only public repositories are listed; set GITHUB_TOKEN to include private ones, or add them later with rness add <repo>\n'
       )
@@ -365,9 +355,14 @@ async function placeContext(
  */
 export async function createCommand(
   opts: CreateOptions,
-  deps: CreateDeps = defaultDeps,
-  transport: Transport = defaultTransport
+  deps: Partial<CommandDeps> = {}
 ): Promise<number> {
+  const terminal = deps.terminal ?? defaultTerminal
+  const transport = deps.transport ?? defaultTransport
+  // Built on first use: it reads the stored login, which most paths never need.
+  let provider = deps.provider
+  const getProvider = async (): Promise<GitProvider> =>
+    (provider ??= await githubProvider(opts.githubApi))
   const cwd = opts.cwd ?? process.cwd()
   if (opts.template !== undefined) {
     process.stderr.write('--template is reserved for a later version\n')
@@ -392,7 +387,7 @@ export async function createCommand(
     opts.pm !== undefined && isPackageManager(opts.pm)
       ? opts.pm
       : detectPackageManager()
-  const interactive = opts.yes !== true && deps.isTty()
+  const interactive = opts.yes !== true && terminal.isTty()
   // The SSH test runs at most once, and only when its answer is needed.
   let sshAccess: SshAccess | undefined
   const testSsh = async (): Promise<SshAccess> => {
@@ -412,7 +407,7 @@ export async function createCommand(
   }
   let loaded: Prompts | undefined
   const prompts = async (): Promise<Prompts> =>
-    (loaded ??= await deps.prompts())
+    (loaded ??= await terminal.prompts())
   let staging: string | undefined
   // '' off a terminal, so scripts and tests see nothing of it.
   if (interactive) process.stdout.write(banner(VERSION))
@@ -458,7 +453,7 @@ export async function createCommand(
       process.stderr.write(`${problem}\n`)
       return 1
     }
-    if (opts.yes !== true && !deps.isTty()) {
+    if (opts.yes !== true && !terminal.isTty()) {
       process.stderr.write(
         'rness create writes files; pass --yes to run without a prompt\n'
       )
@@ -516,7 +511,7 @@ export async function createCommand(
     else if (interactive) {
       const result = await pickRepositories({
         org,
-        apiBase: opts.githubApi ?? DEFAULT_GITHUB_API,
+        provider: await getProvider(),
         prompts: await prompts(),
         catalogue: catalogue.repos,
       })

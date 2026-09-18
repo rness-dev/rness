@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 
+import type { CommandDeps } from '../core/deps.ts'
 import { exists } from '../core/fs.ts'
 import { loadManifest, parseRepoSpec, resolveOrg } from '../core/manifest.ts'
 import { step } from '../core/progress.ts'
@@ -9,10 +10,9 @@ import {
   workspaceDirs,
 } from '../core/repos.ts'
 import { status, warn } from '../core/style.ts'
-import { type Terminal, defaultTerminal } from '../core/terminal.ts'
+import { defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING_LINE,
-  type Transport,
   defaultTransport,
   httpsFlagLine,
   isSshUrl,
@@ -65,9 +65,10 @@ const FULL_URL = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/
 export async function addCommand(
   spec: string,
   opts: AddOptions,
-  terminal: Terminal = defaultTerminal,
-  transport: Transport = defaultTransport
+  deps: Partial<CommandDeps> = {}
 ): Promise<number> {
+  const terminal = deps.terminal ?? defaultTerminal
+  const transport = deps.transport ?? defaultTransport
   const cwd = opts.cwd ?? process.cwd()
   if (opts.ssh === true && opts.https === true) {
     process.stderr.write('--ssh and --https cannot be combined\n')

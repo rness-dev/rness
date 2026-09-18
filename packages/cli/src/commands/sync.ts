@@ -7,6 +7,7 @@ import {
   renderBlock,
 } from '../core/block.ts'
 import { assembleContext } from '../core/context.ts'
+import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
@@ -17,7 +18,6 @@ import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING_LINE,
   INSTEAD_OF_LINES,
-  type Transport,
   defaultTransport,
   isSshUrl,
   sshWorkspaceLines,
@@ -148,9 +148,10 @@ async function askWhatToSync(input: {
  */
 export async function syncCommand(
   opts: SyncOptions,
-  terminal: Terminal = defaultTerminal,
-  transport: Transport = defaultTransport
+  deps: Partial<CommandDeps> = {}
 ): Promise<number> {
+  const terminal = deps.terminal ?? defaultTerminal
+  const transport = deps.transport ?? defaultTransport
   const cwd = opts.cwd ?? process.cwd()
   const check = opts.check === true
   try {
