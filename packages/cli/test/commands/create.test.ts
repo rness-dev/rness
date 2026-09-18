@@ -749,6 +749,7 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
       { name: '.rness' },
       { name: 'my_lib' },
       { name: '.github' },
+      { name: '.github-private', private: true },
       { name: 'WebSite' },
       { name: 'api', private: true },
     ])
@@ -768,18 +769,13 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
     '"Acme Inc" is not a valid GitHub organization name',
   ])
   // A name differing from NAME only by case is offered in lowercase (GitHub
-  // names are case-insensitive); any other is shown disabled, last.
+  // names are case-insensitive); any other is shown disabled, last. Hidden
+  // repositories (.rness, .github, …) and archived ones are not listed.
   assert.deepEqual(term.offered, [
     [
       { value: 'api', label: 'api', hint: 'private' },
       { value: 'web', label: 'web' },
       { value: 'website', label: 'WebSite' },
-      {
-        value: '.github',
-        label: '.github',
-        hint: 'name not supported yet',
-        disabled: true,
-      },
       {
         value: 'my_lib',
         label: 'my_lib',
@@ -792,7 +788,7 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
   assert.equal(requests[0]?.headers['authorization'], undefined)
   assert.ok(
     r.out.startsWith(
-      `not found acme/.rness (or not visible to you) — starting a new workspace\nlisting  acme repositories…\n${NO_TOKEN_NOTE}names rness cannot declare yet (struck through): .github, my_lib\ncreated  acme/.rness (new workspace)\nskipped  install (--skip-install)\ncloned   org/api\ndeclared scope api (org/api)\ncloned   org/website\ndeclared scope website (org/website)\ncommitted acme/.rness\n`
+      `not found acme/.rness (or not visible to you) — starting a new workspace\nlisting  acme repositories…\n${NO_TOKEN_NOTE}names rness cannot declare yet (struck through): my_lib\ncreated  acme/.rness (new workspace)\nskipped  install (--skip-install)\ncloned   org/api\ndeclared scope api (org/api)\ncloned   org/website\ndeclared scope website (org/website)\ncommitted acme/.rness\n`
     ),
     r.out
   )

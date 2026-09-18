@@ -189,14 +189,15 @@ async function pickRepositories(input: {
   }
   const inCatalogue = (name: string): boolean =>
     Object.hasOwn(input.catalogue, name)
-  // Archived repositories and the context repository itself are never
-  // candidates. GitHub names are case-insensitive, so a name that differs
-  // from `NAME` only by case is offered — and declared — in lowercase, as
-  // `rness add` would; any other name is shown but cannot be picked yet.
+  // Archived repositories and hidden ones (a leading dot: .github, the
+  // context repository .rness, …) are never candidates. GitHub names are
+  // case-insensitive, so a name that differs from `NAME` only by case is
+  // offered — and declared — in lowercase, as `rness add` would; any other
+  // name is shown but cannot be picked yet.
   const byLabel = (a: { label: string }, b: { label: string }): number =>
     a.label.localeCompare(b.label, 'en', { sensitivity: 'base' })
   const candidates = listed.filter(
-    (r) => !r.archived && r.name.toLowerCase() !== '.rness'
+    (r) => !r.archived && !r.name.startsWith('.')
   )
   const hint = (isPrivate: boolean, catalogued: boolean): string | null =>
     [isPrivate ? 'private' : null, catalogued ? 'in .rness' : null]
