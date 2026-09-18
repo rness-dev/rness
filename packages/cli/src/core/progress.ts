@@ -38,27 +38,51 @@ export async function step<T>(
   const stream = options.stream ?? process.stdout
   if (!isLive(stream)) return work()
   const draw = (frame: string): void => {
-    stream.write(
+    rawWrite(
       `${CLEAR_LINE}${paint('info', frame, stream)} ${paint('idle', options.label, stream)}`
     )
   }
   let timer: NodeJS.Timeout | undefined
+  let shown = true
+  // Erase the label, once: when the work ends, or as soon as the work itself
+  // writes — its first line must not land behind `… syncing  the blocks`.
+  const erase = (): void => {
+    if (!shown) return
+    shown = false
+    if (timer !== undefined) clearInterval(timer)
+    rawWrite(CLEAR_LINE)
+  }
+  // Both streams share the terminal's line, so a write to either erases it.
+  const rawWrite = stream.write.bind(stream) as NodeJS.WriteStream['write']
+  const rawErr = process.stderr.write.bind(
+    process.stderr
+  ) as NodeJS.WriteStream['write']
+  type Write = NodeJS.WriteStream['write']
+  // `write` is overloaded; the guard only forwards, whatever the overload.
+  const guard = (raw: Write): Write =>
+    ((...args: Parameters<Write>) => {
+      erase()
+      return raw(...args)
+    }) as Write
   if (options.animate) {
     let i = 0
     draw(FRAMES[0] ?? '')
     timer = setInterval(() => {
       i = (i + 1) % FRAMES.length
-      draw(FRAMES[i] ?? '')
+      if (shown) draw(FRAMES[i] ?? '')
     }, INTERVAL_MS)
     // Never the reason the process stays alive.
     timer.unref()
   } else {
     draw('…')
   }
+  stream.write = guard(rawWrite)
+  if (process.stderr !== stream) process.stderr.write = guard(rawErr)
   try {
     return await work()
   } finally {
-    if (timer !== undefined) clearInterval(timer)
-    stream.write(CLEAR_LINE)
+    stream.write = rawWrite
+    if (process.stderr !== stream) process.stderr.write = rawErr
+    erase()
   }
 }

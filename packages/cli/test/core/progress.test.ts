@@ -58,3 +58,34 @@ test('on a terminal the label is shown, then erased — also when the work throw
   await step({ label: 'x', animate: true, stream: ci.s }, async () => undefined)
   assert.equal(ci.written(), '', 'CI is not a place for transient lines')
 })
+
+test('what the work itself prints starts on a clean line: the label is erased first, once', async (t) => {
+  const saved = { CI: process.env['CI'], TERM: process.env['TERM'] }
+  delete process.env['CI']
+  process.env['TERM'] = 'xterm-256color'
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+  })
+  const clear = `\r${String.fromCharCode(27)}[2K`
+  for (const animate of [true, false]) {
+    const out = stream(true)
+    await step(
+      { label: 'syncing  the blocks', animate, stream: out.s },
+      async () => {
+        out.s.write('unchanged AGENTS.md\n')
+        out.s.write('unchanged org/web/AGENTS.md\n')
+      }
+    )
+    const written = out.written()
+    assert.ok(
+      written.endsWith(
+        `${clear}unchanged AGENTS.md\nunchanged org/web/AGENTS.md\n`
+      ),
+      JSON.stringify(written)
+    )
+    assert.ok(!written.includes('blocksunchanged'))
+  }
+})
