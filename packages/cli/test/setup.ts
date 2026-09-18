@@ -9,6 +9,12 @@ import { join } from 'node:path'
 delete process.env['FORCE_COLOR']
 delete process.env['NO_COLOR']
 
+// The developer's own GitHub token must not reach a test: with a real one the
+// CLI is logged in, asks api.github.com who it is, and prints it. Tests that
+// want a token set one themselves.
+delete process.env['GITHUB_TOKEN']
+delete process.env['GH_TOKEN']
+
 // The stored GitHub login lives under the config directory: tests must never
 // read — or overwrite — the developer's own. Every test process gets an
 // empty one; a test that needs a login sets its own.

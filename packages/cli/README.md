@@ -55,6 +55,8 @@ anonymously.
   credential helper for github.com (`--setup-git`, `--no-setup-git`);
   `logout` undoes it. It needs a global install (`npm i -g @rness/cli`): a
   copy run through `npx` lives in a cache. Over SSH none of this is needed.
+  The helper names `node` by its absolute path: after a Node upgrade through
+  a version manager (mise, nvm), run `rness login --setup-git` again.
 - `rness logout` forgets the login; revoke the authorization itself in
   GitHub's settings (the command prints the link).
 
