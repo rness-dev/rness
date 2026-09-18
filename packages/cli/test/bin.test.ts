@@ -348,3 +348,56 @@ test('colour and the banner need a terminal (or FORCE_COLOR); a piped help is pl
   assert.ok(sub.includes(ESC), 'a sub-command help is painted')
   assert.ok(!sub.includes('█'), 'and has no banner')
 })
+
+test('login, logout and git-credential concern the machine: never delegated, and silent about a drifted pin', async (t) => {
+  const root = await tmp('rness-machine-')
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await workspace(root)
+  await writeFile(
+    join(root, '.rness', 'package.json'),
+    JSON.stringify({ devDependencies: { '@rness/cli': '9.9.10' } })
+  )
+  const pkg = join(root, '.rness', 'node_modules', '@rness', 'cli')
+  await mkdir(join(pkg, 'dist'), { recursive: true })
+  await writeFile(
+    join(pkg, 'package.json'),
+    JSON.stringify({ name: '@rness/cli', version: '9.9.9', type: 'module' })
+  )
+  await writeFile(
+    join(pkg, 'dist', 'index.js'),
+    'export async function run() { process.stdout.write("DELEGATED\\n"); return 0 }\n'
+  )
+  const config = await tmp('rness-machine-config-')
+  t.after(() => rm(config, { recursive: true, force: true }))
+  const env: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: config }
+  delete env['RNESS_NO_DELEGATE']
+  delete env['GITHUB_TOKEN']
+  delete env['GH_TOKEN']
+  // git runs the helper from inside a clone, on every fetch.
+  const cwd = join(root, 'org', 'web')
+  await mkdir(cwd, { recursive: true })
+
+  const child = spawn(process.execPath, [binPath, 'git-credential', 'get'], {
+    cwd,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (c: Buffer) => (stdout += c.toString()))
+  child.stderr.on('data', (c: Buffer) => (stderr += c.toString()))
+  child.stdin.end('protocol=https\nhost=github.com\n\n')
+  const code = await new Promise<number | null>((r) => child.on('close', r))
+  assert.equal(code, 0)
+  assert.equal(stdout, '', 'not logged in: git is told nothing')
+  assert.equal(stderr, '', 'no drift warning, no delegation')
+
+  for (const name of ['login', 'logout']) {
+    const help = await execFileP(process.execPath, [binPath, name, '--help'], {
+      cwd,
+      env,
+    })
+    assert.match(help.stdout, new RegExp(`^Usage: rness ${name}`))
+    assert.equal(help.stderr, '')
+  }
+})

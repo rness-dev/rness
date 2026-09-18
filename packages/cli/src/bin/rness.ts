@@ -29,8 +29,17 @@ async function main(): Promise<number> {
   }
   const argv = process.argv.slice(2)
   // `create` makes a workspace and `upgrade` replaces the pinned copy: both
-  // are served by the copy the user invoked (spec 0006 §3).
-  const own = ['create', 'upgrade', 'update'].includes(argv[0] ?? '')
+  // are served by the copy the user invoked (spec 0006 §3). The login concerns
+  // the machine, not a workspace — and git runs `git-credential` from inside
+  // a clone, on every fetch: no delegation, and no warning there either.
+  const own = [
+    'create',
+    'upgrade',
+    'update',
+    'login',
+    'logout',
+    'git-credential',
+  ].includes(argv[0] ?? '')
   const noDelegate = process.env['RNESS_NO_DELEGATE'] === '1'
   const skipDelegation = own || noDelegate
   const command = argv[0]

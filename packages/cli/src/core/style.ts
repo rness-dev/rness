@@ -47,6 +47,7 @@ const DONE = new Set([
   'upgraded',
   'pulled',
   'logged in',
+  'logged out',
 ])
 
 /** What a status verb says about the step: it changed something, it did not, or it is progress. */

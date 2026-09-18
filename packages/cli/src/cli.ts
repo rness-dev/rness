@@ -3,6 +3,9 @@ import { Command, CommanderError, Option } from 'commander'
 import { type AddOptions, addCommand } from './commands/add.ts'
 import { type ContextOptions, contextCommand } from './commands/context.ts'
 import { type CreateOptions, createCommand } from './commands/create.ts'
+import { gitCredentialCommand } from './commands/git-credential.ts'
+import { type LoginOptions, loginCommand } from './commands/login.ts'
+import { logoutCommand } from './commands/logout.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
@@ -107,6 +110,31 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (repo: string, opts: AddOptions) => {
       state.code = await addCommand(repo, opts)
+    })
+
+  program
+    .command('login')
+    .description('Log in to GitHub, to list and clone private repositories')
+    .option('--setup-git', "make rness git's credential helper for github.com")
+    .option('--no-setup-git', 'do not ask about git')
+    .addOption(new Option('--github-api <base>').hideHelp())
+    .action(async (opts: LoginOptions) => {
+      state.code = await loginCommand(opts)
+    })
+
+  program
+    .command('logout')
+    .description('Forget the GitHub login of this machine')
+    .action(async () => {
+      state.code = await logoutCommand()
+    })
+
+  // What git runs once `rness login` made rness its credential helper.
+  program
+    .command('git-credential', { hidden: true })
+    .argument('<operation>')
+    .action(async (operation: string) => {
+      state.code = await gitCredentialCommand(operation)
     })
 
   program
