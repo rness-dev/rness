@@ -28,10 +28,17 @@ import {
   type Prompts,
   createCommand,
 } from '../../src/commands/create.ts'
+import { originUrl } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
+import {
+  INSTEAD_OF_LINES,
+  type Transport,
+  sshWorkspaceLines,
+} from '../../src/core/transport.ts'
 import { VERSION } from '../../src/version.ts'
 import { capture } from '../helpers/capture.ts'
 import { makeRemoteOrg } from '../helpers/remote-org.ts'
+import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 process.env['GIT_AUTHOR_NAME'] = 'rness-test'
@@ -122,10 +129,7 @@ test('new: ./<org> is scaffolded with org and tokens, commits it, adds --repos, 
   )
   assert.match(r.out, /Workspace for `acme` is ready in acme\/\./)
   assert.match(r.out, /Next:\n {2}cd acme\/\.rness\n/)
-  assert.match(
-    r.out,
-    / {2}# then, for every teammate: npm create rness -- --org acme\n/
-  )
+  assert.match(r.out, / {2}# then, for every teammate: npm create rness acme\n/)
   const m = await loadManifest(join(root, '.rness'))
   assert.equal(m.org, 'acme')
   assert.deepEqual(Object.keys(m.repos), ['api'])
@@ -373,7 +377,7 @@ test('guards: inside a workspace, non-empty target, --template, bad org, no TTY,
   assert.match(r6.err, /--pm must be one of npm, pnpm, yarn, bun/)
 })
 
-test('guards without a prompt: --org is required; a positional argument and --dir are unknown', async (t) => {
+test('guards without a prompt: the organization is required once; a second argument and --dir are unknown', async (t) => {
   const noOrg = await create(['--yes', '--cwd', await scratch(t)])
   assert.equal(noOrg.code, 2)
   assert.equal(noOrg.err, 'rness create needs --org <name> without a prompt\n')
@@ -388,7 +392,14 @@ test('guards without a prompt: --org is required; a positional argument and --di
     assert.match(r.err, /is not a valid GitHub organization name/)
   }
 
-  const positional = await create(['my-ws', '--org', 'acme', '--yes'])
+  const twice = await create(['my-ws', '--org', 'acme', '--yes'])
+  assert.equal(twice.code, 2)
+  assert.equal(
+    twice.err,
+    'organization given twice: "my-ws" and --org "acme"\n'
+  )
+
+  const positional = await create(['acme', 'my-ws', '--yes'])
   assert.equal(positional.code, 2)
   assert.match(positional.err, /too many arguments/)
 
@@ -584,7 +595,7 @@ test('an organization name keeps its case in the directory, the URLs and rness.j
   ])
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /Workspace for `Acme-Corp` is ready in Acme-Corp\/\./)
-  assert.match(r.out, /npm create rness -- --org Acme-Corp\n/)
+  assert.match(r.out, /npm create rness Acme-Corp\n/)
   const m = await loadManifest(join(cwd, 'Acme-Corp', '.rness'))
   assert.equal(m.org, 'Acme-Corp')
   assert.deepEqual(m.repos, {
@@ -715,11 +726,12 @@ function terminal(script: Script) {
 
 async function wizard(
   opts: Parameters<typeof createCommand>[0],
-  deps: CreateDeps
+  deps: CreateDeps,
+  transport?: Transport
 ) {
   const c = capture()
   try {
-    const code = await createCommand(opts, deps)
+    const code = await createCommand(opts, deps, transport)
     return { code, out: c.out(), err: c.err() }
   } finally {
     c.restore()
@@ -1007,4 +1019,201 @@ test('wizard: inside a workspace, or with an unusable ./<org>, nothing more is a
   assert.equal(r2.code, 1)
   assert.equal(r2.err, 'acme is not empty\n')
   assert.deepEqual(taken.asked, [ORG_Q], 'refused right after the organization')
+})
+
+// --- [org], and SSH first (spec 0005) ----------------------------------------
+
+test('create <org> is --org <org>; two different names are refused', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const rest = ['--yes', '--skip-install', '--pm', 'npm', '--host', remote.host]
+  const cwd = await scratch(t)
+  const r = await create(['acme', ...rest, '--repos', 'api', '--cwd', cwd])
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual((await loadManifest(join(cwd, 'acme', '.rness'))).repos, {
+    api: { url: `${remote.host}acme/api.git` },
+  })
+
+  const twice = await scratch(t)
+  const same = await create(['acme', '--org', 'acme', ...rest, '--cwd', twice])
+  assert.equal(same.code, 0, same.err)
+
+  const other = await scratch(t)
+  const r2 = await create(['acme', '--org', 'other', ...rest, '--cwd', other])
+  assert.equal(r2.code, 2)
+  assert.equal(r2.err, 'organization given twice: "acme" and --org "other"\n')
+  assert.deepEqual(await readdir(other), ['.git'])
+})
+
+test('--ssh and --https cannot be combined', async (t) => {
+  const cwd = await scratch(t)
+  const r = await create(['acme', '--yes', '--ssh', '--https', '--cwd', cwd])
+  assert.equal(r.code, 2)
+  assert.equal(r.err, '--ssh and --https cannot be combined\n')
+})
+
+const NO_TTY: CreateDeps = {
+  isTty: () => false,
+  prompts: async () => {
+    throw new Error('no prompt without a terminal')
+  },
+}
+const FLAGS = { org: 'acme', yes: true, skipInstall: true, pm: 'npm' }
+
+test('new workspace: URLs are written over SSH when the SSH test passes, over HTTPS otherwise', async (t) => {
+  const ok = await fakeTransport(t, 'acme', SSH_OK)
+  await ok.ssh.addRepo('api', { 'README.md': '# api\n' })
+  const cwd = await scratch(t)
+  const r = await wizard({ ...FLAGS, repos: 'api', cwd }, NO_TTY, ok.transport)
+  assert.equal(r.code, 0, r.err)
+  assert.ok(
+    r.out.startsWith(
+      'using    ssh (github.com as octo)\nnot found acme/.rness (or not visible to you) — starting a new workspace\n'
+    ),
+    r.out
+  )
+  assert.deepEqual(ok.calls, [{ interactive: false }])
+  assert.deepEqual((await loadManifest(join(cwd, 'acme', '.rness'))).repos, {
+    api: { url: `${ok.ssh.host}acme/api.git` },
+  })
+
+  const denied = await fakeTransport(t, 'acme', SSH_DENIED)
+  await denied.https.addRepo('api', { 'README.md': '# api\n' })
+  const cwd2 = await scratch(t)
+  const r2 = await wizard(
+    { ...FLAGS, repos: 'api', cwd: cwd2 },
+    NO_TTY,
+    denied.transport
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.ok(
+    r2.out.startsWith(
+      'using    https (ssh to github.com unavailable: git@github.com: Permission denied (publickey).)\n'
+    ),
+    r2.out
+  )
+  assert.deepEqual((await loadManifest(join(cwd2, 'acme', '.rness'))).repos, {
+    api: { url: `${denied.https.host}acme/api.git` },
+  })
+})
+
+test('--https and --ssh decide without the SSH test', async (t) => {
+  const forced = await fakeTransport(t, 'acme', SSH_OK)
+  await forced.https.addRepo('api', { 'README.md': '# api\n' })
+  await forced.ssh.addRepo('web', { 'README.md': '# web\n' })
+  const cwd = await scratch(t)
+  const r = await wizard(
+    { ...FLAGS, https: true, repos: 'api', cwd },
+    NO_TTY,
+    forced.transport
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.out, /^using /m)
+  assert.deepEqual((await loadManifest(join(cwd, 'acme', '.rness'))).repos, {
+    api: { url: `${forced.https.host}acme/api.git` },
+  })
+  const cwd2 = await scratch(t)
+  const r2 = await wizard(
+    { ...FLAGS, ssh: true, repos: 'web', cwd: cwd2 },
+    NO_TTY,
+    forced.transport
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.deepEqual((await loadManifest(join(cwd2, 'acme', '.rness'))).repos, {
+    web: { url: `${forced.ssh.host}acme/web.git` },
+  })
+  assert.deepEqual(forced.calls, [])
+})
+
+test('in a terminal the SSH test is announced, and may prompt', async (t) => {
+  withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
+  const ok = await fakeTransport(t, 'acme', SSH_OK)
+  await ok.ssh.addRepo('api', { 'README.md': '# api\n' })
+  const { base } = await githubApi(t, reposOf([{ name: 'api' }]))
+  const cwd = await scratch(t)
+  const term = terminal({ pick: [['api']] })
+  const r = await wizard(
+    { org: 'acme', skipInstall: true, pm: 'npm', githubApi: base, cwd },
+    term.deps,
+    ok.transport
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.ok(
+    r.out.startsWith(
+      'checking ssh access to github.com…\nusing    ssh (github.com as octo)\nnot found acme/.rness'
+    ),
+    r.out
+  )
+  assert.deepEqual(ok.calls, [{ interactive: true }])
+})
+
+test('join: a .rness reachable over SSH only is found, and cloned over SSH', async (t) => {
+  const ok = await fakeTransport(t, 'acme', SSH_OK)
+  const contextUrl = await ok.ssh.addRepo('.rness', {
+    'rness.json': manifestText({}),
+  })
+  const cwd = await scratch(t)
+  const r = await wizard({ ...FLAGS, cwd }, NO_TTY, ok.transport)
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^found {4}acme\/\.rness — joining$/m)
+  assert.equal(
+    await originUrl(join(cwd, 'acme', '.rness')),
+    `${ok.ssh.host}acme/.rness.git`
+  )
+  assert.ok(contextUrl.endsWith('/acme/.rness.git'))
+
+  // The same organization seen without SSH access: nothing to join.
+  const denied = await fakeTransport(t, 'acme', SSH_DENIED)
+  await denied.ssh.addRepo('.rness', { 'rness.json': manifestText({}) })
+  const r2 = await wizard(
+    { ...FLAGS, cwd: await scratch(t) },
+    NO_TTY,
+    denied.transport
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.match(r2.out, /^not found acme\/\.rness /m)
+})
+
+test('join of an SSH workspace without SSH access stops before anything is written', async (t) => {
+  withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
+  const denied = await fakeTransport(t, 'acme', SSH_DENIED)
+  await denied.https.addRepo('.rness', {
+    'rness.json': manifestText({
+      api: { url: `${denied.ssh.host}acme/api.git` },
+    }),
+  })
+  const expected = `${[...sshWorkspaceLines(SSH_DENIED.ok ? '' : SSH_DENIED.reason), ...INSTEAD_OF_LINES].join('\n')}\n`
+  const before = await stagedJoins()
+
+  const cwd = await scratch(t)
+  const r = await wizard({ ...FLAGS, cwd }, NO_TTY, denied.transport)
+  assert.equal(r.code, 1)
+  assert.equal(r.err, expected)
+  await assert.rejects(access(join(cwd, 'acme')))
+  assert.deepEqual(await stagedJoins(), before)
+
+  // In a terminal: no repository question is asked first.
+  const term = terminal({})
+  const cwd2 = await scratch(t)
+  const r2 = await wizard(
+    { org: 'acme', skipInstall: true, pm: 'npm', cwd: cwd2 },
+    term.deps,
+    denied.transport
+  )
+  assert.equal(r2.code, 1)
+  assert.equal(r2.err, expected)
+  assert.deepEqual(term.asked, [])
+
+  // --https chooses the form of new entries; it does not make git@ entries cloneable.
+  denied.calls.length = 0
+  const cwd3 = await scratch(t)
+  const r3 = await wizard(
+    { ...FLAGS, https: true, cwd: cwd3 },
+    NO_TTY,
+    denied.transport
+  )
+  assert.equal(r3.code, 1)
+  assert.equal(r3.err, expected)
+  assert.deepEqual(denied.calls, [{ interactive: false }])
+  await assert.rejects(access(join(cwd3, 'acme')))
 })

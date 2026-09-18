@@ -28,7 +28,7 @@ import {
   isPackageManager,
   packageManagerVersion,
 } from '../core/pm.ts'
-import { DEFAULT_HOST, SSH_HOST, probeRemote, repoUrl } from '../core/remote.ts'
+import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { copyScaffold } from '../core/scaffold-copy.ts'
 import {
@@ -36,6 +36,16 @@ import {
   type Terminal,
   defaultTerminal,
 } from '../core/terminal.ts'
+import {
+  CHECKING_LINE,
+  INSTEAD_OF_LINES,
+  type SshAccess,
+  type Transport,
+  defaultTransport,
+  isSshUrl,
+  sshWorkspaceLines,
+  usingLine,
+} from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -50,8 +60,11 @@ export interface CreateOptions {
   /** Comma-separated repositories for the workspace (`<repo>` or `<owner>/<repo>`): catalogue entries are cloned, others added. */
   repos?: string
   pm?: string
+  /** Force `git@github.com:` without the SSH test. */
   ssh?: boolean
-  /** Internal: remote base. */
+  /** Force `https://github.com/` without the SSH test. */
+  https?: boolean
+  /** Internal: remote base; wins over both flags and skips the SSH test. */
   host?: string
   yes?: boolean
   skipInstall?: boolean
@@ -378,11 +391,14 @@ async function syncPinned(root: string, shown: string): Promise<number> {
  * `rness create`: join the organization's `.rness` or start a new one in
  * `./<org>` (spec 0003 §2.1). `rness.json` is the organization's catalogue;
  * the workspace is the selection of it cloned into `org/`. Every prompt comes
- * before the first write, so a cancel leaves nothing behind.
+ * before the first write, so a cancel leaves nothing behind. URLs are written
+ * over SSH when github.com accepts the user's key, over HTTPS otherwise
+ * (spec 0005); a catalogue URL is cloned as written.
  */
 export async function createCommand(
   opts: CreateOptions,
-  deps: CreateDeps = defaultDeps
+  deps: CreateDeps = defaultDeps,
+  transport: Transport = defaultTransport
 ): Promise<number> {
   const cwd = opts.cwd ?? process.cwd()
   if (opts.template !== undefined) {
@@ -391,6 +407,10 @@ export async function createCommand(
   }
   if (opts.pm !== undefined && !isPackageManager(opts.pm)) {
     process.stderr.write(`--pm must be one of ${PACKAGE_MANAGERS.join(', ')}\n`)
+    return 2
+  }
+  if (opts.ssh === true && opts.https === true) {
+    process.stderr.write('--ssh and --https cannot be combined\n')
     return 2
   }
   // A malformed flag is refused before any question is asked about the rest.
@@ -404,8 +424,24 @@ export async function createCommand(
     opts.pm !== undefined && isPackageManager(opts.pm)
       ? opts.pm
       : detectPackageManager()
-  const host = opts.host ?? (opts.ssh === true ? SSH_HOST : DEFAULT_HOST)
   const interactive = opts.yes !== true && deps.isTty()
+  // The SSH test runs at most once, and only when its answer is needed.
+  let sshAccess: SshAccess | undefined
+  const testSsh = async (): Promise<SshAccess> => {
+    if (sshAccess === undefined) {
+      if (interactive) process.stdout.write(`${CHECKING_LINE}\n`)
+      sshAccess = await transport.detect({ interactive })
+    }
+    return sshAccess
+  }
+  const chooseHost = async (): Promise<string> => {
+    if (opts.host !== undefined) return opts.host
+    if (opts.ssh === true) return transport.hosts.ssh
+    if (opts.https === true) return transport.hosts.https
+    const access = await testSsh()
+    process.stdout.write(`${usingLine(access)}\n`)
+    return access.ok ? transport.hosts.ssh : transport.hosts.https
+  }
   let loaded: Prompts | undefined
   const prompts = async (): Promise<Prompts> =>
     (loaded ??= await deps.prompts())
@@ -459,6 +495,7 @@ export async function createCommand(
       return 2
     }
 
+    const host = await chooseHost()
     const contextUrl = repoUrl(host, org, '.rness')
     const probe = await probeRemote(contextUrl)
     if (probe.kind === 'error') {
@@ -484,6 +521,21 @@ export async function createCommand(
       // Validates that the clone is a workspace context: throws on a
       // malformed or absent rness.json.
       catalogue = await loadManifest(await staged())
+      // An SSH workspace is not negotiable: without SSH access its
+      // repositories cannot be cloned, so stop before any question or write.
+      // `--ssh` is the user's word that SSH works; git reports otherwise.
+      const overSsh = Object.values(catalogue.repos).some((r) =>
+        isSshUrl(r.url, transport.hosts)
+      )
+      if (overSsh && opts.ssh !== true && opts.host === undefined) {
+        const access = await testSsh()
+        if (!access.ok) {
+          process.stderr.write(
+            `${[...sshWorkspaceLines(access.reason), ...INSTEAD_OF_LINES].join('\n')}\n`
+          )
+          return 1
+        }
+      }
     }
 
     let specs: string[]
@@ -616,7 +668,7 @@ export async function createCommand(
         gh
           ? `  gh repo create ${org}/.rness --private --source . --push`
           : `  git remote add origin ${contextUrl} && git push -u origin main`,
-        `  # then, for every teammate: npm create rness -- --org ${org}`,
+        `  # then, for every teammate: npm create rness ${org}`,
         '',
       ].join('\n')
     )

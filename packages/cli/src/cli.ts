@@ -79,7 +79,11 @@ function buildProgram(state: RunState): Command {
       '--scopes <list>',
       'comma-separated sub-directories to declare as scopes extending the repository'
     )
-    .option('--ssh', 'use git@github.com: instead of https://github.com/')
+    .option(
+      '--ssh',
+      'force git@github.com: (default: SSH when it works, else HTTPS)'
+    )
+    .option('--https', 'force https://github.com/')
     .option('-y, --yes', 'do not ask for confirmation')
     .addOption(new Option('--host <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
@@ -92,6 +96,7 @@ function buildProgram(state: RunState): Command {
     .description(
       'Create a workspace for a GitHub organization, or join its existing .rness'
     )
+    .argument('[org]', 'the GitHub organization, same as --org')
     .option(
       '--org <name>',
       'the GitHub organization, exact name (github.com/<name>)'
@@ -104,15 +109,33 @@ function buildProgram(state: RunState): Command {
       '--pm <name>',
       `package manager for .rness/ (${PACKAGE_MANAGERS.join(', ')}; default: the one running this command)`
     )
-    .option('--ssh', 'use git@github.com: instead of https://github.com/')
+    .option(
+      '--ssh',
+      'force git@github.com: (default: SSH when it works, else HTTPS)'
+    )
+    .option('--https', 'force https://github.com/')
     .option('--skip-install', 'do not install .rness/ dependencies')
     .option('-y, --yes', 'do not ask for confirmation')
     .option('--template <name>', 'reserved')
     .addOption(new Option('--host <base>').hideHelp())
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(async (opts: CreateOptions) => {
-      state.code = await createCommand(opts)
+    .action(async (orgArg: string | undefined, opts: CreateOptions) => {
+      if (
+        orgArg !== undefined &&
+        opts.org !== undefined &&
+        orgArg !== opts.org
+      ) {
+        process.stderr.write(
+          `organization given twice: "${orgArg}" and --org "${opts.org}"\n`
+        )
+        state.code = 2
+        return
+      }
+      const org = opts.org ?? orgArg
+      state.code = await createCommand(
+        org === undefined ? opts : { ...opts, org }
+      )
     })
 
   return program
