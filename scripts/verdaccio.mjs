@@ -5,13 +5,14 @@
 //   pnpm verdaccio stop     stop the registry
 //   pnpm verdaccio clean    stop it and delete everything it stored
 //
-// Its state lives in .verdaccio/ (git-ignored). Every package is proxied from
-// npmjs; a version deployed here is served from the local storage. `@rness/*`
-// and `create-rness` are proxied too, so that joining a workspace pinned to a
-// published version (0.4.0) installs as it would for a user, while the version
-// under test is the local one: it is not on npmjs yet, so a forgotten deploy
-// fails loudly (ETARGET) instead of testing something else. Publishing always
-// names the local registry explicitly, so a deploy can never reach npmjs.
+// Its state lives in .verdaccio/ (git-ignored). The shims (`create-rness`,
+// `@rness/create`) are served only from the local storage: `npm create rness`
+// asks for their `latest`, so a forgotten deploy must be a 404, never the
+// version published on npmjs. `@rness/cli` is proxied as well as deployed: a
+// workspace pinned to a published version (0.4.0) installs as it would for a
+// user, and the shims pin the version under test exactly, which only exists
+// here. Every other package is proxied from npmjs. Publishing always names
+// the local registry explicitly, so a deploy can never reach npmjs.
 import { execFileSync, spawn } from 'node:child_process'
 import {
   closeSync,
@@ -90,16 +91,20 @@ function writeConfig() {
       '  npmjs:',
       '    url: https://registry.npmjs.org/',
       'packages:',
+      // The first matching pattern wins: the exact name before the scope.
+      "  '@rness/cli':",
+      '    access: $all',
+      '    publish: $all',
+      '    unpublish: $all',
+      '    proxy: npmjs',
       "  '@rness/*':",
       '    access: $all',
       '    publish: $all',
       '    unpublish: $all',
-      '    proxy: npmjs',
       "  'create-rness':",
       '    access: $all',
       '    publish: $all',
       '    unpublish: $all',
-      '    proxy: npmjs',
       "  '**':",
       '    access: $all',
       '    publish: $all',
