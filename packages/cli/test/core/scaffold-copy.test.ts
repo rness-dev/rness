@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { access, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { promisify } from 'node:util'
 
 import { copyScaffold } from '../../src/core/scaffold-copy.ts'
 import { SCAFFOLD_FILES } from '../../src/core/scaffold.ts'
@@ -25,10 +27,23 @@ test('copies every scaffold file, renames _gitignore, replaces the tokens, keeps
   ) as { packageManager: string; devDependencies: Record<string, string> }
   assert.equal(pkg.devDependencies['@rness/cli'], '9.9.9')
   assert.equal(pkg.packageManager, 'pnpm@12.2.1')
-  assert.match(
-    await readFile(join(dest, '.github', 'workflows', 'validate.yml'), 'utf8'),
-    /@rness\/cli@9\.9\.9 validate/
+  // The workflow names no version: it reads the pin, the one place it is
+  // written (spec 0006 §2). Its shell expression is run here as CI would.
+  const workflow = await readFile(
+    join(dest, '.github', 'workflows', 'validate.yml'),
+    'utf8'
   )
+  assert.doesNotMatch(workflow, /__RNESS_|9\.9\.9/)
+  const line = /^ +- run: (npx --yes "@rness\/cli@\$\(.+\)" validate)$/m.exec(
+    workflow
+  )?.[1]
+  assert.ok(line, workflow)
+  const { stdout } = await promisify(execFile)(
+    'sh',
+    ['-c', line.replace(/^npx --yes/, 'echo').replace(/ validate$/, '')],
+    { cwd: dest }
+  )
+  assert.equal(stdout.trim(), '@rness/cli@9.9.9')
   assert.doesNotMatch(
     await readFile(join(dest, 'package.json'), 'utf8'),
     /__RNESS_/

@@ -26,7 +26,7 @@ test('the scaffold passes the contract (template ADR is skipped)', async () => {
   assert.deepEqual(await checkContract(scaffoldDir()), [])
 })
 
-test('package.json and the workflow carry the tokens create replaces', async () => {
+test('package.json carries the tokens create replaces; the workflow names no version', async () => {
   const raw = await readFile(join(scaffoldDir(), 'package.json'), 'utf8')
   assert.match(raw, /"@rness\/cli": "__RNESS_VERSION__"/)
   assert.match(raw, /"packageManager": "__RNESS_PM__"/)
@@ -35,5 +35,6 @@ test('package.json and the workflow carry the tokens create replaces', async () 
     join(scaffoldDir(), '.github', 'workflows', 'validate.yml'),
     'utf8'
   )
-  assert.match(workflow, /@rness\/cli@__RNESS_VERSION__ validate/)
+  assert.doesNotMatch(workflow, /__RNESS_/)
+  assert.match(workflow, /require\('\.\/package\.json'\)\.devDependencies/)
 })

@@ -8,7 +8,8 @@ export interface ScaffoldTokens {
   packageManager: string
 }
 
-const TOKENISED = new Set(['package.json', '.github/workflows/validate.yml'])
+// The CI workflow reads the pinned version from package.json (spec 0006 §2).
+const TOKENISED = new Set(['package.json'])
 
 /** Materialise the shipped skeleton into `dest` (spec 0003 §2.1 step 3); `rness.json` is the caller's. */
 export async function copyScaffold(

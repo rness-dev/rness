@@ -18,4 +18,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npx --yes @rness/cli@__RNESS_VERSION__ validate
+      # The version is written once, in package.json.
+      - run: npx --yes "@rness/cli@$(node -p "require('./package.json').devDependencies['@rness/cli']")" validate
