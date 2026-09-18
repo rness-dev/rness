@@ -73,6 +73,14 @@ export function status(
   return `${paint(toneOf(verb), verb, stream)}${pad} ${rest}`
 }
 
+export function bold(
+  text: string,
+  stream: NodeJS.WriteStream = process.stdout
+): string {
+  if (noColor()) return text
+  return styleText('bold', text, { stream, validateStream: true })
+}
+
 /** `warning: …` for stderr, the prefix painted. */
 export function warn(text: string): string {
   return `${paint('warn', 'warning:', process.stderr)} ${text}`
@@ -127,7 +135,7 @@ export function banner(
     '',
     ...word,
     '',
-    ` ${noColor() ? `rness v${version}` : styleText('bold', `rness v${version}`, { stream, validateStream: true })}`,
+    ` ${bold(`rness v${version}`, stream)}`,
     ` ${paint('idle', 'Context for AI coding agents, across an organization’s repositories', stream)}`,
     '',
     '',

@@ -320,3 +320,31 @@ test('upgrade is served by the invoked copy, never by the pinned one; other comm
     `warning: ${root.split('/').at(-1)}/.rness pins @rness/cli 9.9.10 but 9.9.9 is installed — run pnpm install in .rness\n`
   )
 })
+
+test('colour and the banner need a terminal (or FORCE_COLOR); a piped help is plain', async () => {
+  const ESC = String.fromCharCode(27)
+  const plainEnv: NodeJS.ProcessEnv = { ...noDelegate }
+  delete plainEnv['FORCE_COLOR']
+  const forced = { ...noDelegate, FORCE_COLOR: '1' }
+  const help = (args: string[], env: NodeJS.ProcessEnv) =>
+    execFileP(process.execPath, [binPath, ...args], { env }).then(
+      (r) => r.stdout
+    )
+
+  for (const args of [[], ['--help'], ['sync', '--help']]) {
+    const plain = await help(args, plainEnv)
+    assert.ok(!plain.includes(ESC), `no escape sequence: ${args.join(' ')}`)
+    assert.ok(!plain.includes('█'), `no banner: ${args.join(' ')}`)
+    assert.match(plain, /^Usage: rness/)
+  }
+
+  for (const args of [[], ['--help']]) {
+    const painted = await help(args, forced)
+    assert.ok(painted.includes(ESC))
+    assert.match(painted, /█▀█ █▄ █ █▀▀ █▀▀ █▀▀/)
+    assert.ok(painted.includes(`rness v${VERSION}`))
+  }
+  const sub = await help(['sync', '--help'], forced)
+  assert.ok(sub.includes(ESC), 'a sub-command help is painted')
+  assert.ok(!sub.includes('█'), 'and has no banner')
+})

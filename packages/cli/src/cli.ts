@@ -7,6 +7,7 @@ import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
 import { PACKAGE_MANAGERS } from './core/pm.ts'
+import { banner, bold, paint } from './core/style.ts'
 import { VERSION } from './version.ts'
 
 interface RunState {
@@ -27,7 +28,23 @@ function buildProgram(state: RunState): Command {
       writeErr: (s) => {
         process.stderr.write(s)
       },
+      outputError: (s, write) => {
+        write(paint('error', s, process.stderr))
+      },
     })
+    // Before any sub-command is created: they inherit it. The painters answer
+    // plain text off a terminal, so a piped help is what it always was.
+    .configureHelp({
+      styleTitle: (s) => bold(s),
+      styleUsage: (s) => paint('done', s),
+      styleCommandText: (s) => paint('info', s),
+      styleSubcommandText: (s) => paint('info', s),
+      styleArgumentText: (s) => paint('info', s),
+      styleOptionText: (s) => paint('warn', s),
+      styleDescriptionText: (s) => paint('idle', s),
+    })
+    // The root help only: a sub-command's help stays short.
+    .addHelpText('before', () => banner(VERSION))
 
   program
     .command('context')
@@ -163,7 +180,7 @@ export async function run(argv: string[]): Promise<number> {
   const state: RunState = { code: 0 }
   const program = buildProgram(state)
   if (argv.length === 0) {
-    process.stdout.write(program.helpInformation())
+    process.stdout.write(banner(VERSION) + program.helpInformation())
     return 0
   }
   try {
