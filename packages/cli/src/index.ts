@@ -82,3 +82,12 @@ export {
   SSH_HOST,
   type Probe,
 } from './core/remote.ts'
+export {
+  detectGithubSsh,
+  defaultTransport,
+  GITHUB_HOSTS,
+  type DetectSsh,
+  type Hosts,
+  type SshAccess,
+  type Transport,
+} from './core/transport.ts'
