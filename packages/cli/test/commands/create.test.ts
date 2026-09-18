@@ -784,6 +784,7 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
       { name: 'old', archived: true },
       { name: '.rness' },
       { name: 'my_lib' },
+      { name: '-dash' },
       { name: '.github' },
       { name: '.github-private', private: true },
       { name: 'WebSite' },
@@ -810,11 +811,12 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
   assert.deepEqual(term.offered, [
     [
       { value: 'api', label: 'api 🔒' },
+      { value: 'my_lib', label: 'my_lib' },
       { value: 'web', label: 'web' },
       { value: 'website', label: 'WebSite' },
       {
-        value: 'my_lib',
-        label: 'my_lib',
+        value: '-dash',
+        label: '-dash',
         hint: 'name not supported yet',
         disabled: true,
       },
@@ -824,7 +826,7 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
   assert.equal(requests[0]?.headers['authorization'], undefined)
   assert.ok(
     r.out.startsWith(
-      `not found acme/.rness (or not visible to you) — starting a new workspace\nlisting  acme repositories…\n${NO_TOKEN_NOTE}names rness cannot declare yet (struck through): my_lib\ncreated  acme/.rness (new workspace)\nskipped  install (--skip-install)\ncloned   org/api\ndeclared scope api (org/api)\ncloned   org/website\ndeclared scope website (org/website)\ncommitted acme/.rness\n`
+      `not found acme/.rness (or not visible to you) — starting a new workspace\nlisting  acme repositories…\n${NO_TOKEN_NOTE}names rness cannot declare yet (struck through): -dash\ncreated  acme/.rness (new workspace)\nskipped  install (--skip-install)\ncloned   org/api\ndeclared scope api (org/api)\ncloned   org/website\ndeclared scope website (org/website)\ncommitted acme/.rness\n`
     ),
     r.out
   )

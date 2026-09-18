@@ -160,8 +160,10 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   `not in rness.json:` line pointing at `rness add`.
 - A workspace pinned to 0.4.x clones every catalogue repository on sync —
   `create` runs the pinned copy's sync after joining.
-- Repository names that differ only by case are declared in lowercase;
-  names with `_` or `.` cannot be declared yet and are shown disabled.
+- Repository and scope names take what GitHub allows, in lowercase: letters,
+  digits, `.`, `_` and `-` (`my_lib`, `angular.js`). A name that differs only
+  by case is declared in lowercase. A 0.4.0 CLI rejects a `rness.json` that
+  holds a `.` or a `_` in a name — upgrade every copy together.
 - Organization names follow GitHub's rule — letters, digits and single
   hyphens, not at either end, at most 39 characters — in `--org` and in
   `rness.json`'s `"org"`; the case is kept as typed.

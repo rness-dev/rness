@@ -3,7 +3,7 @@ import { join, posix, sep } from 'node:path'
 
 import { exists } from './fs.ts'
 import { clone, originUrl } from './git.ts'
-import { NAME, parseRepoSpec, writeManifest } from './manifest.ts'
+import { NAME, NAME_RULE, parseRepoSpec, writeManifest } from './manifest.ts'
 import type { GitCredentials } from './provider.ts'
 import type { Manifest, ScopeEntry } from './types.ts'
 
@@ -64,7 +64,9 @@ export async function addRepository(
     const base = segments.at(-1) ?? ''
     const path = `org/${name}/${clean}`
     if (!NAME.test(base))
-      throw new Error(`sub-scope "${clean}" needs a [a-z0-9-] last segment`)
+      throw new Error(
+        `the last segment of sub-scope "${clean}" may only contain ${NAME_RULE}`
+      )
     const existing = scopes[base]
     if (existing !== undefined && existing.path !== path)
       throw new Error(`scope "${base}" already points at ${existing.path}`)

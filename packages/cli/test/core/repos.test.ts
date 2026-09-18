@@ -110,7 +110,7 @@ test('a malformed sub-scope is rejected before cloning: no partial clone is left
       host: 'file:///unused/',
       scopes: ['apps/Bad_Name'],
     }),
-    /needs a \[a-z0-9-\] last segment/
+    /the last segment of sub-scope "apps\/Bad_Name" may only contain lowercase letters/
   )
   assert.equal(await exists(join(root, 'org', 'bad')), false)
   await assert.rejects(

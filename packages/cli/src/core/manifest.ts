@@ -5,7 +5,15 @@ import { writeFileAtomic } from './fs.ts'
 import { repoUrl } from './remote.ts'
 import type { Manifest, RepoEntry, ScopeEntry } from './types.ts'
 
-export const NAME = /^[a-z0-9][a-z0-9-]*$/
+/**
+ * A repository or scope name: what GitHub allows in a repository name, in
+ * lowercase — letters, digits, `.`, `_` and `-`. Not `.` or `..` (the name is
+ * a directory under `org/`), and no leading `-` (git would read an option).
+ */
+export const NAME = /^(?!\.{1,2}$)[a-z0-9._][a-z0-9._-]*$/
+/** How the rule reads in an error message. */
+export const NAME_RULE =
+  "lowercase letters, digits, '.', '_' and '-', not starting with '-'"
 
 /**
  * A GitHub organization (or user) name: alphanumerics and single hyphens, not
@@ -65,7 +73,8 @@ function readRepos(value: unknown): Record<string, RepoEntry> {
   if (!isRecord(raw)) fail('"repos" must be an object')
   const repos: Record<string, RepoEntry> = {}
   for (const [name, entry] of Object.entries(raw)) {
-    if (!NAME.test(name)) fail(`repo name "${name}" is not [a-z0-9-]`)
+    if (!NAME.test(name))
+      fail(`repo name "${name}" may only contain ${NAME_RULE}`)
     if (!isRecord(entry) || typeof entry.url !== 'string')
       fail(`repo "${name}" needs a string "url"`)
     repos[name] = { url: entry.url }
@@ -78,7 +87,8 @@ function readScopes(value: unknown): Record<string, ScopeEntry> {
   if (!isRecord(raw)) fail('"scopes" must be an object')
   const scopes: Record<string, ScopeEntry> = {}
   for (const [name, entry] of Object.entries(raw)) {
-    if (!NAME.test(name)) fail(`scope name "${name}" is not [a-z0-9-]`)
+    if (!NAME.test(name))
+      fail(`scope name "${name}" may only contain ${NAME_RULE}`)
     if (!isRecord(entry)) fail(`scope "${name}" must be an object`)
     const path = checkPath(name, entry.path)
     const ext = entry.extends ?? []
@@ -180,12 +190,12 @@ export function parseRepoSpec(
       url = repoUrl(host, parts[0], parts[1])
     else
       throw new Error(
-        `repository name "${spec}" is not [a-z0-9-] (use <repo>, <owner>/<repo>, or a URL)`
+        `repository name "${spec}" is not a name (use <repo>, <owner>/<repo>, or a URL)`
       )
   }
   const last = url.replace(/\/+$/, '').split(/[/:]/).at(-1) ?? ''
   const name = last.endsWith('.git') ? last.slice(0, -4) : last
   if (!NAME.test(name))
-    throw new Error(`repository name "${name}" is not [a-z0-9-]`)
+    throw new Error(`repository name "${name}" may only contain ${NAME_RULE}`)
   return { name, url }
 }

@@ -250,7 +250,13 @@ test('parseRepoSpec accepts repo, owner/repo and full URLs, and validates the na
   })
   assert.throws(
     () => parseRepoSpec('Bad_Name', 'acme', host),
-    /repository name "Bad_Name" is not \[a-z0-9-\]/
+    /repository name "Bad_Name" may only contain lowercase letters, digits, '\.', '_' and '-'/
   )
+  // What GitHub allows in a repository name is a name: dots and underscores.
+  for (const name of ['my_lib', 'angular.js', 'v2.api-client', '.github', '_x'])
+    assert.equal(parseRepoSpec(name, 'acme', host).name, name)
+  // A directory under org/ and a git argument: never `.`, `..` or an option.
+  for (const name of ['.', '..', '-rf', 'a b', 'Caps'])
+    assert.throws(() => parseRepoSpec(name, 'acme', host), /repository name/)
   assert.throws(() => parseRepoSpec('a/b/c', 'acme', host), /repository name/)
 })
