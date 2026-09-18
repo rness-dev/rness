@@ -4,6 +4,7 @@ import { type AddOptions, addCommand } from './commands/add.ts'
 import { type ContextOptions, contextCommand } from './commands/context.ts'
 import { type CreateOptions, createCommand } from './commands/create.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
+import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
 import { PACKAGE_MANAGERS } from './core/pm.ts'
 import { VERSION } from './version.ts'
@@ -89,6 +90,19 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (repo: string, opts: AddOptions) => {
       state.code = await addCommand(repo, opts)
+    })
+
+  program
+    .command('upgrade')
+    .alias('update')
+    .description(
+      'Move this workspace to another @rness/cli: pin it in .rness/package.json, install, sync'
+    )
+    .argument('[version]', 'an exact version (default: the latest release)')
+    .option('-y, --yes', 'do not ask for confirmation')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (version: string | undefined, opts: UpgradeOptions) => {
+      state.code = await upgradeCommand(version, opts)
     })
 
   program

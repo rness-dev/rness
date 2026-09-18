@@ -271,3 +271,52 @@ test('a reader closing the pipe early (`rness context | head`) ends quietly with
   assert.equal(result.code, 0)
   assert.equal(result.stderr, '')
 })
+
+test('upgrade is served by the invoked copy, never by the pinned one; other commands warn about a drifted pin', async (t) => {
+  const root = await tmp('rness-drift-')
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await workspace(root)
+  await writeFile(
+    join(root, '.rness', 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@12.2.1',
+      devDependencies: { '@rness/cli': '9.9.10' },
+    })
+  )
+  const pkg = join(root, '.rness', 'node_modules', '@rness', 'cli')
+  await mkdir(join(pkg, 'dist'), { recursive: true })
+  await writeFile(
+    join(pkg, 'package.json'),
+    JSON.stringify({ name: '@rness/cli', version: '9.9.9', type: 'module' })
+  )
+  await writeFile(
+    join(pkg, 'dist', 'index.js'),
+    'export async function run(argv) { process.stdout.write(`DELEGATED ${argv.join(" ")}\\n`); return 0 }\n'
+  )
+  const env = { ...process.env }
+  delete env['RNESS_NO_DELEGATE']
+
+  // `upgrade --help` (and its alias) come from this source tree.
+  for (const name of ['upgrade', 'update']) {
+    const { stdout, stderr } = await execFileP(
+      process.execPath,
+      [binPath, name, '--help'],
+      { cwd: root, env }
+    )
+    assert.match(stdout, /Usage: rness upgrade\|update \[options\] \[version\]/)
+    assert.doesNotMatch(stdout, /DELEGATED/)
+    assert.equal(stderr, '', 'no drift warning on upgrade')
+  }
+
+  // Any other command is delegated, after one warning on stderr.
+  const { stdout, stderr } = await execFileP(
+    process.execPath,
+    [binPath, 'validate'],
+    { cwd: root, env }
+  )
+  assert.equal(stdout, 'DELEGATED validate\n')
+  assert.equal(
+    stderr,
+    `warning: ${root.split('/').at(-1)}/.rness pins @rness/cli 9.9.10 but 9.9.9 is installed — run pnpm install in .rness\n`
+  )
+})

@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { readPinnedCli } from './delegate.ts'
 import { exists, writeFileAtomic } from './fs.ts'
 import { type PackageManager, isPackageManager } from './pm.ts'
+import { findWorkspace } from './workspace.ts'
 
 const execFileP = promisify(execFile)
 
@@ -101,6 +102,27 @@ export async function pinDrift(
   if (pin === null || !EXACT_VERSION.test(pin.spec)) return null
   const installed = (await readPinnedCli(rnessDir))?.version ?? null
   return installed === pin.spec ? null : { pin: pin.spec, installed }
+}
+
+/**
+ * The line the launcher prints when the workspace around `cwd` pins one
+ * version and holds another (spec 0006 §4): the teammate who pulled an
+ * upgrade and did not reinstall. Null outside a workspace, and without drift.
+ */
+export async function driftWarning(cwd: string): Promise<string | null> {
+  let root: string
+  let rnessDir: string
+  try {
+    const ws = await findWorkspace(cwd)
+    root = ws.root
+    rnessDir = ws.rnessDir
+  } catch {
+    return null
+  }
+  const drift = await pinDrift(rnessDir)
+  if (drift === null) return null
+  const pm = await workspacePackageManager(rnessDir)
+  return `warning: ${basename(root)}/.rness pins @rness/cli ${drift.pin} but ${drift.installed ?? 'nothing'} is installed — run ${pm} install in .rness`
 }
 
 /**

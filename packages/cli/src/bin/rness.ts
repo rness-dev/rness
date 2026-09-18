@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { run } from '../cli.ts'
 import { findDelegate } from '../core/delegate.ts'
 import { MIN_NODE_MAJOR, isSupportedNode } from '../core/node-version.ts'
+import { driftWarning } from '../core/pinned.ts'
 import { reportError } from '../report.ts'
 import { VERSION } from '../version.ts'
 
@@ -27,8 +28,21 @@ async function main(): Promise<number> {
     return 1
   }
   const argv = process.argv.slice(2)
-  const skipDelegation =
-    argv[0] === 'create' || process.env['RNESS_NO_DELEGATE'] === '1'
+  // `create` makes a workspace and `upgrade` replaces the pinned copy: both
+  // are served by the copy the user invoked (spec 0006 §3).
+  const own = ['create', 'upgrade', 'update'].includes(argv[0] ?? '')
+  const noDelegate = process.env['RNESS_NO_DELEGATE'] === '1'
+  const skipDelegation = own || noDelegate
+  const command = argv[0]
+  if (
+    command !== undefined &&
+    !command.startsWith('-') &&
+    !own &&
+    !noDelegate
+  ) {
+    const warning = await driftWarning(process.cwd())
+    if (warning !== null) process.stderr.write(`${warning}\n`)
+  }
   const delegate = skipDelegation
     ? null
     : await findDelegate(process.cwd(), VERSION)

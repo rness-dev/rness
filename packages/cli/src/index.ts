@@ -33,6 +33,7 @@ export { checkContract, STATUSES } from './core/contract.ts'
 export { scaffoldDir, SCAFFOLD_FILES } from './core/scaffold.ts'
 export type * from './core/types.ts'
 export { syncCommand, type SyncOptions } from './commands/sync.ts'
+export { upgradeCommand, type UpgradeOptions } from './commands/upgrade.ts'
 export { defaultTerminal, type Terminal } from './core/terminal.ts'
 export {
   renderBlock,
