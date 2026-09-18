@@ -19,6 +19,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness create [<org>] [--repos a,b] [--pm npm|pnpm|yarn|bun] [--ssh|--https] [--skip-install] -y
     rness add <repo> [--scopes apps/web,packages/ui] [--ssh|--https] -y
     rness sync [--all] [--scope <name>] [--check] [--pull] -y
+    rness upgrade [<version>] -y
     rness context [--scope <name>] [--json]
     rness validate
 
@@ -45,6 +46,24 @@ Without an agent, a protected key is asked for again by every `git clone`.
 Load it once per session: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` on
 macOS, `ssh-add ~/.ssh/id_ed25519` elsewhere.
 
+### Upgrade
+
+    rness upgrade            # the latest release; `rness upgrade 0.5.0` for another
+    npx @rness/cli@latest upgrade     # from a workspace pinned below 0.5.0
+
+The version is written in one place, `.rness/package.json`. `upgrade` pins it
+there (exact, the rest of the file untouched), installs with the workspace's
+package manager, then syncs through the new copy; a failed install restores
+the file. Commit `.rness`; teammates pull and install in `.rness`. Until they
+do, every command warns that the workspace pins one version and holds
+another. It is never delegated to the pinned copy, which is what it replaces
+— so a workspace pinned below 0.5.0, whose copy has no such command, starts
+with the `npx` form.
+
+An upgrade touches `.rness` only: a generated block is current when its hash
+is, whatever wrote it, so no `AGENTS.md` of the organization changes unless
+its content does.
+
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
@@ -61,6 +80,15 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   over SSH is now found when joining. See "SSH or HTTPS" above.
 - `create` does not offer repositories whose name starts with a dot
   (`.github`, …).
+- `rness upgrade` is new (see "Upgrade" above). From 0.4.0:
+  `npx @rness/cli@latest upgrade`.
+- The header of a generated block no longer names the CLI version
+  (`<!-- rness · scope: … -->`), and `sync` decides by the hash like
+  `validate`: upgrading rewrites no `AGENTS.md`. Blocks written by 0.2–0.4
+  stay as they are until their content changes. A 0.4.0 CLI calls the new
+  header stale — upgrade every copy together.
+- The scaffold's CI workflow reads the version from `package.json` instead of
+  naming it; `upgrade` migrates the old line.
 - `.rness/rness.json` is the organization's catalogue — every repository
   rness knows about, shared by the team. Your workspace is the part of it
   you cloned into `org/`; two teammates can clone different repositories,
