@@ -859,7 +859,7 @@ test('wizard, join: the catalogue is pre-selected and completed; unpicked stays 
   assert.deepEqual(m.repos['other'], { url: `${remote.host}acme/other.git` })
 })
 
-test('wizard, join: a cancelled picker exits 1, writes nothing and leaves no staged clone', async (t) => {
+test('wizard, join: a cancelled picker exits 0, writes nothing and leaves no staged clone', async (t) => {
   withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
   const remote = await makeRemoteOrg(t, 'acme')
   const apiUrl = await remote.addRepo('api', { 'README.md': '# api\n' })
@@ -881,7 +881,7 @@ test('wizard, join: a cancelled picker exits 1, writes nothing and leaves no sta
     },
     term.deps
   )
-  assert.equal(r.code, 1)
+  assert.equal(r.code, 0)
   assert.equal(r.err, 'cancelled\n')
   assert.equal(
     r.out,
@@ -891,7 +891,7 @@ test('wizard, join: a cancelled picker exits 1, writes nothing and leaves no sta
   assert.deepEqual(await stagedJoins(), before)
 })
 
-test('wizard: flags only, in a terminal, keep one confirm; declining writes nothing', async (t) => {
+test('wizard: flags only, in a terminal, keep one confirm; declining exits 0 and writes nothing', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   const cwd = await scratch(t)
   const term = terminal({ confirm: [false] })
@@ -906,7 +906,7 @@ test('wizard: flags only, in a terminal, keep one confirm; declining writes noth
     },
     term.deps
   )
-  assert.equal(r.code, 1)
+  assert.equal(r.code, 0)
   assert.equal(r.err, 'cancelled\n')
   assert.deepEqual(term.asked, ['Create workspace acme in ./acme?'])
   await assert.rejects(access(join(cwd, 'acme')))

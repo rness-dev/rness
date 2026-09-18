@@ -136,9 +136,11 @@ async function targetProblem(
   return null
 }
 
+// A cancelled or declined prompt is the user's choice, not a failure: exit 0
+// so `npm create rness` does not wrap it in npm's error report.
 function cancelled(): number {
   process.stderr.write('cancelled\n')
-  return 1
+  return 0
 }
 
 /**

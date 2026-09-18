@@ -45,7 +45,7 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   `in .rness`). A picked catalogue repository is cloned; a picked new one is
   added to the catalogue, as `rness add` does. Without a picker, `--repos`
   is the selection; a join without `--repos` clones the whole catalogue. A
-  cancelled prompt writes nothing.
+  cancelled or declined prompt writes nothing and exits 0.
 - The listing needs no credentials. Without a `GITHUB_TOKEN` (or `GH_TOKEN`)
   only public repositories are listed — and a personal account always lists
   only its public ones; add the others later with `rness add <repo>`.
