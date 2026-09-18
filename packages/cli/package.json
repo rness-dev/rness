@@ -27,7 +27,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test 'test/**/*.test.ts'",
+    "test": "node --import ./test/setup.ts --test 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
     "build": "tsup",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
