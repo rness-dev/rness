@@ -115,7 +115,7 @@ function usageHint() {
     '',
     'Use it from another shell:',
     `  export npm_config_userconfig=${FILES.npmrc}`,
-    '  cd "$(mktemp -d)" && npm create rness demo',
+    '  cd "$(mktemp -d /tmp/rness-XXXX)" && npm create rness   # or: npm create rness -- --org <org>',
     'and `unset npm_config_userconfig` when you are done.',
   ].join('\n')
 }
