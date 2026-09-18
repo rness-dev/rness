@@ -8,6 +8,14 @@ import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
 import { ensureClaudeMd, mergeBlock } from '../core/merge.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
+import {
+  CHECKING_LINE,
+  INSTEAD_OF_LINES,
+  type Transport,
+  defaultTransport,
+  isSshUrl,
+  sshWorkspaceLines,
+} from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -135,7 +143,8 @@ async function askWhatToSync(input: {
  */
 export async function syncCommand(
   opts: SyncOptions,
-  terminal: Terminal = defaultTerminal
+  terminal: Terminal = defaultTerminal,
+  transport: Transport = defaultTransport
 ): Promise<number> {
   const cwd = opts.cwd ?? process.cwd()
   const check = opts.check === true
@@ -165,6 +174,24 @@ export async function syncCommand(
       })
       if (typeof answer === 'number') return answer
       if (opts.all !== true) toClone = new Set(answer)
+    }
+
+    // rness.json is authoritative: a git@ entry is cloned over SSH or not at
+    // all. Without SSH access, stop before the first clone (spec 0005 §3).
+    const overSsh = [...toClone].some((name) => {
+      const repo = manifest.repos[name]
+      return repo !== undefined && isSshUrl(repo.url, transport.hosts)
+    })
+    if (overSsh) {
+      const interactive = opts.yes !== true && terminal.isTty()
+      if (interactive) process.stdout.write(`${CHECKING_LINE}\n`)
+      const access = await transport.detect({ interactive })
+      if (!access.ok) {
+        process.stderr.write(
+          `${[...sshWorkspaceLines(access.reason), ...INSTEAD_OF_LINES].join('\n')}\n`
+        )
+        return 1
+      }
     }
 
     const lines: string[] = []

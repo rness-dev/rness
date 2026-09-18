@@ -15,8 +15,13 @@ import { type SyncOptions, syncCommand } from '../../src/commands/sync.ts'
 import { BEGIN, END } from '../../src/core/block.ts'
 import { readOrNull } from '../../src/core/fs.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
+import {
+  INSTEAD_OF_LINES,
+  sshWorkspaceLines,
+} from '../../src/core/transport.ts'
 import { capture } from '../helpers/capture.ts'
 import { commitTo, makeBareRepo } from '../helpers/git.ts'
+import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const seo = '# SEO\n\nEvery page sets a title.\n'
@@ -422,4 +427,78 @@ test('terminal: --scope and --all skip the picker and only confirm', async (t) =
     ['confirm']
   )
   assert.match(r2.out, /^cloned {3}org\/api\ncloned {3}org\/docs\n/)
+})
+
+// --- SSH first (spec 0005) ---------------------------------------------------
+
+const NO_TTY: Terminal = {
+  isTty: () => false,
+  prompts: async () => {
+    throw new Error('no prompt without a terminal')
+  },
+}
+
+test('a git@ catalogue entry is not cloned without SSH access: sync stops before any clone or block', async (t) => {
+  const denied = await fakeTransport(t, 'acme', SSH_DENIED)
+  await denied.ssh.addRepo('api', { 'README.md': '# api\n' })
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    repos: { api: { url: `${denied.ssh.host}acme/api.git` } },
+    scopes: { api: { path: 'org/api' } },
+    dirs: ['org'],
+  })
+  const c = capture()
+  const code = await syncCommand(
+    { cwd: root, all: true, yes: true },
+    NO_TTY,
+    denied.transport
+  )
+  c.restore()
+  assert.equal(code, 1)
+  assert.equal(
+    c.err(),
+    `${[...sshWorkspaceLines(SSH_DENIED.ok ? '' : SSH_DENIED.reason), ...INSTEAD_OF_LINES].join('\n')}\n`
+  )
+  assert.equal(c.out(), '')
+  assert.deepEqual(denied.calls, [{ interactive: false }])
+  await assert.rejects(access(join(root, 'org', 'api')))
+  await assert.rejects(access(join(root, 'AGENTS.md')))
+})
+
+test('with SSH access the git@ entry is cloned; the SSH test runs only when such a clone is due', async (t) => {
+  const ok = await fakeTransport(t, 'acme', SSH_OK)
+  await ok.ssh.addRepo('api', { 'README.md': '# api\n' })
+  const webUrl = await ok.https.addRepo('web', { 'README.md': '# web\n' })
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    repos: {
+      api: { url: `${ok.ssh.host}acme/api.git` },
+      web: { url: webUrl },
+    },
+    scopes: { api: { path: 'org/api' }, web: { path: 'org/web' } },
+    dirs: ['org'],
+  })
+  const run = async (opts: SyncOptions) => {
+    const c = capture()
+    const code = await syncCommand(
+      { cwd: root, yes: true, ...opts },
+      NO_TTY,
+      ok.transport
+    )
+    c.restore()
+    return { code, out: c.out(), err: c.err() }
+  }
+  // Nothing is cloned without --all, and --check never clones.
+  assert.equal((await run({})).code, 0)
+  assert.equal((await run({ all: true, check: true })).code, 0)
+  assert.deepEqual(ok.calls, [])
+
+  const all = await run({ all: true })
+  assert.equal(all.code, 0, all.err)
+  assert.match(all.out, /^cloned {3}org\/api\ncloned {3}org\/web\n/)
+  assert.deepEqual(ok.calls, [{ interactive: false }])
+
+  // Everything is cloned now: no test.
+  assert.equal((await run({ all: true })).code, 0)
+  assert.equal(ok.calls.length, 1)
 })
