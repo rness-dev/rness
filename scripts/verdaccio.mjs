@@ -5,10 +5,13 @@
 //   pnpm verdaccio stop     stop the registry
 //   pnpm verdaccio clean    stop it and delete everything it stored
 //
-// Its state lives in .verdaccio/ (git-ignored). `@rness/*` and `create-rness`
-// are served only from the local storage; every other package is proxied from
-// npmjs. Publishing always names the local registry explicitly, so a deploy
-// can never reach npmjs.
+// Its state lives in .verdaccio/ (git-ignored). Every package is proxied from
+// npmjs; a version deployed here is served from the local storage. `@rness/*`
+// and `create-rness` are proxied too, so that joining a workspace pinned to a
+// published version (0.4.0) installs as it would for a user, while the version
+// under test is the local one: it is not on npmjs yet, so a forgotten deploy
+// fails loudly (ETARGET) instead of testing something else. Publishing always
+// names the local registry explicitly, so a deploy can never reach npmjs.
 import { execFileSync, spawn } from 'node:child_process'
 import {
   closeSync,
@@ -91,10 +94,12 @@ function writeConfig() {
       '    access: $all',
       '    publish: $all',
       '    unpublish: $all',
+      '    proxy: npmjs',
       "  'create-rness':",
       '    access: $all',
       '    publish: $all',
       '    unpublish: $all',
+      '    proxy: npmjs',
       "  '**':",
       '    access: $all',
       '    publish: $all',
@@ -115,7 +120,7 @@ function usageHint() {
     '',
     'Use it from another shell:',
     `  export npm_config_userconfig=${FILES.npmrc}`,
-    '  cd "$(mktemp -d /tmp/rness-XXXX)" && npm create rness   # or: npm create rness -- --org <org>',
+    '  cd "$(mktemp -d /tmp/rness-XXXX)" && npm create rness   # or: npm create rness <org>',
     'and `unset npm_config_userconfig` when you are done.',
   ].join('\n')
 }
