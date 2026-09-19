@@ -47,6 +47,12 @@ anonymously.
   it — CI needs no login.
 - rness asks for `repo` and `read:org`: GitHub has no read-only scope for
   private repositories. It only lists and clones.
+- A new workspace has to reach GitHub before teammates can join it. Logged
+  in, the `create` wizard offers to do it: it creates the private repository
+  `<org>/.rness` and pushes the context with `git`. Declined, refused by
+  GitHub, anonymous or with `--yes`, it prints the two manual steps instead
+  — create the empty repository on github.com, then `git remote add origin …
+&& git push`. No other tool is ever needed.
 - An organization that restricts OAuth apps hides its private repositories
   until an owner approves "Rness"; `create` says so, with the link.
 - Over HTTPS, rness's own clones and pulls carry the login — through the

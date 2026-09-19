@@ -1,6 +1,8 @@
 import { type ResolvedToken, resolveToken } from './auth.ts'
 import {
+  type CreateRepositoryResult,
   type RepositoryListing,
+  createRepository,
   getOrgMembership,
   getUser,
   listRepositories,
@@ -74,6 +76,18 @@ export class GitHubOAuthProvider implements GitProvider {
       token: this.#token?.token,
       ...(this.#apiBase === undefined ? {} : { apiBase: this.#apiBase }),
       self: async () => (await this.identity())?.login ?? null,
+    })
+  }
+
+  async createRepository(
+    owner: string,
+    name: string
+  ): Promise<CreateRepositoryResult> {
+    if (this.#token === null)
+      return { kind: 'refused', reason: 'not logged in' }
+    return createRepository(owner, name, {
+      ...this.#api(this.#token.token),
+      self: (await this.identity())?.login ?? null,
     })
   }
 

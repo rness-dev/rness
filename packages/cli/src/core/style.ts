@@ -46,6 +46,7 @@ const DONE = new Set([
   'updated',
   'upgraded',
   'pulled',
+  'pushed',
   'logged in',
   'logged out',
   'synced',

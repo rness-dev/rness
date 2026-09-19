@@ -1,12 +1,10 @@
-import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
-import { promisify } from 'node:util'
 
 import type { CommandDeps } from '../core/deps.ts'
 import { exists } from '../core/fs.ts'
-import { clone, commitAll, init } from '../core/git.ts'
+import { clone, commitAll, init, publish } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
 import { MAX_PAGES, PER_PAGE } from '../core/github.ts'
 import {
@@ -56,8 +54,6 @@ import { VERSION } from '../version.ts'
 import { loginCommand, revokeUrl } from './login.ts'
 import { syncCommand } from './sync.ts'
 
-const execFileP = promisify(execFile)
-
 export interface CreateOptions {
   /** The GitHub organization, exact name (`github.com/<org>`); prompted for when absent. */
   org?: string
@@ -87,15 +83,6 @@ export type CreateDeps = Terminal
 
 async function isEmptyDir(dir: string): Promise<boolean> {
   return (await readdir(dir)).length === 0
-}
-
-async function ghAvailable(): Promise<boolean> {
-  try {
-    await execFileP('gh', ['--version'])
-    return true
-  } catch {
-    return false
-  }
 }
 
 async function insideWorkspace(dir: string): Promise<boolean> {
@@ -425,6 +412,54 @@ async function chooseOrganization(
   if (prompts.isCancel(answer)) return null
   if (typeof answer !== 'string' || answer === '') return OTHER
   return answer
+}
+
+/**
+ * Offer to create `<org>/.rness` on GitHub and push the new context to it.
+ * True when it is published, false when it is left to the user (anonymous,
+ * declined, refused by GitHub — said in one warning), null on a cancel.
+ */
+async function publishContext(input: {
+  ui: Ui
+  prompts: Prompts
+  provider: GitProvider
+  org: string
+  rnessDir: string
+  url: string
+}): Promise<boolean | null> {
+  const { ui, prompts, provider, org } = input
+  if (!provider.authenticated) return false
+  const ok = await prompts.confirm({
+    message: `Create ${org}/.rness on GitHub (private) and push it?`,
+    initialValue: true,
+  })
+  if (prompts.isCancel(ok)) return null
+  if (ok !== true) return false
+  try {
+    const result = await ui.step(
+      { doing: `creating ${org}/.rness on GitHub` },
+      () => provider.createRepository(org, '.rness')
+    )
+    if (result.kind === 'exists') {
+      ui.warn(`${org}/.rness already exists on GitHub; nothing was pushed`)
+      return false
+    }
+    if (result.kind === 'refused') {
+      ui.warn(`GitHub did not create ${org}/.rness: ${result.reason}`)
+      return false
+    }
+    ui.line('created', `github.com/${org}/.rness (private)`)
+    await ui.step(
+      { doing: `pushing  ${org}/.rness`, git: true },
+      () =>
+        publish(input.rnessDir, input.url, provider.credentialsFor(input.url)),
+      () => ['pushed', `${org}/.rness`]
+    )
+    return true
+  } catch (e) {
+    ui.warn(firstLine(e instanceof Error ? e.message : String(e)))
+    return false
+  }
 }
 
 /**
@@ -796,15 +831,32 @@ export async function createCommand(
     )
     if (code !== 0) return code
 
-    const gh = await ghAvailable()
+    // Teammates join once <org>/.rness is on GitHub. Logged in, in a
+    // terminal, rness offers to put it there; otherwise it says how, with
+    // nothing but git (spec 0004 §3b).
+    const name = org
+    const published = interactive
+      ? await publishContext({
+          ui,
+          prompts: await prompts(),
+          provider: gitProvider,
+          org: name,
+          rnessDir,
+          url: contextUrl,
+        })
+      : false
+    if (published === null) return cancelled(ui)
     const next = [
       `cd ${shown}/.rness`,
       // What was asked for and did not happen, as the command that retries
       // it — the workspace is complete otherwise.
       ...failures.map((f) => `rness add ${f.spec}   # failed: ${f.message}`),
-      gh
-        ? `gh repo create ${org}/.rness --private --source . --push`
-        : `git remote add origin ${contextUrl} && git push -u origin main`,
+      ...(published
+        ? []
+        : [
+            `# create the empty private repository ${org}/.rness on github.com, then:`,
+            `git remote add origin ${contextUrl} && git push -u origin main`,
+          ]),
       `# then, for every teammate: npm create rness ${org}`,
     ]
     if (ui.session) {

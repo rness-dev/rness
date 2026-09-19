@@ -306,3 +306,64 @@ export async function getOrgMembership(
   }
   return 'unknown'
 }
+
+export type CreateRepositoryResult =
+  | { kind: 'created' }
+  /** GitHub said the name is taken (422). */
+  | { kind: 'exists' }
+  /** Not allowed, in GitHub's words. */
+  | { kind: 'refused'; reason: string }
+
+/**
+ * Create the private repository `owner/name`: in the organization `owner`,
+ * or — when GitHub knows no such organization and `owner` is the token's own
+ * account (`self`) — under the user.
+ */
+export async function createRepository(
+  owner: string,
+  name: string,
+  options: ApiOptions & { self?: string | null }
+): Promise<CreateRepositoryResult> {
+  const base = (options.apiBase ?? DEFAULT_GITHUB_API).replace(/\/+$/, '')
+  const post = async (
+    path: string
+  ): Promise<{ status: number; message: string }> => {
+    let res: Response
+    try {
+      res = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: {
+          ...apiHeaders(options.token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, private: true }),
+        signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+      })
+    } catch (e) {
+      throw new Error(`cannot reach the GitHub API: ${reason(e)}`, { cause: e })
+    }
+    const body: unknown = await res.json().catch(() => undefined)
+    const message =
+      body !== null && typeof body === 'object'
+        ? String((body as Record<string, unknown>)['message'] ?? '')
+        : ''
+    return { status: res.status, message }
+  }
+  let answer = await post(`/orgs/${encodeURIComponent(owner)}/repos`)
+  if (
+    answer.status === 404 &&
+    options.self !== undefined &&
+    options.self !== null &&
+    options.self.toLowerCase() === owner.toLowerCase()
+  )
+    answer = await post('/user/repos')
+  if (answer.status === 201) return { kind: 'created' }
+  if (answer.status === 422) return { kind: 'exists' }
+  return {
+    kind: 'refused',
+    reason:
+      answer.message === ''
+        ? `GitHub answered ${answer.status}`
+        : `${answer.message} (${answer.status})`,
+  }
+}

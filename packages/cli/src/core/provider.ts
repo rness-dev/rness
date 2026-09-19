@@ -1,4 +1,4 @@
-import type { RepositoryListing } from './github.ts'
+import type { CreateRepositoryResult, RepositoryListing } from './github.ts'
 
 // The seam between the commands and the place the repositories live (spec
 // 0004 §6). The commands do not know how rness is authenticated: the CLI acts
@@ -31,6 +31,11 @@ export interface GitProvider {
   listOrganizations(): Promise<Organization[]>
   organizationAccess(org: string): Promise<OrganizationAccess>
   listRepositories(owner: string): Promise<RepositoryListing>
+  /**
+   * Create the private repository `owner/name` — how a new workspace's
+   * `.rness` gets to GitHub (spec 0004 §3b). Anonymous: refused.
+   */
+  createRepository(owner: string, name: string): Promise<CreateRepositoryResult>
   /**
    * Credentials for `url`, or null: an SSH URL, another host, no login.
    * Cloning itself is not the provider's: `rness.json` says which URL, and

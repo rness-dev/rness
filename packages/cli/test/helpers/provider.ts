@@ -1,4 +1,7 @@
-import type { OrgRepository } from '../../src/core/github.ts'
+import type {
+  CreateRepositoryResult,
+  OrgRepository,
+} from '../../src/core/github.ts'
 import type {
   GitProvider,
   OrganizationAccess,
@@ -12,13 +15,22 @@ export function fakeProvider(spec: {
   access?: OrganizationAccess
   repositories?: OrgRepository[]
   owner?: 'org' | 'user' | 'self'
-}): { provider: GitProvider; asked: string[]; listed: string[] } {
+  /** What `createRepository` does and answers; default: refused. */
+  create?: (owner: string, name: string) => Promise<CreateRepositoryResult>
+}): {
+  provider: GitProvider
+  asked: string[]
+  listed: string[]
+  created: string[]
+} {
   const login = spec.login ?? null
   const asked: string[] = []
   const listed: string[] = []
+  const created: string[] = []
   return {
     asked,
     listed,
+    created,
     provider: {
       authenticated: login !== null,
       identity: async () => (login === null ? null : { login }),
@@ -32,6 +44,15 @@ export function fakeProvider(spec: {
           owner: spec.owner ?? 'org',
           truncated: false,
         }
+      },
+      createRepository: async (owner, name) => {
+        created.push(`${owner}/${name}`)
+        return (
+          spec.create?.(owner, name) ?? {
+            kind: 'refused',
+            reason: 'not scripted',
+          }
+        )
       },
       credentialsFor: (url) => {
         asked.push(url)

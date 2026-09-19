@@ -684,6 +684,8 @@ interface Script {
    * reads as it did before there was one.
    */
   login?: boolean
+  /** The answer to "Create <org>/.rness on GitHub…?"; left out, declined silently too. */
+  publish?: boolean
 }
 
 /**
@@ -717,8 +719,11 @@ function terminal(script: Script) {
     },
     async confirm(opts: Parameters<Prompts['confirm']>[0]) {
       if (opts.message === LOGIN_Q && script.login === undefined) return false
+      const publishing = PUBLISH_Q.test(opts.message)
+      if (publishing && script.publish === undefined) return false
       asked.push(opts.message)
       if (opts.message === LOGIN_Q) return script.login
+      if (publishing) return script.publish
       return next(script.confirm, opts.message)
     },
     async select(opts: { message: string; options: { value: string }[] }) {
@@ -767,6 +772,7 @@ async function stagedJoins(): Promise<string[]> {
 
 const ORG_Q = 'What is your GitHub organization named?'
 const LOGIN_Q = 'Log in to GitHub to list private repositories?'
+const PUBLISH_Q = /^Create \S+\/\.rness on GitHub \(private\) and push it\?$/
 const REPOS_Q = 'Which repositories do you want in your workspace?'
 const NO_TOKEN_NOTE =
   'only public repositories are listed; rness login lists the private ones you can access\n'
@@ -1492,4 +1498,102 @@ test('joining a workspace pinned to an older @rness/cli says so, and how to move
   // A range, or a newer pin, is not this notice's business.
   assert.doesNotMatch((await join('^0.0.1')).out, /pins @rness\/cli/)
   assert.doesNotMatch((await join('99.0.0')).out, /pins @rness\/cli/)
+})
+
+// --- publishing a new workspace (spec 0004 §3b) ------------------------------
+
+test('logged in, a new workspace is offered to GitHub: the repository is created, then pushed with git', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const gh = fakeProvider({
+    login: 'octo',
+    organizations: ['acme'],
+    access: 'member',
+    // GitHub creating acme/.rness: an empty repository appears at the URL.
+    create: async (_owner, name) => {
+      await remote.addRepo(name, {})
+      return { kind: 'created' }
+    },
+  })
+  const cwd = await scratch(t)
+  const term = terminal({ select: ['acme'], publish: true })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, repos: '', cwd },
+    term.deps,
+    undefined,
+    gh.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(gh.created, ['acme/.rness'])
+  assert.ok(
+    term.asked.includes('Create acme/.rness on GitHub (private) and push it?')
+  )
+  assert.match(
+    r.out,
+    /^created {2}github\.com\/acme\/\.rness \(private\)\npushed {3}acme\/\.rness$/m
+  )
+  // What was pushed is the context that was committed.
+  const pushed = await execFileP('git', [
+    'ls-remote',
+    `${remote.host}acme/.rness.git`,
+    'refs/heads/main',
+  ])
+  const local = await execFileP('git', ['rev-parse', 'HEAD'], {
+    cwd: join(cwd, 'acme', '.rness'),
+  })
+  assert.ok(pushed.stdout.startsWith(local.stdout.trim()))
+  assert.doesNotMatch(r.out, /git remote add origin|gh repo/)
+  assert.match(r.out, / {2}# then, for every teammate: npm create rness acme\n/)
+})
+
+test('declined, refused, anonymous or --yes: nothing is created, and the manual steps name git only', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const manual = new RegExp(
+    ` {2}# create the empty private repository acme/\\.rness on github\\.com, then:\\n {2}git remote add origin ${remote.host.replaceAll('/', '\\/')}acme\\/\\.rness\\.git && git push -u origin main\\n`
+  )
+  const opts = {
+    org: 'acme',
+    skipInstall: true,
+    pm: 'npm',
+    host: remote.host,
+    repos: '',
+  }
+
+  const refusing = fakeProvider({
+    login: 'octo',
+    create: async () => ({ kind: 'refused', reason: 'Not Found (404)' }),
+  })
+  const r = await wizard(
+    { ...opts, cwd: await scratch(t) },
+    terminal({ publish: true, confirm: [true] }).deps,
+    undefined,
+    refusing.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.err,
+    /^warning: GitHub did not create acme\/\.rness: Not Found \(404\)$/m
+  )
+  assert.match(r.out, manual)
+
+  const declining = fakeProvider({ login: 'octo' })
+  const r2 = await wizard(
+    { ...opts, cwd: await scratch(t) },
+    terminal({ publish: false, confirm: [true] }).deps,
+    undefined,
+    declining.provider
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.deepEqual(declining.created, [])
+  assert.match(r2.out, manual)
+
+  const scripted = fakeProvider({ login: 'octo' })
+  const r3 = await wizard(
+    { ...opts, yes: true, cwd: await scratch(t) },
+    NO_TTY,
+    undefined,
+    scripted.provider
+  )
+  assert.equal(r3.code, 0, r3.err)
+  assert.match(r3.out, manual)
+  assert.deepEqual(scripted.created, [], '--yes never creates a repository')
 })

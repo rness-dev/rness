@@ -107,3 +107,54 @@ test("a personal account: the logged-in user's own is listed with its private re
   assert.equal(other.owner, 'user')
   assert.deepEqual(other.repositories, [repo('public-only')])
 })
+
+test('createRepository: in the organization, under the user for their own account, and what GitHub may answer', async (t) => {
+  let orgStatus = 201
+  const gh = await fakeGithub(t, (r) => {
+    if (r.method === 'POST' && r.path === '/orgs/acme/repos')
+      return {
+        status: orgStatus,
+        json:
+          orgStatus === 403
+            ? {
+                message:
+                  'You need admin access to the organization before adding a repository to it.',
+              }
+            : {},
+      }
+    if (r.method === 'POST' && r.path === '/orgs/Octo/repos')
+      return { status: 404, json: { message: 'Not Found' } }
+    if (r.method === 'POST' && r.path === '/user/repos')
+      return { status: 201, json: {} }
+    return { status: 500, json: {} }
+  })
+  const provider = new GitHubOAuthProvider({ token: TOKEN, apiBase: gh.base })
+
+  assert.deepEqual(await provider.createRepository('acme', '.rness'), {
+    kind: 'created',
+  })
+  assert.equal(gh.requests[0]?.headers['authorization'], 'Bearer ghu_secret')
+
+  orgStatus = 422
+  assert.deepEqual(await provider.createRepository('acme', '.rness'), {
+    kind: 'exists',
+  })
+  orgStatus = 403
+  assert.deepEqual(await provider.createRepository('acme', '.rness'), {
+    kind: 'refused',
+    reason:
+      'You need admin access to the organization before adding a repository to it. (403)',
+  })
+
+  // Not an organization, but the logged-in user's own account.
+  assert.deepEqual(await provider.createRepository('Octo', '.rness'), {
+    kind: 'created',
+  })
+  assert.equal(gh.requests.at(-1)?.path, '/user/repos')
+
+  const anonymous = new GitHubOAuthProvider({ token: null, apiBase: gh.base })
+  assert.deepEqual(await anonymous.createRepository('acme', '.rness'), {
+    kind: 'refused',
+    reason: 'not logged in',
+  })
+})

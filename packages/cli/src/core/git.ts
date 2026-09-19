@@ -128,6 +128,16 @@ export async function pullFastForward(
   await git(['pull', '--ff-only', '--quiet'], dir, credentials)
 }
 
+/** `git remote add origin <url>` then `git push -u origin main`, in `dir`. */
+export async function publish(
+  dir: string,
+  url: string,
+  credentials?: GitCredentials | null
+): Promise<void> {
+  await git(['remote', 'add', 'origin', positional(url, 'repository url')], dir)
+  await git(['push', '--quiet', '-u', 'origin', 'main'], dir, credentials)
+}
+
 /** The `origin` URL, or null when `dir` is not a clone with an origin. */
 export async function originUrl(dir: string): Promise<string | null> {
   try {
