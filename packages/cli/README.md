@@ -162,6 +162,8 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   `not in rness.json:` line pointing at `rness add`.
 - A workspace pinned to 0.4.x clones every catalogue repository on sync —
   `create` runs the pinned copy's sync after joining.
+- Joining a workspace whose `.rness` pins an older `@rness/cli` than the one
+  you run says so, and that `rness upgrade` moves it.
 - Repository and scope names take what GitHub allows, in lowercase: letters,
   digits, `.`, `_` and `-` (`my_lib`, `angular.js`). A name that differs only
   by case is declared in lowercase. A 0.4.0 CLI rejects a `rness.json` that

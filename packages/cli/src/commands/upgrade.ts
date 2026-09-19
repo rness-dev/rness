@@ -7,6 +7,7 @@ import { readPinnedCli } from '../core/delegate.ts'
 import { readOrNull, writeFileAtomic } from '../core/fs.ts'
 import {
   EXACT_VERSION,
+  compareVersions,
   readPin,
   workspacePackageManager,
   writePin,
@@ -34,25 +35,6 @@ const OLD_WORKFLOW_RUN =
   /npx --yes @rness\/cli@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?) validate/
 /** What the scaffold writes now: the version is read from package.json (spec 0006 §2). */
 const WORKFLOW_RUN = `npx --yes "@rness/cli@$(node -p "require('./package.json').devDependencies['@rness/cli']")" validate`
-
-/** Negative when `a` is the older version. A pre-release is older than its release. */
-function compareVersions(a: string, b: string): number {
-  const split = (v: string): [number[], string | null] => {
-    const dash = v.indexOf('-')
-    const core = dash === -1 ? v : v.slice(0, dash)
-    return [core.split('.').map(Number), dash === -1 ? null : v.slice(dash + 1)]
-  }
-  const [coreA, preA] = split(a)
-  const [coreB, preB] = split(b)
-  for (let i = 0; i < 3; i += 1) {
-    const diff = (coreA[i] ?? 0) - (coreB[i] ?? 0)
-    if (diff !== 0) return diff
-  }
-  if (preA === preB) return 0
-  if (preA === null) return 1
-  if (preB === null) return -1
-  return preA.localeCompare(preB, 'en', { numeric: true })
-}
 
 /** `npm view`: npm ships with Node and follows the user's registry configuration. */
 async function latestVersion(): Promise<string | null> {

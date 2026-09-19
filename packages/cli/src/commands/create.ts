@@ -16,6 +16,7 @@ import {
   parseRepoSpec,
   writeManifest,
 } from '../core/manifest.ts'
+import { EXACT_VERSION, compareVersions, readPin } from '../core/pinned.ts'
 import {
   PACKAGE_MANAGERS,
   type PackageManager,
@@ -696,6 +697,17 @@ export async function createCommand(
         gitProvider.credentialsFor(contextUrl)
       )
       ui.line('cloned', `${shown}/.rness (joined ${org})`)
+      // The pin is the team's, in the repository just cloned: say when it is
+      // behind this rness, and what moves it (spec 0006).
+      const pin = (await readPin(rnessDir))?.spec
+      if (
+        pin !== undefined &&
+        EXACT_VERSION.test(pin) &&
+        compareVersions(pin, VERSION) < 0
+      )
+        ui.hint(
+          `${org}/.rness pins @rness/cli ${pin} — you run ${VERSION}; rness upgrade moves the workspace`
+        )
       await install()
       await mkdir(join(root, 'org'), { recursive: true })
       const failures = await cloneSelection({

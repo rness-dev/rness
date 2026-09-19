@@ -1454,3 +1454,42 @@ test('accepting the login runs the device flow in place; the listing that follow
   assert.equal(listing?.headers['authorization'], 'Bearer ghu_wizard')
   await access(join(cwd, 'acme', 'org', 'vault', 'README.md'))
 })
+
+test('joining a workspace pinned to an older @rness/cli says so, and how to move it', async (t) => {
+  const pinned = (version: string): string =>
+    JSON.stringify({ devDependencies: { '@rness/cli': version } })
+  const line = (version: string): RegExp =>
+    new RegExp(
+      `^acme/\\.rness pins @rness/cli ${version.replaceAll('.', '\\.')} — you run ${VERSION.replaceAll('.', '\\.')}; rness upgrade moves the workspace$`,
+      'm'
+    )
+  const join = async (version: string) => {
+    const remote = await makeRemoteOrg(t, 'acme')
+    await remote.addRepo('.rness', {
+      'rness.json': manifestText({}),
+      'package.json': pinned(version),
+    })
+    return create([
+      'acme',
+      '--yes',
+      '--skip-install',
+      '--pm',
+      'npm',
+      '--host',
+      remote.host,
+      '--cwd',
+      await scratch(t),
+    ])
+  }
+  const older = await join('0.0.1')
+  assert.equal(older.code, 0, older.err)
+  assert.match(older.out, line('0.0.1'))
+
+  const same = await join(VERSION)
+  assert.equal(same.code, 0, same.err)
+  assert.doesNotMatch(same.out, /pins @rness\/cli/)
+
+  // A range, or a newer pin, is not this notice's business.
+  assert.doesNotMatch((await join('^0.0.1')).out, /pins @rness\/cli/)
+  assert.doesNotMatch((await join('99.0.0')).out, /pins @rness\/cli/)
+})

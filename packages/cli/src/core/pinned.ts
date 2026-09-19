@@ -16,6 +16,25 @@ const PACKAGE = '@rness/cli'
 /** A released version, pre-releases included; never a range or a tag. */
 export const EXACT_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
 
+/** Negative when `a` is the older version. A pre-release is older than its release. */
+export function compareVersions(a: string, b: string): number {
+  const split = (v: string): [number[], string | null] => {
+    const dash = v.indexOf('-')
+    const core = dash === -1 ? v : v.slice(0, dash)
+    return [core.split('.').map(Number), dash === -1 ? null : v.slice(dash + 1)]
+  }
+  const [coreA, preA] = split(a)
+  const [coreB, preB] = split(b)
+  for (let i = 0; i < 3; i += 1) {
+    const diff = (coreA[i] ?? 0) - (coreB[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  if (preA === preB) return 0
+  if (preA === null) return 1
+  if (preB === null) return -1
+  return preA.localeCompare(preB, 'en', { numeric: true })
+}
+
 export interface Pin {
   /** What `package.json` says: an exact version in a workspace rness created. */
   spec: string
