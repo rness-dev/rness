@@ -856,6 +856,10 @@ export async function createCommand(
         : [
             `# create the empty private repository ${org}/.rness on github.com, then:`,
             `git remote add origin ${contextUrl} && git push -u origin main`,
+            // git first: everyone has it. The GitHub CLI second, for those
+            // who do — it creates the repository and pushes in one step.
+            '# or, with the GitHub CLI (gh) installed, in one step:',
+            `gh repo create ${org}/.rness --private --source . --push`,
           ]),
       `# then, for every teammate: npm create rness ${org}`,
     ]

@@ -1548,7 +1548,7 @@ test('logged in, a new workspace is offered to GitHub: the repository is created
 test('declined, refused, anonymous or --yes: nothing is created, and the manual steps name git only', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   const manual = new RegExp(
-    ` {2}# create the empty private repository acme/\\.rness on github\\.com, then:\\n {2}git remote add origin ${remote.host.replaceAll('/', '\\/')}acme\\/\\.rness\\.git && git push -u origin main\\n`
+    ` {2}# create the empty private repository acme/\\.rness on github\\.com, then:\\n {2}git remote add origin ${remote.host.replaceAll('/', '\\/')}acme\\/\\.rness\\.git && git push -u origin main\\n {2}# or, with the GitHub CLI \\(gh\\) installed, in one step:\\n {2}gh repo create acme\\/\\.rness --private --source \\. --push\\n`
   )
   const opts = {
     org: 'acme',
