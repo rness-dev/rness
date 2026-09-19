@@ -231,7 +231,8 @@ export async function addCommand(
       ui.outro(
         code === 0
           ? `${result.name} is in your workspace`
-          : 'Done, with problems'
+          : 'Done, with problems',
+        code === 0 ? 'done' : 'warn'
       )
     return code
   } catch (e) {

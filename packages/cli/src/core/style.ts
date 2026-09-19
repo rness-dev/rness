@@ -85,6 +85,32 @@ export function bold(
 }
 
 /**
+ * A title on a coloured background — the intro of a session. Without colour
+ * it is the bare text: padding only makes sense around a background.
+ */
+export function badge(
+  text: string,
+  stream: NodeJS.WriteStream = process.stdout
+): string {
+  if (noColor()) return text
+  const padded = ` ${text} `
+  const painted = styleText(['bgCyan', 'black', 'bold'], padded, {
+    stream,
+    validateStream: true,
+  })
+  return painted === padded ? text : painted
+}
+
+/** Grey, for what is read after the rest: a box of next steps. */
+export function grey(
+  text: string,
+  stream: NodeJS.WriteStream = process.stdout
+): string {
+  if (noColor()) return text
+  return styleText('gray', text, { stream, validateStream: true })
+}
+
+/**
  * Can this terminal draw characters beyond ASCII? The rule `@clack/prompts`
  * follows for its own symbols: everywhere but the Linux console and the
  * legacy Windows console.

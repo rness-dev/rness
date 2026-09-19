@@ -714,7 +714,7 @@ export async function createCommand(
       if (code !== 0) return code
       if (failures.length > 0)
         ui.note(
-          'Next',
+          'Next steps',
           failures.map((f) => `rness add ${f.spec}   # failed: ${f.message}`)
         )
       ui.outro(`You joined ${org} — your workspace is in ${shown}/`)
@@ -796,7 +796,7 @@ export async function createCommand(
       `# then, for every teammate: npm create rness ${org}`,
     ]
     if (ui.session) {
-      ui.note('Next', next)
+      ui.note('Next steps', next)
       ui.outro(`Workspace for ${org} is ready in ${shown}/`)
     } else
       process.stdout.write(

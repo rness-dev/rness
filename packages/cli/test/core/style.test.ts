@@ -2,7 +2,15 @@ import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { type TestContext, test } from 'node:test'
 
-import { banner, paint, status, toneOf, unicode } from '../../src/core/style.ts'
+import {
+  badge,
+  banner,
+  grey,
+  paint,
+  status,
+  toneOf,
+  unicode,
+} from '../../src/core/style.ts'
 
 const ESC = `${String.fromCharCode(27)}[`
 
@@ -81,4 +89,13 @@ test('unicode: everywhere but the Linux console (and a legacy Windows one)', (t)
   assert.equal(unicode(), true)
   process.env['TERM'] = 'linux'
   assert.equal(unicode(), false)
+})
+
+test('a badge is padded only when it has a background to pad; grey is grey on a terminal', () => {
+  assert.equal(badge('Create a workspace', pipe), 'Create a workspace')
+  const painted = badge('Create a workspace', terminal(8))
+  assert.ok(painted.startsWith(ESC), JSON.stringify(painted))
+  assert.ok(painted.includes(' Create a workspace '))
+  assert.equal(grey('cd acme', pipe), 'cd acme')
+  assert.ok(grey('cd acme', terminal(8)).startsWith(ESC))
 })

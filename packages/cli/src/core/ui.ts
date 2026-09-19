@@ -1,5 +1,5 @@
 import { step as transientStep } from './progress.ts'
-import { bold, paint, status, toneOf, warn } from './style.ts'
+import { type Tone, badge, grey, paint, status, toneOf, warn } from './style.ts'
 import type { Prompts, Terminal } from './terminal.ts'
 
 // How an interactive command speaks (spec 0007 §5b). Two renderings of the
@@ -32,7 +32,8 @@ export interface Ui {
    */
   gitIsSilent: boolean
   intro(title: string): void
-  outro(message: string): void
+  /** The last word of a session: green for a success, the tone given otherwise. */
+  outro(message: string, tone?: Tone): void
   /** `sentence` replaces `verb rest` in the session look. */
   line(verb: string, rest: string, sentence?: string): void
   warn(text: string): void
@@ -112,10 +113,10 @@ export function sessionUi(p: Session): Ui {
     session: true,
     gitIsSilent: false,
     intro: (title) => {
-      p.intro(bold(title))
+      p.intro(badge(title))
     },
-    outro: (message) => {
-      p.outro(message)
+    outro: (message, tone = 'done') => {
+      p.outro(paint(tone, message))
     },
     line: (verb, rest, sentence) => {
       say(verb, sentence ?? tidy(`${verb} ${rest}`))
@@ -124,7 +125,7 @@ export function sessionUi(p: Session): Ui {
       p.log.warn(text)
     },
     note: (title, lines) => {
-      p.note(lines.join('\n'), title)
+      p.note(lines.join('\n'), title, { format: (line) => grey(line) })
     },
     hint: (text) => {
       p.log.message(paint('idle', text))

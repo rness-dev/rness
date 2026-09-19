@@ -16,8 +16,14 @@ function clack(): { p: Session; said: string[] } {
     intro: log('intro'),
     outro: log('outro'),
     cancel: log('cancel'),
-    note: (body: string, title: string) => {
-      said.push(`note[${title}]: ${body}`)
+    note: (
+      body: string,
+      title: string,
+      opts?: { format?: (l: string) => string }
+    ) => {
+      said.push(
+        `note[${title}]${opts?.format === undefined ? '' : ' formatted'}: ${body}`
+      )
     },
     log: {
       step: log('step'),
@@ -51,7 +57,7 @@ test('the session look: a sentence per line, by tone, from intro to outro', () =
   ui.warn('careful')
   ui.error('api: git clone failed')
   ui.hint('a tip')
-  ui.note('Next', ['cd acme/.rness', 'git push'])
+  ui.note('Next steps', ['cd acme/.rness', 'git push'])
   ui.cancelled()
   ui.outro('Workspace for acme is ready')
   assert.deepEqual(said, [
@@ -63,7 +69,7 @@ test('the session look: a sentence per line, by tone, from intro to outro', () =
     'warn: careful',
     'error: api: git clone failed',
     'message: a tip',
-    'note[Next]: cd acme/.rness\ngit push',
+    'note[Next steps] formatted: cd acme/.rness\ngit push',
     'cancel: Cancelled',
     'outro: Workspace for acme is ready',
   ])

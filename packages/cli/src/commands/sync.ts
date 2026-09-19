@@ -381,7 +381,8 @@ export async function syncCommand(
             ? 'Done, with problems'
             : check
               ? 'Checked'
-              : 'Your clones carry the current context'
+              : 'Your clones carry the current context',
+          problems.length > 0 ? 'warn' : 'done'
         )
     }
   } catch (e) {

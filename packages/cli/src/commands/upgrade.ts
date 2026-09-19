@@ -228,7 +228,7 @@ export async function upgradeCommand(
       `# teammates: git pull, then ${pm} install in .rness`,
     ]
     if (ui.session) {
-      ui.note('Next', next)
+      ui.note('Next steps', next)
       ui.outro(`${label} runs @rness/cli ${target}`)
     } else
       process.stdout.write(

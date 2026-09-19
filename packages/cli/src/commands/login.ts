@@ -105,7 +105,7 @@ export async function loginCommand(
         `as ${stored.login} (github.com); rness logout to switch`
       )
       await offerSetupGit(opts, terminal, bin, ui)
-      if (own) ui.outro('Nothing to do')
+      if (own) ui.outro('Nothing to do', 'idle')
       return 0
     }
 
