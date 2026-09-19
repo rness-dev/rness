@@ -13,18 +13,18 @@ import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
 import { loadManifest, resolveOrg } from '../core/manifest.ts'
 import { ensureClaudeMd, findBlock, mergeBlock } from '../core/merge.ts'
-import { step } from '../core/progress.ts'
 import type { GitCredentials } from '../core/provider.ts'
-import { status, warn } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
-  CHECKING_LINE,
+  CHECKING,
   INSTEAD_OF_LINES,
   defaultTransport,
   isSshUrl,
   sshWorkspaceLines,
+  testGithubSsh,
 } from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
+import { type Line, type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 
@@ -103,6 +103,7 @@ async function askWhatToSync(input: {
   missing: readonly string[]
   offer: boolean
   terminal: Terminal
+  ui: Ui
 }): Promise<string[] | number> {
   if (!input.terminal.isTty()) {
     process.stderr.write(
@@ -112,7 +113,7 @@ async function askWhatToSync(input: {
   }
   const p = await input.terminal.prompts()
   const cancelled = (): number => {
-    process.stderr.write('cancelled\n')
+    input.ui.cancelled()
     return 1
   }
   if (input.offer && input.missing.length > 0) {
@@ -160,11 +161,18 @@ export async function syncCommand(
     (provider ??= await githubProvider()).credentialsFor(url)
   const cwd = opts.cwd ?? process.cwd()
   const check = opts.check === true
+  // Inside another command's session (`add`, `create`) its reporter is used;
+  // on its own, a sync that asks questions is a session of its own.
+  const ownUi = deps.ui === undefined
+  const ui =
+    deps.ui ??
+    (opts.yes !== true && !check ? await makeUi(terminal) : { ...plainUi })
   try {
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
     const { org, warning } = resolveOrg(manifest, ws.root)
-    if (warning !== null) process.stderr.write(`${warn(warning)}\n`)
+    if (ownUi) ui.intro(`Sync workspace ${org}`)
+    if (warning !== null) ui.warn(warning)
     if (
       opts.scope !== undefined &&
       !Object.hasOwn(manifest.scopes, opts.scope)
@@ -183,6 +191,7 @@ export async function syncCommand(
         // `--all` already answers; `--scope` is about one block, not the workspace.
         offer: opts.all !== true && opts.scope === undefined,
         terminal,
+        ui,
       })
       if (typeof answer === 'number') return answer
       if (opts.all !== true) toClone = new Set(answer)
@@ -194,10 +203,16 @@ export async function syncCommand(
       const repo = manifest.repos[name]
       return repo !== undefined && isSshUrl(repo.url, transport.hosts)
     })
+    // Only a clone over SSH can make git ask something on the terminal.
+    if (!overSsh) ui.gitIsSilent = true
     if (overSsh) {
       const interactive = opts.yes !== true && terminal.isTty()
-      if (interactive) process.stdout.write(`${CHECKING_LINE}\n`)
-      const access = await transport.detect({ interactive })
+      const { access, unattended } = await testGithubSsh(
+        transport,
+        interactive,
+        () => ui.line(...CHECKING)
+      )
+      if (unattended) ui.gitIsSilent = true
       if (!access.ok) {
         process.stderr.write(
           `${[...sshWorkspaceLines(access.reason), ...INSTEAD_OF_LINES].join('\n')}\n`
@@ -206,7 +221,8 @@ export async function syncCommand(
       }
     }
 
-    const lines: string[] = []
+    // A status line as `[verb, rest]`, or a sentence; said once the pass ends.
+    const lines: (Line | string)[] = []
     const problems: string[] = []
 
     try {
@@ -223,10 +239,10 @@ export async function syncCommand(
           }
           try {
             const credentials = await credentialsFor(repo.url)
-            await step({ label: `cloning  ${label}`, animate: false }, () =>
+            await ui.step({ doing: `cloning  ${label}`, git: true }, () =>
               clone(repo.url, dir, credentials)
             )
-            lines.push(status('cloned', `${label}`))
+            lines.push(['cloned', `${label}`])
           } catch (e) {
             problems.push(
               `${label}: ${e instanceof Error ? e.message : String(e)}`
@@ -235,14 +251,14 @@ export async function syncCommand(
         } else if (opts.pull === true && !check) {
           try {
             if (!(await isClean(dir, MANAGED_FILES))) {
-              lines.push(status('skipped', `${label} (working tree not clean)`))
+              lines.push(['skipped', `${label} (working tree not clean)`])
               continue
             }
             const credentials = await credentialsFor(repo.url)
-            await step({ label: `pulling  ${label}`, animate: false }, () =>
+            await ui.step({ doing: `pulling  ${label}`, git: true }, () =>
               pullFastForward(dir, credentials)
             )
-            lines.push(status('pulled', `${label}`))
+            lines.push(['pulled', `${label}`])
           } catch (e) {
             problems.push(
               `${label}: ${e instanceof Error ? e.message : String(e)}`
@@ -270,7 +286,7 @@ export async function syncCommand(
 
       // 2. Blocks — only where repositories live; a standalone context checkout has no org/.
       if (!(await exists(join(ws.root, 'org')))) {
-        lines.push(status('skipped', 'blocks (no org/ directory here)'))
+        lines.push(['skipped', 'blocks (no org/ directory here)'])
       } else {
         let differences = 0
         for (const t of targetsOf(manifest, ws.root, opts.scope)) {
@@ -284,9 +300,7 @@ export async function syncCommand(
               repo === undefined ||
               !notCloned.has(repo)
             )
-              lines.push(
-                status('skipped', `${t.label} (directory not present)`)
-              )
+              lines.push(['skipped', `${t.label} (directory not present)`])
             continue
           }
           // One of the pair symlinked to the other (the common `CLAUDE.md →
@@ -296,7 +310,7 @@ export async function syncCommand(
             MANAGED_FILES.map((f) => isSymlink(join(t.dir, f)))
           )
           if (linked.includes(true)) {
-            lines.push(status('skipped', `${t.label} (symlink)`))
+            lines.push(['skipped', `${t.label} (symlink)`])
             continue
           }
           const context = await assembleContext({
@@ -311,8 +325,8 @@ export async function syncCommand(
             context,
           })
           if (block.bytes > BLOCK_SIZE_WARNING) {
-            process.stderr.write(
-              `${warn(`${t.label}: block is ${Math.round(block.bytes / 1024)} KB (over 32 KB)`)}\n`
+            ui.warn(
+              `${t.label}: block is ${Math.round(block.bytes / 1024)} KB (over 32 KB)`
             )
           }
           const file = join(t.dir, 'AGENTS.md')
@@ -335,18 +349,18 @@ export async function syncCommand(
             continue
           }
           if (!merged.changed) {
-            lines.push(status('unchanged', `${t.label}`))
+            lines.push(['unchanged', `${t.label}`])
             if (!check) await ensureClaudeMd(t.dir)
             continue
           }
           if (check) {
-            lines.push(status('stale', `${t.label}`))
+            lines.push(['stale', `${t.label}`])
             differences += 1
             continue
           }
           await writeFileAtomic(file, merged.text)
           await ensureClaudeMd(t.dir)
-          lines.push(status('updated', `${t.label}`))
+          lines.push(['updated', `${t.label}`])
         }
         if (check && differences > 0)
           problems.push(`${differences} block(s) out of date — run rness sync`)
@@ -357,8 +371,18 @@ export async function syncCommand(
       // Both flushes run even when something above throws, and stdout precedes
       // stderr so the report reads in order. The exit code above is computed
       // before this block, so it is unaffected.
-      for (const l of lines) process.stdout.write(`${l}\n`)
-      for (const p of problems) process.stderr.write(`${p}\n`)
+      for (const l of lines)
+        if (typeof l === 'string') ui.hint(l)
+        else ui.line(l[0], l[1])
+      for (const p of problems) ui.error(p)
+      if (ownUi)
+        ui.outro(
+          problems.length > 0
+            ? 'Done, with problems'
+            : check
+              ? 'Checked'
+              : 'Your clones carry the current context'
+        )
     }
   } catch (e) {
     return reportError(e)

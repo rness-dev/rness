@@ -128,6 +128,66 @@ export async function driftWarning(cwd: string): Promise<string | null> {
   )
 }
 
+export interface PinnedSyncResult {
+  code: number
+  stdout: string
+  stderr: string
+}
+
+/** `sync --yes` through the installed copy, its output kept. Null when nothing is installed. */
+export async function runPinnedSync(
+  root: string
+): Promise<PinnedSyncResult | null> {
+  const installed = await readPinnedCli(join(root, '.rness'))
+  if (installed === null) return null
+  const pinned = join(installed.dir, ...installed.bin.split('/'))
+  if (!(await exists(pinned)))
+    return {
+      code: 1,
+      stdout: '',
+      stderr: `@rness/cli in .rness is not installed correctly (missing ${installed.bin}); reinstall in .rness/\n`,
+    }
+  try {
+    const { stdout, stderr } = await execFileP(
+      process.execPath,
+      [pinned, 'sync', '--yes'],
+      { cwd: root, maxBuffer: 16 * 1024 * 1024 }
+    )
+    return { code: 0, stdout, stderr }
+  } catch (e) {
+    const err = e as { code?: number; stdout?: string; stderr?: string }
+    return {
+      code: typeof err.code === 'number' ? err.code : 1,
+      stdout: err.stdout ?? '',
+      stderr: err.stderr ?? '',
+    }
+  }
+}
+
+/**
+ * What a sync printed, in one line: `3 blocks: 2 updated, 1 unchanged`. The
+ * lines that are not about a block (`not cloned: …`) are returned as they are.
+ */
+export function summariseSync(stdout: string): {
+  summary: string
+  others: string[]
+} {
+  const counts = new Map<string, number>()
+  const others: string[] = []
+  for (const line of stdout.split('\n')) {
+    if (line.trim() === '') continue
+    const verb = /^(updated|unchanged|stale)\s/.exec(line)?.[1]
+    if (verb === undefined) others.push(line)
+    else counts.set(verb, (counts.get(verb) ?? 0) + 1)
+  }
+  const total = [...counts.values()].reduce((a, b) => a + b, 0)
+  const detail = [...counts].map(([verb, n]) => `${n} ${verb}`).join(', ')
+  return {
+    summary: `${total} block${total === 1 ? '' : 's'}${detail === '' ? '' : `: ${detail}`}`,
+    others,
+  }
+}
+
 /**
  * Run `sync --yes` through the copy installed in `.rness/`. With nothing
  * installed, `fallback` runs instead (`create --skip-install`); without a

@@ -11,8 +11,8 @@ import {
 } from '../core/device-flow.ts'
 import { DEFAULT_GITHUB_API, getUser } from '../core/github.ts'
 import { isStableInstall, setupGit } from '../core/setup-git.ts'
-import { status } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
+import { type Ui, makeUi } from '../core/ui.ts'
 import { reportError } from '../report.ts'
 
 export interface LoginOptions {
@@ -24,6 +24,8 @@ export interface LoginOptions {
 
 export interface LoginDeps extends PollDeps {
   terminal?: Terminal
+  /** The caller's reporter: `create` logs in from inside its own session. */
+  ui?: Ui
   /** Open a URL in the browser; failures are nobody's problem. */
   open?: (url: string) => void
   /** This rness's launcher, as git will have to find it. */
@@ -50,12 +52,13 @@ function openInBrowser(url: string): void {
 async function offerSetupGit(
   opts: LoginOptions,
   terminal: Terminal,
-  bin: string
+  bin: string,
+  ui: Ui
 ): Promise<void> {
   if (opts.setupGit === false) return
   if (!isStableInstall(bin)) {
-    process.stdout.write(
-      'install rness globally to let git use your login: npm i -g @rness/cli\n'
+    ui.hint(
+      'install rness globally to let git use your login: npm i -g @rness/cli'
     )
     return
   }
@@ -69,8 +72,10 @@ async function offerSetupGit(
     if (p.isCancel(ok) || ok !== true) return
   }
   const changed = await setupGit(process.execPath, bin)
-  process.stdout.write(
-    `${status(changed ? 'updated' : 'unchanged', 'git: rness answers for https://github.com (rness logout undoes it)')}\n`
+  ui.line(
+    changed ? 'updated' : 'unchanged',
+    'git: rness answers for https://github.com (rness logout undoes it)',
+    'git now asks rness for your github.com login over HTTPS (rness logout undoes it)'
   )
 }
 
@@ -83,44 +88,68 @@ export async function loginCommand(
   deps: LoginDeps = {}
 ): Promise<number> {
   const terminal = deps.terminal ?? defaultTerminal
+  // On its own `login` is a session of its own; inside `create` it is a part.
+  const own = deps.ui === undefined
+  const ui = deps.ui ?? (await makeUi(terminal))
+  if (own) ui.intro('Log in to GitHub')
   try {
     const bin =
       deps.bin ?? (await realpath(process.argv[1] ?? '').catch(() => ''))
     const env = envToken()
     if (env !== null)
-      process.stdout.write(
-        `${env.source} is set and wins over a stored login\n`
-      )
+      ui.hint(`${env.source} is set and wins over a stored login`)
     const stored = await readAuth()
     if (stored !== null && (await resolveToken()) !== null) {
-      process.stdout.write(
-        `${status('logged in', `as ${stored.login} (github.com); rness logout to switch`)}\n`
+      ui.line(
+        'logged in',
+        `as ${stored.login} (github.com); rness logout to switch`
       )
-      await offerSetupGit(opts, terminal, bin)
+      await offerSetupGit(opts, terminal, bin, ui)
+      if (own) ui.outro('Nothing to do')
       return 0
     }
 
     const code = await requestDeviceCode()
-    process.stdout.write(
-      `${status('open', code.verificationUri)}\n${status('code', code.userCode)}\n`
-    )
+    if (ui.session)
+      ui.line(
+        'open',
+        code.verificationUri,
+        `Open ${code.verificationUri} and enter the code ${code.userCode}`
+      )
+    else {
+      ui.line('open', code.verificationUri)
+      ui.line('code', code.userCode)
+    }
     if (terminal.isTty() && process.env['SSH_CONNECTION'] === undefined)
       (deps.open ?? openInBrowser)(code.verificationUri)
-    process.stdout.write(
-      `${status('waiting', 'for you to approve rness on github.com…')}\n`
+    // The plain look says it is waiting, then who logged in; the session
+    // look spins, and the spinner ends as that second line.
+    if (!ui.session)
+      ui.line('waiting', 'for you to approve rness on github.com…')
+    const login = await ui.step(
+      {
+        doing: 'waiting  for you to approve rness on github.com',
+        sentence: 'Waiting for your approval on github.com',
+        quiet: true,
+      },
+      async () => {
+        const tokens = await pollForToken(code, deps)
+        const user = await getUser({
+          token: tokens.accessToken,
+          apiBase: opts.githubApi ?? DEFAULT_GITHUB_API,
+        })
+        await writeAuth({ login: user.login, tokens })
+        return user.login
+      },
+      (name) => ['logged in', `as ${name} (github.com)`]
     )
-    const tokens = await pollForToken(code, deps)
-    const { login } = await getUser({
-      token: tokens.accessToken,
-      apiBase: opts.githubApi ?? DEFAULT_GITHUB_API,
-    })
-    await writeAuth({ login, tokens })
-    process.stdout.write(`${status('logged in', `as ${login} (github.com)`)}\n`)
-    await offerSetupGit(opts, terminal, bin)
+    if (!ui.session) ui.line('logged in', `as ${login} (github.com)`)
+    await offerSetupGit(opts, terminal, bin, ui)
+    if (own) ui.outro(`You are logged in as ${login}`)
     return 0
   } catch (e) {
     if (e instanceof LoginError) {
-      process.stderr.write(`${e.message}\n`)
+      ui.error(e.message)
       return 1
     }
     return reportError(e)

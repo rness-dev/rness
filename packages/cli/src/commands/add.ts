@@ -4,23 +4,25 @@ import type { CommandDeps } from '../core/deps.ts'
 import { exists } from '../core/fs.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
 import { loadManifest, parseRepoSpec, resolveOrg } from '../core/manifest.ts'
-import { step } from '../core/progress.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import {
   type AddRepositoryResult,
   addRepository,
   workspaceDirs,
 } from '../core/repos.ts'
-import { status, warn } from '../core/style.ts'
+import { warn } from '../core/style.ts'
 import { defaultTerminal } from '../core/terminal.ts'
 import {
-  CHECKING_LINE,
+  CHECKING,
   defaultTransport,
   httpsFlagLine,
   isSshUrl,
   sshWorkspaceLines,
-  usingLine,
+  testGithubSsh,
+  usingRest,
+  usingSentence,
 } from '../core/transport.ts'
+import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 import { syncCommand } from './sync.ts'
@@ -41,6 +43,7 @@ export interface AddOptions {
 
 /** One `declared scope …` line per scope of `result` not named in `already`. */
 function printDeclared(
+  ui: Ui,
   result: AddRepositoryResult,
   already: ReadonlySet<string>
 ): void {
@@ -50,9 +53,7 @@ function printDeclared(
     if (entry === undefined) continue
     const ext =
       entry.extends.length === 0 ? '' : `, extends ${entry.extends.join(', ')}`
-    process.stdout.write(
-      `${status('declared', `scope ${name} (${entry.path}${ext})`)}\n`
-    )
+    ui.line('declared', `scope ${name} (${entry.path}${ext})`)
   }
 }
 
@@ -94,6 +95,7 @@ export async function addCommand(
       return 2
     }
     const interactive = opts.yes !== true
+    const ownUi = deps.ui === undefined
     if (interactive && !terminal.isTty()) {
       process.stderr.write(
         'rness add clones and writes files; pass --yes to run without a prompt\n'
@@ -101,18 +103,27 @@ export async function addCommand(
       return 2
     }
 
+    const ui: Ui =
+      deps.ui ?? (interactive ? await makeUi(terminal) : { ...plainUi })
+    if (ownUi) ui.intro(`Add ${parsed.name} to workspace ${org}`)
+    // Only SSH can make git ask something on the terminal (a passphrase).
+    if (opts.host !== undefined || opts.https === true) ui.gitIsSilent = true
     let host = opts.host
     if (host === undefined && opts.ssh === true) host = transport.hosts.ssh
     if (host === undefined && opts.https === true) host = transport.hosts.https
     if (host === undefined && FULL_URL.test(spec)) host = transport.hosts.https
     if (host === undefined) {
-      if (interactive) process.stdout.write(`${CHECKING_LINE}\n`)
-      const access = await transport.detect({ interactive })
+      const { access, unattended } = await testGithubSsh(
+        transport,
+        interactive,
+        () => ui.line(...CHECKING)
+      )
+      if (unattended || !access.ok) ui.gitIsSilent = true
       const overSsh = Object.values(manifest.repos).some((r) =>
         isSshUrl(r.url, transport.hosts)
       )
       if (access.ok || !overSsh) {
-        process.stdout.write(`${usingLine(access)}\n`)
+        ui.line('using', usingRest(access), usingSentence(access))
         host = access.ok ? transport.hosts.ssh : transport.hosts.https
       } else {
         // An SSH workspace never falls back silently: say why, then let the
@@ -124,7 +135,8 @@ export async function addCommand(
           )
           return 1
         }
-        process.stderr.write(`${lines.join('\n')}\n`)
+        ui.error(lines[0])
+        ui.hint(lines[1], 'stderr')
         const p = await terminal.prompts()
         const https = await p.confirm({
           message: `Clone ${parsed.name} over HTTPS instead?`,
@@ -152,16 +164,17 @@ export async function addCommand(
         message: `${plan}, declare scope "${parsed.name}" in rness.json, then sync?`,
       })
       if (isCancel(ok) || ok !== true) {
-        process.stderr.write('cancelled\n')
+        ui.cancelled()
         return 1
       }
     }
 
     const credentials = await credentialsFor(parsed.url)
-    let result = await step(
+    const chosenHost = host
+    let result = await ui.step(
       {
-        label: `${present ? 'adopting' : 'cloning '} org/${parsed.name}`,
-        animate: false,
+        doing: `${present ? 'adopting' : 'cloning '} org/${parsed.name}`,
+        git: true,
       },
       () =>
         addRepository({
@@ -170,14 +183,14 @@ export async function addCommand(
           manifest,
           spec,
           org,
-          host,
+          host: chosenHost,
           scopes,
           credentialsFor: () => credentials,
-        })
+        }),
+      (r) => [r.action, `org/${r.name}`]
     )
-    process.stdout.write(`${status(result.action, `org/${result.name}`)}\n`)
     const announced = new Set<string>()
-    printDeclared(result, announced)
+    printDeclared(ui, result, announced)
     for (const name of result.declared) announced.add(name)
 
     // A monorepo's workspace packages are only knowable once the clone is on
@@ -192,7 +205,7 @@ export async function addCommand(
           required: false,
         })
         if (isCancel(picked)) {
-          process.stderr.write('cancelled\n')
+          ui.cancelled()
           return 1
         }
         // `isCancel` narrows only the unique cancel symbol, not the broader
@@ -209,11 +222,18 @@ export async function addCommand(
             scopes: picked,
             credentialsFor: () => credentials,
           })
-          printDeclared(result, announced)
+          printDeclared(ui, result, announced)
         }
       }
     }
-    return syncCommand({ yes: true, cwd: ws.root })
+    const code = await syncCommand({ yes: true, cwd: ws.root }, { ui })
+    if (ownUi)
+      ui.outro(
+        code === 0
+          ? `${result.name} is in your workspace`
+          : 'Done, with problems'
+      )
+    return code
   } catch (e) {
     return reportError(e)
   }

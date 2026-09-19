@@ -11,13 +11,13 @@ export const SSH_DENIED: SshAccess = {
 
 /**
  * github.com as two fake organisations — what is reachable over SSH and what
- * is reachable over HTTPS — and a scripted answer to the SSH test. `calls`
- * records every run of the test.
+ * is reachable over HTTPS — and a scripted answer to the SSH test (one, or
+ * one per run). `calls` records every run of the test.
  */
 export async function fakeTransport(
   t: TestContext,
   org: string,
-  access: SshAccess
+  access: SshAccess | SshAccess[]
 ): Promise<{
   transport: Transport
   ssh: RemoteOrg
@@ -32,7 +32,12 @@ export async function fakeTransport(
       hosts: { ssh: ssh.host, https: https.host },
       detect: async (opts) => {
         calls.push(opts)
-        return access
+        // A list answers call by call (the last one repeats): the unattended
+        // test, then the one that may have asked for a passphrase.
+        if (!Array.isArray(access)) return access
+        const next = access[Math.min(calls.length, access.length) - 1]
+        if (next === undefined) throw new Error('no scripted SSH answer')
+        return next
       },
     },
     ssh,

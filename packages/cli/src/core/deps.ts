@@ -1,6 +1,7 @@
 import type { GitProvider } from './provider.ts'
 import type { Terminal } from './terminal.ts'
 import type { Transport } from './transport.ts'
+import type { Ui } from './ui.ts'
 
 /**
  * What a command takes from the outside world, each part replaceable in
@@ -11,4 +12,6 @@ export interface CommandDeps {
   terminal: Terminal
   transport: Transport
   provider: GitProvider
+  /** The caller's reporter, when a command runs inside another one's session. */
+  ui: Ui
 }

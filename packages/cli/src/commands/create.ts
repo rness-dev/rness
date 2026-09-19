@@ -16,7 +16,6 @@ import {
   parseRepoSpec,
   writeManifest,
 } from '../core/manifest.ts'
-import { syncPinned } from '../core/pinned.ts'
 import {
   PACKAGE_MANAGERS,
   type PackageManager,
@@ -25,27 +24,31 @@ import {
   isPackageManager,
   packageManagerVersion,
 } from '../core/pm.ts'
-import { step } from '../core/progress.ts'
 import type { GitCredentials, GitProvider } from '../core/provider.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { copyScaffold } from '../core/scaffold-copy.ts'
-import { PRIVATE_MARK, banner, status, unicode, warn } from '../core/style.ts'
+import { PRIVATE_MARK, banner, unicode } from '../core/style.ts'
+import { syncBlocks } from '../core/sync-blocks.ts'
 import {
   type Prompts,
   type Terminal,
   defaultTerminal,
 } from '../core/terminal.ts'
 import {
-  CHECKING_LINE,
+  CHECKING,
   INSTEAD_OF_LINES,
   type SshAccess,
+  type SshTest,
   defaultTransport,
   isSshUrl,
   sshWorkspaceLines,
-  usingLine,
+  testGithubSsh,
+  usingRest,
+  usingSentence,
 } from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
+import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 import { VERSION } from '../version.ts'
@@ -149,8 +152,8 @@ async function targetProblem(
 
 // A cancelled or declined prompt is the user's choice, not a failure: exit 0
 // so `npm create rness` does not wrap it in npm's error report.
-function cancelled(): number {
-  process.stderr.write('cancelled\n')
+function cancelled(ui: Ui): number {
+  ui.cancelled()
   return 0
 }
 
@@ -166,46 +169,56 @@ async function pickRepositories(input: {
   org: string
   provider: GitProvider
   prompts: Prompts
+  ui: Ui
   catalogue: Readonly<Record<string, unknown>>
 }): Promise<{ picked: string[]; prompted: boolean } | null> {
-  const { org, prompts, provider } = input
+  const { org, prompts, provider, ui } = input
   // Logged in: say as whom rness looks at the organization, and when the
   // organization hides its private repositories from OAuth apps (spec 0004 §3).
   if (provider.authenticated) {
     const access = await provider.organizationAccess(org)
     const login = (await provider.identity())?.login
     if (access === 'member')
-      process.stdout.write(
-        `${status('member', `${org}${login === undefined ? '' : ` (as ${login})`}`)}\n`
+      ui.line(
+        'member',
+        `${org}${login === undefined ? '' : ` (as ${login})`}`,
+        `You are a member of ${org}${login === undefined ? '' : ` (as ${login})`}`
       )
-    else if (access === 'restricted')
-      process.stderr.write(
-        `${warn(`${org} restricts OAuth apps, so its private repositories are hidden from rness`)}\nask an owner to approve it: ${revokeUrl()}\n`
+    else if (access === 'restricted') {
+      ui.warn(
+        `${org} restricts OAuth apps, so its private repositories are hidden from rness`
       )
+      ui.hint(`ask an owner to approve it: ${revokeUrl()}`, 'stderr')
+    }
   }
-  process.stdout.write(`${status('listing', `${org} repositories…`)}\n`)
   let listed: { name: string; private: boolean; archived: boolean }[] = []
   let failed = false
+  // The plain look announces the listing; the session look spins on it.
+  if (!ui.session) ui.line('listing', `${org} repositories…`)
   try {
-    const listing = await provider.listRepositories(org)
+    const listing = await ui.step(
+      {
+        doing: `listing  ${org} repositories`,
+        sentence: `Listing the repositories of ${org}`,
+        quiet: true,
+      },
+      () => provider.listRepositories(org),
+      (l) => ['listed', `${l.repositories.length} repositories of ${org}`]
+    )
     listed = listing.repositories
     if (listing.owner === 'user')
-      process.stdout.write(
-        `only public repositories of ${org} are listed; add private ones later with rness add <repo>\n`
+      ui.hint(
+        `only public repositories of ${org} are listed; add private ones later with rness add <repo>`
       )
     else if (!provider.authenticated)
-      process.stdout.write(
-        'only public repositories are listed; rness login lists the private ones you can access\n'
+      ui.hint(
+        'only public repositories are listed; rness login lists the private ones you can access'
       )
     if (listing.truncated)
-      process.stdout.write(
-        `listed the first ${MAX_PAGES * PER_PAGE} repositories of ${org}\n`
-      )
+      ui.hint(`listed the first ${MAX_PAGES * PER_PAGE} repositories of ${org}`)
   } catch (e) {
     failed = true
-    process.stderr.write(
-      `${warn(firstLine(e instanceof Error ? e.message : String(e)))}\n`
-    )
+    ui.warn(firstLine(e instanceof Error ? e.message : String(e)))
   }
   const inCatalogue = (name: string): boolean =>
     Object.hasOwn(input.catalogue, name)
@@ -258,14 +271,13 @@ async function pickRepositories(input: {
       unsupported.length > names.length
         ? ` and ${unsupported.length - names.length} more`
         : ''
-    process.stdout.write(
-      `names rness cannot declare yet (struck through): ${names.join(', ')}${more}\n`
+    ui.hint(
+      `names rness cannot declare yet (struck through): ${names.join(', ')}${more}`
     )
   }
   if (declarable.length === 0) {
     // After a failed listing its own warning already says why.
-    if (!failed)
-      process.stderr.write(`${warn(`no repositories to list for ${org}`)}\n`)
+    if (!failed) ui.warn(`no repositories to list for ${org}`)
     return { picked: [], prompted: false }
   }
   const initialValues = Object.keys(input.catalogue)
@@ -307,7 +319,9 @@ async function cloneSelection(input: {
   host: string
   specs: readonly string[]
   provider: GitProvider
+  ui: Ui
 }): Promise<Failure[]> {
+  const { ui } = input
   let manifest = input.manifest
   const failures: Failure[] = []
   for (const spec of new Set(input.specs)) {
@@ -320,33 +334,40 @@ async function cloneSelection(input: {
       }
       const entry = name === null ? undefined : manifest.repos[name]
       if (name !== null && entry !== undefined) {
-        await step({ label: `cloning  org/${name}`, animate: false }, () =>
-          clone(
-            entry.url,
-            join(input.root, 'org', name),
-            input.provider.credentialsFor(entry.url)
-          )
+        const repo = name
+        await ui.step(
+          { doing: `cloning  org/${repo}`, git: true },
+          () =>
+            clone(
+              entry.url,
+              join(input.root, 'org', repo),
+              input.provider.credentialsFor(entry.url)
+            ),
+          () => ['cloned', `org/${repo}`]
         )
-        process.stdout.write(`${status('cloned', `org/${name}`)}\n`)
         continue
       }
-      const result = await addRepository({
-        root: input.root,
-        rnessDir: input.rnessDir,
-        manifest,
-        spec,
-        org: input.org,
-        host: input.host,
-        scopes: [],
-        credentialsFor: (url) => input.provider.credentialsFor(url),
-      })
-      manifest = result.manifest
-      process.stdout.write(
-        `${status(result.action, `org/${result.name}`)}\n${status('declared', `scope ${result.name} (org/${result.name})`)}\n`
+      const current = manifest
+      const result = await ui.step(
+        { doing: `cloning  ${spec}`, git: true },
+        () =>
+          addRepository({
+            root: input.root,
+            rnessDir: input.rnessDir,
+            manifest: current,
+            spec,
+            org: input.org,
+            host: input.host,
+            scopes: [],
+            credentialsFor: (url) => input.provider.credentialsFor(url),
+          }),
+        (r) => [r.action, `org/${r.name}`]
       )
+      manifest = result.manifest
+      ui.line('declared', `scope ${result.name} (org/${result.name})`)
     } catch (e) {
       const message = firstLine(e instanceof Error ? e.message : String(e))
-      process.stderr.write(`${spec}: ${message}\n`)
+      ui.error(`${spec}: ${message}`)
       failures.push({ spec, message })
     }
   }
@@ -448,16 +469,23 @@ export async function createCommand(
       ? opts.pm
       : detectPackageManager()
   const interactive = opts.yes !== true && terminal.isTty()
+  // The plain look unless this is a wizard in a real terminal (spec 0007 §5b).
+  const ui = interactive ? await makeUi(terminal) : { ...plainUi }
   // The SSH test runs at most once, and only when its answer is needed.
-  let sshAccess: SshAccess | undefined
+  let sshTest: SshTest | undefined
   const testSsh = async (): Promise<SshAccess> => {
-    if (sshAccess === undefined) {
-      if (interactive) process.stdout.write(`${CHECKING_LINE}\n`)
-      sshAccess = await transport.detect({ interactive })
+    if (sshTest === undefined) {
+      sshTest = await testGithubSsh(transport, interactive, () =>
+        ui.line(...CHECKING)
+      )
+      // Unattended SSH never asks anything: git steps may animate.
+      if (sshTest.unattended) ui.gitIsSilent = true
     }
-    return sshAccess
+    return sshTest.access
   }
   const chooseHost = async (): Promise<string> => {
+    // Only SSH can make git ask something on the terminal (a passphrase).
+    if (opts.host !== undefined || opts.https === true) ui.gitIsSilent = true
     if (opts.host !== undefined) return opts.host
     if (opts.ssh === true) return transport.hosts.ssh
     if (opts.https === true) return transport.hosts.https
@@ -466,7 +494,8 @@ export async function createCommand(
     const login = github?.authenticated
       ? (await github.identity())?.login
       : undefined
-    process.stdout.write(`${usingLine(access, login)}\n`)
+    ui.line('using', usingRest(access, login), usingSentence(access, login))
+    if (!access.ok) ui.gitIsSilent = true
     return access.ok ? transport.hosts.ssh : transport.hosts.https
   }
   let loaded: Prompts | undefined
@@ -475,6 +504,7 @@ export async function createCommand(
   let staging: string | undefined
   // '' off a terminal, so scripts and tests see nothing of it.
   if (interactive) process.stdout.write(banner(VERSION))
+  ui.intro('Create a workspace')
   try {
     // In a terminal, before the first question: no answer could fix it.
     if (interactive && (await insideWorkspace(cwd))) {
@@ -502,11 +532,11 @@ export async function createCommand(
         message: 'Log in to GitHub to list private repositories?',
         initialValue: true,
       })
-      if (p.isCancel(login)) return cancelled()
+      if (p.isCancel(login)) return cancelled(ui)
       if (login === true) {
         const code = await loginCommand(
           opts.githubApi === undefined ? {} : { githubApi: opts.githubApi },
-          { terminal }
+          { terminal, ui }
         )
         if (code !== 0) return code
         provider = await githubProvider(opts.githubApi)
@@ -517,7 +547,7 @@ export async function createCommand(
         await getProvider(),
         await prompts()
       )
-      if (chosen === null) return cancelled()
+      if (chosen === null) return cancelled(ui)
       if (chosen !== OTHER) {
         org = chosen
         prompted = true
@@ -535,7 +565,7 @@ export async function createCommand(
             : `"${v}" is not a valid GitHub organization name`
         },
       })
-      if (p.isCancel(answer) || typeof answer !== 'string') return cancelled()
+      if (p.isCancel(answer) || typeof answer !== 'string') return cancelled(ui)
       org = answer.trim()
       prompted = true
     }
@@ -568,11 +598,18 @@ export async function createCommand(
       return 1
     }
     const joining = probe.kind === 'found'
-    process.stdout.write(
-      joining
-        ? `${status('found', `${org}/.rness — joining`)}\n`
-        : `${status('not found', `${org}/.rness (or not visible to you) — starting a new workspace`)}\n`
-    )
+    if (joining)
+      ui.line(
+        'found',
+        `${org}/.rness — joining`,
+        `${org} has a workspace — joining it`
+      )
+    else
+      ui.line(
+        'not found',
+        `${org}/.rness (or not visible to you) — starting a new workspace`,
+        `${org} has no workspace yet (or none you can see) — starting one`
+      )
 
     // Joining: the catalogue is read from a clone staged outside the target,
     // so the picker can offer it before anything is written there.
@@ -583,8 +620,14 @@ export async function createCommand(
     }
     if (joining) {
       const stagedDir = await staged()
-      await step({ label: `cloning  ${org}/.rness`, animate: false }, () =>
-        clone(contextUrl, stagedDir, gitProvider.credentialsFor(contextUrl))
+      await ui.step(
+        {
+          doing: `cloning  ${org}/.rness`,
+          sentence: `Reading the catalogue of ${org}`,
+          git: true,
+        },
+        () =>
+          clone(contextUrl, stagedDir, gitProvider.credentialsFor(contextUrl))
       )
       // Validates that the clone is a workspace context: throws on a
       // malformed or absent rness.json.
@@ -612,10 +655,11 @@ export async function createCommand(
       const result = await pickRepositories({
         org,
         provider: gitProvider,
+        ui,
         prompts: await prompts(),
         catalogue: catalogue.repos,
       })
-      if (result === null) return cancelled()
+      if (result === null) return cancelled(ui)
       specs = result.picked
       prompted ||= result.prompted
     } else {
@@ -627,10 +671,21 @@ export async function createCommand(
       const ok = await p.confirm({
         message: `Create workspace ${org} in ./${shown}?`,
       })
-      if (p.isCancel(ok) || ok !== true) return cancelled()
+      if (p.isCancel(ok) || ok !== true) return cancelled(ui)
     }
 
     const rnessDir = join(root, '.rness')
+    const install = async (): Promise<void> => {
+      if (opts.skipInstall === true) {
+        ui.line('skipped', 'install (--skip-install)')
+        return
+      }
+      await ui.step(
+        { doing: `installing dependencies with ${pm}` },
+        () => installDependencies(pm, rnessDir),
+        () => ['installed', `dependencies with ${pm}`]
+      )
+    }
 
     if (joining) {
       await mkdir(root, { recursive: true })
@@ -640,22 +695,8 @@ export async function createCommand(
         contextUrl,
         gitProvider.credentialsFor(contextUrl)
       )
-      process.stdout.write(
-        `${status('cloned', `${shown}/.rness (joined ${org})`)}\n`
-      )
-      if (opts.skipInstall === true)
-        process.stdout.write(
-          `${status('skipped', 'install (--skip-install)')}\n`
-        )
-      else {
-        await step(
-          { label: `installing dependencies with ${pm}`, animate: true },
-          () => installDependencies(pm, rnessDir)
-        )
-        process.stdout.write(
-          `${status('installed', `dependencies with ${pm}`)}\n`
-        )
-      }
+      ui.line('cloned', `${shown}/.rness (joined ${org})`)
+      await install()
       await mkdir(join(root, 'org'), { recursive: true })
       const failures = await cloneSelection({
         root,
@@ -665,13 +706,18 @@ export async function createCommand(
         host,
         specs,
         provider: gitProvider,
+        ui,
       })
-      const code = await step(
-        { label: 'syncing  the blocks', animate: false },
-        () =>
-          syncPinned(root, shown, () => syncCommand({ yes: true, cwd: root }))
+      const code = await syncBlocks(ui, root, shown, () =>
+        syncCommand({ yes: true, cwd: root })
       )
       if (code !== 0) return code
+      if (failures.length > 0)
+        ui.note(
+          'Next',
+          failures.map((f) => `rness add ${f.spec}   # failed: ${f.message}`)
+        )
+      ui.outro(`You joined ${org} — your workspace is in ${shown}/`)
       return failures.length > 0 ? 1 : 0
     }
 
@@ -688,22 +734,8 @@ export async function createCommand(
         packageManager: `${pm}@${pmVersion}`,
       })
       await writeManifest(rnessDir, catalogue)
-      process.stdout.write(
-        `${status('created', `${shown}/.rness (new workspace)`)}\n`
-      )
-      if (opts.skipInstall === true)
-        process.stdout.write(
-          `${status('skipped', 'install (--skip-install)')}\n`
-        )
-      else {
-        await step(
-          { label: `installing dependencies with ${pm}`, animate: true },
-          () => installDependencies(pm, rnessDir)
-        )
-        process.stdout.write(
-          `${status('installed', `dependencies with ${pm}`)}\n`
-        )
-      }
+      ui.line('created', `${shown}/.rness (new workspace)`)
+      await install()
     } catch (e) {
       // Report the cause before the consequence: the original error first,
       // then the rollback note. Everything under `rnessDir` was written by
@@ -734,44 +766,49 @@ export async function createCommand(
       host,
       specs,
       provider: gitProvider,
+      ui,
     })
 
     await init(rnessDir)
     try {
       await commitAll(rnessDir, 'chore: rness workspace context')
-      process.stdout.write(`${status('committed', `${shown}/.rness`)}\n`)
+      ui.line('committed', `${shown}/.rness`)
     } catch (e) {
-      process.stderr.write(
-        `${warn(`${e instanceof Error ? e.message : String(e)} — commit ${shown}/.rness yourself`)}\n`
+      ui.warn(
+        `${e instanceof Error ? e.message : String(e)} — commit ${shown}/.rness yourself`
       )
     }
 
-    const code = await step(
-      { label: 'syncing  the blocks', animate: false },
-      () => syncPinned(root, shown, () => syncCommand({ yes: true, cwd: root }))
+    const code = await syncBlocks(ui, root, shown, () =>
+      syncCommand({ yes: true, cwd: root })
     )
     if (code !== 0) return code
 
     const gh = await ghAvailable()
-    process.stdout.write(
-      [
-        '',
-        `Workspace for \`${org}\` is ready in ${shown}/.`,
-        '',
-        'Next:',
-        `  cd ${shown}/.rness`,
-        // What was asked for and did not happen, as the command that retries
-        // it — the workspace is complete otherwise.
-        ...failures.map(
-          (f) => `  rness add ${f.spec}   # failed: ${f.message}`
-        ),
-        gh
-          ? `  gh repo create ${org}/.rness --private --source . --push`
-          : `  git remote add origin ${contextUrl} && git push -u origin main`,
-        `  # then, for every teammate: npm create rness ${org}`,
-        '',
-      ].join('\n')
-    )
+    const next = [
+      `cd ${shown}/.rness`,
+      // What was asked for and did not happen, as the command that retries
+      // it — the workspace is complete otherwise.
+      ...failures.map((f) => `rness add ${f.spec}   # failed: ${f.message}`),
+      gh
+        ? `gh repo create ${org}/.rness --private --source . --push`
+        : `git remote add origin ${contextUrl} && git push -u origin main`,
+      `# then, for every teammate: npm create rness ${org}`,
+    ]
+    if (ui.session) {
+      ui.note('Next', next)
+      ui.outro(`Workspace for ${org} is ready in ${shown}/`)
+    } else
+      process.stdout.write(
+        [
+          '',
+          `Workspace for \`${org}\` is ready in ${shown}/.`,
+          '',
+          'Next:',
+          ...next.map((line) => `  ${line}`),
+          '',
+        ].join('\n')
+      )
     return failures.length > 0 ? 1 : 0
   } catch (e) {
     return reportError(e)

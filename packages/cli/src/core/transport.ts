@@ -121,6 +121,45 @@ export const defaultTransport: Transport = {
   detect: detectGithubSsh,
 }
 
+export interface SshTest {
+  access: SshAccess
+  /** SSH works without asking anything: git over SSH will not prompt either. */
+  unattended: boolean
+}
+
+/**
+ * The SSH test, unattended first (`BatchMode=yes`): when that passes, ssh
+ * never asks anything and a progress line may animate while git runs. Only
+ * when it fails, and in a terminal, the test runs again letting ssh ask for a
+ * passphrase — `announce` says so first.
+ */
+export async function testGithubSsh(
+  transport: Transport,
+  interactive: boolean,
+  announce: () => void
+): Promise<SshTest> {
+  const batch = await transport.detect({ interactive: false })
+  if (batch.ok || !interactive) return { access: batch, unattended: batch.ok }
+  announce()
+  return {
+    access: await transport.detect({ interactive: true }),
+    unattended: false,
+  }
+}
+
+const loggedInAs = (login?: string | null): string =>
+  login === undefined || login === null ? '' : `, logged in as ${login}`
+
+/** The outcome of the SSH test as a sentence, for the session look. */
+export function usingSentence(
+  access: SshAccess,
+  login?: string | null
+): string {
+  return access.ok
+    ? `SSH works for github.com (as ${access.login}) — repositories are cloned over SSH`
+    : `No SSH access to github.com (${access.reason}) — repositories are cloned over HTTPS${loggedInAs(login)}`
+}
+
 /** Is `url` written with the SSH base? */
 export function isSshUrl(url: string, hosts: Hosts): boolean {
   return url.startsWith(hosts.ssh)
@@ -128,17 +167,22 @@ export function isSshUrl(url: string, hosts: Hosts): boolean {
 
 /** Printed in a terminal before the test, which may ask for a passphrase. */
 export const CHECKING_LINE = status('checking', 'ssh access to github.com…')
+/** The same as `[verb, rest, sentence]`, for a `Ui`. */
+export const CHECKING = [
+  'checking',
+  'ssh access to github.com…',
+  'Checking SSH access to github.com — ssh may ask for your passphrase',
+] as const
 
 /** `login`: who rness is logged in as, which is what makes HTTPS reach private repositories. */
+export function usingRest(access: SshAccess, login?: string | null): string {
+  return access.ok
+    ? `ssh (github.com as ${access.login})`
+    : `https (ssh to github.com unavailable: ${access.reason}${loggedInAs(login)})`
+}
+
 export function usingLine(access: SshAccess, login?: string | null): string {
-  const as =
-    login === undefined || login === null ? '' : `, logged in as ${login}`
-  return status(
-    'using',
-    access.ok
-      ? `ssh (github.com as ${access.login})`
-      : `https (ssh to github.com unavailable: ${access.reason}${as})`
-  )
+  return status('using', usingRest(access, login))
 }
 
 /** Why an SSH workspace cannot be served, and how to fix it. */

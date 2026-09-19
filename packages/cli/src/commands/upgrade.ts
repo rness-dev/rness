@@ -8,14 +8,14 @@ import { readOrNull, writeFileAtomic } from '../core/fs.ts'
 import {
   EXACT_VERSION,
   readPin,
-  syncPinned,
   workspacePackageManager,
   writePin,
 } from '../core/pinned.ts'
 import { installDependencies } from '../core/pm.ts'
-import { step } from '../core/progress.ts'
-import { status, warn } from '../core/style.ts'
+import { status } from '../core/style.ts'
+import { syncBlocks } from '../core/sync-blocks.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
+import { makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 
@@ -105,7 +105,15 @@ export async function upgradeCommand(
       return 2
     }
 
-    const target = version ?? (await latestVersion())
+    const ui = interactive ? await makeUi(terminal) : { ...plainUi }
+    ui.intro(`Upgrade workspace ${basename(ws.root)}`)
+    const target =
+      version ??
+      (await ui.step(
+        { doing: 'asking   the registry for the latest release', quiet: true },
+        () => latestVersion(),
+        (v) => (v === null ? null : ['latest', `@rness/cli ${v}`])
+      ))
     if (target === null) {
       process.stderr.write(
         'cannot reach the registry; name the version: rness upgrade <version>\n'
@@ -114,7 +122,8 @@ export async function upgradeCommand(
     }
     const installed = (await readPinnedCli(ws.rnessDir))?.version ?? null
     if (pin.spec === target && installed === target) {
-      process.stdout.write(`already at ${target}\n`)
+      if (ui.session) ui.outro(`Already at ${target}`)
+      else process.stdout.write(`already at ${target}\n`)
       return 0
     }
     const downgrading =
@@ -127,18 +136,25 @@ export async function upgradeCommand(
     }
 
     const pm = await workspacePackageManager(ws.rnessDir)
-    process.stdout.write(
-      pin.spec === target
-        ? `${status('install', `@rness/cli ${target} in ${label} (${pm}) — ${installed ?? 'nothing'} is installed`)}\n`
-        : `${status('upgrade', `@rness/cli ${pin.spec} → ${target} in ${label} (${pm})${downgrading ? ' — downgrading' : ''}`)}\n${status('notes', NOTES)}\n`
-    )
+    if (pin.spec === target)
+      ui.line(
+        'install',
+        `@rness/cli ${target} in ${label} (${pm}) — ${installed ?? 'nothing'} is installed`
+      )
+    else {
+      ui.line(
+        'upgrade',
+        `@rness/cli ${pin.spec} → ${target} in ${label} (${pm})${downgrading ? ' — downgrading' : ''}`
+      )
+      ui.line('notes', NOTES, `Release notes: ${NOTES}`)
+    }
     if (interactive) {
       const p = await terminal.prompts()
       const ok = await p.confirm({
         message: `Upgrade @rness/cli to ${target}?`,
       })
       if (p.isCancel(ok) || ok !== true) {
-        process.stderr.write('cancelled\n')
+        ui.cancelled()
         return 1
       }
     }
@@ -163,37 +179,36 @@ export async function upgradeCommand(
           file,
           text.replace(OLD_WORKFLOW_RUN, () => WORKFLOW_RUN)
         )
-        process.stdout.write(
-          `${status('updated', `${shown} (it now reads the version from package.json)`)}\n`
+        ui.line(
+          'updated',
+          `${shown} (it now reads the version from package.json)`
         )
       } else if (
         pin.spec !== target &&
         text.includes(`@rness/cli@${pin.spec}`)
       ) {
-        process.stderr.write(
-          `${warn(`${shown} names @rness/cli@${pin.spec}; update it by hand`)}\n`
-        )
+        ui.warn(`${shown} names @rness/cli@${pin.spec}; update it by hand`)
       }
     }
 
     try {
-      await step(
-        { label: `installing dependencies with ${pm}`, animate: true },
-        () => installDependencies(pm, ws.rnessDir)
+      await ui.step(
+        { doing: `installing dependencies with ${pm}` },
+        () => installDependencies(pm, ws.rnessDir),
+        () => ['installed', `dependencies with ${pm}`]
       )
     } catch (e) {
       for (const [file, text] of restore) await writeFileAtomic(file, text)
       const message = e instanceof Error ? e.message : String(e)
-      process.stderr.write(
-        `${message}\nrestored ${relative(cwd, packageFile) || packageFile}\n`
-      )
+      ui.error(message)
+      ui.hint(`restored ${relative(cwd, packageFile) || packageFile}`, 'stderr')
       if (/minimum.?release.?age|NO_MATURE/i.test(message))
-        process.stderr.write(
-          "pnpm refuses versions published less than 24 h ago: add '@rness/cli' under minimumReleaseAgeExclude in .rness/pnpm-workspace.yaml\n"
+        ui.hint(
+          "pnpm refuses versions published less than 24 h ago: add '@rness/cli' under minimumReleaseAgeExclude in .rness/pnpm-workspace.yaml",
+          'stderr'
         )
       return 1
     }
-    process.stdout.write(`${status('installed', `dependencies with ${pm}`)}\n`)
     const now = (await readPinnedCli(ws.rnessDir))?.version ?? null
     if (now !== target) {
       process.stderr.write(
@@ -202,24 +217,30 @@ export async function upgradeCommand(
       return 1
     }
 
-    const code = await step(
-      { label: 'syncing  the blocks', animate: false },
-      () => syncPinned(ws.root, basename(ws.root))
-    )
+    // The installed copy is a child with plain output: never a prompt.
+    ui.gitIsSilent = true
+    const code = await syncBlocks(ui, ws.root, basename(ws.root))
     if (code !== 0) return code
 
     const rel = relative(cwd, ws.rnessDir) || '.'
-    process.stdout.write(
-      [
-        '',
-        status('upgraded', `${label} to @rness/cli ${target}`),
-        '',
-        'Next:',
-        `  git -C ${rel} add -A && git -C ${rel} commit -m "chore: rness ${target}"`,
-        `  # teammates: git pull, then ${pm} install in .rness`,
-        '',
-      ].join('\n')
-    )
+    const next = [
+      `git -C ${rel} add -A && git -C ${rel} commit -m "chore: rness ${target}"`,
+      `# teammates: git pull, then ${pm} install in .rness`,
+    ]
+    if (ui.session) {
+      ui.note('Next', next)
+      ui.outro(`${label} runs @rness/cli ${target}`)
+    } else
+      process.stdout.write(
+        [
+          '',
+          status('upgraded', `${label} to @rness/cli ${target}`),
+          '',
+          'Next:',
+          ...next.map((line) => `  ${line}`),
+          '',
+        ].join('\n')
+      )
     return 0
   } catch (e) {
     return reportError(e)

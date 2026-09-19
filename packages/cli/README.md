@@ -81,9 +81,11 @@ macOS, `ssh-add ~/.ssh/id_ed25519` elsewhere.
 
 ### Colour
 
-In a terminal the status column, the help and the banner are coloured, and a
-slow step shows a transient line (`cloning  org/api`) that is erased when it
-ends. Through a pipe, in CI, or with `NO_COLOR=1`, the output is plain text —
+In a terminal `create`, `login`, `add`, `sync` and `upgrade` run as one
+session: an intro, a line per finished step, spinners, a "Next" box, an
+outro — in the same gutter as the questions. A spinner never animates while
+git might ask for a passphrase: rness first tests SSH unattended, and clones
+animate only when that passed. The help and the banner are coloured. Through a pipe, in CI, or with `NO_COLOR=1`, the output is plain text —
 the same bytes as before 0.5.0; `FORCE_COLOR=1` paints it anyway. No
 dependency does this: `util.styleText`, and a banner kept as a constant.
 

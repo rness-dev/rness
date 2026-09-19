@@ -1151,26 +1151,47 @@ test('--https and --ssh decide without the SSH test', async (t) => {
   assert.deepEqual(forced.calls, [])
 })
 
-test('in a terminal the SSH test is announced, and may prompt', async (t) => {
+test('the SSH test runs unattended first; only when that fails does a terminal get the one that may ask for a passphrase', async (t) => {
   withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
-  const ok = await fakeTransport(t, 'acme', SSH_OK)
-  await ok.ssh.addRepo('api', { 'README.md': '# api\n' })
   const { base } = await githubApi(t, reposOf([{ name: 'api' }]))
-  const cwd = await scratch(t)
-  const term = terminal({ pick: [['api']] })
+  const opts = { org: 'acme', skipInstall: true, pm: 'npm', githubApi: base }
+
+  // A key an agent holds: nothing is announced, nothing can be asked.
+  const agent = await fakeTransport(t, 'acme', SSH_OK)
+  await agent.ssh.addRepo('api', { 'README.md': '# api\n' })
   const r = await wizard(
-    { org: 'acme', skipInstall: true, pm: 'npm', githubApi: base, cwd },
-    term.deps,
-    ok.transport
+    { ...opts, cwd: await scratch(t) },
+    terminal({ pick: [['api']] }).deps,
+    agent.transport
   )
   assert.equal(r.code, 0, r.err)
   assert.ok(
     r.out.startsWith(
-      'checking ssh access to github.com…\nusing    ssh (github.com as octo)\nnot found acme/.rness'
+      'using    ssh (github.com as octo)\nnot found acme/.rness'
     ),
     r.out
   )
-  assert.deepEqual(ok.calls, [{ interactive: true }])
+  assert.deepEqual(agent.calls, [{ interactive: false }])
+
+  // A protected key and no agent: refused unattended, accepted once ssh could ask.
+  const locked = await fakeTransport(t, 'acme', [SSH_DENIED, SSH_OK])
+  await locked.ssh.addRepo('api', { 'README.md': '# api\n' })
+  const r2 = await wizard(
+    { ...opts, cwd: await scratch(t) },
+    terminal({ pick: [['api']] }).deps,
+    locked.transport
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.ok(
+    r2.out.startsWith(
+      'checking ssh access to github.com…\nusing    ssh (github.com as octo)\nnot found acme/.rness'
+    ),
+    r2.out
+  )
+  assert.deepEqual(locked.calls, [
+    { interactive: false },
+    { interactive: true },
+  ])
 })
 
 test('join: a .rness reachable over SSH only is found, and cloned over SSH', async (t) => {
