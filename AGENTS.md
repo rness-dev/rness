@@ -1,9 +1,9 @@
 # rness workspace member — scope: rness
 
 <!-- BEGIN rness -->
-<!-- rness 0.4.0 · scope: rness · contract: 1 · hash: 3fdb69a3346d · generated: run `rness sync`, never edit inside this block -->
+<!-- rness · scope: rness · contract: 1 · hash: ee0dc45b82a1 · generated: run `rness sync`, never edit inside this block -->
 This directory is scope `rness` of rness workspace `rness-dev`. Full context lives in
-`../../.rness/` — read `STATUS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
+`../../.rness/` — start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
 live: `rness context --scope rness`. If `.rness/` is not reachable, this is a
 standalone clone: the rules below are all you have.
 
