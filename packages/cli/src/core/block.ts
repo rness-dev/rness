@@ -52,14 +52,14 @@ function intro(scope: string | null, org: string, depth: number): string {
   if (scope === null) {
     return [
       `This is the root of rness workspace \`${org}\`. Full context lives in \`.rness/\` —`,
-      'read `STATUS.md`, then task-relevant `adr/`, `specs/`, `plans/`; live: `rness context`.',
+      'start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`; live: `rness context`.',
       'Every `org/<repo>/` carries its own block with the rules that apply there.',
     ].join('\n')
   }
   const rel = `${'../'.repeat(depth)}.rness/`
   return [
     `This directory is scope \`${scope}\` of rness workspace \`${org}\`. Full context lives in`,
-    `\`${rel}\` — read \`STATUS.md\`, then task-relevant \`adr/\`, \`specs/\`, \`plans/\`;`,
+    `\`${rel}\` — start at its \`AGENTS.md\`, then task-relevant \`adr/\`, \`specs/\`, \`plans/\`;`,
     `live: \`rness context --scope ${scope}\`. If \`.rness/\` is not reachable, this is a`,
     'standalone clone: the rules below are all you have.',
   ].join('\n')

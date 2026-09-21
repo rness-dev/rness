@@ -68,7 +68,7 @@ test('renders the scope block: markers, header, intro, rules in resolution order
   )
   const expectedBody = [
     'This directory is scope `web` of rness workspace `acme`. Full context lives in',
-    '`../../.rness/` — read `STATUS.md`, then task-relevant `adr/`, `specs/`, `plans/`;',
+    '`../../.rness/` — start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;',
     'live: `rness context --scope web`. If `.rness/` is not reachable, this is a',
     'standalone clone: the rules below are all you have.',
     '',
@@ -122,7 +122,20 @@ test('the global block names the root, has no relative path, and says where the 
     /^This is the root of rness workspace `acme`\. Full context lives in `\.rness\/` —/
   )
   assert.match(body, /Every `org\/<repo>\/` carries its own block/)
+  assert.match(body, /start at its `AGENTS\.md`, then task-relevant/)
   assert.doesNotMatch(body, /\.\.\//)
+})
+
+test('no intro names STATUS.md: neither the scaffold nor the CLI writes one', () => {
+  for (const scope of ['web', null]) {
+    const block = renderBlock({
+      scope,
+      org: 'acme',
+      depth: scope === null ? 0 : 2,
+      context: twoStandards,
+    })
+    assert.doesNotMatch(block.text, /STATUS\.md/)
+  }
 })
 
 test('depth drives the relative path', () => {
