@@ -127,6 +127,17 @@ its content does.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## 0.5.2 — the block points at a file that exists
+
+- The generated block told agents to read `.rness/STATUS.md`, a file neither
+  the scaffold nor any command writes. It now sends them to
+  `.rness/AGENTS.md`, which every workspace has and which sets the reading
+  order.
+- The intro is part of the hashed body: every block written by 0.5.1 or
+  earlier is out of date under 0.5.2. Run `rness sync` once after upgrading,
+  then commit the refreshed `AGENTS.md` in each repository; until then
+  `rness sync --check` exits 1.
+
 ## 0.5.1 — the version of a workspace moves by pull request
 
 - Joining an organization pinned to an older `@rness/cli` no longer mentions
