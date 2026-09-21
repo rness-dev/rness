@@ -1,4 +1,15 @@
-export { run } from './cli.ts'
+import { run as runCli } from './cli.ts'
+import { catchUp } from './core/catch-up.ts'
+
+/**
+ * What a launcher calls when it delegates to this copy. A launcher older than
+ * 0.5.1 knows nothing about a pin that moved, so the check runs here as well
+ * (spec 0008 §4); a launcher that already looked says so, and this is a no-op.
+ */
+export async function run(argv: string[]): Promise<number> {
+  return (await catchUp(argv)) ?? runCli(argv)
+}
+
 export { VERSION } from './version.ts'
 export {
   contextCommand,
