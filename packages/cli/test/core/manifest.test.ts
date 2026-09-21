@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import {
+  EXCLUDED_NAMES,
+  isMemberRepo,
+  isWorkspaceClone,
   loadManifest,
   parseRepoSpec,
   resolveOrg,
@@ -259,4 +262,38 @@ test('parseRepoSpec accepts repo, owner/repo and full URLs, and validates the na
   for (const name of ['.', '..', '-rf', 'a b', 'Caps'])
     assert.throws(() => parseRepoSpec(name, 'acme', host), /repository name/)
   assert.throws(() => parseRepoSpec('a/b/c', 'acme', host), /repository name/)
+})
+
+test('isMemberRepo: everything active but the context repository', () => {
+  // A leading dot is an ordinary first character: .github carries an
+  // organization's profile, its templates and its shared workflows.
+  assert.equal(isMemberRepo({ name: '.github', archived: false }), true)
+  assert.equal(isMemberRepo({ name: 'web', archived: false }), true)
+  // The catalogue lives there and it is already cloned as <root>/.rness.
+  assert.equal(isMemberRepo({ name: '.rness', archived: false }), false)
+  assert.equal(isMemberRepo({ name: '.RNESS', archived: false }), false)
+  // Archived is read-only on GitHub: a block could never be pushed back.
+  assert.equal(isMemberRepo({ name: 'old', archived: true }), false)
+})
+
+test('isWorkspaceClone: a name the catalogue could hold, and not an excluded one', () => {
+  assert.equal(isWorkspaceClone('.github'), true)
+  assert.equal(isWorkspaceClone('web'), true)
+  assert.equal(isWorkspaceClone('my_lib'), true)
+  // Excluded outright, however valid the name looks.
+  assert.equal(isWorkspaceClone('.rness'), false)
+  assert.equal(isWorkspaceClone('.git'), false)
+  assert.equal(isWorkspaceClone('node_modules'), false)
+  // `rness add` could never declare these, so they are not reported as
+  // undeclared clones: the command suggested would refuse them.
+  assert.equal(isWorkspaceClone('WebSite'), false)
+  assert.equal(isWorkspaceClone('-dash'), false)
+  assert.equal(isWorkspaceClone('..'), false)
+})
+
+test('the exclusion list is one place, shared by both rules', () => {
+  for (const name of EXCLUDED_NAMES) {
+    assert.equal(isWorkspaceClone(name), false, name)
+    assert.equal(isMemberRepo({ name, archived: false }), false, name)
+  }
 })

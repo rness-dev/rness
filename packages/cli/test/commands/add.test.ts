@@ -341,3 +341,16 @@ test('a full URL, --host and a bad name never run the SSH test; --ssh and --http
   assert.equal(both.code, 2)
   assert.equal(both.err, '--ssh and --https cannot be combined\n')
 })
+
+test('add refuses the context repository, whatever organization it is named with', async (t) => {
+  const root = await makeWorkspace(t, { org: 'acme', dirs: ['org'] })
+  for (const spec of ['.rness', 'acme/.rness', 'other/.rness']) {
+    const r = await add(['--yes', '--cwd', root, spec])
+    assert.equal(r.code, 2, `${spec} must be refused`)
+    assert.match(
+      r.err,
+      /^\.rness is the workspace context, not a member repository — it is already cloned at [^/]+\/\.rness$/m
+    )
+    assert.equal(r.out, '', 'nothing is written')
+  }
+})

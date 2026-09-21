@@ -35,7 +35,7 @@ export function paint(
   return styleText(FORMAT[tone], text, { stream, validateStream: true })
 }
 
-const IDLE = new Set(['unchanged', 'skipped', 'not cloned'])
+const IDLE = new Set(['unchanged', 'skipped', 'not cloned', 'current'])
 const DONE = new Set([
   'created',
   'cloned',
@@ -86,17 +86,40 @@ export function bold(
 }
 
 /**
- * A title on a coloured background — the intro of a session. Without colour
- * it is the bare text: padding only makes sense around a background.
+ * Backgrounds for a badge. `intro` opens a session; the others close one, so
+ * the verdict is legible at a glance without reading the words.
+ */
+const BACKGROUND: Record<BadgeTone, Format> = {
+  intro: ['bgCyan', 'black', 'bold'],
+  done: ['bgGreen', 'black', 'bold'],
+  idle: ['bgCyan', 'black', 'bold'],
+  info: ['bgCyan', 'black', 'bold'],
+  warn: ['bgYellow', 'black', 'bold'],
+  error: ['bgRed', 'white', 'bold'],
+}
+
+export type BadgeTone = Tone | 'intro'
+
+/**
+ * Text on a coloured background — the intro of a session, or its verdict.
+ * Without colour it is the bare text: padding only makes sense around a
+ * background.
  */
 export function badge(
   text: string,
+  tone: BadgeTone | NodeJS.WriteStream = 'intro',
   stream: NodeJS.WriteStream = process.stdout
 ): string {
+  // The stream used to be the second argument; callers that pass one still
+  // get the intro badge they asked for before tones existed.
+  const [t, s] =
+    typeof tone === 'string'
+      ? ([tone, stream] as const)
+      : (['intro', tone] as const)
   if (noColor()) return text
   const padded = ` ${text} `
-  const painted = styleText(['bgCyan', 'black', 'bold'], padded, {
-    stream,
+  const painted = styleText(BACKGROUND[t], padded, {
+    stream: s,
     validateStream: true,
   })
   return painted === padded ? text : painted

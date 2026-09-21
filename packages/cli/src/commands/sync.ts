@@ -1,4 +1,3 @@
-import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -25,7 +24,7 @@ import {
 } from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Line, type Ui, makeUi, plainUi } from '../core/ui.ts'
-import { findWorkspace } from '../core/workspace.ts'
+import { clonesIn, findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 
 export interface SyncOptions {
@@ -80,19 +79,6 @@ function targetsOf(
 const SELECT_ALL = '*'
 
 /** The directories under `org/` — the user's workspace (ADR 0008). */
-async function clonesIn(root: string): Promise<Set<string>> {
-  try {
-    const entries = await readdir(join(root, 'org'), { withFileTypes: true })
-    return new Set(
-      entries
-        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
-        .map((e) => e.name)
-    )
-  } catch {
-    return new Set()
-  }
-}
-
 /**
  * In a terminal: offer the catalogue repositories that are not cloned, or
  * confirm when there are none. Returns the repositories to clone, or an exit

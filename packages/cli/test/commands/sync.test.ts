@@ -553,3 +553,37 @@ test('a block whose header still names an older CLI is current by its hash: upgr
     /<!-- rness · scope: web · contract: 1 · hash: [0-9a-f]{12} ·/
   )
 })
+
+test('a clone whose name begins with a dot is a clone like any other', async (t) => {
+  // `.github` carries an organization's profile and shared workflows; it is a
+  // repository a member works on, so sync must see it under org/ (spec 0009).
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { '.github': { path: 'org/.github' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org/.github'],
+  })
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^updated {2}org\/\.github\/AGENTS\.md$/m)
+  assert.doesNotMatch(r.out, /directory not present/)
+  const block = await readFile(
+    join(root, 'org', '.github', 'AGENTS.md'),
+    'utf8'
+  )
+  assert.match(block, /· scope: \.github ·/)
+})
+
+test('an excluded directory under org/ is not taken for an undeclared clone', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/web' } },
+    files: { 'standards/coding.md': coding },
+    // An install run one directory too high, and a name rness could never
+    // declare: neither is a clone (spec 0009 §3).
+    dirs: ['org/web', 'org/node_modules', 'org/WebSite'],
+  })
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.out, /not in rness\.json/)
+})

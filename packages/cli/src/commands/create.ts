@@ -10,11 +10,12 @@ import { MAX_PAGES, PER_PAGE } from '../core/github.ts'
 import {
   NAME,
   ORG_NAME,
+  isMemberRepo,
   loadManifest,
   parseRepoSpec,
   writeManifest,
 } from '../core/manifest.ts'
-import { EXACT_VERSION, compareVersions, readPin } from '../core/pinned.ts'
+import { hasLockfile, workspacePackageManager } from '../core/pinned.ts'
 import {
   PACKAGE_MANAGERS,
   type PackageManager,
@@ -48,7 +49,7 @@ import {
 } from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
-import { findWorkspace } from '../core/workspace.ts'
+import { clonesIn, findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 import { VERSION } from '../version.ts'
 import { loginCommand, revokeUrl } from './login.ts'
@@ -191,7 +192,12 @@ async function pickRepositories(input: {
         quiet: true,
       },
       () => provider.listRepositories(org),
-      (l) => ['listed', `${l.repositories.length} repositories of ${org}`]
+      // What the listing offers, not what GitHub returned: the count and the
+      // list below it must agree (spec 0009).
+      (l) => [
+        'listed',
+        `${l.repositories.filter(isMemberRepo).length} repositories of ${org}`,
+      ]
     )
     listed = listing.repositories
     if (listing.owner === 'user')
@@ -210,16 +216,19 @@ async function pickRepositories(input: {
   }
   const inCatalogue = (name: string): boolean =>
     Object.hasOwn(input.catalogue, name)
-  // Archived repositories and hidden ones (a leading dot: .github, the
-  // context repository .rness, …) are never candidates. GitHub names are
-  // case-insensitive, so a name that differs from `NAME` only by case is
-  // offered — and declared — in lowercase, as `rness add` would; any other
-  // name is shown but cannot be picked yet.
+  // Every active repository of the organization is a candidate but its context
+  // repository, which is already cloned as `<root>/.rness` and is not a member
+  // of the workspace it defines (spec 0009). A name beginning with a dot is an
+  // ordinary repository: `.github` carries an organization's profile, its
+  // issue templates and its shared workflows, and a member works on it like
+  // any other. Archived repositories stay out: GitHub makes them read-only, so
+  // a block written into one could never be pushed back.
+  // GitHub names are case-insensitive, so a name that differs from `NAME` only
+  // by case is offered — and declared — in lowercase, as `rness add` would;
+  // any other name is shown but cannot be picked yet.
   const byLabel = (a: { label: string }, b: { label: string }): number =>
     a.label.localeCompare(b.label, 'en', { sensitivity: 'base' })
-  const candidates = listed.filter(
-    (r) => !r.archived && !r.name.startsWith('.')
-  )
+  const candidates = listed.filter(isMemberRepo)
   // A private repository wears a padlock next to its name — visible on every
   // line, where a hint shows on the focused one only. A terminal that cannot
   // draw it falls back to the word, as a hint.
@@ -500,7 +509,7 @@ export async function createCommand(
     )
     return 2
   }
-  const pm: PackageManager =
+  let pm: PackageManager =
     opts.pm !== undefined && isPackageManager(opts.pm)
       ? opts.pm
       : detectPackageManager()
@@ -519,6 +528,10 @@ export async function createCommand(
     }
     return sshTest.access
   }
+  // Whether this machine's SSH access to github.com was proved. A delegated
+  // child that then fails on publickey is missing an agent, not a key
+  // (spec 0008 §2.1).
+  const sshWorks = (): boolean => sshTest?.access.ok === true
   const chooseHost = async (): Promise<string> => {
     // Only SSH can make git ask something on the terminal (a passphrase).
     if (opts.host !== undefined || opts.https === true) ui.gitIsSilent = true
@@ -713,12 +726,18 @@ export async function createCommand(
     const rnessDir = join(root, '.rness')
     const install = async (): Promise<void> => {
       if (opts.skipInstall === true) {
-        ui.line('skipped', 'install (--skip-install)')
+        // Naming the manager says what to run by hand — and, on a join, which
+        // one the workspace declared (spec 0009 §5).
+        ui.line('skipped', `install with ${pm} (--skip-install)`)
         return
       }
+      // A joined workspace carries the lockfile its clone brought, so the
+      // install is frozen and leaves the working tree clean (spec 0008 §2). A
+      // new workspace has no lockfile yet and resolves freely.
+      const frozen = await hasLockfile(rnessDir, pm)
       await ui.step(
         { doing: `installing dependencies with ${pm}` },
-        () => installDependencies(pm, rnessDir),
+        () => installDependencies(pm, rnessDir, { frozen }),
         () => ['installed', `dependencies with ${pm}`]
       )
     }
@@ -732,17 +751,15 @@ export async function createCommand(
         gitProvider.credentialsFor(contextUrl)
       )
       ui.line('cloned', `${shown}/.rness (joined ${org})`)
-      // The pin is the team's, in the repository just cloned: say when it is
-      // behind this rness, and what moves it (spec 0006).
-      const pin = (await readPin(rnessDir))?.spec
-      if (
-        pin !== undefined &&
-        EXACT_VERSION.test(pin) &&
-        compareVersions(pin, VERSION) < 0
-      )
-        ui.hint(
-          `${org}/.rness pins @rness/cli ${pin} — you run ${VERSION}; rness upgrade moves the workspace`
-        )
+      // The workspace declares the manager it installs with (`packageManager`,
+      // else the lockfile it committed). Joining adopts it: installing with
+      // the one that happened to launch `create` would drop a second lockfile
+      // beside the committed one (spec 0009 §5). `--pm` still wins.
+      if (opts.pm === undefined) pm = await workspacePackageManager(rnessDir)
+      // The pin is the team's, in the repository just cloned. Joining aligns
+      // on it and says nothing: moving an organization's version is a
+      // maintainer's act, not something asked of whoever arrives
+      // (spec 0008 §2).
       await install()
       await mkdir(join(root, 'org'), { recursive: true })
       const failures = await cloneSelection({
@@ -755,15 +772,34 @@ export async function createCommand(
         provider: gitProvider,
         ui,
       })
-      const code = await syncBlocks(ui, root, shown, () =>
-        syncCommand({ yes: true, cwd: root })
+      const code = await syncBlocks(
+        ui,
+        root,
+        shown,
+        () => syncCommand({ yes: true, cwd: root }),
+        sshWorks()
       )
       if (code !== 0) return code
-      if (failures.length > 0)
-        ui.note(
-          'Next steps',
-          failures.map((f) => `rness add ${f.spec}   # failed: ${f.message}`)
-        )
+      // What is left to do, never what just scrolled past: the `cloned` lines
+      // are right above (spec 0009 §6).
+      const cloned = await clonesIn(root)
+      const remaining = Object.keys(catalogue.repos).filter(
+        (name) => !cloned.has(name)
+      )
+      const next = [
+        `cd ${shown}`,
+        // The comment above its command, as the new-workspace note does: a
+        // line that wraps in a narrow terminal is a line nobody reads.
+        ...(remaining.length > 0
+          ? [
+              `# clone the catalogue repositories you did not pick: ${remaining.join(', ')}`,
+              'rness sync --all',
+            ]
+          : []),
+        ...failures.map((f) => `rness add ${f.spec}   # failed: ${f.message}`),
+      ]
+      if (ui.session) ui.note('Next steps', next)
+      else process.stdout.write(`\n${next.map((l) => `  ${l}`).join('\n')}\n`)
       ui.outro(`You joined ${org} — your workspace is in ${shown}/`)
       return failures.length > 0 ? 1 : 0
     }
@@ -826,8 +862,12 @@ export async function createCommand(
       )
     }
 
-    const code = await syncBlocks(ui, root, shown, () =>
-      syncCommand({ yes: true, cwd: root })
+    const code = await syncBlocks(
+      ui,
+      root,
+      shown,
+      () => syncCommand({ yes: true, cwd: root }),
+      sshWorks()
     )
     if (code !== 0) return code
 

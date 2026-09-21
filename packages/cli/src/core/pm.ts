@@ -59,17 +59,31 @@ export function installErrorLine(stderr: string): string {
   return lines.find((l) => !BARE_NPM_CODE.test(l)) ?? firstLine(stderr)
 }
 
+const FROZEN: Record<PackageManager, readonly string[]> = {
+  npm: ['ci'],
+  pnpm: ['install', '--frozen-lockfile'],
+  yarn: ['install', '--immutable'],
+  bun: ['install', '--frozen-lockfile'],
+}
+
+/** The install that refuses to touch a committed lockfile (spec 0008 §4). */
+export function frozenArgs(pm: PackageManager): string[] {
+  return [...FROZEN[pm]]
+}
+
 /** `<pm> install` in `dir`; output is swallowed, failure is one line. */
 export async function installDependencies(
   pm: PackageManager,
-  dir: string
+  dir: string,
+  opts: { frozen?: boolean } = {}
 ): Promise<void> {
+  const args = opts.frozen === true ? frozenArgs(pm) : ['install']
   try {
-    await execFileP(pm, ['install'], { cwd: dir, maxBuffer: 16 * 1024 * 1024 })
+    await execFileP(pm, args, { cwd: dir, maxBuffer: 16 * 1024 * 1024 })
   } catch (e) {
     const err = e as { stderr?: string; message: string }
     throw new Error(
-      `${pm} install failed in ${dir}: ${installErrorLine(err.stderr ?? err.message)}`,
+      `${pm} ${args.join(' ')} failed in ${dir}: ${installErrorLine(err.stderr ?? err.message)}`,
       { cause: e }
     )
   }

@@ -1,9 +1,14 @@
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import type { CommandDeps } from '../core/deps.ts'
 import { exists } from '../core/fs.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
-import { loadManifest, parseRepoSpec, resolveOrg } from '../core/manifest.ts'
+import {
+  CONTEXT_REPO,
+  loadManifest,
+  parseRepoSpec,
+  resolveOrg,
+} from '../core/manifest.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import {
   type AddRepositoryResult,
@@ -92,6 +97,18 @@ export async function addCommand(
       parsed = parseRepoSpec(spec, org, transport.hosts.https)
     } catch (e) {
       process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`)
+      return 2
+    }
+    // The context repository holds the catalogue and is already cloned as
+    // `<root>/.rness`. Adding it would put a second, diverging copy under
+    // `org/`, list the catalogue inside itself, and give `.rness/AGENTS.md` a
+    // generated member block next to the shared one (spec 0009). The name
+    // decides, whatever organization it came from: every spelling lands on
+    // the same directory and the same catalogue key.
+    if (parsed.name === CONTEXT_REPO) {
+      process.stderr.write(
+        `${CONTEXT_REPO} is the workspace context, not a member repository — it is already cloned at ${basename(ws.root)}/${CONTEXT_REPO}\n`
+      )
       return 2
     }
     const interactive = opts.yes !== true

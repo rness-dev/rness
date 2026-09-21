@@ -18,5 +18,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # The version is written once, in package.json.
+      # Nothing is installed in a CI checkout, and no package manager is set
+      # up: the launcher must not try to close the drift here (spec 0008 §4).
       - run: npx --yes "@rness/cli@$(node -p "require('./package.json').devDependencies['@rness/cli']")" validate
+        env:
+          RNESS_NO_INSTALL: '1'

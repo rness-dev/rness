@@ -5,8 +5,13 @@ import { promisify } from 'node:util'
 
 import { readPinnedCli } from './delegate.ts'
 import { exists, writeFileAtomic } from './fs.ts'
-import { type PackageManager, isPackageManager } from './pm.ts'
+import {
+  type PackageManager,
+  installDependencies,
+  isPackageManager,
+} from './pm.ts'
 import { warn } from './style.ts'
+import { agentHintLines } from './transport.ts'
 import { findWorkspace } from './workspace.ts'
 
 const execFileP = promisify(execFile)
@@ -111,6 +116,21 @@ export async function workspacePackageManager(
 }
 
 /**
+ * Whether the workspace carries a lockfile **this** manager can install from.
+ * A frozen install is per-manager: `npm ci` needs `package-lock.json` and
+ * fails outright next to a `pnpm-lock.yaml`, which is the common case when the
+ * manager running `create` is not the one the workspace declares.
+ */
+export async function hasLockfile(
+  rnessDir: string,
+  pm: PackageManager
+): Promise<boolean> {
+  for (const [lockfile, owner] of LOCKFILES)
+    if (owner === pm && (await exists(join(rnessDir, lockfile)))) return true
+  return false
+}
+
+/**
  * An exact pin that is not the installed copy: someone pulled an upgrade and
  * did not reinstall, or never installed. Null when they agree, and when the
  * pin is a range — it says nothing precise about what should be installed.
@@ -147,6 +167,73 @@ export async function driftWarning(cwd: string): Promise<string | null> {
   )
 }
 
+/** A delegated child is killed after this long without finishing (spec 0008 §5). */
+export const CHILD_DEADLINE_MS = 120_000
+
+/**
+ * The environment of a delegated child. Its output is piped and the parent
+ * owns the terminal, so a prompt from `ssh` or from git's credential helper is
+ * invisible and blocks forever. `GIT_SSH_COMMAND` is composed, not replaced:
+ * a user's own agent command (1Password, a named key) must survive.
+ */
+export function childEnv(
+  env: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    GIT_SSH_COMMAND: `${env['GIT_SSH_COMMAND'] ?? 'ssh'} -o BatchMode=yes`,
+    GIT_TERMINAL_PROMPT: '0',
+  }
+}
+
+export interface InstallOutcome {
+  installed: boolean
+  pin: string
+  /** Why it did not install; null when it did. */
+  reason: string | null
+}
+
+export interface EnsureOptions {
+  env?: NodeJS.ProcessEnv
+  announce?: (pin: string) => void
+  install?: (
+    pm: PackageManager,
+    dir: string,
+    opts: { frozen: boolean }
+  ) => Promise<void>
+}
+
+/**
+ * Bring `.rness/node_modules` back to the pin (spec 0008 §4). The version was
+ * decided by the pull request that moved the pin, so this asks nothing. Null
+ * when there is no drift. A failure is reported, never thrown: the caller
+ * falls back to the warning and runs the command anyway.
+ */
+export async function ensureInstalled(
+  rnessDir: string,
+  opts: EnsureOptions = {}
+): Promise<InstallOutcome | null> {
+  const drift = await pinDrift(rnessDir)
+  if (drift === null) return null
+  const env = opts.env ?? process.env
+  if (env['RNESS_NO_INSTALL'] === '1')
+    return { installed: false, pin: drift.pin, reason: 'RNESS_NO_INSTALL=1' }
+  const pm = await workspacePackageManager(rnessDir)
+  const frozen = await hasLockfile(rnessDir, pm)
+  const install = opts.install ?? installDependencies
+  opts.announce?.(drift.pin)
+  try {
+    await install(pm, rnessDir, { frozen })
+    return { installed: true, pin: drift.pin, reason: null }
+  } catch (e) {
+    return {
+      installed: false,
+      pin: drift.pin,
+      reason: e instanceof Error ? e.message : String(e),
+    }
+  }
+}
+
 export interface PinnedSyncResult {
   code: number
   stdout: string
@@ -170,15 +257,30 @@ export async function runPinnedSync(
     const { stdout, stderr } = await execFileP(
       process.execPath,
       [pinned, 'sync', '--yes'],
-      { cwd: root, maxBuffer: 16 * 1024 * 1024 }
+      {
+        cwd: root,
+        maxBuffer: 16 * 1024 * 1024,
+        env: childEnv(),
+        timeout: CHILD_DEADLINE_MS,
+        killSignal: 'SIGKILL',
+      }
     )
     return { code: 0, stdout, stderr }
   } catch (e) {
-    const err = e as { code?: number; stdout?: string; stderr?: string }
+    const err = e as {
+      code?: number
+      killed?: boolean
+      stdout?: string
+      stderr?: string
+    }
+    const deadline =
+      err.killed === true
+        ? `rness sync in .rness did not finish within ${CHILD_DEADLINE_MS / 1000}s and was stopped\n`
+        : ''
     return {
       code: typeof err.code === 'number' ? err.code : 1,
       stdout: err.stdout ?? '',
-      stderr: err.stderr ?? '',
+      stderr: `${err.stderr ?? ''}${deadline}`,
     }
   }
 }
@@ -204,6 +306,36 @@ export function summariseSync(stdout: string): {
   return {
     summary: `${total} block${total === 1 ? '' : 's'}${detail === '' ? '' : `: ${detail}`}`,
     others,
+  }
+}
+
+/**
+ * What the parent makes of a delegated sync (spec 0008 §2.1). A pinned copy
+ * older than 0.5.0 clones catalogue repositories nobody picked and exits 1 when
+ * one fails; it cannot be made to exit 0, so the blocks decide. One block line
+ * on stdout means the sync did its job: what the child wrote to stderr is then
+ * context, not the command's outcome.
+ */
+export function syncOutcome(
+  result: PinnedSyncResult,
+  opts: { sshWorks?: boolean } = {}
+): { code: number; hints: string[]; errors: string[] } {
+  const { others } = summariseSync(result.stdout)
+  const wrote = /^(updated|unchanged|stale)\s/m.test(result.stdout)
+  const stderr = result.stderr
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .filter((l) => l.trim() !== '')
+  const hints = wrote ? [...others, ...stderr] : others
+  if (
+    opts.sshWorks === true &&
+    /Permission denied \(publickey\)/.test(result.stderr)
+  )
+    hints.push(...agentHintLines())
+  return {
+    code: wrote ? 0 : result.code,
+    hints,
+    errors: wrote ? [] : stderr,
   }
 }
 
@@ -238,7 +370,13 @@ export async function syncPinned(
     const { stdout, stderr } = await execFileP(
       process.execPath,
       [pinned, 'sync', '--yes'],
-      { cwd: root, maxBuffer: 16 * 1024 * 1024 }
+      {
+        cwd: root,
+        maxBuffer: 16 * 1024 * 1024,
+        env: childEnv(),
+        timeout: CHILD_DEADLINE_MS,
+        killSignal: 'SIGKILL',
+      }
     )
     process.stdout.write(stdout)
     if (stderr !== '') process.stderr.write(stderr)

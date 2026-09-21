@@ -11,6 +11,55 @@ import type { Manifest, RepoEntry, ScopeEntry } from './types.ts'
  * a directory under `org/`), and no leading `-` (git would read an option).
  */
 export const NAME = /^(?!\.{1,2}$)[a-z0-9._][a-z0-9._-]*$/
+
+/**
+ * The organization's context repository. It holds the catalogue and is cloned
+ * as `<root>/.rness`, so it is never a member of the workspace it defines:
+ * `create` does not offer it and `add` refuses it (spec 0009).
+ */
+export const CONTEXT_REPO = '.rness'
+
+/**
+ * Names that are never a repository of the workspace, whatever they look like
+ * (spec 0009). A leading dot is an ordinary first character — `.github`
+ * carries an organization's profile, its templates and its shared workflows —
+ * so the rule cannot be a shape: it is this list. Add a name here rather than
+ * inventing another filter.
+ *
+ * - `.rness` — the context repository: it holds the catalogue and is already
+ *   cloned as `<root>/.rness`.
+ * - `.git` — a git directory, were `org/` ever to sit inside a repository.
+ * - `node_modules` — an install run one directory too high.
+ */
+export const EXCLUDED_NAMES: ReadonlySet<string> = new Set([
+  CONTEXT_REPO,
+  '.git',
+  'node_modules',
+])
+
+/**
+ * Whether a repository of the organization can become a member of the
+ * workspace. Everything active is, but an excluded name; an archived
+ * repository is read-only on GitHub, so a block written into it could never be
+ * pushed back. `create` filters its listing with this, and counts with it, so
+ * the number it announces and the list it offers cannot disagree.
+ */
+export function isMemberRepo(repo: {
+  name: string
+  archived: boolean
+}): boolean {
+  return !repo.archived && !EXCLUDED_NAMES.has(repo.name.toLowerCase())
+}
+
+/**
+ * Whether a directory under `org/` is one of the workspace's clones. It must
+ * be a name the catalogue could hold: a directory `rness add` could never
+ * declare is not reported as an undeclared clone, since the command suggested
+ * to bring it in would refuse it.
+ */
+export function isWorkspaceClone(name: string): boolean {
+  return NAME.test(name) && !EXCLUDED_NAMES.has(name)
+}
 /** How the rule reads in an error message. */
 export const NAME_RULE =
   "lowercase letters, digits, '.', '_' and '-', not starting with '-'"

@@ -150,6 +150,7 @@ test('upgrade pins the latest version in place, installs, and syncs through the 
     [
       `upgrade  @rness/cli 0.4.0 → 0.5.0 in ${label} (npm)`,
       'notes    https://github.com/rness-dev/rness/tree/main/packages/cli#readme',
+      'wrote    .rness/.github/dependabot.yml (@rness/cli now moves by pull request)',
       'installed dependencies with npm',
       'PINNED 0.5.0 sync --yes',
       '',
@@ -157,7 +158,7 @@ test('upgrade pins the latest version in place, installs, and syncs through the 
       '',
       'Next:',
       '  git -C .rness add -A && git -C .rness commit -m "chore: rness 0.5.0"',
-      '  # teammates: git pull, then npm install in .rness',
+      '  # teammates: git pull — the next rness command installs it',
       '',
     ].join('\n')
   )
@@ -307,4 +308,21 @@ test('in a terminal one confirmation; declining writes nothing', async (t) => {
     'Upgrade @rness/cli to 0.5.0?',
     'Upgrade @rness/cli to 0.5.0?',
   ])
+})
+
+test('upgrade writes dependabot.yml, and leaves one that is already there', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const first = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(first.code, 0, first.err)
+  const written = await read(root, '.github', 'dependabot.yml')
+  assert.match(written, /dependency-name: "@rness\/cli"/)
+
+  // A second upgrade finds it and does not touch it.
+  await writeFile(join(root, '.rness', '.github', 'dependabot.yml'), '# ours\n')
+  await fakeNpm(t, { latest: '0.6.0' })
+  const second = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(second.code, 0, second.err)
+  assert.equal(await read(root, '.github', 'dependabot.yml'), '# ours\n')
+  assert.match(second.out, /dependabot\.yml is already there/)
 })

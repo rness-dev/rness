@@ -1,0 +1,12 @@
+# The workspace's @rness/cli pin moves by pull request (spec 0008 §3): the diff
+# shows the pin and the lockfile, and the validate workflow runs with the new
+# version before anyone merges. `directory: "/"` is the repository root because
+# this .rness repository is itself the package root.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "@rness/cli"

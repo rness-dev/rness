@@ -103,9 +103,20 @@ dependency does this: `util.styleText`, and a banner kept as a constant.
 The version is written in one place, `.rness/package.json`. `upgrade` pins it
 there (exact, the rest of the file untouched), installs with the workspace's
 package manager, then syncs through the new copy; a failed install restores
-the file. Commit `.rness`; teammates pull and install in `.rness`. Until they
-do, every command warns that the workspace pins one version and holds
-another. It is never delegated to the pinned copy, which is what it replaces
+the file. Commit `.rness`. Teammates pull, and the next `rness` command in that
+workspace installs the new pin itself — frozen, so the working tree stays
+clean — and carries on: nothing to remember, nothing to run.
+`RNESS_NO_INSTALL=1` turns that off and restores the warning, for CI, a
+container image, or a machine that cannot install. A workspace still on 0.5.0
+has no such catch-up: moving it to 0.5.1 is the last manual install.
+
+Usually nobody runs `upgrade` at all. A workspace ships
+`.github/dependabot.yml`, so each release opens a pull request on the
+organization's `.rness`: the pin and the lockfile in the diff, `validate`
+running on the new version, review, merge. `upgrade` writes that file into
+workspaces created before 0.5.1.
+
+`upgrade` is never delegated to the pinned copy, which is what it replaces
 — so a workspace pinned below 0.5.0, whose copy has no such command, starts
 with the `npx` form.
 
@@ -115,6 +126,23 @@ its content does.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.5.1 — the version of a workspace moves by pull request
+
+- Joining an organization pinned to an older `@rness/cli` no longer mentions
+  versions, and no longer invites a newcomer to move the whole team: the
+  workspace is served by the version the organization agreed on.
+- A workspace whose pin moved is reinstalled on the next command, with the
+  package manager's frozen install so the working tree stays clean. Set
+  `RNESS_NO_INSTALL=1` to keep the old warning instead — for CI, a container
+  image, or a machine that cannot install.
+- New workspaces ship `.github/dependabot.yml`, and `rness upgrade` writes it
+  into workspaces created earlier: a pull request per release, reviewed, with
+  `validate` running on the new version before the merge.
+- A delegated child can no longer wait on an invisible SSH passphrase prompt:
+  it fails with a readable line instead of hanging.
+- A join that wrote its blocks succeeds even when a repository nobody picked
+  failed to clone; those failures are hints.
 
 ## 0.5.0 — the organization is the workspace; rness.json is its catalogue
 
@@ -209,9 +237,26 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
     pnpm --filter @rness/cli test     # node:test on the TypeScript sources
     pnpm --filter @rness/cli typecheck
     pnpm --filter @rness/cli build    # tsup → dist/
-    RNESS_NO_DELEGATE=1 node packages/cli/src/bin/rness.ts --help
+    pnpm dev --help                   # the CLI, straight from these sources
 
-Inside a workspace whose `.rness/` pins a published `@rness/cli`, set
-`RNESS_NO_DELEGATE=1` to run this source tree instead of delegating.
+`pnpm dev` runs `packages/cli/src/bin/rness.ts`: Node ≥ 24 strips the types,
+so nothing is built between an edit and the next run. It turns delegation off,
+because inside a workspace the launcher would otherwise hand the command to the
+published `@rness/cli` pinned in `.rness/` rather than to the sources under
+test; `RNESS_NO_DELEGATE=0 pnpm dev …` puts it back, to exercise delegation
+itself.
+
+To reach it from a workspace elsewhere on the machine, link it once:
+
+    ln -s "$PWD/scripts/dev.mjs" ~/.local/bin/rness-dev   # from the repository root
+    cd ~/somewhere/acme && rness-dev validate
+
+`create` is never delegated, so it always runs these sources — and it refuses
+to run inside a workspace, so call it from an empty directory.
+
+`pnpm verdaccio` is the other loop: a local registry that serves this build as
+a real package, for what only shows up through an install (`npm create rness`,
+the pinned copy, a version bump). It is slower, and its caches have to be
+forgotten on every redeploy, which `deploy` now does.
 
 Node ≥ 24. MIT.

@@ -101,12 +101,22 @@ export type Session = Required<
 >
 
 /** The session look over clack's functions; exported for tests, which script them. */
+/** What a line says, once its tone has a symbol of its own to carry it. */
+const IDLE_SYMBOL = '\u00b7'
+
 export function sessionUi(p: Session): Ui {
+  // clack draws the gutter symbol, so it is the coloured column the plain
+  // look puts first (spec 0007 §4): the text beside it stays neutral, which
+  // is what lets a path lead and the paths of a list align (§5d).
   const say = (verb: string, text: string): void => {
     const tone = toneOf(verb)
-    if (tone === 'done') p.log.step(text)
+    if (tone === 'done') p.log.success(text)
     else if (tone === 'warn') p.log.warn(text)
-    else if (tone === 'idle') p.log.message(paint('idle', text))
+    else if (tone === 'error') p.log.error(text)
+    else if (tone === 'idle')
+      p.log.message(paint('idle', text), {
+        symbol: paint('idle', IDLE_SYMBOL),
+      })
     else p.log.info(text)
   }
   return {
@@ -116,10 +126,14 @@ export function sessionUi(p: Session): Ui {
       p.intro(badge(title))
     },
     outro: (message, tone = 'done') => {
-      p.outro(paint(tone, message))
+      // The verdict closes a session the way the title opened it: on a
+      // background, legible before the words are read (spec 0007 §5c).
+      p.outro(badge(message, tone))
     },
     line: (verb, rest, sentence) => {
-      say(verb, sentence ?? tidy(`${verb} ${rest}`))
+      // The path leads, the verb follows: in a list the paths align on the
+      // left instead of starting at whatever width the verb happened to be.
+      say(verb, sentence ?? `${rest} ${verb}`)
     },
     warn: (text) => {
       p.log.warn(text)
@@ -138,26 +152,28 @@ export function sessionUi(p: Session): Ui {
     },
     async step(options, work, done) {
       const label = options.sentence ?? tidy(options.doing)
+      // The verb is kept beside its text: a finished step is said by `say`,
+      // so its symbol is the one a plain line of the same tone would wear.
       const finish = (
         result: Awaited<ReturnType<typeof work>>
-      ): string | null => {
-        const line = done?.(result) ?? null
-        return line === null ? null : tidy(`${line[0]} ${line[1]}`)
-      }
+      ): readonly [string, string] | null => done?.(result) ?? null
+      const label_ = (line: readonly [string, string]): string =>
+        `${line[1]} ${line[0]}`
       // A spinner redraws its line: not while git's ssh may be asking for a
       // passphrase on the same terminal.
       if (options.git === true && !this.gitIsSilent) {
         p.log.message(paint('idle', `${label}…`))
         const result = await work()
-        const text = finish(result)
-        if (text !== null) p.log.step(text)
+        const line = finish(result)
+        if (line !== null) say(line[0], label_(line))
         return result
       }
       const spin = p.spinner()
       spin.start(label)
       try {
         const result = await work()
-        spin.stop(finish(result) ?? label)
+        const line = finish(result)
+        spin.stop(line === null ? label : label_(line))
         return result
       } catch (e) {
         spin.error(`${label} — failed`)

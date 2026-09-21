@@ -62,10 +62,11 @@ test('the session look: a sentence per line, by tone, from intro to outro', () =
   ui.outro('Workspace for acme is ready')
   assert.deepEqual(said, [
     'intro: Create a workspace',
-    'step: Cloned org/api',
+    // The path leads; clack's own symbol carries the tone (spec 0007 §5d).
+    'success: org/api cloned',
     'info: SSH works for github.com',
-    'message: Unchanged AGENTS.md',
-    'warn: Stale org/api/AGENTS.md',
+    'message: AGENTS.md unchanged',
+    'warn: org/api/AGENTS.md stale',
     'warn: careful',
     'error: api: git clone failed',
     'message: a tip',
@@ -95,9 +96,9 @@ test('a step spins — unless it runs git while git might still ask for a passph
     'stop: Installing dependencies with npm',
     // git might prompt: the label once, then the outcome — nothing redrawn.
     'message: Cloning org/api…',
-    'step: Cloned org/api',
+    'success: org/api cloned',
     'spin: Cloning org/api',
-    'stop: Cloned org/api',
+    'stop: org/api cloned',
     'spin: Installing dependencies with npm',
     'spin-error: Installing dependencies with npm — failed',
   ])

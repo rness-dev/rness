@@ -308,11 +308,13 @@ test('upgrade is served by the invoked copy, never by the pinned one; other comm
     assert.equal(stderr, '', 'no drift warning on upgrade')
   }
 
-  // Any other command is delegated, after one warning on stderr.
+  // Any other command is delegated, after one warning on stderr. The install
+  // that would normally close the drift is off here (spec 0008 §4): this test
+  // is about delegation, and it must not reach a registry.
   const { stdout, stderr } = await execFileP(
     process.execPath,
     [binPath, 'validate'],
-    { cwd: root, env }
+    { cwd: root, env: { ...env, RNESS_NO_INSTALL: '1' } }
   )
   assert.equal(stdout, 'DELEGATED validate\n')
   assert.equal(
@@ -400,4 +402,26 @@ test('login, logout and git-credential concern the machine: never delegated, and
     assert.match(help.stdout, new RegExp(`^Usage: rness ${name}`))
     assert.equal(help.stderr, '')
   }
+})
+
+test('a drifting workspace is left alone when RNESS_NO_INSTALL is set', async (t) => {
+  const dir = await tmp('rness-noinstall-')
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await workspace(dir)
+  await writeFile(
+    join(dir, '.rness', 'package.json'),
+    JSON.stringify({
+      private: true,
+      devDependencies: { '@rness/cli': '9.9.9' },
+    })
+  )
+  const { stderr } = await execFileP(process.execPath, [binPath, 'context'], {
+    cwd: dir,
+    env: { ...process.env, RNESS_NO_INSTALL: '1' },
+  })
+  assert.match(stderr, /pins @rness\/cli 9\.9\.9 but nothing is installed/)
+  assert.ok(
+    !stderr.includes('installing @rness/cli'),
+    'RNESS_NO_INSTALL=1 installs nothing'
+  )
 })

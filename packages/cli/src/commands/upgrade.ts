@@ -1,10 +1,10 @@
 import { execFile } from 'node:child_process'
-import { readFile, readdir } from 'node:fs/promises'
-import { basename, join, relative } from 'node:path'
+import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { basename, dirname, join, relative } from 'node:path'
 import { promisify } from 'node:util'
 
 import { readPinnedCli } from '../core/delegate.ts'
-import { readOrNull, writeFileAtomic } from '../core/fs.ts'
+import { exists, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import {
   EXACT_VERSION,
   compareVersions,
@@ -13,6 +13,7 @@ import {
   writePin,
 } from '../core/pinned.ts'
 import { installDependencies } from '../core/pm.ts'
+import { scaffoldDir } from '../core/scaffold.ts'
 import { status } from '../core/style.ts'
 import { syncBlocks } from '../core/sync-blocks.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
@@ -173,6 +174,24 @@ export async function upgradeCommand(
       }
     }
 
+    // An organization created before 0.5.1 never runs the scaffold again, so
+    // the upgrade is where it receives the bot that moves the pin by pull
+    // request (spec 0008 §3.2).
+    const dependabot = join(ws.rnessDir, '.github', 'dependabot.yml')
+    if (await exists(dependabot)) {
+      ui.hint('.github/dependabot.yml is already there — left as it is')
+    } else {
+      await mkdir(dirname(dependabot), { recursive: true })
+      await writeFileAtomic(
+        dependabot,
+        await readFile(join(scaffoldDir(), '.github', 'dependabot.yml'), 'utf8')
+      )
+      ui.line(
+        'wrote',
+        '.rness/.github/dependabot.yml (@rness/cli now moves by pull request)'
+      )
+    }
+
     try {
       await ui.step(
         { doing: `installing dependencies with ${pm}` },
@@ -207,7 +226,7 @@ export async function upgradeCommand(
     const rel = relative(cwd, ws.rnessDir) || '.'
     const next = [
       `git -C ${rel} add -A && git -C ${rel} commit -m "chore: rness ${target}"`,
-      `# teammates: git pull, then ${pm} install in .rness`,
+      '# teammates: git pull — the next rness command installs it',
     ]
     if (ui.session) {
       ui.note('Next steps', next)

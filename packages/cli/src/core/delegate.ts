@@ -54,6 +54,13 @@ export async function readPinnedCli(
   }
 }
 
+/** Absolute path of the pinned copy's executable, or null when nothing is installed. */
+export async function pinnedBinPath(rnessDir: string): Promise<string | null> {
+  const pinned = await readPinnedCli(rnessDir)
+  if (pinned === null) return null
+  return join(pinned.dir, ...pinned.bin.split('/'))
+}
+
 /**
  * The `@rness/cli` pinned in `<workspace>/.rness/package.json` (installed under
  * `.rness/node_modules`), when it exists and is not the running version. The

@@ -128,7 +128,7 @@ test('new: ./<org> is scaffolded with org and tokens, commits it, adds --repos, 
   const root = join(cwd, 'acme')
   assert.match(
     r.out,
-    /^not found acme\/\.rness \(or not visible to you\) — starting a new workspace\ncreated {2}acme\/\.rness \(new workspace\)\nskipped {2}install \(--skip-install\)\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncommitted acme\/\.rness\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n/
+    /^not found acme\/\.rness \(or not visible to you\) — starting a new workspace\ncreated {2}acme\/\.rness \(new workspace\)\nskipped {2}install with npm \(--skip-install\)\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncommitted acme\/\.rness\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n/
   )
   assert.match(r.out, /Workspace for `acme` is ready in acme\/\./)
   assert.match(r.out, /Next:\n {2}cd acme\/\.rness\n/)
@@ -189,7 +189,7 @@ test('join without --repos: the whole catalogue is cloned', async (t) => {
   assert.equal(r.code, 0, r.err)
   assert.equal(
     r.out,
-    'found    acme/.rness — joining\ncloned   acme/.rness (joined acme)\nskipped  install (--skip-install)\ncloned   org/api\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n'
+    'found    acme/.rness — joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n'
   )
   const root = join(cwd, 'acme')
   const { stdout } = await execFileP('git', ['remote', 'get-url', 'origin'], {
@@ -228,7 +228,7 @@ test('join --repos: catalogue entries are cloned without rewriting rness.json; o
   assert.equal(only.code, 0, only.err)
   assert.equal(
     only.out,
-    'found    acme/.rness — joining\ncloned   acme/.rness (joined acme)\nskipped  install (--skip-install)\ncloned   org/api\nnot cloned: web (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n'
+    'found    acme/.rness — joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nnot cloned: web (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web\n  rness sync --all\n'
   )
   const root = join(cwd, 'acme')
   await assert.rejects(access(join(root, 'org', 'web')))
@@ -812,10 +812,13 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
     '"Acme Inc" is not a valid GitHub organization name',
   ])
   // A name differing from NAME only by case is offered in lowercase (GitHub
-  // names are case-insensitive); any other is shown disabled, last. Hidden
-  // repositories (.rness, .github, …) and archived ones are not listed.
+  // names are case-insensitive); any other is shown disabled, last. A leading
+  // dot is an ordinary name: `.github` is offered like any repository. Only
+  // the context repository `.rness` and archived ones stay out (spec 0009).
   assert.deepEqual(term.offered, [
     [
+      { value: '.github', label: '.github' },
+      { value: '.github-private', label: '.github-private 🔒' },
       { value: 'api', label: 'api 🔒' },
       { value: 'my_lib', label: 'my_lib' },
       { value: 'web', label: 'web' },
@@ -832,7 +835,7 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
   assert.equal(requests[0]?.headers['authorization'], undefined)
   assert.ok(
     r.out.startsWith(
-      `not found acme/.rness (or not visible to you) — starting a new workspace\nlisting  acme repositories…\n${NO_TOKEN_NOTE}names rness cannot declare yet (struck through): -dash\ncreated  acme/.rness (new workspace)\nskipped  install (--skip-install)\ncloned   org/api\ndeclared scope api (org/api)\ncloned   org/website\ndeclared scope website (org/website)\ncommitted acme/.rness\n`
+      `not found acme/.rness (or not visible to you) — starting a new workspace\nlisting  acme repositories…\n${NO_TOKEN_NOTE}names rness cannot declare yet (struck through): -dash\ncreated  acme/.rness (new workspace)\nskipped  install with npm (--skip-install)\ncloned   org/api\ndeclared scope api (org/api)\ncloned   org/website\ndeclared scope website (org/website)\ncommitted acme/.rness\n`
     ),
     r.out
   )
@@ -889,7 +892,7 @@ test('wizard, join: the catalogue is pre-selected and completed; unpicked stays 
   assert.deepEqual(term.preselected, [['api', 'web', 'secret']])
   assert.equal(
     r.out,
-    'found    acme/.rness — joining\nlisting  acme repositories…\ncloned   acme/.rness (joined acme)\nskipped  install (--skip-install)\ncloned   org/api\ncloned   org/other\ndeclared scope other (org/other)\nnot cloned: web, secret (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/other/AGENTS.md\n'
+    'found    acme/.rness — joining\nlisting  acme repositories…\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\ncloned   org/other\ndeclared scope other (org/other)\nnot cloned: web, secret (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/other/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web, secret\n  rness sync --all\n'
   )
   const root = join(cwd, 'acme')
   await assert.rejects(access(join(root, 'org', 'web')))
@@ -1461,14 +1464,9 @@ test('accepting the login runs the device flow in place; the listing that follow
   await access(join(cwd, 'acme', 'org', 'vault', 'README.md'))
 })
 
-test('joining a workspace pinned to an older @rness/cli says so, and how to move it', async (t) => {
+test('joining a workspace pinned to an older @rness/cli says nothing about versions', async (t) => {
   const pinned = (version: string): string =>
     JSON.stringify({ devDependencies: { '@rness/cli': version } })
-  const line = (version: string): RegExp =>
-    new RegExp(
-      `^acme/\\.rness pins @rness/cli ${version.replaceAll('.', '\\.')} — you run ${VERSION.replaceAll('.', '\\.')}; rness upgrade moves the workspace$`,
-      'm'
-    )
   const join = async (version: string) => {
     const remote = await makeRemoteOrg(t, 'acme')
     await remote.addRepo('.rness', {
@@ -1487,15 +1485,17 @@ test('joining a workspace pinned to an older @rness/cli says so, and how to move
       await scratch(t),
     ])
   }
+  // Joining aligns on the organization's pin. Moving it is a maintainer's
+  // act, never asked of whoever arrives (spec 0008 §2).
   const older = await join('0.0.1')
   assert.equal(older.code, 0, older.err)
-  assert.match(older.out, line('0.0.1'))
+  assert.doesNotMatch(older.out, /pins @rness\/cli/)
+  assert.doesNotMatch(older.out, /rness upgrade moves the workspace/)
 
   const same = await join(VERSION)
   assert.equal(same.code, 0, same.err)
   assert.doesNotMatch(same.out, /pins @rness\/cli/)
 
-  // A range, or a newer pin, is not this notice's business.
   assert.doesNotMatch((await join('^0.0.1')).out, /pins @rness\/cli/)
   assert.doesNotMatch((await join('99.0.0')).out, /pins @rness\/cli/)
 })
@@ -1596,4 +1596,41 @@ test('declined, refused, anonymous or --yes: nothing is created, and the manual 
   assert.equal(r3.code, 0, r3.err)
   assert.match(r3.out, manual)
   assert.deepEqual(scripted.created, [], '--yes never creates a repository')
+})
+
+test('joining adopts the package manager the workspace declares; --pm still wins', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const apiUrl = await remote.addRepo('api', { 'README.md': '# api\n' })
+  await remote.addRepo('.rness', {
+    'rness.json': manifestText({ api: { url: apiUrl } }),
+    // What the team installs with, committed with the workspace.
+    'package.json':
+      '{\n  "private": true,\n  "packageManager": "pnpm@12.2.1"\n}\n',
+  })
+  const options = [
+    '--org',
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--host',
+    remote.host,
+  ]
+  // `create` was launched by npm (the test runner's agent is not pnpm), yet
+  // the workspace's own manager is the one used.
+  const adopted = await create([...options, '--cwd', await scratch(t)])
+  assert.equal(adopted.code, 0, adopted.err)
+  assert.match(
+    adopted.out,
+    /^skipped {2}install with pnpm \(--skip-install\)$/m
+  )
+
+  const forced = await create([
+    ...options,
+    '--pm',
+    'npm',
+    '--cwd',
+    await scratch(t),
+  ])
+  assert.equal(forced.code, 0, forced.err)
+  assert.match(forced.out, /^skipped {2}install with npm \(--skip-install\)$/m)
 })

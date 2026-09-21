@@ -13,10 +13,29 @@ export interface CheckBlocksInput {
   org: string
 }
 
+/**
+ * What a target's `AGENTS.md` turned out to be. `stale` and `malformed` are
+ * problems, `missing-dir` and `no-block` only warnings; `current` says
+ * nothing and carries no message.
+ */
+export type BlockStatus =
+  'current' | 'stale' | 'malformed' | 'missing-dir' | 'no-block'
+
+export interface BlockCheck {
+  label: string
+  status: BlockStatus
+  /** The line the plain look prints; null when the block is current. */
+  message: string | null
+}
+
 export interface CheckBlocksResult {
   problems: string[]
   warnings: string[]
+  /** One entry per target, in the order they were checked (spec 0007 §5c). */
+  checks: BlockCheck[]
 }
+
+const PROBLEM: ReadonlySet<BlockStatus> = new Set(['stale', 'malformed'])
 
 /**
  * Compare every present block with a fresh render (spec 0003 §4.6): a
@@ -29,9 +48,26 @@ export async function checkBlocks({
   manifest,
   org,
 }: CheckBlocksInput): Promise<CheckBlocksResult> {
-  const problems: string[] = []
-  const warnings: string[] = []
-  if (!(await exists(join(root, 'org')))) return { problems, warnings }
+  const checks: BlockCheck[] = []
+  const note = (
+    label: string,
+    status: BlockStatus,
+    message: string | null = null
+  ): void => {
+    checks.push({ label, status, message })
+  }
+  // The two flat arrays are a view over `checks`, so a line printed today
+  // cannot drift from what the terminal renders.
+  const derive = (): CheckBlocksResult => ({
+    problems: checks
+      .filter((c) => PROBLEM.has(c.status) && c.message !== null)
+      .map((c) => c.message as string),
+    warnings: checks
+      .filter((c) => !PROBLEM.has(c.status) && c.message !== null)
+      .map((c) => c.message as string),
+    checks,
+  })
+  if (!(await exists(join(root, 'org')))) return derive()
 
   const targets: Array<{
     scope: string | null
@@ -51,18 +87,26 @@ export async function checkBlocks({
 
   for (const t of targets) {
     if (!(await exists(t.dir))) {
-      warnings.push(`${t.label}: directory not present, block not checked`)
+      note(
+        t.label,
+        'missing-dir',
+        `${t.label}: directory not present, block not checked`
+      )
       continue
     }
     const text = await readOrNull(join(t.dir, 'AGENTS.md'))
     const lines = text === null ? [] : text.split(/\r?\n/)
     const found = findBlock(lines)
     if (found.kind === 'none') {
-      warnings.push(`${t.label}: no rness block yet (run rness sync)`)
+      note(
+        t.label,
+        'no-block',
+        `${t.label}: no rness block yet (run rness sync)`
+      )
       continue
     }
     if (found.kind === 'error') {
-      problems.push(`${t.label}: ${found.message}`)
+      note(t.label, 'malformed', `${t.label}: ${found.message}`)
       continue
     }
     const context = await assembleContext({
@@ -78,9 +122,10 @@ export async function checkBlocks({
     })
     // Two ways to be stale: the header no longer matches a fresh render, or the
     // body no longer matches its own header — a hand edit inside the block.
-    if (!isCurrentBlock(lines.slice(found.begin, found.end + 1), fresh.hash)) {
-      problems.push(`${t.label}: stale rness block (run rness sync)`)
-    }
+    if (isCurrentBlock(lines.slice(found.begin, found.end + 1), fresh.hash))
+      note(t.label, 'current')
+    else
+      note(t.label, 'stale', `${t.label}: stale rness block (run rness sync)`)
   }
-  return { problems, warnings }
+  return derive()
 }

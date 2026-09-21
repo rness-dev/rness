@@ -38,10 +38,14 @@ async function check(root: string) {
 const ABSENT_API = 'org/api/AGENTS.md: directory not present, block not checked'
 
 test('a freshly synced workspace has no problems; an absent scope directory is only noted', async (t) => {
-  assert.deepEqual(await check(await synced(t)), {
-    problems: [],
-    warnings: [ABSENT_API],
-  })
+  const { problems, warnings } = await check(await synced(t))
+  assert.deepEqual(
+    { problems, warnings },
+    {
+      problems: [],
+      warnings: [ABSENT_API],
+    }
+  )
 })
 
 test('editing a standard makes the block stale; a missing block is only a warning', async (t) => {
@@ -104,6 +108,31 @@ test('a malformed block is a problem; no org/ means nothing to check', async (t)
       manifest,
       org: 'acme',
     }),
-    { problems: [], warnings: [] }
+    { problems: [], warnings: [], checks: [] }
+  )
+})
+
+test('checkBlocks reports every target, and derives problems and warnings from them', async (t) => {
+  const result = await check(await synced(t))
+  // One entry per target, in the order they are checked: the root first, then
+  // the scopes of the manifest (spec 0007 §5c).
+  assert.deepEqual(result.checks, [
+    { label: 'AGENTS.md', status: 'current', message: null },
+    { label: 'org/web/AGENTS.md', status: 'current', message: null },
+    {
+      label: 'org/api/AGENTS.md',
+      status: 'missing-dir',
+      message: ABSENT_API,
+    },
+  ])
+  // The two flat arrays are a view over the same facts: every non-current
+  // check appears in exactly one of them, with the byte it prints today.
+  const flattened = [...result.problems, ...result.warnings].sort()
+  assert.deepEqual(
+    flattened,
+    result.checks
+      .filter((c) => c.message !== null)
+      .map((c) => c.message)
+      .sort()
   )
 })

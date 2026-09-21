@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import {
   detectPackageManager,
+  frozenArgs,
   installErrorLine,
   isPackageManager,
   packageManagerVersion,
@@ -62,4 +63,11 @@ test("installErrorLine skips npm's bare error code for the line that says what i
     'ERR_PNPM_NO_MATCHING_VERSION  No matching version found for @rness/cli@0.4.0'
   )
   assert.equal(installErrorLine(''), 'unknown error')
+})
+
+test('frozenArgs: each manager has its own immutable install', () => {
+  assert.deepEqual(frozenArgs('npm'), ['ci'])
+  assert.deepEqual(frozenArgs('pnpm'), ['install', '--frozen-lockfile'])
+  assert.deepEqual(frozenArgs('yarn'), ['install', '--immutable'])
+  assert.deepEqual(frozenArgs('bun'), ['install', '--frozen-lockfile'])
 })

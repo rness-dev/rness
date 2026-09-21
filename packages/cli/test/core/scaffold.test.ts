@@ -38,3 +38,14 @@ test('package.json carries the tokens create replaces; the workflow names no ver
   assert.doesNotMatch(workflow, /__RNESS_/)
   assert.match(workflow, /require\('\.\/package\.json'\)\.devDependencies/)
 })
+
+test('the scaffold ships a dependabot configuration for the pin', async () => {
+  assert.ok(SCAFFOLD_FILES.includes('.github/dependabot.yml'))
+  const text = await readFile(
+    join(scaffoldDir(), '.github', 'dependabot.yml'),
+    'utf8'
+  )
+  assert.match(text, /package-ecosystem: npm/)
+  assert.match(text, /dependency-name: "@rness\/cli"/)
+  assert.match(text, /interval: weekly/)
+})

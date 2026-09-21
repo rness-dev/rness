@@ -186,6 +186,22 @@ export function usingLine(access: SshAccess, login?: string | null): string {
 }
 
 /** Why an SSH workspace cannot be served, and how to fix it. */
+/**
+ * A child's `git clone` failed on publickey although the parent's own SSH test
+ * passed: the key works but no agent holds it, so git's `ssh` asks again in
+ * every child (spec 0008 §2.1).
+ */
+export function agentHintLines(
+  platform: NodeJS.Platform = process.platform
+): string[] {
+  const mac = platform === 'darwin'
+  return [
+    'your key works but is not loaded; ssh asks again in every child:',
+    `  ssh-add ${mac ? '--apple-use-keychain ' : ''}~/.ssh/id_ed25519`,
+    `  ~/.ssh/config: AddKeysToAgent yes${mac ? ', UseKeychain yes' : ''}`,
+  ]
+}
+
 export function sshWorkspaceLines(reason: string): [string, string] {
   return [
     `this workspace clones over SSH (rness.json) but ssh to github.com fails: ${reason}`,

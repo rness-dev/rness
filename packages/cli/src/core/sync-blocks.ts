@@ -1,4 +1,9 @@
-import { runPinnedSync, summariseSync, syncPinned } from './pinned.ts'
+import {
+  runPinnedSync,
+  summariseSync,
+  syncOutcome,
+  syncPinned,
+} from './pinned.ts'
 import type { Ui } from './ui.ts'
 
 /**
@@ -13,7 +18,8 @@ export async function syncBlocks(
   ui: Ui,
   root: string,
   shown: string,
-  inPlace?: () => Promise<number>
+  inPlace?: () => Promise<number>,
+  sshWorks?: boolean
 ): Promise<number> {
   if (!ui.session)
     return ui.step({ doing: 'syncing  the blocks', git: true }, () =>
@@ -37,8 +43,8 @@ export async function syncBlocks(
     )
     return 1
   }
-  for (const line of summariseSync(result.stdout).others) ui.hint(line)
-  for (const line of result.stderr.split('\n'))
-    if (line.trim() !== '') ui.error(line)
-  return result.code
+  const outcome = syncOutcome(result, { sshWorks: sshWorks === true })
+  for (const line of outcome.hints) ui.hint(line)
+  for (const line of outcome.errors) ui.error(line)
+  return outcome.code
 }

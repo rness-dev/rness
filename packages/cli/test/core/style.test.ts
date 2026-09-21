@@ -99,3 +99,21 @@ test('a badge is padded only when it has a background to pad; grey is grey on a 
   assert.equal(grey('cd acme', pipe), 'cd acme')
   assert.ok(grey('cd acme', terminal(8)).startsWith(ESC))
 })
+
+test('badge: the tone chooses the background; a stream without colour keeps the bare text', () => {
+  assert.equal(badge('Context OK', 'done', pipe), 'Context OK')
+  const ok = badge('Context OK', 'done', terminal(8))
+  const bad = badge('Context mismatch', 'error', terminal(8))
+  assert.match(ok, /Context OK/)
+  assert.match(bad, /Context mismatch/)
+  assert.notEqual(
+    ok,
+    bad,
+    'a success and a failure do not wear the same colour'
+  )
+  // The intro keeps the colour it had before the tone existed.
+  assert.equal(
+    badge('Create a workspace', terminal(8)),
+    badge('Create a workspace', 'intro', terminal(8))
+  )
+})
