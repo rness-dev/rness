@@ -1,6 +1,6 @@
 {
   "name": "@rness/create",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "npm create @rness — start or join the rness workspace of a GitHub organization",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@rness/cli": "0.5.2"
+    "@rness/cli": "0.5.3"
   }
 }

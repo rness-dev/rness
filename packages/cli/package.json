@@ -1,6 +1,6 @@
 {
   "name": "@rness/cli",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Configuration-plane CLI for rness workspaces: resolve, validate and sync org-level context for AI coding agents",
   "license": "MIT",
   "type": "module",

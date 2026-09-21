@@ -110,6 +110,12 @@ clean — and carries on: nothing to remember, nothing to run.
 container image, or a machine that cannot install. A workspace still on 0.5.0
 has no such catch-up: moving it to 0.5.1 is the last manual install.
 
+The catch-up needs one of two things: a launcher — the `rness` you typed,
+usually the global install — at 0.5.1 or later, or an installed copy at 0.5.3
+or later, which checks for itself whatever launched it. With an older global
+and a workspace below 0.5.3, a pin that moved is neither installed nor
+announced: `npm i -g @rness/cli@latest` once.
+
 Usually nobody runs `upgrade` at all. A workspace ships
 `.github/dependabot.yml`, so each release opens a pull request on the
 organization's `.rness`: the pin and the lockfile in the diff, `validate`
@@ -129,6 +135,22 @@ its content does.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.5.3 — catching up no longer depends on the global install
+
+- After a pull that moved the pin, the next `rness` command installs it. That
+  check ran in the launcher only, so a global `@rness/cli` below 0.5.1 — which
+  delegates to the installed copy without looking — left the old version in
+  place and said nothing: `sync --check` answered `unchanged` with 0.5.1
+  blocks under a 0.5.2 pin. The installed copy now checks as well.
+- Reach: the check lives in the installed copy, so it works from the first pin
+  move after a workspace holds 0.5.3. The move to 0.5.3 itself still needs a
+  launcher at 0.5.1 or later.
+- The scaffold's `dependabot.yml` says why the pin's pull request arrives 3 to
+  10 days after a release (a weekly check, plus Dependabot's default 3-day
+  cooldown) and gives the three lines that lift it for `@rness/cli`. The
+  default stays: for an adopting organization the CLI is a third-party
+  package, and the cooldown guards against a compromised release.
 
 ## 0.5.2 — the block points at a file that exists
 
