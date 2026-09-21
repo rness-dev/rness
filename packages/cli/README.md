@@ -114,7 +114,10 @@ Usually nobody runs `upgrade` at all. A workspace ships
 `.github/dependabot.yml`, so each release opens a pull request on the
 organization's `.rness`: the pin and the lockfile in the diff, `validate`
 running on the new version, review, merge. `upgrade` writes that file into
-workspaces created before 0.5.1.
+workspaces created before 0.5.1. The pull request arrives 3 to 10 days after
+a release: the check is weekly, and Dependabot holds any new version back for
+3 days by default, a guard against a compromised release. The file's header
+says how to lift that delay for `@rness/cli`.
 
 `upgrade` is never delegated to the pinned copy, which is what it replaces
 — so a workspace pinned below 0.5.0, whose copy has no such command, starts

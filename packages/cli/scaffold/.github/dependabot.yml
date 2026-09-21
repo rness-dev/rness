@@ -2,6 +2,14 @@
 # shows the pin and the lockfile, and the validate workflow runs with the new
 # version before anyone merges. `directory: "/"` is the repository root because
 # this .rness repository is itself the package root.
+#
+# The pull request arrives 3 to 10 days after a release: the check is weekly,
+# and Dependabot holds any new version back for 3 days (its default cooldown,
+# a guard against a compromised release). To receive it sooner, at the price of
+# that guard, add under `allow:`, at the same indentation:
+#     cooldown:
+#       exclude:
+#         - "@rness/cli"
 version: 2
 updates:
   - package-ecosystem: npm

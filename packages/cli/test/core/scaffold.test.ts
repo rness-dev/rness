@@ -48,4 +48,9 @@ test('the scaffold ships a dependabot configuration for the pin', async () => {
   assert.match(text, /package-ecosystem: npm/)
   assert.match(text, /dependency-name: "@rness\/cli"/)
   assert.match(text, /interval: weekly/)
+  // Dependabot's default 3-day cooldown stays on: for the organizations that
+  // adopt rness, @rness/cli is a third-party package. The file says how to
+  // lift it, in a comment, and never does it itself.
+  assert.doesNotMatch(text, /^\s*cooldown:/m)
+  assert.match(text, /^#\s+cooldown:$/m)
 })
