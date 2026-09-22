@@ -8,6 +8,9 @@ Not an agent — no LLM loop.
 
     npm create rness           # prompts for the organization, then the repositories for your workspace
     npm create rness acme      # the organization github.com/acme, no first prompt
+    pnpm create rness          # the same with pnpm, yarn or bun: `.rness/` is
+    yarn create rness          # installed with the manager that ran the command
+    bun create rness
     npm i -g @rness/cli        # the command is `rness`
     npx @rness/cli --help
 
