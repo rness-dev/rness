@@ -28,6 +28,8 @@ export interface ScopeEntry {
 export interface Manifest {
   contract: 1
   org: string | null
+  /** The team's agents (spec 0011 §3.1); null when never asked, [] for none. */
+  agents: string[] | null
   repos: Record<string, RepoEntry>
   scopes: Record<string, ScopeEntry>
 }

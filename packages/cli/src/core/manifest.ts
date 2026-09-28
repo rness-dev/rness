@@ -73,7 +73,7 @@ export const NAME_RULE =
 export const ORG_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/
 
 /** Every top-level key contract 1 defines. */
-const KEYS = ['contract', 'org', 'repos', 'scopes']
+const KEYS = ['contract', 'org', 'agents', 'repos', 'scopes']
 
 function fail(message: string): never {
   throw new Error(`rness.json: ${message}`)
@@ -111,6 +111,23 @@ function readOrg(value: unknown): string | null {
  */
 export function workspaceName(manifest: Manifest, root: string): string {
   return manifest.org ?? basename(root)
+}
+
+/** An agent name as `agents` holds it: lowercase letters, digits and `-`. */
+const AGENT_NAME = /^[a-z][a-z0-9-]*$/
+
+/** `agents`, when present: a list of unique agent names (spec 0011 §3.1). */
+function readAgents(value: unknown): string[] | null {
+  if (value === undefined) return null
+  if (
+    !Array.isArray(value) ||
+    !value.every((v) => typeof v === 'string' && AGENT_NAME.test(v)) ||
+    new Set(value).size !== value.length
+  )
+    fail(
+      `"agents" must be a list of unique agent names (got ${JSON.stringify(value)})`
+    )
+  return [...(value as string[])]
 }
 
 function readRepos(value: unknown): Record<string, RepoEntry> {
@@ -176,6 +193,7 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
   return {
     contract: 1,
     org: readOrg(data.org),
+    agents: readAgents(data.agents),
     repos: readRepos(data.repos),
     scopes: readScopes(data.scopes),
   }
@@ -200,6 +218,10 @@ export async function writeManifest(
   const lines = ['{', '  "contract": 1,']
   if (manifest.org !== null)
     lines.push(`  "org": ${JSON.stringify(manifest.org)},`)
+  if (manifest.agents !== null)
+    lines.push(
+      `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`
+    )
   lines.push(
     '  "repos": {',
     repos.join(',\n'),

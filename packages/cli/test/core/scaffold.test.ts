@@ -19,7 +19,13 @@ test('the scaffold ships _gitignore, never .gitignore', async () => {
 
 test('the scaffold manifest is a valid empty workspace', async () => {
   const m = await loadManifest(scaffoldDir())
-  assert.deepEqual(m, { contract: 1, org: null, repos: {}, scopes: {} })
+  assert.deepEqual(m, {
+    contract: 1,
+    org: null,
+    agents: null,
+    repos: {},
+    scopes: {},
+  })
 })
 
 test('the scaffold passes the contract (template ADR is skipped)', async () => {

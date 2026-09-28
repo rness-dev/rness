@@ -193,6 +193,7 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
   await writeManifest(d, {
     contract: 1,
     org: null,
+    agents: null,
     repos: { web: { url: 'https://github.com/acme/web.git' } },
     scopes: {
       web: { path: 'org/web', extends: [] },
@@ -214,7 +215,13 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
 }
 `
   )
-  await writeManifest(d, { contract: 1, org: 'acme', repos: {}, scopes: {} })
+  await writeManifest(d, {
+    contract: 1,
+    org: 'acme',
+    agents: null,
+    repos: {},
+    scopes: {},
+  })
   assert.match(
     await readFile(join(d, 'rness.json'), 'utf8'),
     /^\{\n {2}"contract": 1,\n {2}"org": "acme",\n/
@@ -222,9 +229,74 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
   assert.deepEqual(await loadManifest(d), {
     contract: 1,
     org: 'acme',
+    agents: null,
     repos: {},
     scopes: {},
   })
+})
+
+// --- agents (spec 0011 §3.1) ----------------------------------------------------
+
+test('agents: absent is null ("never asked"), a list is kept, [] included', async (t) => {
+  for (const [agents, expected] of [
+    [undefined, null],
+    [[], []],
+    [['claude'], ['claude']],
+    [
+      ['claude', 'codex'],
+      ['claude', 'codex'],
+    ],
+  ] as const) {
+    const d = await fixture({ contract: 1, agents, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    assert.deepEqual((await loadManifest(d)).agents, expected)
+  }
+})
+
+test('agents: a list of unique lowercase names, or an error', async (t) => {
+  for (const agents of [
+    'claude',
+    [1],
+    ['Claude'],
+    [''],
+    ['claude', 'claude'],
+  ]) {
+    const d = await fixture({ contract: 1, agents, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      /^Error: rness\.json: "agents" must be a list of unique agent names/,
+      JSON.stringify(agents)
+    )
+  }
+})
+
+test('writeManifest puts agents after org, and writes [] too', async (t) => {
+  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  await writeManifest(d, {
+    contract: 1,
+    org: 'acme',
+    agents: ['claude'],
+    repos: {},
+    scopes: {},
+  })
+  assert.match(
+    await readFile(join(d, 'rness.json'), 'utf8'),
+    /^\{\n {2}"contract": 1,\n {2}"org": "acme",\n {2}"agents": \["claude"\],\n {2}"repos"/
+  )
+  await writeManifest(d, {
+    contract: 1,
+    org: null,
+    agents: [],
+    repos: {},
+    scopes: {},
+  })
+  assert.match(
+    await readFile(join(d, 'rness.json'), 'utf8'),
+    /^\{\n {2}"contract": 1,\n {2}"agents": \[\],\n/
+  )
+  assert.deepEqual((await loadManifest(d)).agents, [])
 })
 
 test('parseRepoSpec accepts repo, owner/repo and full URLs, and validates the name', () => {

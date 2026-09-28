@@ -697,7 +697,13 @@ export async function createCommand(
 
     // Joining: the catalogue is read from a clone staged outside the target,
     // so the picker can offer it before anything is written there.
-    let catalogue: Manifest = { contract: 1, org, repos: {}, scopes: {} }
+    let catalogue: Manifest = {
+      contract: 1,
+      org,
+      agents: null,
+      repos: {},
+      scopes: {},
+    }
     const staged = async (): Promise<string> => {
       staging ??= await mkdtemp(join(tmpdir(), 'rness-join-'))
       return join(staging, '.rness')

@@ -98,7 +98,7 @@ export async function createBlank(input: {
     ui,
     root,
     shown,
-    manifest: { contract: 1, org: null, repos: {}, scopes: {} },
+    manifest: { contract: 1, org: null, agents: null, repos: {}, scopes: {} },
     pm,
     skipInstall: input.skipInstall,
     kind: 'blank workspace',
