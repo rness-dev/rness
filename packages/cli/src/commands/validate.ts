@@ -1,7 +1,10 @@
+import { agentTargets } from '../core/agent-targets.ts'
+import { unsupportedAgents, unsupportedMessage } from '../core/agents.ts'
 import { checkBlocks } from '../core/blocks.ts'
 import { checkContract } from '../core/contract.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
+import { rnessCommand } from '../core/pm.ts'
 import { scopeChain } from '../core/scope.ts'
 import { warn } from '../core/style.ts'
 import { defaultTerminal } from '../core/terminal.ts'
@@ -44,6 +47,18 @@ export async function validateCommand(
       org,
     })
     problems.push(...blocks.problems)
+    // The team's agents (spec 0011 §3): a name this copy cannot compile, and
+    // a value a declared target guarantees but a clone lacks.
+    for (const name of unsupportedAgents(manifest.agents ?? []))
+      problems.push(unsupportedMessage(name))
+    const targets = await agentTargets(ws.root, manifest, { check: true })
+    for (const o of targets)
+      if (o.status === 'stale')
+        problems.push(
+          `${o.label}: ${o.detail ?? ''} (run ${rnessCommand()} sync)`
+        )
+      else if (o.status === 'invalid')
+        problems.push(`${o.label}: ${o.detail ?? 'unreadable'}`)
 
     const ui = await makeUi(deps.terminal ?? defaultTerminal)
     if (!ui.session) {
@@ -72,6 +87,8 @@ export async function validateCommand(
       else if (c.status === 'stale' || c.status === 'malformed')
         ui.error(c.message)
       else ui.warn(c.message)
+    for (const o of targets)
+      if (o.status === 'unchanged') ui.line('current', o.label)
     for (const p of problems) if (!blocks.problems.includes(p)) ui.error(p)
     ui.outro(
       problems.length > 0 ? 'Context mismatch' : 'Context OK',

@@ -226,3 +226,40 @@ test('off a terminal the bytes do not change, whatever the reporter could do', a
   assert.equal(c.out(), 'context ok\n')
   assert.ok(!c.out().includes('blocks current'), 'no session wording')
 })
+
+// --- agents (spec 0011 §3) ---------------------------------------------------
+
+test('validate refuses an agent this version cannot compile, and a missing guaranteed value', async (t) => {
+  const spec = {
+    org: 'acme',
+    repos: { api: { url: 'https://github.com/acme/api.git' } },
+    scopes: { api: { path: 'org/api' } },
+    dirs: ['org/api'],
+  }
+  const codex = await makeWorkspace(t, { ...spec, agents: ['codex'] })
+  const c1 = capture()
+  const unsupported = await run(['validate', '--cwd', codex])
+  c1.restore()
+  assert.equal(unsupported, 1)
+  assert.match(
+    c1.err(),
+    /rness\.json: agent "codex" is not supported by @rness\/cli \S+ \(supported: claude\)\n/
+  )
+
+  const claude = await makeWorkspace(t, { ...spec, agents: ['claude'] })
+  const c2 = capture()
+  const missing = await run(['validate', '--cwd', claude])
+  c2.restore()
+  assert.equal(missing, 1)
+  assert.match(
+    c2.err(),
+    /^org\/api\/\.claude\/settings\.json: permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness \(run rness sync\)$/m
+  )
+
+  const c3 = capture()
+  assert.equal(await run(['sync', '--yes', '--cwd', claude]), 0)
+  const ok = await run(['validate', '--cwd', claude])
+  c3.restore()
+  assert.equal(ok, 0, c3.err())
+  assert.match(c3.out(), /context ok\n$/)
+})
