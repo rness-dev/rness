@@ -1,5 +1,12 @@
 import { join } from 'node:path'
 
+import { agentTargets, leftoverTargets } from '../core/agent-targets.ts'
+import {
+  SUPPORTED_AGENTS,
+  TARGETS,
+  unsupportedAgents,
+  unsupportedMessage,
+} from '../core/agents.ts'
 import {
   BLOCK_SIZE_WARNING,
   isCurrentBlock,
@@ -10,7 +17,7 @@ import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
-import { loadManifest, workspaceName } from '../core/manifest.ts'
+import { loadManifest, workspaceName, writeManifest } from '../core/manifest.ts'
 import {
   type MergeResult,
   claudeMdAtRoot,
@@ -45,6 +52,8 @@ export interface SyncOptions {
   all?: boolean
   /** Skip the confirmation prompt. */
   yes?: boolean
+  /** Agents to declare in rness.json before compiling them (spec 0011 §3.2). */
+  agent?: string[]
   /** Internal (tests): directory to resolve from; default `process.cwd()`. */
   cwd?: string
 }
@@ -191,10 +200,31 @@ export async function syncCommand(
   const ui =
     deps.ui ??
     (opts.yes !== true && !check ? await makeUi(terminal) : { ...plainUi })
+  const agentFlags = opts.agent ?? []
+  if (agentFlags.length > 0 && check) {
+    process.stderr.write(
+      '--agent cannot be combined with --check: it declares agents in rness.json\n'
+    )
+    return 2
+  }
+  const unknown = unsupportedAgents(agentFlags)[0]
+  if (unknown !== undefined) {
+    process.stderr.write(
+      `unknown agent "${unknown}" (supported: ${SUPPORTED_AGENTS.join(', ')})\n`
+    )
+    return 2
+  }
   try {
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
     const org = workspaceName(manifest, ws.root)
+    // An agent this copy cannot compile would leave the team's files half
+    // made: refuse before anything is written (spec 0011 §3.1).
+    const unsupported = unsupportedAgents(manifest.agents ?? [])[0]
+    if (unsupported !== undefined) {
+      process.stderr.write(`${unsupportedMessage(unsupported)}\n`)
+      return 1
+    }
     if (ownUi) ui.intro(`Sync workspace ${org}`)
     if (
       opts.scope !== undefined &&
@@ -202,6 +232,46 @@ export async function syncCommand(
     ) {
       process.stderr.write(`unknown scope: ${opts.scope}\n`)
       return 1
+    }
+
+    // The team's agents: named on the command line, or asked once in a
+    // terminal; never asked by --yes, --check or --scope (spec 0011 §3.2).
+    let declare: string[] | null = null
+    if (agentFlags.length > 0) {
+      const current = manifest.agents ?? []
+      const added = agentFlags.filter((a) => !current.includes(a))
+      if (added.length > 0) declare = [...current, ...new Set(added)]
+    } else if (
+      manifest.agents === null &&
+      !check &&
+      opts.yes !== true &&
+      opts.scope === undefined &&
+      terminal.isTty()
+    ) {
+      const p = await terminal.prompts()
+      const answer = await p.multiselect<string>({
+        message: 'Which agents does your team use?',
+        options: Object.values(TARGETS).map((t) => ({
+          value: t.name,
+          label: t.label,
+        })),
+        required: false,
+      })
+      if (p.isCancel(answer)) {
+        ui.cancelled()
+        return 1
+      }
+      declare = Array.isArray(answer) ? answer : []
+    }
+    if (declare !== null) {
+      const before = manifest.agents ?? []
+      manifest.agents = declare
+      await writeManifest(ws.rnessDir, manifest)
+      for (const name of declare.filter((a) => !before.includes(a)))
+        ui.line('declared', `agent ${name} in .rness/rness.json`)
+      if (declare.length === 0)
+        ui.line('declared', 'no agent in .rness/rness.json')
+      ui.hint('rness.json changed: commit it in .rness, for the whole team')
     }
 
     const clones = await clonesIn(ws.root)
@@ -393,6 +463,30 @@ export async function syncCommand(
           problems.push(
             `${differences} block(s) out of date — run ${rnessCommand()} sync`
           )
+
+        // 3. Agent targets — the whole workspace, so never under --scope.
+        if (opts.scope === undefined) {
+          let stale = 0
+          for (const o of await agentTargets(ws.root, manifest, { check })) {
+            if (o.status === 'invalid')
+              problems.push(
+                `${o.label}: ${o.detail ?? 'unreadable'}; fix it, then ${rnessCommand()} sync`
+              )
+            else if (o.status === 'stale') {
+              stale += 1
+              lines.push(['stale', `${o.label} (${o.detail ?? ''})`])
+            } else lines.push([o.status, o.label])
+          }
+          if (stale > 0)
+            problems.push(
+              `${stale} agent file(s) out of date — run ${rnessCommand()} sync`
+            )
+          if (!check)
+            for (const label of await leftoverTargets(ws.root, manifest))
+              lines.push(
+                `${label} still carries the values of an agent no longer in rness.json (left as is)`
+              )
+        }
       }
 
       return problems.length > 0 ? 1 : 0

@@ -84,6 +84,11 @@ function buildProgram(state: RunState): Command {
     )
     .option('--pull', 'git pull --ff-only in every clean clone')
     .option('--all', 'clone every rness.json repository missing from org/')
+    .option(
+      '--agent <name>',
+      'declare an agent in rness.json, then write its files (repeatable; supported: claude)',
+      (value: string, previous: string[] = []) => [...previous, value]
+    )
     .option('-y, --yes', 'do not ask for confirmation')
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: SyncOptions) => {

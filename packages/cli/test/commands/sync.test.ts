@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {
   access,
   lstat,
+  mkdir,
   readFile,
   readlink,
   symlink,
@@ -14,6 +15,7 @@ import { run } from '../../src/cli.ts'
 import { type SyncOptions, syncCommand } from '../../src/commands/sync.ts'
 import { BEGIN, END } from '../../src/core/block.ts'
 import { readOrNull } from '../../src/core/fs.ts'
+import { loadManifest } from '../../src/core/manifest.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import {
   INSTEAD_OF_LINES,
@@ -362,16 +364,37 @@ test('with --all, a clone failure is reported, the manifest is untouched, other 
 const CANCEL = Symbol('cancel')
 
 interface Asked {
-  kind: 'picker' | 'confirm'
+  kind: 'picker' | 'confirm' | 'agents'
   message: string
   values?: string[]
   labels?: string[]
 }
 
 /** Scripted prompts: an unexpected question fails the test. */
-function scripted(answers: { pick?: unknown; confirm?: unknown }) {
+function scripted(answers: {
+  pick?: unknown
+  confirm?: unknown
+  /**
+   * The answer to "Which agents does your team use?" (spec 0011 §3.2). The
+   * tests that are not about agents declare `agents: []`, so it never comes.
+   */
+  agents?: unknown
+}) {
   const asked: Asked[] = []
   const prompts = {
+    async multiselect(o: {
+      message: string
+      options: { value: string; label?: string }[]
+    }) {
+      if (!('agents' in answers)) throw new Error('unexpected agents question')
+      asked.push({
+        kind: 'agents',
+        message: o.message,
+        values: o.options.map((x) => x.value),
+        labels: o.options.map((x) => x.label ?? x.value),
+      })
+      return answers.agents
+    },
     async autocompleteMultiselect(o: {
       message: string
       options: { value: string; label?: string }[]
@@ -411,6 +434,7 @@ async function catalogueWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
   const docs = await makeBareRepo(t, 'docs')
   return makeWorkspace(t, {
     org: 'acme',
+    agents: [],
     repos: { api: { url: api }, docs: { url: docs } },
     scopes: { api: { path: 'org/api' }, docs: { path: 'org/docs' } },
     files: { 'standards/coding.md': coding },
@@ -461,6 +485,7 @@ test('terminal: cancelling the picker writes nothing', async (t) => {
 test('terminal: nothing to offer asks for confirmation; a clone rness.json does not know is named', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
+    agents: [],
     scopes: { web: { path: 'org/web' } },
     files: { 'standards/coding.md': coding },
     dirs: ['org/web', 'org/extra'],
@@ -657,4 +682,136 @@ test('an excluded directory under org/ is not taken for an undeclared clone', as
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
   assert.doesNotMatch(r.out, /not in rness\.json/)
+})
+
+// --- agents (spec 0011 §3) ---------------------------------------------------
+
+const SETTINGS = '.claude/settings.json'
+const loadManifestAt = (root: string) => loadManifest(join(root, '.rness'))
+
+async function agentWorkspace(
+  t: Parameters<typeof makeWorkspace>[0],
+  agents?: string[]
+) {
+  return makeWorkspace(t, {
+    org: 'acme',
+    ...(agents === undefined ? {} : { agents }),
+    repos: { api: { url: 'https://github.com/acme/api.git' } },
+    scopes: { api: { path: 'org/api' } },
+    dirs: ['org/api'],
+  })
+}
+
+test('sync --agent claude declares it, then writes the Claude settings of every clone', async (t) => {
+  const root = await agentWorkspace(t)
+  const r = await sync(['--yes', '--agent', 'claude', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^declared agent claude in \.rness\/rness\.json\n/)
+  assert.match(r.out, /\nupdated {2}org\/api\/\.claude\/settings\.json\n/)
+  assert.deepEqual((await loadManifestAt(root)).agents, ['claude'])
+  assert.deepEqual(
+    JSON.parse(await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')),
+    { permissions: { additionalDirectories: ['../../.rness'] } }
+  )
+  const again = await sync(['--yes', '--cwd', root])
+  assert.equal(again.code, 0, again.err)
+  assert.match(again.out, /\nunchanged org\/api\/\.claude\/settings\.json\n/)
+  assert.doesNotMatch(again.out, /declared/)
+})
+
+test('an agent this version cannot compile is refused: --agent exits 2, rness.json exits 1', async (t) => {
+  const root = await agentWorkspace(t)
+  const flag = await sync(['--yes', '--agent', 'codex', '--cwd', root])
+  assert.equal(flag.code, 2)
+  assert.equal(flag.err, 'unknown agent "codex" (supported: claude)\n')
+  const check = await sync(['--check', '--agent', 'claude', '--cwd', root])
+  assert.equal(check.code, 2)
+  assert.match(check.err, /--agent cannot be combined with --check/)
+
+  const declared = await agentWorkspace(t, ['codex'])
+  const r = await sync(['--yes', '--cwd', declared])
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /rness\.json: agent "codex" is not supported by @rness\/cli /
+  )
+  await assert.rejects(readFile(join(declared, 'AGENTS.md'), 'utf8'))
+})
+
+test('--check reports a missing guaranteed value; --scope leaves the agent files alone', async (t) => {
+  const root = await agentWorkspace(t, ['claude'])
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 1)
+  assert.match(
+    check.out,
+    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness\)\n/
+  )
+  await assert.rejects(readFile(join(root, 'org', 'api', SETTINGS), 'utf8'))
+  const scoped = await sync(['--yes', '--scope', 'api', '--cwd', root])
+  assert.equal(scoped.code, 0, scoped.err)
+  assert.doesNotMatch(scoped.out, /settings\.json/)
+})
+
+test('a settings file that is not JSON is reported and kept', async (t) => {
+  const root = await agentWorkspace(t, ['claude'])
+  await mkdir(join(root, 'org', 'api', '.claude'))
+  await writeFile(join(root, 'org', 'api', SETTINGS), '{ oops')
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /org\/api\/\.claude\/settings\.json: not valid JSON; fix it, then rness sync/
+  )
+  assert.equal(
+    await readFile(join(root, 'org', 'api', SETTINGS), 'utf8'),
+    '{ oops'
+  )
+})
+
+test('in a terminal, with no agents key, sync asks once; [] means never again', async (t) => {
+  const root = await agentWorkspace(t)
+  const first = scripted({ agents: ['claude'], confirm: true })
+  const r = await syncIn({ cwd: root }, first.terminal)
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(first.asked[0], {
+    kind: 'agents',
+    message: 'Which agents does your team use?',
+    values: ['claude'],
+    labels: ['Claude Code'],
+  })
+  assert.deepEqual((await loadManifestAt(root)).agents, ['claude'])
+  await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')
+
+  const none = await agentWorkspace(t)
+  const asked = scripted({ agents: [], confirm: true })
+  assert.equal((await syncIn({ cwd: none }, asked.terminal)).code, 0)
+  assert.deepEqual((await loadManifestAt(none)).agents, [])
+  const later = scripted({ confirm: true })
+  assert.equal((await syncIn({ cwd: none }, later.terminal)).code, 0)
+  assert.equal(
+    later.asked.some((a) => a.kind === 'agents'),
+    false,
+    '[] is an answer: never asked again'
+  )
+
+  // --yes and --check never ask, and write no key.
+  const quiet = await agentWorkspace(t)
+  assert.equal((await sync(['--yes', '--cwd', quiet])).code, 0)
+  assert.equal((await loadManifestAt(quiet)).agents, null)
+})
+
+test('an agent removed from rness.json leaves its values, and sync says where', async (t) => {
+  const root = await agentWorkspace(t, ['claude'])
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0)
+  const file = join(root, '.rness', 'rness.json')
+  const json = JSON.parse(await readFile(file, 'utf8')) as { agents: string[] }
+  json.agents = []
+  await writeFile(file, JSON.stringify(json, null, 2))
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /org\/api\/\.claude\/settings\.json still carries the values of an agent no longer in rness\.json \(left as is\)/
+  )
+  await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')
 })
