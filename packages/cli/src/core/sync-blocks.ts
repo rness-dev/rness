@@ -12,7 +12,7 @@ import type { Ui } from './ui.ts'
  * always did. The session look keeps them to itself and says them in one —
  * `Synced 3 blocks: 2 updated, 1 unchanged` — since the child, whose stdout
  * is a pipe, can only print the plain look. `inPlace` runs when nothing is
- * installed (`create --skip-install`).
+ * installed (`create --skip-install`), or when delegation is off.
  */
 export async function syncBlocks(
   ui: Ui,
@@ -21,6 +21,10 @@ export async function syncBlocks(
   inPlace?: () => Promise<number>,
   sshWorks?: boolean
 ): Promise<number> {
+  // Delegation off (`rness-dev`, `RNESS_NO_DELEGATE=1`): the sources under
+  // test write the blocks, not the published copy the install just pinned.
+  if (process.env['RNESS_NO_DELEGATE'] === '1' && inPlace !== undefined)
+    return inPlace()
   if (!ui.session)
     return ui.step({ doing: 'syncing  the blocks', git: true }, () =>
       syncPinned(root, shown, inPlace)

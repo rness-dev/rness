@@ -13,20 +13,26 @@
 // user, and the shims pin the version under test exactly, which only exists
 // here. Every other package is proxied from npmjs. Publishing always names
 // the local registry explicitly, so a deploy can never reach npmjs.
+//
+// Every deploy publishes a version of its own — the next patch, `-dev.<time>`
+// (0.6.1-dev.20260928190512) — from a staged copy: the sources keep theirs,
+// and no cache can serve an older build under the number being tested.
 import { execFileSync, spawn } from 'node:child_process'
 import {
   closeSync,
+  cpSync,
   existsSync,
   globSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
@@ -118,14 +124,16 @@ function writeConfig() {
   )
   writeFileSync(
     FILES.npmrc,
-    `registry=${URL_BASE}\n//127.0.0.1:${PORT}/:_authToken=local\n`
+    // prefer-online: npm revalidates every packument, so the build deployed a
+    // second ago is seen at once rather than after the metadata cache expires.
+    `registry=${URL_BASE}\n//127.0.0.1:${PORT}/:_authToken=local\nprefer-online=true\n`
   )
 }
 
 function usageHint() {
   return [
     '',
-    'Use it from another shell:',
+    'Use it, in this shell or another:',
     `  export npm_config_userconfig=${FILES.npmrc}`,
     '  cd "$(mktemp -d /tmp/rness-XXXX)" && npm create rness   # or: npm create rness <org>',
     'and `unset npm_config_userconfig` when you are done.',
@@ -270,9 +278,13 @@ function clearPnpmCopies(names) {
         if (ours) drop(join(dlx, entry))
       }
     // The `v<n>` layer is pnpm's own store version, so it is matched rather
-    // than named: this keeps working across pnpm releases.
+    // than named: this keeps working across pnpm releases. So is the rest of
+    // the path (measured with pnpm 12): the metadata sits under `metadata/`
+    // and `metadata-full/`, in a directory named `127.0.0.1+<port>` or
+    // `http%3A+127.0.0.1+<port>` — missing one left `pnpm create` resolving
+    // `latest` from before the deploy.
     for (const dir of globSync(
-      join(cache, '*', 'metadata', `127.0.0.1+${PORT}`)
+      join(cache, '*', 'metadata*', `*127.0.0.1+${PORT}`)
     ))
       for (const name of names) {
         drop(join(dir, ...name.split('/')))
@@ -282,43 +294,72 @@ function clearPnpmCopies(names) {
   return cleared
 }
 
-async function deploy() {
-  // Deploying is what you want the registry for: start it rather than send the
-  // user back to another command. start() is idempotent and raises its own
-  // error when something else already answers on the port.
-  if (!(await isUp())) await start()
-  if (!existsSync(FILES.npmrc)) writeConfig()
-  const unlisted = readdirSync(join(ROOT, 'packages')).filter(
-    (d) => !PACKAGES.includes(d)
-  )
-  if (unlisted.length > 0) {
+/**
+ * The version a deploy publishes: the next patch as a prerelease stamped with
+ * the time (`0.6.0` → `0.6.1-dev.20260928190512`). No registry has seen that
+ * number, so no cache — npx, pnpm's store and metadata, a workspace's
+ * lockfile — can hold another tarball under it, and the pin a new workspace
+ * writes names exactly this build. The sources keep their own version.
+ */
+function devVersion(base, now = new Date()) {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(base)
+  if (m === null) throw new Error(`cannot derive a dev version from ${base}`)
+  const stamp = now.toISOString().replace(/\D/g, '').slice(0, 14)
+  return `${m[1]}.${m[2]}.${Number(m[3]) + 1}-dev.${stamp}`
+}
+
+/**
+ * tsup inlines src/version.ts as `var VERSION = "x.y.z";` in one chunk of
+ * dist/: the version the CLI reports, checks drift against and writes into a
+ * new workspace's pin. Anything else found is a build whose shape changed.
+ */
+function stampBundle(dist, version) {
+  const declaration = /\bvar VERSION = "[^"]+";/g
+  let found = 0
+  for (const file of globSync('*.js', { cwd: dist })) {
+    const path = join(dist, file)
+    const text = readFileSync(path, 'utf8')
+    const hits = text.match(declaration)?.length ?? 0
+    if (hits === 0) continue
+    found += hits
+    writeFileSync(
+      path,
+      text.replace(declaration, `var VERSION = ${JSON.stringify(version)};`)
+    )
+  }
+  if (found !== 1)
     throw new Error(
-      `packages not in the deploy order: ${unlisted.join(', ')} (edit scripts/verdaccio.mjs)`
+      `expected one VERSION declaration in ${dist}, found ${found}: the bundle changed shape (scripts/verdaccio.mjs)`
     )
-  }
-  const published = []
-  console.log('building…')
-  execFileSync('pnpm', ['build'], { cwd: ROOT, stdio: 'inherit' })
-  for (const dir of PACKAGES) {
-    const cwd = join(ROOT, 'packages', dir)
-    const { name, version } = JSON.parse(
-      readFileSync(join(cwd, 'package.json'), 'utf8')
-    )
-    // Redeploying the same version after a code change: drop the local copy.
-    try {
-      npm(['view', `${name}@${version}`, 'version'])
-      npm(['unpublish', `${name}@${version}`, '--force'])
-    } catch {
-      // not deployed yet
-    }
-    // The build ran above; prepublishOnly (typecheck, tests, build) is skipped.
-    npm(['publish', '--ignore-scripts'], cwd)
-    published.push(name)
-    console.log(`deployed ${name}@${version}`)
-  }
-  // `npm create rness` runs through npx, which keeps the first copy of a
-  // version it installed and never looks again: redeploying the same version
-  // would go on testing the old code. npx rebuilds the cache on demand.
+}
+
+/**
+ * A copy of `packages/<dir>` under `into`, published as `version`: its
+ * package.json says it, a shim's exact pin on @rness/cli names it, and the
+ * CLI's bundle reports it. The repository is left as it is.
+ */
+function stage(dir, version, into) {
+  const to = join(into, dir)
+  cpSync(join(ROOT, 'packages', dir), to, {
+    recursive: true,
+    filter: (src) => !src.split(sep).includes('node_modules'),
+  })
+  const manifest = join(to, 'package.json')
+  const pkg = JSON.parse(readFileSync(manifest, 'utf8'))
+  pkg.version = version
+  if (pkg.dependencies?.['@rness/cli'] !== undefined)
+    pkg.dependencies['@rness/cli'] = version
+  writeFileSync(manifest, `${JSON.stringify(pkg, null, 2)}\n`)
+  if (pkg.name === '@rness/cli') stampBundle(join(to, 'dist'), version)
+  return { name: pkg.name, cwd: to }
+}
+
+/**
+ * npx keeps what it installed under `<cache>/_npx/<hash>/`. A new version is
+ * fetched on its own, but an entry holding one of these packages is dropped
+ * anyway — only those: every other npx install on the machine stays.
+ */
+function clearNpxCopies(names) {
   let cache = join(homedir(), '.npm')
   try {
     cache = execFileSync('npm', ['config', 'get', 'cache'], {
@@ -329,23 +370,61 @@ async function deploy() {
     // npm's default location
   }
   const npx = join(cache, '_npx')
-  if (existsSync(npx)) {
-    rmSync(npx, { recursive: true, force: true })
-    console.log(`cleared the npx cache (${npx})`)
+  if (!existsSync(npx)) return []
+  const cleared = []
+  for (const entry of readdirSync(npx)) {
+    const modules = join(npx, entry, 'node_modules')
+    if (names.some((name) => existsSync(join(modules, ...name.split('/'))))) {
+      rmSync(join(npx, entry), { recursive: true, force: true })
+      cleared.push(join(npx, entry))
+    }
   }
-  const pnpmCleared = clearPnpmCopies(published)
-  for (const path of pnpmCleared) console.log(`cleared ${path}`)
+  return cleared
+}
+
+async function deploy() {
+  // Deploying is what you want the registry for: start it rather than send the
+  // user back to another command. start() is idempotent and raises its own
+  // error when something else already answers on the port.
+  if (!(await isUp())) await start()
+  writeConfig()
+  const unlisted = readdirSync(join(ROOT, 'packages')).filter(
+    (d) => !PACKAGES.includes(d)
+  )
+  if (unlisted.length > 0) {
+    throw new Error(
+      `packages not in the deploy order: ${unlisted.join(', ')} (edit scripts/verdaccio.mjs)`
+    )
+  }
+  console.log('building…')
+  execFileSync('pnpm', ['build'], { cwd: ROOT, stdio: 'inherit' })
+  const { version: base } = JSON.parse(
+    readFileSync(join(ROOT, 'packages', 'cli', 'package.json'), 'utf8')
+  )
+  const version = devVersion(base)
+  const staging = mkdtempSync(join(tmpdir(), 'rness-deploy-'))
+  const published = []
+  try {
+    for (const dir of PACKAGES) {
+      const { name, cwd } = stage(dir, version, staging)
+      // The build ran above; prepublishOnly (typecheck, tests, build) is
+      // skipped. `latest`, so `npm create rness` and `rness upgrade` resolve
+      // this build — npm asks for the tag of a prerelease explicitly.
+      npm(['publish', '--ignore-scripts', '--tag', 'latest'], cwd)
+      published.push(name)
+      console.log(`deployed ${name}@${version}`)
+    }
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
+  const cleared = [...clearNpxCopies(published), ...clearPnpmCopies(published)]
+  for (const path of cleared) console.log(`cleared ${path}`)
   console.log(usageHint())
-  // A workspace that already installed holds the third copy, in its own
-  // lockfile: the integrity recorded there is the old tarball's, and pnpm
-  // trusts it. Only its owner can drop it (measured: clearing the store and
-  // the metadata alone is not enough).
   console.log(
     [
       '',
-      'A workspace that already installed this version must forget it too:',
-      '  rm -rf <workspace>/.rness/node_modules <workspace>/.rness/pnpm-lock.yaml',
-      `  npm_config_userconfig=${FILES.npmrc} pnpm install --dir <workspace>/.rness`,
+      `A new workspace pins ${version}. To try it in one that exists, inside it:`,
+      `  rness upgrade ${version}`,
     ].join('\n')
   )
 }

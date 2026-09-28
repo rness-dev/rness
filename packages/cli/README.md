@@ -317,12 +317,16 @@ To reach it from a workspace elsewhere on the machine, link it once:
     ln -s "$PWD/scripts/dev.mjs" ~/.local/bin/rness-dev   # from the repository root
     cd ~/somewhere/acme && rness-dev validate
 
-`create` is never delegated, so it always runs these sources — and it refuses
-to run inside a workspace, so call it from an empty directory.
+`create` is never delegated, so it always runs these sources — the blocks it
+writes at the end included, even once it has installed the pinned copy — and
+it refuses to run inside a workspace, so call it from an empty directory.
 
 `pnpm verdaccio` is the other loop: a local registry that serves this build as
 a real package, for what only shows up through an install (`npm create rness`,
-the pinned copy, a version bump). It is slower, and its caches have to be
-forgotten on every redeploy, which `deploy` now does.
+the pinned copy, a version bump). Each `pnpm verdaccio deploy` publishes a
+version of its own — `0.6.1-dev.<time>` for sources at 0.6.0 — so a new
+workspace pins exactly that build and no cache serves an older one under its
+number. To try it in a workspace that exists, run `rness upgrade <version>`
+inside it; the deploy prints the line.
 
 Node ≥ 24. MIT.
