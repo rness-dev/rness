@@ -147,6 +147,25 @@ its content does.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## 0.6.0 — a workspace without GitHub
+
+- `rness create <name> --blank` writes `<name>/.rness/` (a `rness.json`
+  without `"org"`, committed), an empty `<name>/org/` and the root
+  `AGENTS.md` and `CLAUDE.md`, with no login, SSH test or GitHub request.
+  With `npm create`, flags go after `--`: `npm create rness demo -- --blank`.
+- In a terminal, `create` with no organization and no `--repos` first asks
+  how to start: from a GitHub organization, as before, or a blank local
+  workspace.
+- A `rness.json` without `"org"` is no longer a warning in `sync`, `add` and
+  `validate`. In such a workspace `rness add <repo>` exits 2 and asks for
+  `<owner>/<repo>` or a git URL: it used to take the directory name as the
+  owner, a repository that almost never exists.
+- The next steps `create` prints are written with the package manager that
+  ran it: `npx @rness/cli`, `pnpm dlx @rness/cli`, `yarn dlx @rness/cli`
+  (npx on Yarn 1), `bunx @rness/cli`, and `<pm> create rness <org>` for
+  teammates. They said `rness …`, a command `npm create` never installs.
+- Blocks are unchanged: no `rness sync` is needed after upgrading.
+
 ## 0.5.3 — catching up no longer depends on the global install
 
 - After a pull that moved the pin, the next `rness` command installs it. That
