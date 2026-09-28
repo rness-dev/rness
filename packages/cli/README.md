@@ -147,6 +147,12 @@ its content does.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## Unreleased
+
+- The scaffold's `validate.yml` uses `actions/checkout@v7` and
+  `actions/setup-node@v7`, as the rness repositories do. A workspace created
+  before keeps its own file.
+
 ## 0.6.1 — hints you can type
 
 - Every hint that names a command to run (`not cloned: …`, `run … sync`,
