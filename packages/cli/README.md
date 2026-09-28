@@ -147,8 +147,20 @@ its content does.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.6.2 — no dialog for the root CLAUDE.md
 
+- Opening Claude Code in a repository of the workspace no longer asks "Allow
+  external CLAUDE.md file imports?". The workspace root `CLAUDE.md` carried
+  `@AGENTS.md`; Claude Code loads that file from every repository below it,
+  where the import points outside the working directory. `rness sync` now
+  writes the global block into the root `CLAUDE.md` itself; a line that is
+  exactly `@AGENTS.md` is dropped there, the rest of the file is kept. The
+  `CLAUDE.md` of each repository keeps its `@AGENTS.md`.
+- The root files are not in any repository: run `rness sync` once after the
+  upgrade, on every machine. The blocks in the repositories are unchanged.
+- `sync --check` and `validate` cover the root `CLAUDE.md`. At the root, a
+  symlink between `CLAUDE.md` and `AGENTS.md` is left as it is and the other
+  file is still written.
 - The scaffold's `validate.yml` uses `actions/checkout@v7` and
   `actions/setup-node@v7`, as the rness repositories do. A workspace created
   before keeps its own file.
