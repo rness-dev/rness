@@ -70,18 +70,25 @@ export async function checkBlocks({
   })
   if (!(await exists(join(root, 'org')))) return derive()
 
+  // The root carries the global block twice: in AGENTS.md, and in CLAUDE.md
+  // with no `@AGENTS.md` pointer left (spec 0011 §2). A scope, in AGENTS.md.
   const targets: Array<{
     scope: string | null
     dir: string
     depth: number
+    file: string
     label: string
-  }> = [{ scope: null, dir: root, depth: 0, label: 'AGENTS.md' }]
+  }> = [
+    { scope: null, dir: root, depth: 0, file: 'AGENTS.md', label: 'AGENTS.md' },
+    { scope: null, dir: root, depth: 0, file: 'CLAUDE.md', label: 'CLAUDE.md' },
+  ]
   for (const [name, entry] of Object.entries(manifest.scopes)) {
     const segments = entry.path.split('/')
     targets.push({
       scope: name,
       dir: join(root, ...segments),
       depth: segments.length,
+      file: 'AGENTS.md',
       label: `${entry.path}/AGENTS.md`,
     })
   }
@@ -95,7 +102,7 @@ export async function checkBlocks({
       )
       continue
     }
-    const text = await readOrNull(join(t.dir, 'AGENTS.md'))
+    const text = await readOrNull(join(t.dir, t.file))
     const lines = text === null ? [] : text.split(/\r?\n/)
     const found = findBlock(lines)
     if (found.kind === 'none') {
@@ -123,7 +130,12 @@ export async function checkBlocks({
     })
     // Two ways to be stale: the header no longer matches a fresh render, or the
     // body no longer matches its own header — a hand edit inside the block.
-    if (isCurrentBlock(lines.slice(found.begin, found.end + 1), fresh.hash))
+    const pointerLeft =
+      t.file === 'CLAUDE.md' && lines.some((l) => l.trim() === '@AGENTS.md')
+    if (
+      isCurrentBlock(lines.slice(found.begin, found.end + 1), fresh.hash) &&
+      !pointerLeft
+    )
       note(t.label, 'current')
     else
       note(

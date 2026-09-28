@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -118,6 +118,7 @@ test('checkBlocks reports every target, and derives problems and warnings from t
   // the scopes of the manifest (spec 0007 §5c).
   assert.deepEqual(result.checks, [
     { label: 'AGENTS.md', status: 'current', message: null },
+    { label: 'CLAUDE.md', status: 'current', message: null },
     { label: 'org/web/AGENTS.md', status: 'current', message: null },
     {
       label: 'org/api/AGENTS.md',
@@ -134,5 +135,31 @@ test('checkBlocks reports every target, and derives problems and warnings from t
       .filter((c) => c.message !== null)
       .map((c) => c.message)
       .sort()
+  )
+})
+
+test('the root CLAUDE.md is checked: its block, and no @AGENTS.md pointer left (spec 0011 §2)', async (t) => {
+  const root = await synced(t)
+  const block = await readFile(join(root, 'CLAUDE.md'), 'utf8')
+
+  await writeFile(join(root, 'CLAUDE.md'), `@AGENTS.md\n${block}`)
+  assert.deepEqual((await check(root)).problems, [
+    'CLAUDE.md: stale rness block (run rness sync)',
+  ])
+
+  await writeFile(join(root, 'CLAUDE.md'), '@AGENTS.md\n')
+  const pointer = await check(root)
+  assert.deepEqual(pointer.problems, [])
+  assert.ok(
+    pointer.warnings.includes('CLAUDE.md: no rness block yet (run rness sync)')
+  )
+
+  await rm(join(root, 'CLAUDE.md'))
+  await symlink('AGENTS.md', join(root, 'CLAUDE.md'))
+  const linked = await check(root)
+  assert.deepEqual(linked.problems, [])
+  assert.equal(
+    linked.checks.find((c) => c.label === 'CLAUDE.md')?.status,
+    'current'
   )
 })

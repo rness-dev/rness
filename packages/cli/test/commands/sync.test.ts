@@ -63,7 +63,52 @@ test('writes the root and scope blocks and the CLAUDE.md pointers; skips scopes 
   const rootBlock = await readFile(join(root, 'AGENTS.md'), 'utf8')
   assert.match(rootBlock, /· scope: global ·/)
   assert.doesNotMatch(rootBlock, /standards\/web\/seo\.md/)
-  assert.equal(await readFile(join(root, 'CLAUDE.md'), 'utf8'), '@AGENTS.md\n')
+  // The root CLAUDE.md carries the global block in clear: Claude Code loads it
+  // from every repository below, where `@AGENTS.md` would be an external import
+  // (spec 0011 §2). Scopes keep the pointer.
+  const rootClaude = await readFile(join(root, 'CLAUDE.md'), 'utf8')
+  assert.equal(rootClaude, rootBlock)
+  assert.doesNotMatch(rootClaude, /@AGENTS\.md/)
+})
+
+test('the root CLAUDE.md pointer is converted once; --check reports it until then', async (t) => {
+  const root = await basic(t)
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0)
+  await writeFile(join(root, 'CLAUDE.md'), '# Mine\n\n@AGENTS.md\nkeep me\n')
+
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 1)
+  assert.match(check.out, /^unchanged AGENTS\.md\nstale {4}CLAUDE\.md\n/)
+  assert.match(
+    await readFile(join(root, 'CLAUDE.md'), 'utf8'),
+    /@AGENTS\.md/,
+    '--check writes nothing'
+  )
+
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^unchanged AGENTS\.md\nupdated {2}CLAUDE\.md\n/)
+  const text = await readFile(join(root, 'CLAUDE.md'), 'utf8')
+  assert.match(text, /^# Mine\n\n<!-- BEGIN rness -->/)
+  assert.match(text, /<!-- END rness -->\n\nkeep me\n$/)
+  assert.doesNotMatch(text, /@AGENTS\.md/)
+
+  const again = await sync(['--check', '--cwd', root])
+  assert.equal(again.code, 0, again.out)
+  assert.doesNotMatch(again.out, /CLAUDE\.md/)
+})
+
+test('at the root a symlinked CLAUDE.md is left as it is, and AGENTS.md is still written', async (t) => {
+  const root = await basic(t)
+  await symlink('AGENTS.md', join(root, 'CLAUDE.md'))
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^updated {2}AGENTS\.md\nupdated {2}org\/web/)
+  assert.doesNotMatch(r.out, /skipped {2}AGENTS\.md/)
+  assert.equal((await lstat(join(root, 'CLAUDE.md'))).isSymbolicLink(), true)
+  assert.match(await readFile(join(root, 'CLAUDE.md'), 'utf8'), /BEGIN rness/)
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 0, check.out)
 })
 
 test('a second run changes nothing; --check agrees; editing a standard makes --check fail', async (t) => {

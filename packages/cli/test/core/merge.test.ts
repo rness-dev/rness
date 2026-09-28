@@ -6,7 +6,12 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { readOrNull, writeFileAtomic } from '../../src/core/fs.ts'
-import { ensureClaudeMd, findBlock, mergeBlock } from '../../src/core/merge.ts'
+import {
+  claudeMdAtRoot,
+  ensureClaudeMd,
+  findBlock,
+  mergeBlock,
+} from '../../src/core/merge.ts'
 
 const BLOCK = '<!-- BEGIN rness -->\nBLOCK\n<!-- END rness -->'
 const fixtures = fileURLToPath(new URL('../fixtures/blocks/', import.meta.url))
@@ -141,4 +146,40 @@ test('writeFileAtomic leaves no temp file behind; readOrNull is null only for EN
   assert.equal(await readOrNull(file), 'hello\n')
   const { readdir } = await import('node:fs/promises')
   assert.deepEqual(await readdir(dir), ['AGENTS.md'])
+})
+
+// --- the workspace root CLAUDE.md (spec 0011 §2) ------------------------------
+
+test('claudeMdAtRoot: a missing file, or the bare pointer, becomes the block alone', () => {
+  for (const existing of [
+    null,
+    '@AGENTS.md\n',
+    '@AGENTS.md',
+    '\n@AGENTS.md\n\n',
+  ]) {
+    const r = claudeMdAtRoot(existing, BLOCK)
+    assert.ok(r.ok)
+    assert.equal(r.text, `${BLOCK}\n`, JSON.stringify(existing))
+    assert.equal(r.changed, true)
+  }
+})
+
+test('claudeMdAtRoot: the pointer line goes, the rest of the file stays', () => {
+  const r = claudeMdAtRoot('# Notes\n\n@AGENTS.md\nmine\n', BLOCK)
+  assert.ok(r.ok)
+  assert.equal(r.text, `# Notes\n\n${BLOCK}\n\nmine\n`)
+})
+
+test('claudeMdAtRoot: a current file is unchanged; CRLF is kept', () => {
+  const current = claudeMdAtRoot(`${BLOCK}\n`, BLOCK)
+  assert.ok(current.ok)
+  assert.equal(current.changed, false)
+  const crlf = claudeMdAtRoot('mine\r\n@AGENTS.md\r\n', BLOCK)
+  assert.ok(crlf.ok)
+  assert.equal(crlf.text, `${BLOCK.split('\n').join('\r\n')}\r\n\r\nmine\r\n`)
+})
+
+test('claudeMdAtRoot: two spans are an error, and the text is left alone', () => {
+  const r = claudeMdAtRoot(`${BLOCK}\n${BLOCK}\n`, BLOCK)
+  assert.equal(r.ok, false)
 })

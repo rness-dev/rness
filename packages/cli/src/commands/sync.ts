@@ -11,7 +11,13 @@ import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
-import { ensureClaudeMd, findBlock, mergeBlock } from '../core/merge.ts'
+import {
+  type MergeResult,
+  claudeMdAtRoot,
+  ensureClaudeMd,
+  findBlock,
+  mergeBlock,
+} from '../core/merge.ts'
 import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
@@ -74,6 +80,37 @@ function targetsOf(
     })
   }
   return targets
+}
+
+/**
+ * Bring one file's rness block up to date — or, in `check`, only say whether
+ * it is. Current by its hash, not by its text: a block an older CLI wrote,
+ * whose header still names that version, is left byte for byte. At the root
+ * `CLAUDE.md` a leftover `@AGENTS.md` pointer also makes it out of date.
+ */
+async function syncBlockFile(
+  file: string,
+  block: { text: string; hash: string },
+  check: boolean,
+  rootClaudeMd = false
+): Promise<'unchanged' | 'stale' | 'updated' | { error: string }> {
+  const existing = await readOrNull(file)
+  const existingLines = existing === null ? [] : existing.split(/\r?\n/)
+  const span = findBlock(existingLines)
+  const current =
+    span.kind === 'one' &&
+    isCurrentBlock(existingLines.slice(span.begin, span.end + 1), block.hash) &&
+    !(rootClaudeMd && existingLines.some((l) => l.trim() === '@AGENTS.md'))
+  const merged: MergeResult = current
+    ? { ok: true, text: existing ?? '', changed: false }
+    : rootClaudeMd
+      ? claudeMdAtRoot(existing, block.text)
+      : mergeBlock(existing, block.text)
+  if (!merged.ok) return { error: merged.error }
+  if (!merged.changed) return 'unchanged'
+  if (check) return 'stale'
+  await writeFileAtomic(file, merged.text)
+  return 'updated'
 }
 
 /** The picker's "select all" entry; no repository name can take this value. */
@@ -289,13 +326,16 @@ export async function syncCommand(
               lines.push(['skipped', `${t.label} (directory not present)`])
             continue
           }
-          // One of the pair symlinked to the other (the common `CLAUDE.md →
-          // AGENTS.md`) is left untouched: reading follows the link, and the
-          // atomic rename would replace the link with a duplicate of its target.
-          const linked = await Promise.all(
+          // In a scope, one of the pair symlinked to the other (the common
+          // `CLAUDE.md → AGENTS.md`) leaves the directory untouched: reading
+          // follows the link, and the atomic rename would replace the link with
+          // a duplicate of its target. At the root a link is still never
+          // rewritten, but the other file is (spec 0011 §2).
+          const [agentsLinked, claudeLinked] = await Promise.all(
             MANAGED_FILES.map((f) => isSymlink(join(t.dir, f)))
           )
-          if (linked.includes(true)) {
+          const atRoot = t.scope === null
+          if (!atRoot && (agentsLinked === true || claudeLinked === true)) {
             lines.push(['skipped', `${t.label} (symlink)`])
             continue
           }
@@ -315,38 +355,39 @@ export async function syncCommand(
               `${t.label}: block is ${Math.round(block.bytes / 1024)} KB (over 32 KB)`
             )
           }
-          const file = join(t.dir, 'AGENTS.md')
-          const existing = await readOrNull(file)
-          // Current by its hash, not by its text: a block an older CLI wrote,
-          // whose header still names that version, is left byte for byte.
-          const existingLines = existing === null ? [] : existing.split(/\r?\n/)
-          const span = findBlock(existingLines)
-          const current =
-            span.kind === 'one' &&
-            isCurrentBlock(
-              existingLines.slice(span.begin, span.end + 1),
-              block.hash
-            )
-          const merged = current
-            ? { ok: true as const, text: existing ?? '', changed: false }
-            : mergeBlock(existing, block.text)
-          if (!merged.ok) {
-            problems.push(`${t.label}: ${merged.error}`)
+          const agents =
+            agentsLinked === true
+              ? 'skipped'
+              : await syncBlockFile(join(t.dir, 'AGENTS.md'), block, check)
+          if (typeof agents === 'object') {
+            problems.push(`${t.label}: ${agents.error}`)
             continue
           }
-          if (!merged.changed) {
-            lines.push(['unchanged', `${t.label}`])
+          lines.push(
+            agents === 'skipped'
+              ? ['skipped', `${t.label} (symlink)`]
+              : [agents, t.label]
+          )
+          if (agents === 'stale') differences += 1
+          if (!atRoot) {
             if (!check) await ensureClaudeMd(t.dir)
             continue
           }
-          if (check) {
-            lines.push(['stale', `${t.label}`])
-            differences += 1
+          // The root CLAUDE.md follows the root AGENTS.md: its line is said
+          // only when its status differs (a pointer converted, a hand edit).
+          if (claudeLinked === true) continue
+          const claude = await syncBlockFile(
+            join(t.dir, 'CLAUDE.md'),
+            block,
+            check,
+            true
+          )
+          if (typeof claude === 'object') {
+            problems.push(`CLAUDE.md: ${claude.error}`)
             continue
           }
-          await writeFileAtomic(file, merged.text)
-          await ensureClaudeMd(t.dir)
-          lines.push(['updated', `${t.label}`])
+          if (claude === 'stale') differences += 1
+          if (claude !== agents) lines.push([claude, 'CLAUDE.md'])
         }
         if (check && differences > 0)
           problems.push(

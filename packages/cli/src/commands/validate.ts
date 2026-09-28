@@ -59,7 +59,15 @@ export async function validateCommand(
     // commands cross the same targets, so they read the same (spec 0007 §5c).
     // A conforming block is grey — green means something was written, and on a
     // large organization that is what must stand out (spec 0007 §4).
-    for (const c of blocks.checks)
+    // The root CLAUDE.md follows the root AGENTS.md, as in `sync`: its line
+    // is said only when its status differs.
+    const rootStatus = blocks.checks.find(
+      (c) => c.label === 'AGENTS.md'
+    )?.status
+    const shown = blocks.checks.filter(
+      (c) => !(c.label === 'CLAUDE.md' && c.status === rootStatus)
+    )
+    for (const c of shown)
       if (c.message === null) ui.line('current', c.label)
       else if (c.status === 'stale' || c.status === 'malformed')
         ui.error(c.message)

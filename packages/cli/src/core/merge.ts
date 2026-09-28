@@ -79,6 +79,29 @@ export function mergeBlock(
   return { ok: true, text, changed: text !== existing }
 }
 
+const POINTER = '@AGENTS.md'
+
+/**
+ * The workspace root `CLAUDE.md` (spec 0011 §2): the global block in clear.
+ * Claude Code loads it from every directory below, where `@AGENTS.md` would
+ * be an import outside the working directory — gated behind a dialog. So the
+ * pointer line rness wrote there is dropped, and the block merged like any
+ * other; the rest of the file is kept.
+ */
+export function claudeMdAtRoot(
+  existing: string | null,
+  block: string
+): MergeResult {
+  if (existing === null) return mergeBlock(null, block)
+  const lines = existing.split(/\r?\n/)
+  if (!lines.some((l) => l.trim() === POINTER))
+    return mergeBlock(existing, block)
+  const eol = existing.includes('\r\n') ? '\r\n' : '\n'
+  const rest = lines.filter((l) => l.trim() !== POINTER).join(eol)
+  const merged = mergeBlock(rest.trim() === '' ? null : rest, block)
+  return merged.ok ? { ...merged, changed: merged.text !== existing } : merged
+}
+
 /**
  * `CLAUDE.md` next to an `AGENTS.md`: create with `@AGENTS.md`, or prepend that
  * line when absent. A symlinked `CLAUDE.md` is left exactly as it is — reading
