@@ -6,8 +6,9 @@ Not an agent — no LLM loop.
 
 ## Install
 
-    npm create rness           # prompts for the organization, then the repositories for your workspace
+    npm create rness           # asks how to start: a GitHub organization, or a blank workspace
     npm create rness acme      # the organization github.com/acme, no first prompt
+    pnpm create rness demo --blank   # ./demo with no GitHub step; npm: npm create rness demo -- --blank
     pnpm create rness          # the same with pnpm, yarn or bun: `.rness/` is
     yarn create rness          # installed with the manager that ran the command
     bun create rness
@@ -20,6 +21,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 ## Commands
 
     rness create [<org>] [--repos a,b] [--pm npm|pnpm|yarn|bun] [--ssh|--https] [--skip-install] -y
+    rness create <name> --blank [--pm npm|pnpm|yarn|bun] [--skip-install] -y
     rness add <repo> [--scopes apps/web,packages/ui] [--ssh|--https] -y
     rness sync [--all] [--scope <name>] [--check] [--pull] -y
     rness upgrade [<version>] -y
@@ -31,6 +33,12 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 `create` never runs inside a workspace. `add`, `sync` and `create` ask for
 confirmation in a terminal; pass `-y`/`--yes` in scripts. `sync --check`
 writes nothing and exits 1 when a block is out of date — use it in CI.
+
+`create --blank` needs no GitHub organization, account or login: it writes
+`<name>/.rness/` (a `rness.json` without `"org"`, committed), an empty
+`<name>/org/` and the root `AGENTS.md` and `CLAUDE.md`. Only the install of
+`.rness/` goes to the network. Bring repositories in with
+`rness add <owner>/<repo>` or a git URL — a bare name needs an `"org"`.
 
 ### Log in
 

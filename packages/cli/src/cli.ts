@@ -153,9 +153,12 @@ function buildProgram(state: RunState): Command {
   program
     .command('create')
     .description(
-      'Create a workspace for a GitHub organization, or join its existing .rness'
+      "Create or join a GitHub organization's workspace, or a blank one with --blank"
     )
-    .argument('[org]', 'the GitHub organization, same as --org')
+    .argument(
+      '[name]',
+      'the GitHub organization, same as --org; with --blank, the workspace directory'
+    )
     .option(
       '--org <name>',
       'the GitHub organization, exact name (github.com/<name>)'
@@ -173,6 +176,10 @@ function buildProgram(state: RunState): Command {
       'force git@github.com: (default: SSH when it works, else HTTPS)'
     )
     .option('--https', 'force https://github.com/')
+    .option(
+      '--blank',
+      'a local workspace with no GitHub organization: .rness/, an empty org/, the root files'
+    )
     .option('--skip-install', 'do not install .rness/ dependencies')
     .option('-y, --yes', 'do not ask for confirmation')
     .option('--template <name>', 'reserved')
@@ -180,6 +187,13 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (orgArg: string | undefined, opts: CreateOptions) => {
+      // Blank, the positional names the directory; --org is refused there.
+      if (opts.blank === true) {
+        state.code = await createCommand(
+          orgArg === undefined ? opts : { ...opts, name: orgArg }
+        )
+        return
+      }
       if (
         orgArg !== undefined &&
         opts.org !== undefined &&

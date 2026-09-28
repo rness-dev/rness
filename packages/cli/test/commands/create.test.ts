@@ -673,7 +673,14 @@ function withEnv(
 const CANCEL = Symbol('cancel')
 
 interface Script {
-  text?: string[]
+  text?: (string | typeof CANCEL)[]
+  /**
+   * The answer to "How do you want to start?". Left out, it is answered
+   * "github" without being recorded, as the login is declined: every wizard
+   * test that is not about a blank workspace reads as it did before there was
+   * one (spec 0012).
+   */
+  start?: 'github' | 'blank' | typeof CANCEL
   confirm?: (boolean | typeof CANCEL)[]
   pick?: (string[] | typeof CANCEL)[]
   /** "Which GitHub organization?" answers. */
@@ -709,6 +716,7 @@ function terminal(script: Script) {
       asked.push(opts.message)
       for (;;) {
         const answer = next(script.text, opts.message)
+        if (answer === CANCEL) return answer
         const error =
           typeof opts.validate === 'function'
             ? await opts.validate(answer)
@@ -727,8 +735,11 @@ function terminal(script: Script) {
       return next(script.confirm, opts.message)
     },
     async select(opts: { message: string; options: { value: string }[] }) {
+      if (opts.message === START_Q && script.start === undefined)
+        return 'github'
       asked.push(opts.message)
       offered.push(opts.options.map((o) => o.value))
+      if (opts.message === START_Q) return script.start
       return next(script.select, opts.message)
     },
     async autocompleteMultiselect(opts: {
@@ -770,6 +781,8 @@ async function stagedJoins(): Promise<string[]> {
   return (await readdir(tmpdir())).filter((n) => n.startsWith('rness-join-'))
 }
 
+const START_Q = 'How do you want to start?'
+const NAME_Q = 'What should the workspace be called?'
 const ORG_Q = 'What is your GitHub organization named?'
 const LOGIN_Q = 'Log in to GitHub to list private repositories?'
 const PUBLISH_Q = /^Create \S+\/\.rness on GitHub \(private\) and push it\?$/
@@ -937,7 +950,8 @@ test('wizard, join: a cancelled picker exits 0, writes nothing and leaves no sta
 test('wizard: flags only, in a terminal, keep one confirm; declining exits 0 and writes nothing', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   const cwd = await scratch(t)
-  const term = terminal({ confirm: [false] })
+  // An organization settles how to start: asked, the first question would cancel.
+  const term = terminal({ start: CANCEL, confirm: [false] })
   const r = await wizard(
     {
       org: 'acme',
@@ -1633,4 +1647,260 @@ test('joining adopts the package manager the workspace declares; --pm still wins
   ])
   assert.equal(forced.code, 0, forced.err)
   assert.match(forced.out, /^skipped {2}install with npm \(--skip-install\)$/m)
+})
+
+// --- a blank workspace (spec 0012) -------------------------------------------
+
+/** A provider or a transport whose every use fails: the proof no GitHub step ran. */
+function forbidden<T extends object>(what: string): T {
+  return new Proxy({} as T, {
+    get: (_target, key) => {
+      throw new Error(`${what} used for a blank workspace: ${String(key)}`)
+    },
+  })
+}
+
+const offline = (): [Transport, GitProvider] => [
+  forbidden<Transport>('transport'),
+  forbidden<GitProvider>('provider'),
+]
+
+const BLANK_NEXT = [
+  'cd my-project',
+  '# bring a repository in: <owner>/<repo> on GitHub, or any git URL',
+  'rness add <owner>/<repo>',
+  '# to share it: set "org" in .rness/rness.json, then push .rness to github.com/<org>/.rness',
+]
+
+const NAME_RULE_ERROR = (name: string): string =>
+  `workspace name "${name}" may only contain letters, digits, '.', '_' and '-', not starting with '-'`
+
+test('blank: .rness without "org", an empty org/ and the root files — and no GitHub step', async (t) => {
+  const cwd = await scratch(t)
+  const noTty: CreateDeps = {
+    isTty: () => false,
+    prompts: () => Promise.reject(new Error('no prompt off a terminal')),
+  }
+  const r = await wizard(
+    {
+      blank: true,
+      name: 'my-project',
+      yes: true,
+      skipInstall: true,
+      pm: 'npm',
+      cwd,
+    },
+    noTty,
+    ...offline()
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.equal(r.err, '')
+  assert.equal(
+    r.out,
+    [
+      'created  my-project/.rness (blank workspace)',
+      'skipped  install with npm (--skip-install)',
+      'committed my-project/.rness',
+      'updated  AGENTS.md',
+      '',
+      'Workspace `my-project` is ready in my-project/.',
+      '',
+      'Next:',
+      ...BLANK_NEXT.map((l) => `  ${l}`),
+      '',
+    ].join('\n')
+  )
+  const root = join(cwd, 'my-project')
+  assert.deepEqual((await readdir(root)).sort(), [
+    '.rness',
+    'AGENTS.md',
+    'CLAUDE.md',
+    'org',
+  ])
+  assert.deepEqual(await readdir(join(root, 'org')), [])
+  const m = await loadManifest(join(root, '.rness'))
+  assert.equal(m.org, null)
+  assert.deepEqual(m.repos, {})
+  assert.deepEqual(m.scopes, {})
+  assert.doesNotMatch(
+    await readFile(join(root, '.rness', 'rness.json'), 'utf8'),
+    /"org"/
+  )
+  const pkg = JSON.parse(
+    await readFile(join(root, '.rness', 'package.json'), 'utf8')
+  ) as { devDependencies: Record<string, string> }
+  assert.equal(pkg.devDependencies['@rness/cli'], VERSION)
+  const { stdout } = await execFileP('git', ['log', '--oneline', 'main'], {
+    cwd: join(root, '.rness'),
+  })
+  assert.equal(stdout.trim().split('\n').length, 1, 'exactly one commit')
+  assert.match(stdout, /chore: rness workspace context/)
+  assert.match(
+    await readFile(join(root, 'AGENTS.md'), 'utf8'),
+    /rness workspace `my-project`/
+  )
+})
+
+test('blank through the command line: create <name> --blank; the name keeps its case', async (t) => {
+  const cwd = await scratch(t)
+  const r = await create([
+    'My.Project_2',
+    '--blank',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^created {2}My\.Project_2\/\.rness \(blank workspace\)\n/
+  )
+  const m = await loadManifest(join(cwd, 'My.Project_2', '.rness'))
+  assert.equal(m.org, null)
+  assert.deepEqual(await readdir(cwd), ['.git', 'My.Project_2'])
+})
+
+test('blank: refused before anything is written', async (t) => {
+  const cwd = await scratch(t)
+  const base = ['--yes', '--skip-install', '--cwd', cwd]
+  for (const [flags, message] of [
+    [['--org', 'acme'], '--blank cannot be combined with --org\n'],
+    [['--repos', 'api'], '--blank cannot be combined with --repos\n'],
+    [['--ssh'], '--blank cannot be combined with --ssh\n'],
+    [['--https'], '--blank cannot be combined with --https\n'],
+    [['--host', 'file:///x/'], '--blank cannot be combined with --host\n'],
+  ] as const) {
+    const r = await create(['my-project', '--blank', ...flags, ...base])
+    assert.equal(r.code, 2, flags.join(' '))
+    assert.equal(r.err, message)
+  }
+
+  const noName = await create(['--blank', ...base])
+  assert.equal(noName.code, 2)
+  assert.equal(
+    noName.err,
+    'rness create --blank needs a <name> without a prompt\n'
+  )
+
+  for (const bad of ['.', '..', 'a/b', 'my project', 'é']) {
+    const r = await create([bad, '--blank', ...base])
+    assert.equal(r.code, 2, bad)
+    assert.equal(r.err, `${NAME_RULE_ERROR(bad)}\n`)
+  }
+  // On the command line commander reads a leading '-' as an option; the rule
+  // still holds for every other caller.
+  const dash = await wizard(
+    { blank: true, name: '-x', yes: true, cwd },
+    terminal({}).deps,
+    ...offline()
+  )
+  assert.equal(dash.code, 2)
+  assert.equal(dash.err, `${NAME_RULE_ERROR('-x')}\n`)
+
+  const noYes = await create([
+    'my-project',
+    '--blank',
+    '--skip-install',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(noYes.code, 2)
+  assert.match(noYes.err, /pass --yes/)
+  assert.deepEqual(await readdir(cwd), ['.git'])
+
+  await mkdir(join(cwd, 'my-project'))
+  await writeFile(join(cwd, 'my-project', 'stuff.txt'), 'x')
+  const notEmpty = await create(['my-project', '--blank', ...base])
+  assert.equal(notEmpty.code, 1)
+  assert.equal(notEmpty.err, 'my-project is not empty\n')
+
+  const inside = await makeWorkspace(t, { org: 'acme' })
+  const nested = await create([
+    'my-project',
+    '--blank',
+    '--yes',
+    '--skip-install',
+    '--cwd',
+    inside,
+  ])
+  assert.equal(nested.code, 1)
+  assert.match(nested.err, /already inside an rness workspace/)
+  await assert.rejects(access(join(inside, 'my-project')))
+})
+
+test('blank: a failed install is rolled back, the directory too', async (t) => {
+  const cwd = await scratch(t)
+  await fakeBin(t, 'bun', [
+    '#!/bin/sh',
+    'if [ "$1" = "--version" ]; then echo "1.0.0"; exit 0; fi',
+    'if [ "$1" = "install" ]; then echo "bun install failed: offline" 1>&2; exit 1; fi',
+    'exit 0',
+  ])
+  const r = await create([
+    'my-project',
+    '--blank',
+    '--yes',
+    '--pm',
+    'bun',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 1)
+  assert.match(r.err, /bun install failed: offline/)
+  assert.match(r.err, /removed my-project\/\.rness after the failure/)
+  assert.deepEqual(await readdir(cwd), ['.git'])
+})
+
+test('wizard, blank: the first question, then the name; GitHub is never asked', async (t) => {
+  const cwd = await scratch(t)
+  const term = terminal({ start: 'blank', text: ['my project', 'my-project'] })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', cwd },
+    term.deps,
+    ...offline()
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [START_Q, NAME_Q], 'no login, no confirm')
+  assert.deepEqual(term.offered, [['github', 'blank']])
+  assert.deepEqual(term.refused, [NAME_RULE_ERROR('my project')])
+  const m = await loadManifest(join(cwd, 'my-project', '.rness'))
+  assert.equal(m.org, null)
+  await access(join(cwd, 'my-project', 'AGENTS.md'))
+})
+
+test('wizard, blank: --blank <name> keeps one confirm; a cancel anywhere writes nothing', async (t) => {
+  const cwd = await scratch(t)
+  const declined = terminal({ confirm: [false] })
+  const r1 = await wizard(
+    { blank: true, name: 'my-project', skipInstall: true, pm: 'npm', cwd },
+    declined.deps,
+    ...offline()
+  )
+  assert.equal(r1.code, 0)
+  assert.equal(r1.err, 'cancelled\n')
+  assert.deepEqual(declined.asked, [
+    'Create blank workspace my-project in ./my-project?',
+  ])
+
+  const atStart = terminal({ start: CANCEL })
+  const r2 = await wizard(
+    { skipInstall: true, pm: 'npm', cwd },
+    atStart.deps,
+    ...offline()
+  )
+  assert.equal(r2.code, 0)
+  assert.deepEqual(atStart.asked, [START_Q])
+
+  const atName = terminal({ text: [CANCEL] })
+  const r3 = await wizard(
+    { blank: true, skipInstall: true, pm: 'npm', cwd },
+    atName.deps,
+    ...offline()
+  )
+  assert.equal(r3.code, 0)
+  assert.deepEqual(atName.asked, [NAME_Q], '--blank settles the first question')
+  assert.deepEqual(await readdir(cwd), ['.git'])
 })

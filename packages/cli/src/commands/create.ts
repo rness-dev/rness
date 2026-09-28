@@ -1,10 +1,9 @@
-import { mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
 import type { CommandDeps } from '../core/deps.ts'
-import { exists } from '../core/fs.ts'
-import { clone, commitAll, init, publish } from '../core/git.ts'
+import { clone, publish } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
 import { MAX_PAGES, PER_PAGE } from '../core/github.ts'
 import {
@@ -13,21 +12,24 @@ import {
   isMemberRepo,
   loadManifest,
   parseRepoSpec,
-  writeManifest,
 } from '../core/manifest.ts'
-import { hasLockfile, workspacePackageManager } from '../core/pinned.ts'
+import {
+  buildContext,
+  commitContext,
+  insideWorkspace,
+  installContext,
+  targetProblem,
+} from '../core/new-workspace.ts'
+import { workspacePackageManager } from '../core/pinned.ts'
 import {
   PACKAGE_MANAGERS,
   type PackageManager,
   detectPackageManager,
-  installDependencies,
   isPackageManager,
-  packageManagerVersion,
 } from '../core/pm.ts'
 import type { GitCredentials, GitProvider } from '../core/provider.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
-import { copyScaffold } from '../core/scaffold-copy.ts'
 import { PRIVATE_MARK, banner, unicode } from '../core/style.ts'
 import { syncBlocks } from '../core/sync-blocks.ts'
 import {
@@ -49,9 +51,14 @@ import {
 } from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
-import { clonesIn, findWorkspace } from '../core/workspace.ts'
+import { clonesIn } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 import { VERSION } from '../version.ts'
+import {
+  WORKSPACE_NAME,
+  createBlank,
+  workspaceNameError,
+} from './create-blank.ts'
 import { loginCommand, revokeUrl } from './login.ts'
 import { syncCommand } from './sync.ts'
 
@@ -71,6 +78,10 @@ export interface CreateOptions {
   skipInstall?: boolean
   /** Reserved; rejected. */
   template?: string
+  /** A workspace with no GitHub organization (spec 0012). */
+  blank?: boolean
+  /** With `blank`: the workspace directory; prompted for when absent. */
+  name?: string
   /** Internal (tests): directory to resolve from. */
   cwd?: string
   /** Internal (tests): GitHub REST API base. */
@@ -81,19 +92,6 @@ export type { Prompts }
 
 /** What create needs from the terminal; tests replace it with scripted answers. */
 export type CreateDeps = Terminal
-
-async function isEmptyDir(dir: string): Promise<boolean> {
-  return (await readdir(dir)).length === 0
-}
-
-async function insideWorkspace(dir: string): Promise<boolean> {
-  try {
-    await findWorkspace(dir)
-    return true
-  } catch {
-    return false
-  }
-}
 
 function firstLine(text: string): string {
   return (
@@ -109,34 +107,6 @@ function splitSpecs(list: string): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s !== '')
-}
-
-/**
- * Why `root` cannot receive a new workspace, as the one-line message the
- * guards print; `null` when it can. Both ends of the operation count: the
- * directory create runs in, and the parent of the target — either one inside
- * a workspace would nest a second `.rness` under the first.
- */
-async function targetProblem(
-  cwd: string,
-  root: string,
-  pm: PackageManager
-): Promise<string | null> {
-  const shown = relative(cwd, root) || '.'
-  if ((await insideWorkspace(cwd)) || (await insideWorkspace(dirname(root))))
-    return 'already inside an rness workspace; create runs from outside one'
-  if (!(await exists(root))) return null
-  if (await exists(join(root, '.rness', 'rness.json'))) {
-    // A join whose install failed leaves exactly this: a context clone and
-    // no dependencies. Re-running create cannot help — point at the install
-    // that finishes the job instead of at `rness add`.
-    if (!(await exists(join(root, '.rness', 'node_modules'))))
-      return `${shown} holds an rness workspace whose dependencies are not installed; cd ${shown}/.rness && ${pm} install, then rness sync`
-    return `${shown} already holds an rness workspace (.rness/); run rness add inside it to add repositories`
-  }
-  if (!(await stat(root)).isDirectory()) return `${shown} is not a directory`
-  if (!(await isEmptyDir(root))) return `${shown} is not empty`
-  return null
 }
 
 // A cancelled or declined prompt is the user's choice, not a failure: exit 0
@@ -390,6 +360,34 @@ async function placeContext(
   }
 }
 
+/** The flags that name a GitHub workspace, which a blank one has none of. */
+function blankConflict(opts: CreateOptions): string | null {
+  if (opts.org !== undefined) return '--org'
+  if (opts.repos !== undefined) return '--repos'
+  if (opts.ssh === true) return '--ssh'
+  if (opts.https === true) return '--https'
+  if (opts.host !== undefined) return '--host'
+  return null
+}
+
+/**
+ * The wizard's first question (spec 0012): from a GitHub organization, the
+ * flow below, or a blank local workspace. Null is a cancel.
+ */
+async function chooseStart(
+  prompts: Prompts
+): Promise<'github' | 'blank' | null> {
+  const answer = await prompts.select<string>({
+    message: 'How do you want to start?',
+    options: [
+      { value: 'github', label: 'From a GitHub organization' },
+      { value: 'blank', label: 'Blank local workspace' },
+    ],
+  })
+  if (prompts.isCancel(answer)) return null
+  return answer === 'blank' ? 'blank' : 'github'
+}
+
 const OTHER = Symbol('another organization')
 
 /**
@@ -502,6 +500,17 @@ export async function createCommand(
     process.stderr.write('--ssh and --https cannot be combined\n')
     return 2
   }
+  if (opts.blank === true) {
+    const clash = blankConflict(opts)
+    if (clash !== null) {
+      process.stderr.write(`--blank cannot be combined with ${clash}\n`)
+      return 2
+    }
+    if (opts.name !== undefined && !WORKSPACE_NAME.test(opts.name)) {
+      process.stderr.write(`${workspaceNameError(opts.name)}\n`)
+      return 2
+    }
+  }
   // A malformed flag is refused before any question is asked about the rest.
   if (opts.org !== undefined && !ORG_NAME.test(opts.org)) {
     process.stderr.write(
@@ -562,6 +571,31 @@ export async function createCommand(
       )
       return 1
     }
+
+    // Blank, or the wizard's first answer: no GitHub step at all. An
+    // organization or repositories on the command line settle it.
+    let blank = opts.blank === true
+    if (
+      !blank &&
+      interactive &&
+      opts.org === undefined &&
+      opts.repos === undefined
+    ) {
+      const start = await chooseStart(await prompts())
+      if (start === null) return cancelled(ui)
+      blank = start === 'blank'
+    }
+    if (blank)
+      return await createBlank({
+        name: opts.name,
+        cwd,
+        pm,
+        interactive,
+        mayWrite: opts.yes === true || terminal.isTty(),
+        skipInstall: opts.skipInstall === true,
+        ui,
+        prompts,
+      })
 
     let prompted = false
     let org = opts.org
@@ -724,23 +758,8 @@ export async function createCommand(
     }
 
     const rnessDir = join(root, '.rness')
-    const install = async (): Promise<void> => {
-      if (opts.skipInstall === true) {
-        // Naming the manager says what to run by hand — and, on a join, which
-        // one the workspace declared (spec 0009 §5).
-        ui.line('skipped', `install with ${pm} (--skip-install)`)
-        return
-      }
-      // A joined workspace carries the lockfile its clone brought, so the
-      // install is frozen and leaves the working tree clean (spec 0008 §2). A
-      // new workspace has no lockfile yet and resolves freely.
-      const frozen = await hasLockfile(rnessDir, pm)
-      await ui.step(
-        { doing: `installing dependencies with ${pm}` },
-        () => installDependencies(pm, rnessDir, { frozen }),
-        () => ['installed', `dependencies with ${pm}`]
-      )
-    }
+    const install = (): Promise<void> =>
+      installContext({ ui, pm, rnessDir, skip: opts.skipInstall === true })
 
     if (joining) {
       await mkdir(root, { recursive: true })
@@ -804,40 +823,19 @@ export async function createCommand(
       return failures.length > 0 ? 1 : 0
     }
 
-    // Resolved before anything touches the filesystem: a missing package
-    // manager binary must not leave an empty `<shown>/` behind.
-    const pmVersion = await packageManagerVersion(pm)
-    await mkdir(root, { recursive: true })
-    // Phase 1 — creating the workspace itself. Only these steps are rolled
-    // back: past them the workspace exists and is worth keeping, whatever a
-    // repository does next.
-    try {
-      await copyScaffold(rnessDir, {
-        version: VERSION,
-        packageManager: `${pm}@${pmVersion}`,
-      })
-      await writeManifest(rnessDir, catalogue)
-      ui.line('created', `${shown}/.rness (new workspace)`)
-      await install()
-    } catch (e) {
-      // Report the cause before the consequence: the original error first,
-      // then the rollback note. Everything under `rnessDir` was written by
-      // this call, so removing it is safe; `root` goes too when it is left
-      // empty (this call created it, or found it empty), or the retry the
-      // message asks for would be refused with "<shown> is not empty". A
-      // failing `rm` is swallowed rather than thrown, since it must never
-      // mask the original error.
-      reportError(e)
-      await rm(rnessDir, { recursive: true, force: true }).catch(
-        () => undefined
-      )
-      if (await isEmptyDir(root).catch(() => false))
-        await rm(root, { recursive: true, force: true }).catch(() => undefined)
-      process.stderr.write(
-        `removed ${shown}/.rness after the failure; fix it and retry\n`
-      )
-      return 1
-    }
+    // Phase 1 — creating the workspace itself; a failure is rolled back. Past
+    // it the workspace exists and is worth keeping, whatever a repository
+    // does next.
+    const built = await buildContext({
+      ui,
+      root,
+      shown,
+      manifest: catalogue,
+      pm,
+      skipInstall: opts.skipInstall === true,
+      kind: 'new workspace',
+    })
+    if (!built) return 1
 
     // Phase 2 — the repositories. Nothing here is rolled back.
     await mkdir(join(root, 'org'), { recursive: true })
@@ -852,15 +850,7 @@ export async function createCommand(
       ui,
     })
 
-    await init(rnessDir)
-    try {
-      await commitAll(rnessDir, 'chore: rness workspace context')
-      ui.line('committed', `${shown}/.rness`)
-    } catch (e) {
-      ui.warn(
-        `${e instanceof Error ? e.message : String(e)} — commit ${shown}/.rness yourself`
-      )
-    }
+    await commitContext({ ui, rnessDir, shown })
 
     const code = await syncBlocks(
       ui,
