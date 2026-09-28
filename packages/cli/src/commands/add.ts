@@ -7,7 +7,7 @@ import {
   CONTEXT_REPO,
   loadManifest,
   parseRepoSpec,
-  resolveOrg,
+  workspaceName,
 } from '../core/manifest.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import {
@@ -15,7 +15,6 @@ import {
   addRepository,
   workspaceDirs,
 } from '../core/repos.ts'
-import { warn } from '../core/style.ts'
 import { defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING,
@@ -88,8 +87,8 @@ export async function addCommand(
   try {
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
-    const { org, warning } = resolveOrg(manifest, ws.root)
-    if (warning !== null) process.stderr.write(`${warn(warning)}\n`)
+    // The owner of a bare `<repo>`; a blank workspace has none (spec 0012).
+    const org = manifest.org
 
     // The name is checked before anything else runs; the host comes later.
     let parsed: { name: string; url: string }
@@ -122,7 +121,10 @@ export async function addCommand(
 
     const ui: Ui =
       deps.ui ?? (interactive ? await makeUi(terminal) : { ...plainUi })
-    if (ownUi) ui.intro(`Add ${parsed.name} to workspace ${org}`)
+    if (ownUi)
+      ui.intro(
+        `Add ${parsed.name} to workspace ${workspaceName(manifest, ws.root)}`
+      )
     // Only SSH can make git ask something on the terminal (a passphrase).
     if (opts.host !== undefined || opts.https === true) ui.gitIsSilent = true
     let host = opts.host

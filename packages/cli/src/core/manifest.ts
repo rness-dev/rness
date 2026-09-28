@@ -104,17 +104,13 @@ function readOrg(value: unknown): string | null {
   return value
 }
 
-/** The organisation name every block and `add` use: `org`, else the root directory's name. */
-export function resolveOrg(
-  manifest: Manifest,
-  root: string
-): { org: string; warning: string | null } {
-  if (manifest.org !== null) return { org: manifest.org, warning: null }
-  const name = basename(root)
-  return {
-    org: name,
-    warning: `rness.json: no "org"; using the directory name "${name}"`,
-  }
+/**
+ * The name the workspace goes by — in its blocks and its session titles: the
+ * organization, else the root directory's name. A workspace without `org` is
+ * a blank one (spec 0012), a normal state rather than a slip to warn about.
+ */
+export function workspaceName(manifest: Manifest, root: string): string {
+  return manifest.org ?? basename(root)
 }
 
 function readRepos(value: unknown): Record<string, RepoEntry> {
@@ -222,7 +218,7 @@ const FULL_URL = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/
 /** `web` → `<host><org>/web.git`; `other/api` → `<host>other/api.git`; a full URL is kept. */
 export function parseRepoSpec(
   spec: string,
-  org: string,
+  org: string | null,
   host: string
 ): { name: string; url: string } {
   let url: string
@@ -230,8 +226,14 @@ export function parseRepoSpec(
     url = spec
   } else {
     const parts = spec.split('/')
-    if (parts.length === 1) url = repoUrl(host, org, spec)
-    else if (
+    if (parts.length === 1) {
+      // A blank workspace has no owner to expand a bare name with (spec 0012).
+      if (org === null)
+        throw new Error(
+          'this workspace has no GitHub organization: give <owner>/<repo> or a git URL'
+        )
+      url = repoUrl(host, org, spec)
+    } else if (
       parts.length === 2 &&
       parts[0] !== undefined &&
       parts[1] !== undefined

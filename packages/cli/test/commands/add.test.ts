@@ -48,6 +48,34 @@ test('add <url> clones, declares, and syncs the new scope and the root', async (
   assert.deepEqual(m.repos, { api: { url } })
 })
 
+test('without "org" (a blank workspace): a bare name is refused, a URL is added without a warning', async (t) => {
+  const url = await makeBareRepo(t, 'api')
+  const root = await makeWorkspace(t, { dirs: ['org'] })
+  // A local host: before spec 0012 the bare name became <dirname>/web and was
+  // cloned from it; the host keeps that failure offline and fast.
+  const bare = await add([
+    '--yes',
+    '--host',
+    'file:///nonexistent/',
+    '--cwd',
+    root,
+    'web',
+  ])
+  assert.equal(bare.code, 2)
+  assert.equal(
+    bare.err,
+    'this workspace has no GitHub organization: give <owner>/<repo> or a git URL\n'
+  )
+  await assert.rejects(access(join(root, 'org', 'web')))
+
+  const full = await add(['--yes', '--cwd', root, url])
+  assert.equal(full.code, 0, full.err)
+  assert.equal(full.err, '')
+  const m = await loadManifest(join(root, '.rness'))
+  assert.equal(m.org, null)
+  assert.deepEqual(m.repos, { api: { url } })
+})
+
 test('add <repo> expands with the org and --host; --scopes declares sub-scopes', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   await remote.addRepo('platform', { 'README.md': '# platform\n' })

@@ -1,7 +1,7 @@
 import { checkBlocks } from '../core/blocks.ts'
 import { checkContract } from '../core/contract.ts'
 import type { CommandDeps } from '../core/deps.ts'
-import { loadManifest, resolveOrg } from '../core/manifest.ts'
+import { loadManifest, workspaceName } from '../core/manifest.ts'
 import { scopeChain } from '../core/scope.ts'
 import { warn } from '../core/style.ts'
 import { defaultTerminal } from '../core/terminal.ts'
@@ -35,8 +35,7 @@ export async function validateCommand(
     // loadManifest only checks that extends targets exist; walk every scope so
     // an extends cycle is reported here rather than breaking `context` later.
     for (const s of Object.keys(manifest.scopes)) scopeChain(manifest, s)
-    const { org, warning } = resolveOrg(manifest, ws.root)
-    const warnings: string[] = warning === null ? [] : [warning]
+    const org = workspaceName(manifest, ws.root)
     const problems = await checkContract(ws.rnessDir)
     const blocks = await checkBlocks({
       root: ws.root,
@@ -45,12 +44,11 @@ export async function validateCommand(
       org,
     })
     problems.push(...blocks.problems)
-    warnings.push(...blocks.warnings)
 
     const ui = await makeUi(deps.terminal ?? defaultTerminal)
     if (!ui.session) {
       for (const p of problems) process.stderr.write(`${p}\n`)
-      for (const w of warnings) process.stderr.write(`${warn(w)}\n`)
+      for (const w of blocks.warnings) process.stderr.write(`${warn(w)}\n`)
       if (problems.length > 0) return 1
       process.stdout.write('context ok\n')
       return 0
@@ -67,7 +65,6 @@ export async function validateCommand(
         ui.error(c.message)
       else ui.warn(c.message)
     for (const p of problems) if (!blocks.problems.includes(p)) ui.error(p)
-    for (const w of warnings) if (!blocks.warnings.includes(w)) ui.warn(w)
     ui.outro(
       problems.length > 0 ? 'Context mismatch' : 'Context OK',
       problems.length > 0 ? 'error' : 'done'

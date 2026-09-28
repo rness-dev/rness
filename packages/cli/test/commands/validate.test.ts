@@ -58,16 +58,14 @@ test('rejects --cwd with no value with bad-usage exit 2', async () => {
   assert.equal(code, 2)
 })
 
-test('a manifest without "org" validates with a warning on stderr, exit 0', async () => {
+test('a manifest without "org" validates without a warning, exit 0', async () => {
   const c = capture()
   const code = await run(['validate', '--cwd', scopedCwd])
   c.restore()
   assert.equal(code, 0)
   assert.equal(c.out().trim(), 'context ok')
-  assert.match(
-    c.err(),
-    /warning: rness\.json: no "org"; using the directory name "ws-scoped"\n/
-  )
+  // No "org" is a blank workspace (spec 0012), not a slip to warn about.
+  assert.doesNotMatch(c.err(), /"org"/)
 })
 
 test('validate reports a stale block as a problem and a missing one as a warning', async (t) => {

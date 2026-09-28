@@ -10,7 +10,7 @@ import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
-import { loadManifest, resolveOrg } from '../core/manifest.ts'
+import { loadManifest, workspaceName } from '../core/manifest.ts'
 import { ensureClaudeMd, findBlock, mergeBlock } from '../core/merge.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
@@ -156,9 +156,8 @@ export async function syncCommand(
   try {
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
-    const { org, warning } = resolveOrg(manifest, ws.root)
+    const org = workspaceName(manifest, ws.root)
     if (ownUi) ui.intro(`Sync workspace ${org}`)
-    if (warning !== null) ui.warn(warning)
     if (
       opts.scope !== undefined &&
       !Object.hasOwn(manifest.scopes, opts.scope)

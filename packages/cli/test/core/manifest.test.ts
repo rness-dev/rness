@@ -10,7 +10,7 @@ import {
   isWorkspaceClone,
   loadManifest,
   parseRepoSpec,
-  resolveOrg,
+  workspaceName,
   writeManifest,
 } from '../../src/core/manifest.ts'
 
@@ -175,18 +175,16 @@ test('org follows GitHub: case kept, single inner hyphens, at most 39 characters
   }
 })
 
-test('resolveOrg falls back to the root directory name with a warning', async (t) => {
+test('workspaceName: the org, else the root directory name, without a warning', async (t) => {
   const d = await fixture({ contract: 1, repos: {}, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const manifest = await loadManifest(d)
-  const { org, warning } = resolveOrg(manifest, '/tmp/workspaces/acme')
-  assert.equal(org, 'acme')
-  assert.match(warning ?? '', /no "org"; using the directory name "acme"/)
-  const pinned = resolveOrg(
-    { ...manifest, org: 'acme-dev' },
-    '/tmp/workspaces/acme'
+  // A workspace without "org" is a blank one (spec 0012): a normal state.
+  assert.equal(workspaceName(manifest, '/tmp/workspaces/acme'), 'acme')
+  assert.equal(
+    workspaceName({ ...manifest, org: 'acme-dev' }, '/tmp/workspaces/acme'),
+    'acme-dev'
   )
-  assert.deepEqual(pinned, { org: 'acme-dev', warning: null })
 })
 
 test('writeManifest keeps the key order and omits empty extends and a null org', async (t) => {
@@ -262,6 +260,22 @@ test('parseRepoSpec accepts repo, owner/repo and full URLs, and validates the na
   for (const name of ['.', '..', '-rf', 'a b', 'Caps'])
     assert.throws(() => parseRepoSpec(name, 'acme', host), /repository name/)
   assert.throws(() => parseRepoSpec('a/b/c', 'acme', host), /repository name/)
+})
+
+test('parseRepoSpec without an organization: owner/repo and URLs only', () => {
+  const host = 'https://github.com/'
+  assert.throws(
+    () => parseRepoSpec('web', null, host),
+    /^Error: this workspace has no GitHub organization: give <owner>\/<repo> or a git URL$/
+  )
+  assert.deepEqual(parseRepoSpec('other/api', null, host), {
+    name: 'api',
+    url: 'https://github.com/other/api.git',
+  })
+  assert.deepEqual(parseRepoSpec('git@github.com:acme/sdk.git', null, host), {
+    name: 'sdk',
+    url: 'git@github.com:acme/sdk.git',
+  })
 })
 
 test('isMemberRepo: everything active but the context repository', () => {

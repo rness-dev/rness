@@ -13,7 +13,8 @@ export interface AddRepositoryInput {
   manifest: Manifest
   /** `<repo>`, `<owner>/<repo>`, or a clone URL. */
   spec: string
-  org: string
+  /** The owner of a bare `<repo>`; null in a blank workspace, which refuses one. */
+  org: string | null
   host: string
   /** Sub-scopes relative to the repository (`apps/web`); each becomes scope `<basename>` extending `<repo>`. */
   scopes: readonly string[]
