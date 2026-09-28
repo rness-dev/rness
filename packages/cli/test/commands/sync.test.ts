@@ -815,3 +815,27 @@ test('an agent removed from rness.json leaves its values, and sync says where', 
   )
   await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')
 })
+
+test('--pull still pulls a clone whose only change is the agent file sync wrote', async (t) => {
+  const url = await makeBareRepo(t, 'api')
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    agents: ['claude'],
+    repos: { api: { url } },
+    scopes: { api: { path: 'org/api' } },
+  })
+  const first = await sync(['--yes', '--all', '--cwd', root])
+  assert.equal(first.code, 0, first.err)
+  await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')
+
+  await commitTo(url, 'NEW.md', 'new\n')
+  const pulled = await sync(['--yes', '--pull', '--cwd', root])
+  assert.equal(pulled.code, 0, pulled.err)
+  assert.match(pulled.out, /^pulled {3}org\/api\n/)
+  assert.equal(await readOrNull(join(root, 'org', 'api', 'NEW.md')), 'new\n')
+
+  // Anything else untracked under .claude/ is the developer's: not clean.
+  await writeFile(join(root, 'org', 'api', '.claude', 'notes.md'), 'x')
+  const dirty = await sync(['--yes', '--pull', '--cwd', root])
+  assert.match(dirty.out, /^skipped {2}org\/api \(working tree not clean\)\n/)
+})

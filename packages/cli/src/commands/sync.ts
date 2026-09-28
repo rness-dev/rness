@@ -2,7 +2,9 @@ import { join } from 'node:path'
 
 import { agentTargets, leftoverTargets } from '../core/agent-targets.ts'
 import {
+  type AgentTarget,
   SUPPORTED_AGENTS,
+  TARGETS,
   unsupportedAgents,
   unsupportedMessage,
 } from '../core/agents.ts'
@@ -335,7 +337,17 @@ export async function syncCommand(
           }
         } else if (opts.pull === true && !check) {
           try {
-            if (!(await isClean(dir, MANAGED_FILES))) {
+            // The files sync writes itself are not the developer's changes:
+            // the blocks, and the declared agents' files (spec 0011 §3.3).
+            const written = [
+              ...MANAGED_FILES,
+              ...(manifest.agents ?? []).flatMap((a) =>
+                Object.hasOwn(TARGETS, a)
+                  ? [(TARGETS[a] as AgentTarget).file]
+                  : []
+              ),
+            ]
+            if (!(await isClean(dir, written))) {
               lines.push(['skipped', `${label} (working tree not clean)`])
               continue
             }

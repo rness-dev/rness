@@ -382,3 +382,16 @@ test('add refuses the context repository, whatever organization it is named with
     assert.equal(r.out, '', 'nothing is written')
   }
 })
+
+test('in a workspace that declares claude, add writes the new clone its Claude settings', async (t) => {
+  const url = await makeBareRepo(t, 'api')
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    agents: ['claude'],
+    dirs: ['org'],
+  })
+  const r = await add(['--yes', '--cwd', root, url])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /\nupdated {2}org\/api\/\.claude\/settings\.json\n/)
+  await access(join(root, 'org', 'api', '.claude', 'settings.json'))
+})

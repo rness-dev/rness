@@ -113,6 +113,9 @@ export async function isClean(
         [
           'status',
           '--porcelain',
+          // Every untracked file on its own line: a directory folded into one
+          // `?? dir/` entry would slip past a pathspec naming a file inside it.
+          '--untracked-files=all',
           ...(pathspec.length > 0 ? ['--', ...pathspec] : []),
         ],
         dir
