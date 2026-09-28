@@ -1,0 +1,131 @@
+import { mkdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+
+import { type AgentTarget, TARGETS } from './agents.ts'
+import { exists, readOrNull, writeFileAtomic } from './fs.ts'
+import {
+  describeGuarantee,
+  ensureGuarantees,
+  missingGuarantees,
+} from './json-guarantees.ts'
+import type { Manifest } from './types.ts'
+
+/** What one target file turned out to be, as `sync` and `validate` say it. */
+export interface TargetOutcome {
+  /** Workspace-relative: `org/<repo>/.claude/settings.json`. */
+  label: string
+  status: 'updated' | 'unchanged' | 'stale' | 'invalid'
+  /** What is missing (stale) or why the file is refused (invalid). */
+  detail: string | null
+}
+
+interface TargetFile {
+  target: AgentTarget
+  file: string
+  label: string
+}
+
+/**
+ * Every file the given targets own a part of: one per target and per
+ * repository of the catalogue that is cloned under `org/`. The root of a
+ * clone only — a nested scope's path to `.rness` is not verified (spec 0011
+ * §5).
+ */
+async function filesOf(
+  root: string,
+  manifest: Manifest,
+  targets: readonly AgentTarget[]
+): Promise<TargetFile[]> {
+  const files: TargetFile[] = []
+  for (const repo of Object.keys(manifest.repos)) {
+    if (!(await exists(join(root, 'org', repo)))) continue
+    for (const target of targets)
+      files.push({
+        target,
+        file: join(root, 'org', repo, ...target.file.split('/')),
+        label: `org/${repo}/${target.file}`,
+      })
+  }
+  return files
+}
+
+function declared(manifest: Manifest): AgentTarget[] {
+  return (manifest.agents ?? []).flatMap((name) =>
+    Object.hasOwn(TARGETS, name) ? [TARGETS[name] as AgentTarget] : []
+  )
+}
+
+/**
+ * Compile the declared agents into every clone (spec 0011 §3.3), or with
+ * `check` only say what is missing. Unsupported names are the caller's to
+ * refuse; they are skipped here.
+ */
+export async function agentTargets(
+  root: string,
+  manifest: Manifest,
+  opts: { check: boolean }
+): Promise<TargetOutcome[]> {
+  const outcomes: TargetOutcome[] = []
+  for (const { target, file, label } of await filesOf(
+    root,
+    manifest,
+    declared(manifest)
+  )) {
+    const existing = await readOrNull(file)
+    if (opts.check) {
+      const missing = missingGuarantees(existing, target.guarantees)
+      if ('invalid' in missing)
+        outcomes.push({ label, status: 'invalid', detail: missing.invalid })
+      else if (missing.length > 0)
+        outcomes.push({
+          label,
+          status: 'stale',
+          detail: missing.map(describeGuarantee).join('; '),
+        })
+      else outcomes.push({ label, status: 'unchanged', detail: null })
+      continue
+    }
+    const ensured = ensureGuarantees(existing, target.guarantees)
+    if (ensured.kind === 'invalid') {
+      outcomes.push({ label, status: 'invalid', detail: ensured.reason })
+      continue
+    }
+    if (ensured.kind === 'unchanged') {
+      outcomes.push({ label, status: 'unchanged', detail: null })
+      continue
+    }
+    await mkdir(dirname(file), { recursive: true })
+    await writeFileAtomic(file, ensured.text)
+    outcomes.push({ label, status: 'updated', detail: null })
+  }
+  return outcomes
+}
+
+/**
+ * Files that still carry every value of a target the team no longer
+ * declares. rness cannot tell its entries from the team's, so it leaves them
+ * and says where they are (spec 0011 §3.4). Nothing when `agents` was never
+ * set: a file written by hand is none of rness's business then.
+ */
+export async function leftoverTargets(
+  root: string,
+  manifest: Manifest
+): Promise<string[]> {
+  if (manifest.agents === null) return []
+  const agents = manifest.agents
+  const undeclared = Object.values(TARGETS).filter(
+    (t) => !agents.includes(t.name)
+  )
+  const leftovers: string[] = []
+  for (const { target, file, label } of await filesOf(
+    root,
+    manifest,
+    undeclared
+  )) {
+    const existing = await readOrNull(file)
+    if (existing === null) continue
+    const missing = missingGuarantees(existing, target.guarantees)
+    if (!('invalid' in missing) && missing.length === 0) leftovers.push(label)
+  }
+  return leftovers
+}

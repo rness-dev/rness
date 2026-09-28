@@ -5,6 +5,8 @@ import type { TestContext } from 'node:test'
 
 export interface WorkspaceSpec {
   org?: string
+  /** The team's agents; left out, the key is absent ("never asked"). */
+  agents?: string[]
   repos?: Record<string, { url: string }>
   scopes?: Record<string, { path: string; extends?: string[] }>
   /** `.rness/`-relative markdown files, e.g. `'standards/web/seo.md': '# SEO\n'`. */
@@ -27,6 +29,7 @@ export async function makeWorkspace(
     scopes: spec.scopes ?? {},
   }
   if (spec.org !== undefined) manifest['org'] = spec.org
+  if (spec.agents !== undefined) manifest['agents'] = spec.agents
   await writeFile(
     join(root, '.rness', 'rness.json'),
     JSON.stringify(manifest, null, 2)
