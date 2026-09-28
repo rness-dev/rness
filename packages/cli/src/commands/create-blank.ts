@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 
+import { askAgents } from '../core/ask-agents.ts'
 import {
   buildContext,
   commitContext,
@@ -33,6 +34,8 @@ export function workspaceNameError(name: string): string {
 export async function createBlank(input: {
   /** Already checked against `WORKSPACE_NAME`; prompted for when absent. */
   name: string | undefined
+  /** `--agent`, already checked; asked for in the wizard when empty. */
+  agents: readonly string[]
   cwd: string
   pm: PackageManager
   /** A wizard in a terminal: questions may be asked. */
@@ -83,6 +86,17 @@ export async function createBlank(input: {
     )
     return 2
   }
+  // The team's agents, before the first write (spec 0011 §3.2). The question
+  // does not count as the confirmation.
+  let agents: string[] | null =
+    input.agents.length > 0 ? [...input.agents] : null
+  if (agents === null && input.interactive) {
+    agents = await askAgents(await input.prompts())
+    if (agents === null) {
+      ui.cancelled()
+      return 0
+    }
+  }
   if (input.interactive && !prompted) {
     const p = await input.prompts()
     const ok = await p.confirm({
@@ -98,7 +112,7 @@ export async function createBlank(input: {
     ui,
     root,
     shown,
-    manifest: { contract: 1, org: null, agents: null, repos: {}, scopes: {} },
+    manifest: { contract: 1, org: null, agents, repos: {}, scopes: {} },
     pm,
     skipInstall: input.skipInstall,
     kind: 'blank workspace',

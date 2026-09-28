@@ -681,6 +681,11 @@ interface Script {
    * one (spec 0012).
    */
   start?: 'github' | 'blank' | typeof CANCEL
+  /**
+   * The answer to "Which agents does your team use?" (spec 0011 §3.2). Left
+   * out, it is answered [] without being recorded, as the login is declined.
+   */
+  agents?: string[] | typeof CANCEL
   confirm?: (boolean | typeof CANCEL)[]
   pick?: (string[] | typeof CANCEL)[]
   /** "Which GitHub organization?" answers. */
@@ -734,6 +739,13 @@ function terminal(script: Script) {
       if (publishing) return script.publish
       return next(script.confirm, opts.message)
     },
+    async multiselect(opts: { message: string; options: { value: string }[] }) {
+      if (opts.message === AGENTS_Q && script.agents === undefined) return []
+      asked.push(opts.message)
+      offered.push(opts.options.map((o) => o.value))
+      if (opts.message === AGENTS_Q) return script.agents
+      throw new Error(`no scripted answer for: ${opts.message}`)
+    },
     async select(opts: { message: string; options: { value: string }[] }) {
       if (opts.message === START_Q && script.start === undefined)
         return 'github'
@@ -782,6 +794,7 @@ async function stagedJoins(): Promise<string[]> {
 }
 
 const START_Q = 'How do you want to start?'
+const AGENTS_Q = 'Which agents does your team use?'
 const NAME_Q = 'What should the workspace be called?'
 const ORG_Q = 'What is your GitHub organization named?'
 const LOGIN_Q = 'Log in to GitHub to list private repositories?'
@@ -1908,6 +1921,9 @@ test('wizard, blank: --blank <name> keeps one confirm; a cancel anywhere writes 
 // --- next steps in the words of the manager that ran create -----------------
 
 test('next steps spell rness the way create was launched, whatever --pm installs with', async (t) => {
+  // One restore for the whole loop: several withEnv calls would restore in
+  // the order they were made, and leave the last agent set for the next test.
+  withEnv(t, { npm_config_user_agent: undefined })
   for (const [agent, runner] of [
     ['npm/11.13.0 node/v24.16.0 darwin arm64', 'npx @rness/cli'],
     ['pnpm/12.5.1 npm/? node/? darwin arm64', 'pnpm dlx @rness/cli'],
@@ -1916,7 +1932,7 @@ test('next steps spell rness the way create was launched, whatever --pm installs
     // Yarn 1 has no dlx; npx comes with Node.
     ['yarn/1.22.22 npm/? node/v24.16.0', 'npx @rness/cli'],
   ] as const) {
-    withEnv(t, { npm_config_user_agent: agent })
+    process.env['npm_config_user_agent'] = agent
     const r = await create([
       'my-project',
       '--blank',
@@ -1983,4 +1999,161 @@ test('join: next steps speak the launching manager, not the one the workspace in
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /^skipped {2}install with pnpm \(--skip-install\)$/m)
   assert.match(r.out, /\n {2}bunx @rness\/cli sync --all\n$/)
+})
+
+// --- agents (spec 0011 §3.2) --------------------------------------------------
+
+test('create --agent declares it in the new workspace and writes its files in every clone', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const cwd = await scratch(t)
+  const r = await create([
+    'acme',
+    '--agent',
+    'claude',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    remote.host,
+    '--repos',
+    'api',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 0, r.err)
+  const root = join(cwd, 'acme')
+  assert.deepEqual((await loadManifest(join(root, '.rness'))).agents, [
+    'claude',
+  ])
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        join(root, 'org', 'api', '.claude', 'settings.json'),
+        'utf8'
+      )
+    ),
+    { permissions: { additionalDirectories: ['../../.rness'] } }
+  )
+  assert.match(r.out, /updated {2}org\/api\/\.claude\/settings\.json\n/)
+
+  const blank = await create([
+    'demo',
+    '--blank',
+    '--agent',
+    'claude',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(blank.code, 0, blank.err)
+  assert.deepEqual((await loadManifest(join(cwd, 'demo', '.rness'))).agents, [
+    'claude',
+  ])
+})
+
+test('create without --agent and without a terminal writes no agents key', async (t) => {
+  const cwd = await scratch(t)
+  const r = await create([
+    'demo',
+    '--blank',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(
+    await readFile(join(cwd, 'demo', '.rness', 'rness.json'), 'utf8'),
+    /"agents"/
+  )
+})
+
+test('wizard: a new workspace asks which agents, before the confirm; blank too', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const cwd = await scratch(t)
+  const term = terminal({ agents: ['claude'], confirm: [true] })
+  const r = await wizard(
+    {
+      org: 'acme',
+      repos: 'api',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      cwd,
+    },
+    term.deps
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [AGENTS_Q, 'Create workspace acme in ./acme?'])
+  assert.deepEqual((await loadManifest(join(cwd, 'acme', '.rness'))).agents, [
+    'claude',
+  ])
+  await access(join(cwd, 'acme', 'org', 'api', '.claude', 'settings.json'))
+
+  const blank = terminal({ start: 'blank', text: ['demo'], agents: [] })
+  const b = await wizard(
+    { skipInstall: true, pm: 'npm', cwd },
+    blank.deps,
+    ...offline()
+  )
+  assert.equal(b.code, 0, b.err)
+  assert.deepEqual(blank.asked, [START_Q, NAME_Q, AGENTS_Q])
+  assert.deepEqual((await loadManifest(join(cwd, 'demo', '.rness'))).agents, [])
+
+  const cancel = terminal({ start: 'blank', text: ['other'], agents: CANCEL })
+  const c = await wizard(
+    { skipInstall: true, pm: 'npm', cwd },
+    cancel.deps,
+    ...offline()
+  )
+  assert.equal(c.code, 0)
+  await assert.rejects(access(join(cwd, 'other')))
+})
+
+test('--agent: an unknown agent exits 2 before any question; a join refuses it before any write', async (t) => {
+  const unknown = await create([
+    'demo',
+    '--blank',
+    '--agent',
+    'codex',
+    '--yes',
+    '--cwd',
+    await scratch(t),
+  ])
+  assert.equal(unknown.code, 2)
+  assert.equal(unknown.err, 'unknown agent "codex" (supported: claude)\n')
+
+  const remote = await makeRemoteOrg(t, 'acme')
+  const apiUrl = await remote.addRepo('api', { 'README.md': '# api\n' })
+  await remote.addRepo('.rness', {
+    'rness.json': manifestText({ api: { url: apiUrl } }),
+  })
+  const cwd = await scratch(t)
+  const join_ = await create([
+    'acme',
+    '--agent',
+    'claude',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    remote.host,
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(join_.code, 2)
+  assert.match(
+    join_.err,
+    /acme\/\.rness exists: --agent only applies to a new workspace; after joining, run rness sync --agent claude\n/
+  )
+  assert.deepEqual(await readdir(cwd), ['.git'])
 })

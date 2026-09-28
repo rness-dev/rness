@@ -185,6 +185,11 @@ function buildProgram(state: RunState): Command {
       '--blank',
       'a local workspace with no GitHub organization: .rness/, an empty org/, the root files'
     )
+    .option(
+      '--agent <name>',
+      "a new workspace's agent, declared in rness.json (repeatable; supported: claude)",
+      (value: string, previous: string[] = []) => [...previous, value]
+    )
     .option('--skip-install', 'do not install .rness/ dependencies')
     .option('-y, --yes', 'do not ask for confirmation')
     .option('--template <name>', 'reserved')

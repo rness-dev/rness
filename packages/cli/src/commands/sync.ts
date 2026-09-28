@@ -3,10 +3,10 @@ import { join } from 'node:path'
 import { agentTargets, leftoverTargets } from '../core/agent-targets.ts'
 import {
   SUPPORTED_AGENTS,
-  TARGETS,
   unsupportedAgents,
   unsupportedMessage,
 } from '../core/agents.ts'
+import { askAgents } from '../core/ask-agents.ts'
 import {
   BLOCK_SIZE_WARNING,
   isCurrentBlock,
@@ -248,20 +248,12 @@ export async function syncCommand(
       opts.scope === undefined &&
       terminal.isTty()
     ) {
-      const p = await terminal.prompts()
-      const answer = await p.multiselect<string>({
-        message: 'Which agents does your team use?',
-        options: Object.values(TARGETS).map((t) => ({
-          value: t.name,
-          label: t.label,
-        })),
-        required: false,
-      })
-      if (p.isCancel(answer)) {
+      const answer = await askAgents(await terminal.prompts())
+      if (answer === null) {
         ui.cancelled()
         return 1
       }
-      declare = Array.isArray(answer) ? answer : []
+      declare = answer
     }
     if (declare !== null) {
       const before = manifest.agents ?? []

@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 
+import { SUPPORTED_AGENTS, unsupportedAgents } from '../core/agents.ts'
+import { askAgents } from '../core/ask-agents.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { clone, publish } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
@@ -83,6 +85,8 @@ export interface CreateOptions {
   blank?: boolean
   /** With `blank`: the workspace directory; prompted for when absent. */
   name?: string
+  /** A new workspace's agents, declared in rness.json (spec 0011 §3.2). */
+  agent?: string[]
   /** Internal (tests): directory to resolve from. */
   cwd?: string
   /** Internal (tests): GitHub REST API base. */
@@ -497,6 +501,14 @@ export async function createCommand(
     process.stderr.write(`--pm must be one of ${PACKAGE_MANAGERS.join(', ')}\n`)
     return 2
   }
+  const agentFlags = [...new Set(opts.agent ?? [])]
+  const unknownAgent = unsupportedAgents(agentFlags)[0]
+  if (unknownAgent !== undefined) {
+    process.stderr.write(
+      `unknown agent "${unknownAgent}" (supported: ${SUPPORTED_AGENTS.join(', ')})\n`
+    )
+    return 2
+  }
   if (opts.ssh === true && opts.https === true) {
     process.stderr.write('--ssh and --https cannot be combined\n')
     return 2
@@ -589,6 +601,7 @@ export async function createCommand(
     if (blank)
       return await createBlank({
         name: opts.name,
+        agents: agentFlags,
         cwd,
         pm,
         interactive,
@@ -682,6 +695,14 @@ export async function createCommand(
       return 1
     }
     const joining = probe.kind === 'found'
+    // A join takes the organization's agents; declaring one is a change to
+    // its rness.json, made from inside the workspace (spec 0011 §3.2).
+    if (joining && agentFlags.length > 0) {
+      process.stderr.write(
+        `${org}/.rness exists: --agent only applies to a new workspace; after joining, run ${rnessCommand()} sync${agentFlags.map((a) => ` --agent ${a}`).join('')}\n`
+      )
+      return 2
+    }
     if (joining)
       ui.line(
         'found',
@@ -755,6 +776,16 @@ export async function createCommand(
     } else {
       // Scripts and CI: a join takes the whole catalogue, a new workspace nothing.
       specs = Object.keys(catalogue.repos)
+    }
+    // A new workspace's agents: named, or asked with the other questions,
+    // before the first write. They do not count as the confirmation.
+    if (!joining) {
+      if (agentFlags.length > 0) catalogue.agents = agentFlags
+      else if (interactive) {
+        const answer = await askAgents(await prompts())
+        if (answer === null) return cancelled(ui)
+        catalogue.agents = answer
+      }
     }
     if (interactive && !prompted) {
       const p = await prompts()
