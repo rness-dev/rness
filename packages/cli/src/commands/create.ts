@@ -26,6 +26,7 @@ import {
   type PackageManager,
   detectPackageManager,
   isPackageManager,
+  rnessRunnerFor,
 } from '../core/pm.ts'
 import type { GitCredentials, GitProvider } from '../core/provider.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
@@ -522,6 +523,9 @@ export async function createCommand(
     opts.pm !== undefined && isPackageManager(opts.pm)
       ? opts.pm
       : detectPackageManager()
+  // The next steps are written with the manager that ran create, which a join
+  // may not install with: it is the one this machine is known to have.
+  const launchedWith = pm
   const interactive = opts.yes !== true && terminal.isTty()
   // The plain look unless this is a wizard in a real terminal (spec 0007 §5b).
   const ui = interactive ? await makeUi(terminal) : { ...plainUi }
@@ -805,6 +809,7 @@ export async function createCommand(
       const remaining = Object.keys(catalogue.repos).filter(
         (name) => !cloned.has(name)
       )
+      const rness = await rnessRunnerFor(launchedWith)
       const next = [
         `cd ${shown}`,
         // The comment above its command, as the new-workspace note does: a
@@ -812,10 +817,12 @@ export async function createCommand(
         ...(remaining.length > 0
           ? [
               `# clone the catalogue repositories you did not pick: ${remaining.join(', ')}`,
-              'rness sync --all',
+              `${rness} sync --all`,
             ]
           : []),
-        ...failures.map((f) => `rness add ${f.spec}   # failed: ${f.message}`),
+        ...failures.map(
+          (f) => `${rness} add ${f.spec}   # failed: ${f.message}`
+        ),
       ]
       if (ui.session) ui.note('Next steps', next)
       else process.stdout.write(`\n${next.map((l) => `  ${l}`).join('\n')}\n`)
@@ -876,11 +883,12 @@ export async function createCommand(
         })
       : false
     if (published === null) return cancelled(ui)
+    const rness = await rnessRunnerFor(launchedWith)
     const next = [
       `cd ${shown}/.rness`,
       // What was asked for and did not happen, as the command that retries
       // it — the workspace is complete otherwise.
-      ...failures.map((f) => `rness add ${f.spec}   # failed: ${f.message}`),
+      ...failures.map((f) => `${rness} add ${f.spec}   # failed: ${f.message}`),
       ...(published
         ? []
         : [
@@ -891,7 +899,7 @@ export async function createCommand(
             '# or, with the GitHub CLI (gh) installed, in one step:',
             `gh repo create ${org}/.rness --private --source . --push`,
           ]),
-      `# then, for every teammate: npm create rness ${org}`,
+      `# then, for every teammate: ${launchedWith} create rness ${org}`,
     ]
     if (ui.session) {
       ui.note('Next steps', next)

@@ -7,6 +7,7 @@ import {
   installErrorLine,
   isPackageManager,
   packageManagerVersion,
+  rnessRunner,
 } from '../../src/core/pm.ts'
 
 test('detects the package manager from the npm user agent, npm by default', () => {
@@ -22,6 +23,17 @@ test('detects the package manager from the npm user agent, npm by default', () =
   )
   assert.equal(detectPackageManager(''), 'npm')
   assert.equal(detectPackageManager('cargo/1.0'), 'npm')
+})
+
+test('rnessRunner: the rness CLI without a global install, per manager', () => {
+  assert.equal(rnessRunner('npm', '11.13.0'), 'npx @rness/cli')
+  assert.equal(rnessRunner('pnpm', '12.2.1'), 'pnpm dlx @rness/cli')
+  assert.equal(rnessRunner('bun', '1.1.34'), 'bunx @rness/cli')
+  assert.equal(rnessRunner('yarn', '4.5.0'), 'yarn dlx @rness/cli')
+  assert.equal(rnessRunner('yarn', '2.0.0'), 'yarn dlx @rness/cli')
+  // Yarn 1 has no dlx, and an unknown yarn may be one: npx comes with Node.
+  assert.equal(rnessRunner('yarn', '1.22.22'), 'npx @rness/cli')
+  assert.equal(rnessRunner('yarn', null), 'npx @rness/cli')
 })
 
 test('isPackageManager guards the --pm flag', () => {

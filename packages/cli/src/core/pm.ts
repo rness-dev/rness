@@ -43,6 +43,30 @@ export async function packageManagerVersion(
   }
 }
 
+/**
+ * The rness CLI run through `pm`, without a global install: what the next
+ * steps of `create` are written with, so they work on the machine that ran it.
+ * Inside a workspace the fetched copy hands over to the pinned one. Yarn 1 has
+ * no `dlx`, and an unknown yarn may be one: npx comes with Node.
+ */
+export function rnessRunner(
+  pm: PackageManager,
+  version: string | null
+): string {
+  if (pm === 'pnpm') return 'pnpm dlx @rness/cli'
+  if (pm === 'bun') return 'bunx @rness/cli'
+  if (pm === 'yarn' && Number(version?.split('.')[0]) >= 2)
+    return 'yarn dlx @rness/cli'
+  return 'npx @rness/cli'
+}
+
+/** `rnessRunner` for the installed `pm`; only yarn needs its version asked. */
+export async function rnessRunnerFor(pm: PackageManager): Promise<string> {
+  const version =
+    pm === 'yarn' ? await packageManagerVersion(pm).catch(() => null) : null
+  return rnessRunner(pm, version)
+}
+
 const BARE_NPM_CODE = /^npm (error|ERR!) code \S+$/
 
 /**

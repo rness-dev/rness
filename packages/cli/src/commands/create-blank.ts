@@ -6,7 +6,7 @@ import {
   commitContext,
   targetProblem,
 } from '../core/new-workspace.ts'
-import type { PackageManager } from '../core/pm.ts'
+import { type PackageManager, rnessRunnerFor } from '../core/pm.ts'
 import { syncBlocks } from '../core/sync-blocks.ts'
 import type { Prompts } from '../core/terminal.ts'
 import type { Ui } from '../core/ui.ts'
@@ -116,7 +116,7 @@ export async function createBlank(input: {
   const next = [
     `cd ${shown}`,
     '# bring a repository in: <owner>/<repo> on GitHub, or any git URL',
-    'rness add <owner>/<repo>',
+    `${await rnessRunnerFor(pm)} add <owner>/<repo>`,
     '# to share it: set "org" in .rness/rness.json, then push .rness to github.com/<org>/.rness',
   ]
   if (ui.session) {
