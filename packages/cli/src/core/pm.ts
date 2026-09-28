@@ -60,11 +60,18 @@ export function rnessRunner(
   return 'npx @rness/cli'
 }
 
-/** `rnessRunner` for the installed `pm`; only yarn needs its version asked. */
-export async function rnessRunnerFor(pm: PackageManager): Promise<string> {
-  const version =
-    pm === 'yarn' ? await packageManagerVersion(pm).catch(() => null) : null
-  return rnessRunner(pm, version)
+/**
+ * The rness command as the user can type it again, for every hint and next
+ * step: launched through a package manager — npx, pnpm dlx, yarn dlx, bunx,
+ * `pnpm create`, a package script, which all set `npm_config_user_agent` —
+ * that manager's runner; else the `rness` they typed, a global install.
+ */
+export function rnessCommand(env: NodeJS.ProcessEnv = process.env): string {
+  const agent = env['npm_config_user_agent'] ?? ''
+  if (agent === '') return 'rness'
+  const pm = detectPackageManager(agent)
+  const [name, version] = (agent.split(' ')[0] ?? '').split('/')
+  return rnessRunner(pm, name === pm ? (version ?? null) : null)
 }
 
 const BARE_NPM_CODE = /^npm (error|ERR!) code \S+$/

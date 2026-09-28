@@ -12,7 +12,7 @@ import {
   workspacePackageManager,
   writePin,
 } from '../core/pinned.ts'
-import { installDependencies } from '../core/pm.ts'
+import { installDependencies, rnessCommand } from '../core/pm.ts'
 import { scaffoldDir } from '../core/scaffold.ts'
 import { status } from '../core/style.ts'
 import { syncBlocks } from '../core/sync-blocks.ts'
@@ -76,7 +76,7 @@ export async function upgradeCommand(
     const pin = await readPin(ws.rnessDir)
     if (pin === null) {
       process.stderr.write(
-        `no @rness/cli entry in ${label}/package.json; add it to devDependencies, then run rness upgrade\n`
+        `no @rness/cli entry in ${label}/package.json; add it to devDependencies, then run ${rnessCommand()} upgrade\n`
       )
       return 1
     }
@@ -99,7 +99,7 @@ export async function upgradeCommand(
       ))
     if (target === null) {
       process.stderr.write(
-        'cannot reach the registry; name the version: rness upgrade <version>\n'
+        `cannot reach the registry; name the version: ${rnessCommand()} upgrade <version>\n`
       )
       return 1
     }
@@ -113,7 +113,7 @@ export async function upgradeCommand(
       EXACT_VERSION.test(pin.spec) && compareVersions(target, pin.spec) < 0
     if (downgrading && version === undefined) {
       process.stderr.write(
-        `${label} pins @rness/cli ${pin.spec}, newer than the latest release ${target}; to downgrade: rness upgrade ${target}\n`
+        `${label} pins @rness/cli ${pin.spec}, newer than the latest release ${target}; to downgrade: ${rnessCommand()} upgrade ${target}\n`
       )
       return 1
     }

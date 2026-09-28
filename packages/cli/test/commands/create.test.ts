@@ -228,7 +228,7 @@ test('join --repos: catalogue entries are cloned without rewriting rness.json; o
   assert.equal(only.code, 0, only.err)
   assert.equal(
     only.out,
-    'found    acme/.rness — joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nnot cloned: web (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web\n  npx @rness/cli sync --all\n'
+    'found    acme/.rness — joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nnot cloned: web (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web\n  rness sync --all\n'
   )
   const root = join(cwd, 'acme')
   await assert.rejects(access(join(root, 'org', 'web')))
@@ -540,7 +540,7 @@ test('a repository that fails is reported and skipped; the workspace is still fi
   assert.match(r.out, /updated {2}org\/api\/AGENTS\.md\n/)
   assert.match(
     r.out,
-    /Next:\n {2}cd acme\/\.rness\n {2}npx @rness\/cli add ghost {3}# failed: git clone failed: /
+    /Next:\n {2}cd acme\/\.rness\n {2}rness add ghost {3}# failed: git clone failed: /
   )
   assert.deepEqual(
     Object.keys((await loadManifest(join(root, '.rness'))).repos),
@@ -905,7 +905,7 @@ test('wizard, join: the catalogue is pre-selected and completed; unpicked stays 
   assert.deepEqual(term.preselected, [['api', 'web', 'secret']])
   assert.equal(
     r.out,
-    'found    acme/.rness — joining\nlisting  acme repositories…\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\ncloned   org/other\ndeclared scope other (org/other)\nnot cloned: web, secret (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/other/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web, secret\n  npx @rness/cli sync --all\n'
+    'found    acme/.rness — joining\nlisting  acme repositories…\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\ncloned   org/other\ndeclared scope other (org/other)\nnot cloned: web, secret (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/other/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web, secret\n  rness sync --all\n'
   )
   const root = join(cwd, 'acme')
   await assert.rejects(access(join(root, 'org', 'web')))
@@ -1668,7 +1668,7 @@ const offline = (): [Transport, GitProvider] => [
 const BLANK_NEXT = [
   'cd my-project',
   '# bring a repository in: <owner>/<repo> on GitHub, or any git URL',
-  'npx @rness/cli add <owner>/<repo>',
+  'rness add <owner>/<repo>',
   '# to share it: set "org" in .rness/rness.json, then push .rness to github.com/<org>/.rness',
 ]
 
@@ -1907,54 +1907,45 @@ test('wizard, blank: --blank <name> keeps one confirm; a cancel anywhere writes 
 
 // --- next steps in the words of the manager that ran create -----------------
 
-test('next steps run rness through the manager that ran create: npx, pnpm dlx, yarn dlx, bunx', async (t) => {
-  for (const [pm, version, runner] of [
-    ['pnpm', '12.2.1', 'pnpm dlx @rness/cli'],
-    ['bun', '1.1.34', 'bunx @rness/cli'],
-    ['yarn', '4.5.0', 'yarn dlx @rness/cli'],
+test('next steps spell rness the way create was launched, whatever --pm installs with', async (t) => {
+  for (const [agent, runner] of [
+    ['npm/11.13.0 node/v24.16.0 darwin arm64', 'npx @rness/cli'],
+    ['pnpm/12.5.1 npm/? node/? darwin arm64', 'pnpm dlx @rness/cli'],
+    ['bun/1.3.14 npm/? node/v24.3.0', 'bunx @rness/cli'],
+    ['yarn/4.5.0 npm/? node/v24.16.0', 'yarn dlx @rness/cli'],
     // Yarn 1 has no dlx; npx comes with Node.
-    ['yarn', '1.22.22', 'npx @rness/cli'],
+    ['yarn/1.22.22 npm/? node/v24.16.0', 'npx @rness/cli'],
   ] as const) {
-    await fakeBin(t, pm, [
-      '#!/bin/sh',
-      `if [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi`,
-      'exit 0',
-    ])
-    const cwd = await scratch(t)
+    withEnv(t, { npm_config_user_agent: agent })
     const r = await create([
       'my-project',
       '--blank',
       '--yes',
       '--skip-install',
       '--pm',
-      pm,
+      'npm',
       '--cwd',
-      cwd,
+      await scratch(t),
     ])
-    assert.equal(r.code, 0, `${pm} ${version}: ${r.err}`)
+    assert.equal(r.code, 0, `${agent}: ${r.err}`)
     assert.match(
       r.out,
       new RegExp(`\\n {2}${runner} add <owner>/<repo>\\n`),
-      `${pm} ${version}`
+      agent
     )
-    assert.doesNotMatch(r.out, /^ {2}rness /m, `${pm} ${version}`)
   }
 })
 
-test('new workspace: the retry and the command for teammates use the same manager', async (t) => {
+test('new workspace: the retry and the command for teammates follow the launching manager', async (t) => {
+  withEnv(t, { npm_config_user_agent: 'bun/1.3.14 npm/? node/v24.3.0' })
   const remote = await makeRemoteOrg(t, 'acme')
-  await fakeBin(t, 'bun', [
-    '#!/bin/sh',
-    'if [ "$1" = "--version" ]; then echo "1.1.34"; exit 0; fi',
-    'exit 0',
-  ])
   const r = await create([
     '--org',
     'acme',
     '--yes',
     '--skip-install',
     '--pm',
-    'bun',
+    'npm',
     '--host',
     remote.host,
     '--repos',

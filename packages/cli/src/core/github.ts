@@ -1,3 +1,5 @@
+import { rnessCommand } from './pm.ts'
+
 /** The public GitHub REST API; `--github-api` overrides it in tests. */
 export const DEFAULT_GITHUB_API = 'https://api.github.com'
 
@@ -5,7 +7,8 @@ export const DEFAULT_GITHUB_API = 'https://api.github.com'
 export const MAX_PAGES = 50
 export const PER_PAGE = 100
 
-const ADD_LATER = '; add repositories later with rness add <repo>'
+const addLater = (): string =>
+  `; add repositories later with ${rnessCommand()} add <repo>`
 
 export interface OrgRepository {
   name: string
@@ -109,12 +112,12 @@ function httpError(page: Page, path: string): Error {
         page.headers.has('retry-after')))
   ) {
     return new Error(
-      'GitHub API rate limit reached; set GITHUB_TOKEN or add repositories later with rness add',
+      `GitHub API rate limit reached; set GITHUB_TOKEN or add repositories later with ${rnessCommand()} add`,
       { cause }
     )
   }
   return new Error(
-    `GitHub API answered ${page.status} for ${path}${ADD_LATER}`,
+    `GitHub API answered ${page.status} for ${path}${addLater()}`,
     { cause }
   )
 }
@@ -173,7 +176,7 @@ export async function listRepositories(
       page = await getPage(url(kind, n), headers, timeoutMs)
       if (page.status === 404) {
         throw new Error(
-          `GitHub has no organization or user named "${owner}" (or it is not visible to you)${ADD_LATER}`,
+          `GitHub has no organization or user named "${owner}" (or it is not visible to you)${addLater()}`,
           { cause: { status: 404, path: kind.path } }
         )
       }

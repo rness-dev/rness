@@ -10,6 +10,7 @@ import {
   requestDeviceCode,
 } from '../core/device-flow.ts'
 import { DEFAULT_GITHUB_API, getUser } from '../core/github.ts'
+import { rnessCommand } from '../core/pm.ts'
 import { isStableInstall, setupGit } from '../core/setup-git.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import { type Ui, makeUi } from '../core/ui.ts'
@@ -74,8 +75,8 @@ async function offerSetupGit(
   const changed = await setupGit(process.execPath, bin)
   ui.line(
     changed ? 'updated' : 'unchanged',
-    'git: rness answers for https://github.com (rness logout undoes it)',
-    'git now asks rness for your github.com login over HTTPS (rness logout undoes it)'
+    `git: rness answers for https://github.com (${rnessCommand()} logout undoes it)`,
+    `git now asks rness for your github.com login over HTTPS (${rnessCommand()} logout undoes it)`
   )
 }
 
@@ -102,7 +103,7 @@ export async function loginCommand(
     if (stored !== null && (await resolveToken()) !== null) {
       ui.line(
         'logged in',
-        `as ${stored.login} (github.com); rness logout to switch`
+        `as ${stored.login} (github.com); ${rnessCommand()} logout to switch`
       )
       await offerSetupGit(opts, terminal, bin, ui)
       if (own) ui.outro('Nothing to do', 'idle')

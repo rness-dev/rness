@@ -9,6 +9,11 @@ import { join } from 'node:path'
 delete process.env['FORCE_COLOR']
 delete process.env['NO_COLOR']
 
+// `pnpm test` sets the package manager's user agent; `node --test` does not.
+// It decides how hints spell the rness command (`pnpm dlx @rness/cli` or
+// `rness`), so every test starts without one and sets it when it cares.
+delete process.env['npm_config_user_agent']
+
 // The developer's own GitHub token must not reach a test: with a real one the
 // CLI is logged in, asks api.github.com who it is, and prints it. Tests that
 // want a token set one themselves.

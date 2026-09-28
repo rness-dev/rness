@@ -8,6 +8,7 @@ import {
   refreshTokenSet,
 } from './device-flow.ts'
 import { writeFileAtomic } from './fs.ts'
+import { rnessCommand } from './pm.ts'
 
 // Where the GitHub login lives (spec 0004 §1): one file, readable by its
 // owner only. No keychain: that needs a native dependency.
@@ -177,7 +178,7 @@ export async function resolveToken(
       if (e instanceof RefreshRejected) {
         await clearAuth()
         ;(deps.notify ?? ((l) => process.stderr.write(`${l}\n`)))(
-          'your GitHub login expired; run rness login'
+          `your GitHub login expired; run ${rnessCommand()} login`
         )
         return null
       }

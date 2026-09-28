@@ -147,6 +147,17 @@ its content does.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## Unreleased
+
+- Every hint that names a command to run (`not cloned: …`, `run … sync`,
+  `run … login`, `… upgrade <version>`) spells rness the way it was
+  launched: `npx @rness/cli`, `pnpm dlx @rness/cli`, `yarn dlx @rness/cli`
+  (npx on Yarn 1), `bunx @rness/cli`, or `rness` when it was typed directly.
+  The next steps of `create` follow the same rule; `--pm`, which chooses what
+  `.rness/` installs with, no longer decides them.
+- Under `rness-dev` (`RNESS_NO_DELEGATE=1`), `create` writes its first blocks
+  from the sources rather than through the copy it just installed.
+
 ## 0.6.0 — a workspace without GitHub
 
 - `rness create <name> --blank` writes `<name>/.rness/` (a `rness.json`

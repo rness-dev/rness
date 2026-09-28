@@ -4,6 +4,7 @@ import { isCurrentBlock, renderBlock } from './block.ts'
 import { assembleContext } from './context.ts'
 import { exists, readOrNull } from './fs.ts'
 import { findBlock } from './merge.ts'
+import { rnessCommand } from './pm.ts'
 import type { Manifest } from './types.ts'
 
 export interface CheckBlocksInput {
@@ -101,7 +102,7 @@ export async function checkBlocks({
       note(
         t.label,
         'no-block',
-        `${t.label}: no rness block yet (run rness sync)`
+        `${t.label}: no rness block yet (run ${rnessCommand()} sync)`
       )
       continue
     }
@@ -125,7 +126,11 @@ export async function checkBlocks({
     if (isCurrentBlock(lines.slice(found.begin, found.end + 1), fresh.hash))
       note(t.label, 'current')
     else
-      note(t.label, 'stale', `${t.label}: stale rness block (run rness sync)`)
+      note(
+        t.label,
+        'stale',
+        `${t.label}: stale rness block (run ${rnessCommand()} sync)`
+      )
   }
   return derive()
 }

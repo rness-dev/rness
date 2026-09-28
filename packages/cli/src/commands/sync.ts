@@ -12,6 +12,7 @@ import { clone, isClean, pullFastForward } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
 import { ensureClaudeMd, findBlock, mergeBlock } from '../core/merge.ts'
+import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
@@ -254,7 +255,7 @@ export async function syncCommand(
 
       if (notCloned.size > 0)
         lines.push(
-          `not cloned: ${[...notCloned].join(', ')} (rness add <name>, or rness sync --all)`
+          `not cloned: ${[...notCloned].join(', ')} (${rnessCommand()} add <name>, or ${rnessCommand()} sync --all)`
         )
       // A clone the catalogue does not know gets no block: no scope declares
       // its rules. Say how to bring it in rather than skipping it silently.
@@ -266,7 +267,7 @@ export async function syncCommand(
       )
       if (undeclared.length > 0)
         lines.push(
-          `not in rness.json: ${undeclared.join(', ')} (rness add <name> declares it)`
+          `not in rness.json: ${undeclared.join(', ')} (${rnessCommand()} add <name> declares it)`
         )
 
       // 2. Blocks — only where repositories live; a standalone context checkout has no org/.
@@ -348,7 +349,9 @@ export async function syncCommand(
           lines.push(['updated', `${t.label}`])
         }
         if (check && differences > 0)
-          problems.push(`${differences} block(s) out of date — run rness sync`)
+          problems.push(
+            `${differences} block(s) out of date — run ${rnessCommand()} sync`
+          )
       }
 
       return problems.length > 0 ? 1 : 0

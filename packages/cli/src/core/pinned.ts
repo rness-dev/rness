@@ -9,6 +9,7 @@ import {
   type PackageManager,
   installDependencies,
   isPackageManager,
+  rnessCommand,
 } from './pm.ts'
 import { warn } from './style.ts'
 import { agentHintLines } from './transport.ts'
@@ -355,7 +356,7 @@ export async function syncPinned(
   if (installed === null) {
     if (fallback !== undefined) return fallback()
     process.stderr.write(
-      `@rness/cli is not installed in ${shown}/.rness; install in .rness/, then rness sync\n`
+      `@rness/cli is not installed in ${shown}/.rness; install in .rness/, then ${rnessCommand()} sync\n`
     )
     return 1
   }

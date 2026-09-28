@@ -26,7 +26,7 @@ import {
   type PackageManager,
   detectPackageManager,
   isPackageManager,
-  rnessRunnerFor,
+  rnessCommand,
 } from '../core/pm.ts'
 import type { GitCredentials, GitProvider } from '../core/provider.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
@@ -173,11 +173,11 @@ async function pickRepositories(input: {
     listed = listing.repositories
     if (listing.owner === 'user')
       ui.hint(
-        `only public repositories of ${org} are listed; add private ones later with rness add <repo>`
+        `only public repositories of ${org} are listed; add private ones later with ${rnessCommand()} add <repo>`
       )
     else if (!provider.authenticated)
       ui.hint(
-        'only public repositories are listed; rness login lists the private ones you can access'
+        `only public repositories are listed; ${rnessCommand()} login lists the private ones you can access`
       )
     if (listing.truncated)
       ui.hint(`listed the first ${MAX_PAGES * PER_PAGE} repositories of ${org}`)
@@ -523,9 +523,6 @@ export async function createCommand(
     opts.pm !== undefined && isPackageManager(opts.pm)
       ? opts.pm
       : detectPackageManager()
-  // The next steps are written with the manager that ran create, which a join
-  // may not install with: it is the one this machine is known to have.
-  const launchedWith = pm
   const interactive = opts.yes !== true && terminal.isTty()
   // The plain look unless this is a wizard in a real terminal (spec 0007 §5b).
   const ui = interactive ? await makeUi(terminal) : { ...plainUi }
@@ -809,7 +806,7 @@ export async function createCommand(
       const remaining = Object.keys(catalogue.repos).filter(
         (name) => !cloned.has(name)
       )
-      const rness = await rnessRunnerFor(launchedWith)
+      const rness = rnessCommand()
       const next = [
         `cd ${shown}`,
         // The comment above its command, as the new-workspace note does: a
@@ -883,7 +880,7 @@ export async function createCommand(
         })
       : false
     if (published === null) return cancelled(ui)
-    const rness = await rnessRunnerFor(launchedWith)
+    const rness = rnessCommand()
     const next = [
       `cd ${shown}/.rness`,
       // What was asked for and did not happen, as the command that retries
@@ -899,7 +896,9 @@ export async function createCommand(
             '# or, with the GitHub CLI (gh) installed, in one step:',
             `gh repo create ${org}/.rness --private --source . --push`,
           ]),
-      `# then, for every teammate: ${launchedWith} create rness ${org}`,
+      // How this command was launched (npm when rness was typed directly),
+      // whatever --pm installed with.
+      `# then, for every teammate: ${detectPackageManager()} create rness ${org}`,
     ]
     if (ui.session) {
       ui.note('Next steps', next)

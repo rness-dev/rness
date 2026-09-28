@@ -11,6 +11,7 @@ import {
   type PackageManager,
   installDependencies,
   packageManagerVersion,
+  rnessCommand,
 } from './pm.ts'
 import { copyScaffold } from './scaffold-copy.ts'
 import type { Manifest } from './types.ts'
@@ -56,8 +57,8 @@ export async function targetProblem(
     // no dependencies. Re-running create cannot help — point at the install
     // that finishes the job instead of at `rness add`.
     if (!(await exists(join(root, '.rness', 'node_modules'))))
-      return `${shown} holds an rness workspace whose dependencies are not installed; cd ${shown}/.rness && ${pm} install, then rness sync`
-    return `${shown} already holds an rness workspace (.rness/); run rness add inside it to add repositories`
+      return `${shown} holds an rness workspace whose dependencies are not installed; cd ${shown}/.rness && ${pm} install, then ${rnessCommand()} sync`
+    return `${shown} already holds an rness workspace (.rness/); run ${rnessCommand()} add inside it to add repositories`
   }
   if (!(await stat(root)).isDirectory()) return `${shown} is not a directory`
   if (!(await isEmptyDir(root))) return `${shown} is not empty`

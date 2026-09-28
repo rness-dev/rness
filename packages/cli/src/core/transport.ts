@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 
+import { rnessCommand } from './pm.ts'
 import { DEFAULT_HOST, SSH_HOST } from './remote.ts'
 import { status } from './style.ts'
 
@@ -216,5 +217,5 @@ export const INSTEAD_OF_LINES: [string, string] = [
 ]
 
 export function httpsFlagLine(spec: string): string {
-  return `or clone this repository over HTTPS: rness add ${spec} --https`
+  return `or clone this repository over HTTPS: ${rnessCommand()} add ${spec} --https`
 }

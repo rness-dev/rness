@@ -144,6 +144,32 @@ test('unknown --scope and a workspace without org/ are handled', async (t) => {
   assert.match(r.out, /^skipped {2}blocks \(no org\/ directory here\)\n$/)
 })
 
+test('hints spell rness the way it was launched: pnpm dlx here', async (t) => {
+  const original = process.env['npm_config_user_agent']
+  process.env['npm_config_user_agent'] = 'pnpm/12.5.1 npm/? node/? darwin arm64'
+  t.after(() => {
+    if (original === undefined) delete process.env['npm_config_user_agent']
+    else process.env['npm_config_user_agent'] = original
+  })
+  const url = await makeBareRepo(t, 'api')
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    repos: { api: { url } },
+    scopes: { api: { path: 'org/api' } },
+    dirs: ['org'],
+  })
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 1)
+  assert.match(
+    check.out,
+    /^not cloned: api \(pnpm dlx @rness\/cli add <name>, or pnpm dlx @rness\/cli sync --all\)$/m
+  )
+  assert.match(
+    `${check.out}${check.err}`,
+    /out of date — run pnpm dlx @rness\/cli sync/
+  )
+})
+
 test('a missing clone is reported, not cloned; --check agrees; no per-scope line under it', async (t) => {
   const url = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {

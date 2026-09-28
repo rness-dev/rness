@@ -7,6 +7,7 @@ import {
   installErrorLine,
   isPackageManager,
   packageManagerVersion,
+  rnessCommand,
   rnessRunner,
 } from '../../src/core/pm.ts'
 
@@ -34,6 +35,24 @@ test('rnessRunner: the rness CLI without a global install, per manager', () => {
   // Yarn 1 has no dlx, and an unknown yarn may be one: npx comes with Node.
   assert.equal(rnessRunner('yarn', '1.22.22'), 'npx @rness/cli')
   assert.equal(rnessRunner('yarn', null), 'npx @rness/cli')
+})
+
+test('rnessCommand: how the user launched rness, to type it again', () => {
+  // No package manager in between: the `rness` they typed (a global install).
+  assert.equal(rnessCommand({}), 'rness')
+  assert.equal(rnessCommand({ npm_config_user_agent: '' }), 'rness')
+  const agent = (ua: string) => rnessCommand({ npm_config_user_agent: ua })
+  assert.equal(
+    agent('npm/11.13.0 node/v24.16.0 darwin arm64'),
+    'npx @rness/cli'
+  )
+  assert.equal(
+    agent('pnpm/12.5.1 npm/? node/? darwin arm64'),
+    'pnpm dlx @rness/cli'
+  )
+  assert.equal(agent('bun/1.3.14 npm/? node/v24.3.0'), 'bunx @rness/cli')
+  assert.equal(agent('yarn/4.5.0 npm/? node/v24.16.0'), 'yarn dlx @rness/cli')
+  assert.equal(agent('yarn/1.22.22 npm/? node/v24.16.0'), 'npx @rness/cli')
 })
 
 test('isPackageManager guards the --pm flag', () => {

@@ -4,6 +4,7 @@ import {
   syncOutcome,
   syncPinned,
 } from './pinned.ts'
+import { rnessCommand } from './pm.ts'
 import type { Ui } from './ui.ts'
 
 /**
@@ -43,7 +44,7 @@ export async function syncBlocks(
   if (result === null) {
     if (inPlace !== undefined) return inPlace()
     ui.error(
-      `@rness/cli is not installed in ${shown}/.rness; install in .rness/, then rness sync`
+      `@rness/cli is not installed in ${shown}/.rness; install in .rness/, then ${rnessCommand()} sync`
     )
     return 1
   }
