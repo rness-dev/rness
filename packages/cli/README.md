@@ -20,10 +20,10 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 
 ## Commands
 
-    rness create [<org>] [--repos a,b] [--pm npm|pnpm|yarn|bun] [--ssh|--https] [--skip-install] -y
-    rness create <name> --blank [--pm npm|pnpm|yarn|bun] [--skip-install] -y
+    rness create [<org>] [--repos a,b] [--agent claude] [--pm npm|pnpm|yarn|bun] [--ssh|--https] [--skip-install] -y
+    rness create <name> --blank [--agent claude] [--pm npm|pnpm|yarn|bun] [--skip-install] -y
     rness add <repo> [--scopes apps/web,packages/ui] [--ssh|--https] -y
-    rness sync [--all] [--scope <name>] [--check] [--pull] -y
+    rness sync [--all] [--scope <name>] [--check] [--pull] [--agent <name>] -y
     rness upgrade [<version>] -y
     rness login [--setup-git|--no-setup-git]
     rness logout
@@ -39,6 +39,35 @@ writes nothing and exits 1 when a block is out of date — use it in CI.
 `<name>/org/` and the root `AGENTS.md` and `CLAUDE.md`. Only the install of
 `.rness/` goes to the network. Bring repositories in with
 `rness add <owner>/<repo>` or a git URL — a bare name needs an `"org"`.
+
+### Agent targets
+
+The `AGENTS.md` block is what every agent reads. On top of it, rness writes
+the files a given agent needs, for the agents the team declares in
+`rness.json`:
+
+    rness sync --agent claude     # declare claude, then write its files
+    rness sync                    # in a terminal, with nothing declared, asks once
+
+```json
+{ "contract": 1, "org": "acme", "agents": ["claude"], "repos": { … }, "scopes": { … } }
+```
+
+- `agents` is the team's: the files it produces are committed in each
+  repository. `[]` means none; without the key, `sync` asks in a terminal and
+  never in scripts (`-y`, `--check`). A new workspace asks with `create`'s
+  other questions, or takes `--agent`.
+- **Claude Code** (`claude`): each clone gets `.claude/settings.json` with
+  `../../.rness` in `permissions.additionalDirectories`, so a session in the
+  repository reads the context repository without a prompt. Claude Code
+  applies it once the repository has been trusted interactively. Verified
+  with Claude Code 2.1.284 on 2026-09-29.
+- rness owns values, not files: what is missing is added, nothing else is
+  touched, and a file it cannot parse is reported, never rewritten.
+  `sync --check` and `validate` report a missing value. Removing an agent
+  from `agents` leaves its values in place; `sync` says where.
+- Other agents (Codex, Cursor, GitHub Copilot) read the `AGENTS.md` block;
+  `sync` refuses an agent it has no target for.
 
 ### Log in
 
@@ -146,6 +175,19 @@ its content does.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.7.0 — agent targets: Claude Code
+
+- `rness.json` may declare the team's agents: `"agents": ["claude"]`. It is
+  an optional key of contract 1; no block changes. A CLI older than 0.7.0
+  refuses the key: move the pin before declaring an agent.
+- `rness sync --agent claude` declares it and writes each clone's
+  `.claude/settings.json` (`../../.rness` in
+  `permissions.additionalDirectories`). In a terminal with nothing declared,
+  `sync` asks once which agents the team uses; `create` asks for a new
+  workspace, or takes `--agent`.
+- `sync --check` and `validate` cover the agent files, and `sync --pull`
+  does not count them as local changes. See "Agent targets".
 
 ## 0.6.2 — no dialog for the root CLAUDE.md
 
