@@ -93,13 +93,14 @@ decided:
   written.
 - With `claude` in `agents`, `sync` registers it in each clone:
   `.mcp.json` gets `mcpServers.rness`, which runs the pinned copy
-  (`node ../../.rness/node_modules/@rness/cli/dist/bin/rness.js mcp`), and
-  `.claude/settings.json` lists `rness` in `enabledMcpjsonServers`. A
+  (`node ../../.rness/node_modules/@rness/cli/dist/bin/rness.js mcp`). A
   team's own `rness` entry is left as it is.
+- Each developer approves the server once, in Claude Code's own dialog.
+  rness does not pre-approve it: `enabledMcpjsonServers` in a committed
+  settings file would let any change to the `rness` entry of `.mcp.json` run
+  unasked. Review such a change like code.
 - Verified with Claude Code 2.1.284 on 2026-09-29: the server starts from the
-  repository and its tools answer. Not verified yet: that
-  `enabledMcpjsonServers` spares the approval prompt in an interactive
-  session.
+  repository and its tools answer.
 - Another agent can run the same command from a clone; rness writes no
   configuration for it.
 
@@ -177,8 +178,9 @@ dependency does this: `util.styleText`, and a banner kept as a constant.
 
 The version is written in one place, `.rness/package.json`. `upgrade` pins it
 there (exact, the rest of the file untouched), installs with the workspace's
-package manager, then syncs through the new copy; a failed install restores
-the file. Commit `.rness`. Teammates pull, and the next `rness` command in that
+package manager, syncs through the new copy, then commits `.rness`
+(`chore: rness <version>`); a failed install restores the file. Push
+`.rness`. Teammates pull, and the next `rness` command in that
 workspace installs the new pin itself — frozen, so the working tree stays
 clean — and carries on: nothing to remember, nothing to run.
 `RNESS_NO_INSTALL=1` turns that off and restores the warning, for CI, a
@@ -216,8 +218,10 @@ now names; `rness validate` warns while it is behind.
   scaffold did not change; overlapping lines conflict, and `upgrade` stops
   before installing — resolve with git (`git checkout --ours <file>` keeps
   yours, `--theirs` takes the scaffold's), commit, run `upgrade` again.
-- `.rness` must be a clean git repository. The merge is staged, not
-  committed: the next steps end in one commit.
+- `.rness` must be a clean git repository with no merge in progress.
+  `upgrade` commits the merge itself, through the repository's hooks. When a
+  hook refuses, everything stays staged, what it said is shown, and
+  `upgrade` exits 1 with the commit to make.
 - A workspace with no scaffold commit (made by hand, or older than
   `create`) is adopted: identical files merge silently, a differing one
   conflicts once.
@@ -231,12 +235,31 @@ pin merges the scaffold of the copy installed in `.rness`. A global below
 `npx` form, or the pinned copy from inside `.rness`. A workspace pinned below 0.5.0, whose copy has no such
 command, starts with the `npx` form.
 
-An upgrade touches `.rness` only: a generated block is current when its hash
-is, whatever wrote it, so no `AGENTS.md` of the organization changes unless
-its content does.
+An upgrade commits `.rness` only. Its sync rewrites a block only when the
+block's content changed — a block is current when its hash is, whatever
+wrote it — and writes the agent files a release adds. The next steps list,
+per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.9.1 — upgrade ends in its commit; the MCP server approved per developer
+
+- `rness upgrade` commits `.rness` itself (`chore: rness <version>`), with
+  the repository's hooks; a refusal leaves everything staged and exits 1.
+  The next steps say what is left: push, and per repository the files the
+  sync changed.
+- `upgrade` syncs every time, the Dependabot case included (pin and install
+  already at the target). In 0.9.0 it skipped the sync there, so the values
+  0.9.0 added to the agent files were missing and the scaffold's
+  pre-commit hook refused the commit.
+- `upgrade` refuses a `.rness` with a merge in progress.
+- `validate` counts a merge in progress: the commit recording a scaffold
+  merge no longer warns that the scaffold is not merged.
+- The Claude target no longer writes `enabledMcpjsonServers`: each developer
+  approves the MCP server once. After syncing with 0.9.0, remove `rness`
+  from `enabledMcpjsonServers` in each `.claude/settings.json` by hand —
+  rness never removes a value.
 
 ## 0.9.0 — the context on demand: `rness mcp`
 
