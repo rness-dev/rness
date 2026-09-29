@@ -232,7 +232,14 @@ async function mark(opts: MarkOptions): Promise<number> {
   const board = await declaredBoard(c)
   const items = await fromGithub(c.provider.items(board))
   if (opts.end === true) {
-    const ids = items.filter((i) => i.session === opts.session).map((i) => i.id)
+    // A subagent's marks read `claude · <type> · <id>`: the session's end
+    // clears every mark ending in its id, whatever agent type precedes it.
+    const id = opts.session.split(' · ').pop() ?? opts.session
+    const ids = items
+      .filter(
+        (i) => i.session === opts.session || i.session?.endsWith(` · ${id}`)
+      )
+      .map((i) => i.id)
     await fromGithub(c.provider.mark(board, ids, null))
     await syncBoard(c, board, plainUi, 'added')
     return 0

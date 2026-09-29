@@ -427,3 +427,41 @@ test('mark that cannot reach the pulse records why, for the next session start, 
   assert.ok(reason !== null && reason !== '')
   assert.equal(await takeFailure(), null)
 })
+
+test('--end clears the session and its subagents (same id, any agent type), not another session', async (t) => {
+  await machine(t)
+  const marked = (session: string) => ({
+    Path: 'plans/0002-b.md',
+    Agent: 'working',
+    Session: session,
+  })
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    items: [
+      item('i1', marked('claude · 1a2b3c4d'), '0002 — B'),
+      item('i2', marked('claude · reviewer · 1a2b3c4d')),
+      item('i3', marked('claude · 9f9f9f9f')),
+    ],
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const r = await run(() =>
+    pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session: 'claude · 1a2b3c4d',
+      paths: [],
+      end: true,
+    })
+  )
+  assert.equal(r.code, 0)
+  const cleared = g.mutations
+    .filter((m) => m.op === 'clear')
+    .map((m) => m.variables['itemId'])
+  assert.deepEqual([...new Set(cleared)].sort(), ['i1', 'i2'])
+})

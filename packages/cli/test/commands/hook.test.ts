@@ -84,11 +84,8 @@ async function hook(
     output: sink((s) => (out += s)),
     error: sink((s) => (err += s)),
     env,
-    ...(spawned === undefined
-      ? {}
-      : {
-          spawn: (args: string[], cwd: string) => spawned.push({ args, cwd }),
-        }),
+    // Always injected: a hook must never start a real process from a test.
+    spawn: (args: string[], cwd: string) => (spawned ?? []).push({ args, cwd }),
   })
   return { code, out, err }
 }
