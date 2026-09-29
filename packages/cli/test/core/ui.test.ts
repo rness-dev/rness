@@ -85,6 +85,12 @@ test('a step spins — unless it runs git while git might still ask for a passph
   await ui.step({ doing: 'cloning  org/api', git: true }, async () => 1, cloned)
   ui.gitIsSilent = true
   await ui.step({ doing: 'cloning  org/api', git: true }, async () => 1, cloned)
+  // A sentence of its own, where `rest verb` would not read.
+  await ui.step(
+    { doing: 'syncing  the blocks' },
+    async () => 1,
+    () => ['synced', '3 blocks: 3 unchanged', 'Synced 3 blocks: 3 unchanged']
+  )
   await assert.rejects(
     ui.step({ doing: 'installing dependencies with npm' }, async () => {
       throw new Error('boom')
@@ -99,6 +105,8 @@ test('a step spins — unless it runs git while git might still ask for a passph
     'success: org/api cloned',
     'spin: Cloning org/api',
     'stop: org/api cloned',
+    'spin: Syncing the blocks',
+    'stop: Synced 3 blocks: 3 unchanged',
     'spin: Installing dependencies with npm',
     'spin-error: Installing dependencies with npm — failed',
   ])
@@ -120,13 +128,18 @@ test('the plain look is the status column, and a quiet step adds nothing to it',
       async () => 1,
       () => ['installed', 'dependencies with npm']
     )
+    await ui.step(
+      { doing: 'syncing  the blocks' },
+      async () => 1,
+      () => ['synced', '3 blocks', 'a sentence the plain look never says']
+    )
     ui.hint('only public repositories are listed')
     ui.warn('careful')
     ui.cancelled()
     ui.outro('ignored')
     assert.equal(
       c.out(),
-      'cloned   org/api\ninstalled dependencies with npm\nonly public repositories are listed\n'
+      'cloned   org/api\ninstalled dependencies with npm\nsynced   3 blocks\nonly public repositories are listed\n'
     )
     assert.equal(c.err(), 'warning: careful\ncancelled\n')
   } finally {
@@ -152,6 +165,27 @@ test('a sync is summarised in one line; what is not about a block is kept', () =
     '1 block: 1 unchanged'
   )
   assert.equal(summariseSync('').summary, '0 blocks')
+})
+
+test('the agent files a sync writes are counted apart from the blocks', () => {
+  assert.equal(
+    summariseSync(
+      [
+        'unchanged AGENTS.md',
+        'unchanged CLAUDE.md',
+        'updated  org/api/AGENTS.md',
+        'unchanged org/api/.claude/settings.json',
+        'updated  org/api/.mcp.json',
+        'stale    org/web/.mcp.json (mcpServers.rness is missing)',
+        '',
+      ].join('\n')
+    ).summary,
+    '3 blocks: 1 updated, 2 unchanged; 3 agent files: 1 updated, 1 unchanged, 1 stale'
+  )
+  assert.equal(
+    summariseSync('unchanged org/api/.mcp.json\n').summary,
+    '0 blocks; 1 agent file: 1 unchanged'
+  )
 })
 
 test('the SSH test is unattended first; the one that may prompt runs only in a terminal, announced', async () => {

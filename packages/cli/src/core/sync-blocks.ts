@@ -39,7 +39,10 @@ export async function syncBlocks(
     (r) =>
       r === null || r.code !== 0
         ? null
-        : ['synced', summariseSync(r.stdout).summary]
+        : (() => {
+            const { summary } = summariseSync(r.stdout)
+            return ['synced', summary, `Synced ${summary}`] as const
+          })()
   )
   if (result === null) {
     if (inPlace !== undefined) return inPlace()

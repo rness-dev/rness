@@ -286,26 +286,50 @@ export async function runPinnedSync(
   }
 }
 
+const SYNC_VERBS = ['updated', 'unchanged', 'stale'] as const
+
 /**
- * What a sync printed, in one line: `3 blocks: 2 updated, 1 unchanged`. The
- * lines that are not about a block (`not cloned: …`) are returned as they are.
+ * `3 blocks: 2 updated, 1 unchanged`, the verbs always in that order —
+ * nothing after the count when none.
+ */
+function counted(noun: string, counts: ReadonlyMap<string, number>): string {
+  const total = [...counts.values()].reduce((a, b) => a + b, 0)
+  const detail = SYNC_VERBS.filter((verb) => counts.has(verb))
+    .map((verb) => `${counts.get(verb) ?? 0} ${verb}`)
+    .join(', ')
+  return `${total} ${noun}${total === 1 ? '' : 's'}${detail === '' ? '' : `: ${detail}`}`
+}
+
+/**
+ * What a sync printed, in one line: `3 blocks: 2 updated, 1 unchanged`, then
+ * the agent files when there are any — `; 2 agent files: 2 unchanged`. A
+ * block is an `AGENTS.md` or a `CLAUDE.md`; any other file is an agent's
+ * (spec 0011). The lines about neither (`not cloned: …`) are returned as
+ * they are.
  */
 export function summariseSync(stdout: string): {
   summary: string
   others: string[]
 } {
-  const counts = new Map<string, number>()
+  const blocks = new Map<string, number>()
+  const agentFiles = new Map<string, number>()
   const others: string[] = []
   for (const line of stdout.split('\n')) {
     if (line.trim() === '') continue
-    const verb = /^(updated|unchanged|stale)\s/.exec(line)?.[1]
-    if (verb === undefined) others.push(line)
-    else counts.set(verb, (counts.get(verb) ?? 0) + 1)
+    const m = /^(updated|unchanged|stale)\s+(\S+)/.exec(line)
+    if (m === null) {
+      others.push(line)
+      continue
+    }
+    const [, verb = '', path = ''] = m
+    const counts = /(^|\/)(AGENTS|CLAUDE)\.md$/.test(path) ? blocks : agentFiles
+    counts.set(verb, (counts.get(verb) ?? 0) + 1)
   }
-  const total = [...counts.values()].reduce((a, b) => a + b, 0)
-  const detail = [...counts].map(([verb, n]) => `${n} ${verb}`).join(', ')
   return {
-    summary: `${total} block${total === 1 ? '' : 's'}${detail === '' ? '' : `: ${detail}`}`,
+    summary: [
+      counted('block', blocks),
+      ...(agentFiles.size > 0 ? [counted('agent file', agentFiles)] : []),
+    ].join('; '),
     others,
   }
 }

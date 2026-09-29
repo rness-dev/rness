@@ -7,7 +7,8 @@ import type { Prompts, Terminal } from './terminal.ts'
 // and `session`, clack's gutter from `intro` to `outro`, in a terminal.
 
 /** A status line: the verb of the column, what follows it. */
-export type Line = readonly [verb: string, rest: string]
+/** `sentence` replaces `rest verb` in the session look, where that would not read. */
+export type Line = readonly [verb: string, rest: string, sentence?: string]
 
 export interface StepOptions {
   /** The transient label of the plain look: `cloning  org/api`. */
@@ -154,11 +155,9 @@ export function sessionUi(p: Session): Ui {
       const label = options.sentence ?? tidy(options.doing)
       // The verb is kept beside its text: a finished step is said by `say`,
       // so its symbol is the one a plain line of the same tone would wear.
-      const finish = (
-        result: Awaited<ReturnType<typeof work>>
-      ): readonly [string, string] | null => done?.(result) ?? null
-      const label_ = (line: readonly [string, string]): string =>
-        `${line[1]} ${line[0]}`
+      const finish = (result: Awaited<ReturnType<typeof work>>): Line | null =>
+        done?.(result) ?? null
+      const label_ = (line: Line): string => line[2] ?? `${line[1]} ${line[0]}`
       // A spinner redraws its line: not while git's ssh may be asking for a
       // passphrase on the same terminal.
       if (options.git === true && !this.gitIsSilent) {
