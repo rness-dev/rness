@@ -4,7 +4,13 @@ import { checkBlocks } from '../core/blocks.ts'
 import { checkContract } from '../core/contract.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
+import { EXACT_VERSION, readPin } from '../core/pinned.ts'
 import { rnessCommand } from '../core/pm.ts'
+import {
+  findScaffoldBase,
+  isRepository,
+  isShallow,
+} from '../core/scaffold-git.ts'
 import { scopeChain } from '../core/scope.ts'
 import { warn } from '../core/style.ts'
 import { defaultTerminal } from '../core/terminal.ts'
@@ -60,10 +66,31 @@ export async function validateCommand(
       else if (o.status === 'invalid')
         problems.push(`${o.label}: ${o.detail ?? 'unreadable'}`)
 
+    // The scaffold (spec 0013 §4): a warning, never a problem — and nothing
+    // in a one-commit CI checkout, whose history is not there to read.
+    const scaffoldWarnings: string[] = []
+    if ((await isRepository(ws.rnessDir)) && !(await isShallow(ws.rnessDir))) {
+      const pin = await readPin(ws.rnessDir)
+      const base = await findScaffoldBase(ws.rnessDir)
+      if (base === null || base.version === null)
+        scaffoldWarnings.push(
+          `the scaffold is not tracked in .rness yet: run ${rnessCommand()} upgrade`
+        )
+      else if (
+        pin !== null &&
+        EXACT_VERSION.test(pin.spec) &&
+        pin.spec !== base.version
+      )
+        scaffoldWarnings.push(
+          `the @rness/cli ${pin.spec} scaffold is not merged here: run ${rnessCommand()} upgrade`
+        )
+    }
+
     const ui = await makeUi(deps.terminal ?? defaultTerminal)
     if (!ui.session) {
       for (const p of problems) process.stderr.write(`${p}\n`)
-      for (const w of blocks.warnings) process.stderr.write(`${warn(w)}\n`)
+      for (const w of [...blocks.warnings, ...scaffoldWarnings])
+        process.stderr.write(`${warn(w)}\n`)
       if (problems.length > 0) return 1
       process.stdout.write('context ok\n')
       return 0
@@ -90,6 +117,7 @@ export async function validateCommand(
     for (const o of targets)
       if (o.status === 'unchanged') ui.line('current', o.label)
     for (const p of problems) if (!blocks.problems.includes(p)) ui.error(p)
+    for (const w of scaffoldWarnings) ui.warn(w)
     ui.outro(
       problems.length > 0 ? 'Context mismatch' : 'Context OK',
       problems.length > 0 ? 'error' : 'done'

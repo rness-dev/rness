@@ -263,3 +263,87 @@ test('validate refuses an agent this version cannot compile, and a missing guara
   assert.equal(ok, 0, c3.err())
   assert.match(c3.out(), /context ok\n$/)
 })
+
+// --- the scaffold (spec 0013 §4) ---------------------------------------------
+
+test('validate warns when the scaffold merged in .rness is not the pinned version', async (t) => {
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const { writeFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const git = (dir: string, ...args: string[]) =>
+    promisify(execFile)('git', args, {
+      cwd: dir,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 't',
+        GIT_AUTHOR_EMAIL: 't@t.invalid',
+        GIT_COMMITTER_NAME: 't',
+        GIT_COMMITTER_EMAIL: 't@t.invalid',
+      },
+    })
+  const at = async (pin: string, message: string) => {
+    const root = await makeWorkspace(t, { org: 'acme', dirs: ['org'] })
+    const rness = join(root, '.rness')
+    await writeFile(
+      join(rness, 'package.json'),
+      JSON.stringify({ devDependencies: { '@rness/cli': pin } })
+    )
+    await git(rness, 'init', '-q', '-b', 'main')
+    await git(rness, 'add', '-A')
+    await git(rness, 'commit', '-q', '-m', message)
+    return root
+  }
+  const validate = async (root: string) => {
+    const c = capture()
+    const code = await run(['validate', '--cwd', root])
+    c.restore()
+    return { code, err: c.err() }
+  }
+  const create = (v: string) =>
+    `chore: rness workspace context\n\nRness-Scaffold: ${v}`
+
+  const current = await validate(await at('0.8.0', create('0.8.0')))
+  assert.equal(current.code, 0)
+  assert.doesNotMatch(current.err, /scaffold/)
+
+  const behind = await validate(await at('0.9.0', create('0.8.0')))
+  assert.equal(behind.code, 0, 'a warning, never a problem')
+  assert.match(
+    behind.err,
+    /warning: the @rness\/cli 0\.9\.0 scaffold is not merged here: run rness upgrade\n/
+  )
+
+  for (const message of ['chore: rness workspace context', 'chore: baseline']) {
+    const untracked = await validate(await at('0.9.0', message))
+    assert.match(
+      untracked.err,
+      /warning: the scaffold is not tracked in \.rness yet: run rness upgrade\n/,
+      message
+    )
+  }
+
+  // A one-commit CI checkout has no history to read: nothing is said.
+  const origin = await at('0.9.0', create('0.8.0'))
+  await git(
+    join(origin, '.rness'),
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'more'
+  )
+  const shallow = join(origin, 'shallow')
+  await git(
+    origin,
+    'clone',
+    '-q',
+    '--depth',
+    '1',
+    `file://${join(origin, '.rness')}`,
+    join(shallow, '.rness')
+  )
+  await git(origin, 'init', '-q', join(shallow, 'org'))
+  const ci = await validate(shallow)
+  assert.doesNotMatch(ci.err, /scaffold/)
+})
