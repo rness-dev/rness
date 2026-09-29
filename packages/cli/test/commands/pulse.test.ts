@@ -220,7 +220,7 @@ test('an organization that restricts OAuth apps: its 403 message, as it comes', 
   assert.doesNotMatch(r.err, /\n\s+at |add repositories/)
 })
 
-test('create: the lines of the spec in order, and the manifest declares the pulse', async (t) => {
+test('create: the project, then the layout it built and a first sync, and the manifest declares the pulse', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo, read:org, project') })
   const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
@@ -241,17 +241,16 @@ test('create: the lines of the spec in order, and the manifest declares the puls
     lines[1]!,
     /^created\s+Agent Pulse — https:\/\/github\.com\/orgs\/acme\/projects\/7$/
   )
+  // What ensureLayout added: Status is GitHub's own field, its options rness's.
+  assert.match(lines[2]!, /^created\s+fields Collection, Agent, Session, Path$/)
+  assert.match(lines[3]!, /^created\s+options Accepted, In progress$/)
+  assert.match(lines[4]!, /^created\s+views ADR, Specs, Plans, Working$/)
+  assert.match(lines[5]!, /^synced\s+2 items: 2 created$/)
   assert.match(
-    lines[2]!,
-    /^created\s+fields Status, Collection, Agent, Session, Path$/
-  )
-  assert.match(lines[3]!, /^created\s+views ADR, Specs, Plans, Working$/)
-  assert.match(lines[4]!, /^synced\s+2 items: 2 created$/)
-  assert.match(
-    lines[5]!,
+    lines[6]!,
     /^declared\s+pulse in \.rness\/rness\.json — commit it: git -C \.rness commit -am "chore: rness pulse"$/
   )
-  assert.equal(lines.length, 6)
+  assert.equal(lines.length, 7)
   const manifest = JSON.parse(
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   )
@@ -262,6 +261,90 @@ test('create: the lines of the spec in order, and the manifest declares the puls
       .filter((m) => m.op === 'addDraft')
       .map((m) => m.variables['title']),
     ['0001 — A', '0002 — B']
+  )
+})
+
+test('create: a view GitHub refuses once the project exists — declared all the same, and sync completes the layout', async (t) => {
+  await machine(t)
+  let refuseViews = true
+  const g = await board(t, {
+    other: (r) =>
+      asUser('repo, project')(r) ??
+      (refuseViews && r.path.endsWith('/views')
+        ? { status: 422, json: { message: 'Validation Failed' } }
+        : undefined),
+  })
+  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const created = await run(() =>
+    pulseCreateCommand(
+      { cwd, yes: true, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(created.code, 1)
+  assert.equal(created.err.trim(), 'GitHub: Validation Failed')
+  const lines = created.out.trim().split('\n')
+  assert.match(
+    lines[1]!,
+    /^created\s+Agent Pulse — https:\/\/github\.com\/orgs\/acme\/projects\/7$/
+  )
+  assert.match(lines.at(-1)!, /^declared\s+pulse in \.rness\/rness\.json/)
+  const manifest = JSON.parse(
+    await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
+  )
+  assert.equal(manifest.provider, 'github')
+  assert.deepEqual(manifest.pulse, { project: 7 })
+
+  refuseViews = false
+  const synced = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(synced.err, '')
+  assert.equal(synced.code, 0)
+  assert.deepEqual(
+    synced.out
+      .trim()
+      .split('\n')
+      .map((l) => l.replace(/\s+/, ' ')),
+    [
+      'added view ADR',
+      'added view Specs',
+      'added view Plans',
+      'added view Working',
+      'synced 2 items: 2 created',
+    ]
+  )
+  assert.deepEqual(g.views, ['ADR', 'Specs', 'Plans', 'Working'])
+  assert.equal(
+    g.mutations.filter((m) => m.op === 'createProject').length,
+    1,
+    'one project, never a second'
+  )
+})
+
+test('create: a field GitHub refuses once the project exists — declared all the same', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    other: (r) =>
+      asUser('repo, project')(r) ??
+      (r.path === '/graphql' &&
+      JSON.stringify(r.body).includes('createProjectV2Field') &&
+      (r.body as { variables: { name: string } }).variables.name === 'Agent'
+        ? { json: { errors: [{ message: 'Name has already been taken' }] } }
+        : undefined),
+  })
+  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const r = await run(() =>
+    pulseCreateCommand(
+      { cwd, yes: true, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 1)
+  assert.equal(r.err.trim(), 'GitHub: Name has already been taken')
+  assert.deepEqual(
+    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')).pulse,
+    { project: 7 }
   )
 })
 

@@ -51,6 +51,11 @@ interface Cache {
   fields?: gh.Field[]
   /** The items as last read: the values `apply` compares against. */
   known: Map<string, gh.RawItem>
+  /**
+   * Made by this process and not laid out yet: its Status still carries
+   * GitHub's default options, which the first `ensureLayout` replaces.
+   */
+  fresh?: boolean
 }
 
 const namesOf = (field: gh.Field): string[] =>
@@ -91,22 +96,15 @@ export class GitHubBoards implements Pick<
     return cache.fields
   }
 
-  async createBoard(org: string, layout: Layout): Promise<Board> {
+  /** The project only: the caller declares it before `ensureLayout` builds it. */
+  async createBoard(org: string): Promise<Board> {
     const project = await gh.createProject(
       await gh.orgId(org, this.#o),
       PROJECT_TITLE,
       this.#o
     )
     const board = { org, number: project.number, url: project.url }
-    this.#remember(board, project.id)
-    // A new project's Status carries GitHub's default options: replaced, not extended.
-    if (layout.statuses.length > 0)
-      await gh.setOptions(
-        statusField(await gh.fields(project.id, this.#o)),
-        layout.statuses,
-        this.#o
-      )
-    await this.ensureLayout(board, layout)
+    this.#remember(board, project.id).fresh = true
     return board
   }
 
@@ -155,7 +153,14 @@ export class GitHubBoards implements Pick<
       return gh.createField(cache.projectId, name, 'TEXT', this.#o)
     }
 
-    const status = await withOptions(statusField(fields), layout.statuses)
+    // A new project's Status carries GitHub's default options: replaced, not
+    // extended, once. After that, options are only ever added.
+    const fresh = cache.fresh === true && layout.statuses.length > 0
+    cache.fresh = false
+    if (fresh) added.push(...layout.statuses.map((n) => `option ${n}`))
+    const status = fresh
+      ? await gh.setOptions(statusField(fields), layout.statuses, this.#o)
+      : await withOptions(statusField(fields), layout.statuses)
     const collection = await single(COLLECTION_FIELD, layout.types)
     const agent = await single('Agent', [WORKING])
     const session = await text('Session')

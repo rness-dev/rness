@@ -20,18 +20,33 @@ const BOARD = {
   url: 'https://github.com/orgs/acme/projects/7',
 }
 
-test('createBoard: the project, its fields, the Status options, one view per type and the Working table', async (t) => {
+test('createBoard makes the project only; its first ensureLayout replaces the Status options, then adds the fields, one view per collection and the Working table', async (t) => {
   const g = await board(t)
-  const created = await g.provider.createBoard('acme', layout)
+  const created = await g.provider.createBoard('acme')
   assert.deepEqual(created, BOARD)
-
   assert.deepEqual(
-    g.mutations.find((m) => m.op === 'createProject')?.variables,
-    {
-      ownerId: 'O_1',
-      title: 'Agent Pulse',
-    }
+    g.mutations.map((m) => [m.op, m.variables]),
+    [['createProject', { ownerId: 'O_1', title: 'Agent Pulse' }]],
+    'nothing but the project before the caller can declare it'
   )
+  assert.deepEqual(
+    g.fields[0]!.options?.map((o) => o.name),
+    ['Todo'],
+    "GitHub's default options, untouched so far"
+  )
+
+  const added = await g.provider.ensureLayout(created, layout)
+  assert.deepEqual(added, [
+    'option draft',
+    'option accepted',
+    'field Collection',
+    'field Agent',
+    'field Session',
+    'field Path',
+    'view ADR',
+    'view Marketing',
+    'view Working',
+  ])
   assert.deepEqual(
     g.fields.map((f) => [f.name, f.options?.map((o) => o.name) ?? 'text']),
     [
@@ -58,6 +73,30 @@ test('createBoard: the project, its fields, the Status options, one view per typ
     },
     { name: 'Working', layout: 'table', filter: 'agent:working' },
   ])
+
+  // Once laid out, the board is like any other: extended, never replaced.
+  assert.deepEqual(await g.provider.ensureLayout(created, layout), [])
+  assert.deepEqual(
+    await g.provider.ensureLayout(created, {
+      ...layout,
+      statuses: ['review'],
+    }),
+    ['option review']
+  )
+  assert.deepEqual(
+    g.fields[0]!.options?.map((o) => o.name),
+    ['draft', 'accepted', 'review']
+  )
+})
+
+test("createBoard with no status in .rness: GitHub's default options stay", async (t) => {
+  const g = await board(t)
+  const created = await g.provider.createBoard('acme')
+  await g.provider.ensureLayout(created, { ...layout, statuses: [] })
+  assert.deepEqual(
+    g.fields[0]!.options?.map((o) => o.name),
+    ['Todo']
+  )
 })
 
 test('board: the project of a number, or null', async (t) => {
@@ -178,7 +217,7 @@ test('items: values by field name, missing ones null, archived ones not listed',
 
 async function laidOut(t: TestContext, items: FItem[] = []) {
   const g = await board(t, { items })
-  await g.provider.createBoard('acme', layout)
+  await g.provider.ensureLayout(await g.provider.createBoard('acme'), layout)
   g.mutations.length = 0
   return g
 }
@@ -306,7 +345,7 @@ test('mark sets Agent and Session, or clears both', async (t) => {
 test('anonymous: every board method needs a login', async () => {
   const provider = new GitHubOAuthProvider({ token: null })
   const refused = { message: 'the pulse needs a GitHub login: run rness login' }
-  await assert.rejects(provider.createBoard('acme', layout), refused)
+  await assert.rejects(provider.createBoard('acme'), refused)
   await assert.rejects(provider.board('acme', 7), refused)
   await assert.rejects(provider.ensureLayout(BOARD, layout), refused)
   await assert.rejects(provider.items(BOARD), refused)

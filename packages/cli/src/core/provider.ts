@@ -53,11 +53,18 @@ export interface Provider {
    * SSH comes first (spec 0005).
    */
   credentialsFor(url: string): GitCredentials | null
-  /** The board (spec 0017 §3): a new one for `org` with `layout`. Anonymous: refused. */
-  createBoard(org: string, layout: Layout): Promise<Board>
+  /**
+   * The board (spec 0017 §3): a new, empty one for `org`, so that the caller
+   * can declare it before `ensureLayout` builds it. Anonymous: refused.
+   */
+  createBoard(org: string): Promise<Board>
   /** The board `number` of `org`, or null when the provider has none. */
   board(org: string, number: number): Promise<Board | null>
-  /** Adds the fields, options and views `layout` needs; returns what it added, removes nothing. */
+  /**
+   * Adds the fields, options and views `layout` needs and returns what it
+   * added (`field X`, `option X`, `view X`); removes nothing, except the
+   * provider's default statuses on a board `createBoard` just made.
+   */
   ensureLayout(board: Board, layout: Layout): Promise<string[]>
   /** The items of the board, not the archived ones. */
   items(board: Board): Promise<BoardItem[]>

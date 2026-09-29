@@ -114,8 +114,8 @@ export class GitHubOAuthProvider implements Provider {
   }
 
   // The board methods are async so that a missing login rejects, never throws.
-  async createBoard(org: string, layout: Layout): Promise<Board> {
-    return this.#boards().createBoard(org, layout)
+  async createBoard(org: string): Promise<Board> {
+    return this.#boards().createBoard(org)
   }
 
   async board(org: string, number: number): Promise<Board | null> {

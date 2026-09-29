@@ -1,5 +1,4 @@
 import type { CommandDeps } from '../core/deps.ts'
-import { COLLECTION_FIELD, STATUS_FIELD } from '../core/github-board.ts'
 import { loadManifest, providerOf, writeManifest } from '../core/manifest.ts'
 import type { Board, Provider } from '../core/provider.ts'
 import { openProvider } from '../core/providers.ts'
@@ -24,8 +23,6 @@ export interface PulseOptions {
 
 const PROJECT_SCOPE = 'project'
 const NEEDS_SCOPE = 'the pulse needs the project scope: run rness login'
-const FIELDS = [STATUS_FIELD, COLLECTION_FIELD, 'Agent', 'Session', 'Path']
-const WORKING_VIEW = 'Working'
 
 const boardUrl = (org: string, project: number): string =>
   `https://github.com/orgs/${org}/projects/${project}`
@@ -78,6 +75,21 @@ async function declaredBoard(c: Context): Promise<Board> {
 
 const plural = (n: number): string => `${n} item${n === 1 ? '' : 's'}`
 
+/** What the layout gained, as `sync` says it: `added view Plans`, a line each. */
+type SayLayout = (ui: Ui, added: readonly string[]) => void
+const eachAdded: SayLayout = (ui, added) => {
+  for (const a of added) ui.line('added', a)
+}
+/** As `create` says it: a line per kind, `created fields Collection, Agent`. */
+const createdByKind: SayLayout = (ui, added) => {
+  for (const kind of ['field', 'option', 'view']) {
+    const names = added
+      .filter((a) => a.startsWith(`${kind} `))
+      .map((a) => a.slice(kind.length + 1))
+    if (names.length > 0) ui.line('created', `${kind}s ${names.join(', ')}`)
+  }
+}
+
 /**
  * Layout first, then the documents: one way (spec 0017 §4). What it did is
  * said as `sync` says things, and the summary drops the parts that are zero.
@@ -86,14 +98,14 @@ async function syncBoard(
   c: Context,
   board: Board,
   ui: Ui,
-  layoutVerb: string
+  sayLayout: SayLayout
 ): Promise<void> {
   const tabs = await statusTabs(c.rnessDir)
   const want = desiredOf(tabs, c.org)
-  for (const added of await fromGithub(
-    c.provider.ensureLayout(board, layoutOf(tabs))
-  ))
-    ui.line(layoutVerb, added)
+  sayLayout(
+    ui,
+    await fromGithub(c.provider.ensureLayout(board, layoutOf(tabs)))
+  )
   const steps = planSync(want, await fromGithub(c.provider.items(board)))
   for (const step of steps) await fromGithub(c.provider.apply(board, step))
   const count = (kind: string): number =>
@@ -115,7 +127,7 @@ async function syncBoard(
   )
 }
 
-/** `rness pulse create`: the board, its layout, a first sync, and the declaration. */
+/** `rness pulse create`: the project, declared at once; then its layout and a first sync. */
 export async function pulseCreateCommand(
   opts: PulseOptions,
   deps: Partial<CommandDeps> = {}
@@ -155,35 +167,24 @@ export async function pulseCreateCommand(
       `${providerOf(c.manifest)}, logged in as ${login}, scope ${PROJECT_SCOPE}`
     )
 
-    const tabs = await statusTabs(c.rnessDir)
-    const layout = layoutOf(tabs)
-    const board = await fromGithub(c.provider.createBoard(c.org, layout))
-    ui.line('created', `Agent Pulse — ${board.url}`)
-    ui.line('created', `fields ${FIELDS.join(', ')}`)
-    ui.line(
-      'created',
-      `views ${[...layout.views.map((v) => v.name), WORKING_VIEW].join(', ')}`
-    )
-
-    // Declared as soon as the board exists: a failed first sync leaves a
-    // board `rness pulse sync` can fill, not one nobody knows about.
+    const board = await fromGithub(c.provider.createBoard(c.org))
+    // Declared as soon as the project exists, before its layout: whatever
+    // fails after this leaves a declared project that `rness pulse sync`
+    // completes, not one nobody knows about (spec 0017 §3).
     await writeManifest(c.rnessDir, {
       ...c.manifest,
       provider: providerOf(c.manifest),
       pulse: { project: board.number },
     })
-    const declared = (): void =>
+    ui.line('created', `Agent Pulse — ${board.url}`)
+    try {
+      await syncBoard(c, board, ui, createdByKind)
+    } finally {
       ui.line(
         'declared',
         'pulse in .rness/rness.json — commit it: git -C .rness commit -am "chore: rness pulse"'
       )
-    try {
-      await syncBoard(c, board, ui, 'added')
-    } catch (e) {
-      declared()
-      throw e
     }
-    declared()
     return 0
   } catch (e) {
     return reportError(e)
@@ -198,7 +199,7 @@ export async function pulseSyncCommand(
   try {
     const ui = deps.ui ?? (await makeUi(deps.terminal ?? defaultTerminal))
     const c = await context(opts)
-    await syncBoard(c, await declaredBoard(c), ui, 'added')
+    await syncBoard(c, await declaredBoard(c), ui, eachAdded)
     return 0
   } catch (e) {
     return reportError(e)
@@ -242,7 +243,7 @@ async function mark(opts: MarkOptions): Promise<number> {
       )
       .map((i) => i.id)
     await fromGithub(c.provider.mark(board, ids, null))
-    await syncBoard(c, board, plainUi, 'added')
+    await syncBoard(c, board, plainUi, eachAdded)
     return 0
   }
   const wanted = new Set(opts.paths)
