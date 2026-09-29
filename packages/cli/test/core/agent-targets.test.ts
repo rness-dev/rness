@@ -33,7 +33,6 @@ test('claude declared: each cloned repository gets its settings and .mcp.json; a
     JSON.parse(await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')),
     {
       permissions: { additionalDirectories: ['../../.rness'] },
-      enabledMcpjsonServers: ['rness'],
     }
   )
   assert.deepEqual(
@@ -62,8 +61,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
     {
       label: `org/api/${SETTINGS}`,
       status: 'stale',
-      detail:
-        'permissions.additionalDirectories lacks ../../.rness; enabledMcpjsonServers lacks rness',
+      detail: 'permissions.additionalDirectories lacks ../../.rness',
     },
     {
       label: 'org/api/.mcp.json',
@@ -100,6 +98,30 @@ test('check: complete settings, .mcp.json without rness — only .mcp.json is st
       detail: 'mcpServers.rness is missing',
     },
   ])
+})
+
+test('a settings file written by 0.9.0 keeps its enabledMcpjsonServers: rness neither needs nor removes it', async (t) => {
+  const { root, manifest } = await workspace(t, ['claude'])
+  await agentTargets(root, manifest, { check: false })
+  const written = `${JSON.stringify(
+    {
+      permissions: { additionalDirectories: ['../../.rness'] },
+      enabledMcpjsonServers: ['rness'],
+    },
+    null,
+    2
+  )}\n`
+  await writeFile(join(root, 'org', 'api', SETTINGS), written)
+  for (const check of [true, false])
+    assert.deepEqual((await agentTargets(root, manifest, { check }))[0], {
+      label: `org/api/${SETTINGS}`,
+      status: 'unchanged',
+      detail: null,
+    })
+  assert.equal(
+    await readFile(join(root, 'org', 'api', SETTINGS), 'utf8'),
+    written
+  )
 })
 
 test('no agents, or none declared: nothing is written', async (t) => {

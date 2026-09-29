@@ -2043,7 +2043,6 @@ test('create --agent declares it in the new workspace and writes its files in ev
     ),
     {
       permissions: { additionalDirectories: ['../../.rness'] },
-      enabledMcpjsonServers: ['rness'],
     }
   )
   assert.match(r.out, /updated {2}org\/api\/\.claude\/settings\.json\n/)

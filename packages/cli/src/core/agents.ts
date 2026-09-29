@@ -44,15 +44,16 @@ export const TARGETS: Readonly<Record<string, AgentTarget>> = {
             path: ['permissions', 'additionalDirectories'],
             contains: '../../.rness',
           },
-          // Start the rness MCP server of .mcp.json without asking.
-          { path: ['enabledMcpjsonServers'], contains: 'rness' },
         ],
       },
       {
         file: '.mcp.json',
         guarantees: [
           // The pinned copy, by a path relative to the repository — the
-          // directory Claude Code starts the server in (spec 0014 §6).
+          // directory Claude Code starts the server in (spec 0014 §6). Not
+          // pre-approved in settings: each developer approves it once, since
+          // a repository approving its own command would run any change to
+          // it unasked (spec 0014 §3, 0.9.1).
           {
             path: ['mcpServers', 'rness'],
             value: {

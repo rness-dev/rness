@@ -22,7 +22,6 @@ test('Claude Code is the one target: read access to .rness, and the rness MCP se
             path: ['permissions', 'additionalDirectories'],
             contains: '../../.rness',
           },
-          { path: ['enabledMcpjsonServers'], contains: 'rness' },
         ],
       },
       {

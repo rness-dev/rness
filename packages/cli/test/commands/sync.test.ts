@@ -716,7 +716,6 @@ test('sync --agent claude declares it, then writes the Claude settings of every 
     JSON.parse(await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')),
     {
       permissions: { additionalDirectories: ['../../.rness'] },
-      enabledMcpjsonServers: ['rness'],
     }
   )
   const again = await sync(['--yes', '--cwd', root])
@@ -750,7 +749,7 @@ test('--check reports a missing guaranteed value; --scope leaves the agent files
   assert.equal(check.code, 1)
   assert.match(
     check.out,
-    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness; enabledMcpjsonServers lacks rness\)\nstale {4}org\/api\/\.mcp\.json \(mcpServers\.rness is missing\)\n/
+    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness\)\nstale {4}org\/api\/\.mcp\.json \(mcpServers\.rness is missing\)\n/
   )
   await assert.rejects(readFile(join(root, 'org', 'api', SETTINGS), 'utf8'))
   const scoped = await sync(['--yes', '--scope', 'api', '--cwd', root])
