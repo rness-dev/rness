@@ -57,6 +57,21 @@ export async function graphql<T>(
   return answer.data
 }
 
+/** As `graphql`, but null when every error is NOT_FOUND: an unknown repository is no failure. */
+export async function graphqlFound<T>(
+  query: string,
+  variables: Record<string, unknown>,
+  options: ApiOptions
+): Promise<T | null> {
+  const answer = await graphqlRaw<T>(query, variables, options)
+  const errors = answer.errors ?? []
+  if (errors.length > 0 && errors.every((e) => e.type === 'NOT_FOUND'))
+    return null
+  const error = firstError(answer)
+  if (error !== null) throw error
+  return answer.data ?? null
+}
+
 export async function orgId(org: string, o: ApiOptions): Promise<string> {
   const d = await graphql<{ organization: { id: string } | null }>(
     'query($login: String!) { organization(login: $login) { id } }',
@@ -108,7 +123,9 @@ export async function findProject(
     o
   )
   // An unknown project is a NOT_FOUND error, not an absent value.
-  if (answer.errors?.every((e) => e.type === 'NOT_FOUND') === true) return null
+  const errors = answer.errors ?? []
+  if (errors.length > 0 && errors.every((e) => e.type === 'NOT_FOUND'))
+    return null
   const error = firstError(answer)
   if (error !== null) throw error
   return answer.data?.organization?.projectV2 ?? null
@@ -241,9 +258,24 @@ export async function setOptions(
   return toField(d.updateProjectV2Field.projectV2Field)
 }
 
+/** The issue an item is (spec 0018 §2). */
+export interface RawIssue {
+  id: string
+  number: number
+  open: boolean
+  /** `owner/name`. */
+  repository: string
+  body: string
+  labels: string[]
+}
+
 export interface RawItem {
   id: string
+  /** A draft's id; null for any other content. */
   draftId: string | null
+  /** The issue the item is; null for a draft or other content (a pull request). */
+  issue: RawIssue | null
+  /** The draft's or the issue's title. */
   title: string
   archived: boolean
   /** Field name → text or option name. */
@@ -253,7 +285,16 @@ export interface RawItem {
 interface ItemNode {
   id: string
   isArchived?: boolean
-  content?: { id?: string; title?: string } | null
+  /** A draft has no `number`; content that is neither is `{}`. */
+  content?: {
+    id?: string
+    title?: string
+    number?: number
+    state?: string
+    body?: string
+    repository?: { nameWithOwner?: string }
+    labels?: { nodes: { name?: string }[] }
+  } | null
   fieldValues?: {
     nodes: { text?: string; name?: string; field?: { name?: string } }[]
   }
@@ -287,8 +328,23 @@ export async function listItems(
                       id
                       title
                     }
+                    ... on Issue {
+                      id
+                      number
+                      title
+                      state
+                      body
+                      repository {
+                        nameWithOwner
+                      }
+                      labels(first: 20) {
+                        nodes {
+                          name
+                        }
+                      }
+                    }
                   }
-                  fieldValues(first: 20) {
+                  fieldValues(first: 50) {
                     nodes {
                       ... on ProjectV2ItemFieldTextValue {
                         text
@@ -328,10 +384,25 @@ export async function listItems(
         const value = v.text ?? v.name
         if (field !== undefined && value !== undefined) values[field] = value
       }
+      const c = n.content
+      const issue =
+        c?.id !== undefined && c.number !== undefined
+          ? {
+              id: c.id,
+              number: c.number,
+              open: c.state === 'OPEN',
+              repository: c.repository?.nameWithOwner ?? '',
+              body: c.body ?? '',
+              labels: (c.labels?.nodes ?? [])
+                .map((l) => l.name ?? '')
+                .filter((l) => l !== ''),
+            }
+          : null
       items.push({
         id: n.id,
-        draftId: n.content?.id ?? null,
-        title: n.content?.title ?? '',
+        draftId: issue === null ? (c?.id ?? null) : null,
+        issue,
+        title: c?.title ?? '',
         archived: n.isArchived === true,
         values,
       })
@@ -469,6 +540,119 @@ export async function archive(
       }
     `,
     { projectId, itemId },
+    o
+  )
+}
+
+/** Adds an issue to the project (`addProjectV2ItemById`); returns the item's id. */
+export async function addItem(
+  projectId: string,
+  contentId: string,
+  o: ApiOptions
+): Promise<string> {
+  const d = await graphql<{ addProjectV2ItemById: { item: { id: string } } }>(
+    `
+      mutation ($projectId: ID!, $contentId: ID!) {
+        addProjectV2ItemById(
+          input: { projectId: $projectId, contentId: $contentId }
+        ) {
+          item {
+            id
+          }
+        }
+      }
+    `,
+    { projectId, contentId },
+    o
+  )
+  return d.addProjectV2ItemById.item.id
+}
+
+/** Makes a draft item an issue of the repository; the item keeps its id and fields (spec 0018 §1). */
+export async function convertDraft(
+  itemId: string,
+  repositoryId: string,
+  o: ApiOptions
+): Promise<{ id: string; number: number }> {
+  const d = await graphql<{
+    convertProjectV2DraftIssueItemToIssue: {
+      item: { content: { id?: string; number?: number } | null }
+    }
+  }>(
+    `
+      mutation ($itemId: ID!, $repositoryId: ID!) {
+        convertProjectV2DraftIssueItemToIssue(
+          input: { itemId: $itemId, repositoryId: $repositoryId }
+        ) {
+          item {
+            id
+            content {
+              ... on Issue {
+                id
+                number
+              }
+            }
+          }
+        }
+      }
+    `,
+    { itemId, repositoryId },
+    o
+  )
+  const content = d.convertProjectV2DraftIssueItemToIssue.item.content
+  const id = content?.id
+  const number = content?.number
+  if (id === undefined || number === undefined)
+    throw new Error(`GitHub converted the item ${itemId} without an issue`)
+  return { id, number }
+}
+
+/** The repositories the project is linked to, as `owner/name`. */
+export async function linkedRepositories(
+  projectId: string,
+  o: ApiOptions
+): Promise<string[]> {
+  const d = await graphql<{
+    node: { repositories: { nodes: { nameWithOwner: string }[] } } | null
+  }>(
+    `
+      query ($projectId: ID!) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            repositories(first: 100) {
+              nodes {
+                nameWithOwner
+              }
+            }
+          }
+        }
+      }
+    `,
+    { projectId },
+    o
+  )
+  return (d.node?.repositories.nodes ?? []).map((r) => r.nameWithOwner)
+}
+
+/** Links the project to a repository: it shows in the repository's Projects tab (spec 0018 §2). */
+export async function linkRepository(
+  projectId: string,
+  repositoryId: string,
+  o: ApiOptions
+): Promise<void> {
+  await graphql(
+    `
+      mutation ($projectId: ID!, $repositoryId: ID!) {
+        linkProjectV2ToRepository(
+          input: { projectId: $projectId, repositoryId: $repositoryId }
+        ) {
+          repository {
+            id
+          }
+        }
+      }
+    `,
+    { projectId, repositoryId },
     o
   )
 }

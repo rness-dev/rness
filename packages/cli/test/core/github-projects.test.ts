@@ -3,7 +3,9 @@ import { test } from 'node:test'
 
 import {
   addDraft,
+  addItem,
   archive,
+  convertDraft,
   createField,
   createProject,
   createView,
@@ -11,6 +13,8 @@ import {
   fields,
   findProject,
   graphql,
+  linkRepository,
+  linkedRepositories,
   listItems,
   orgId,
   setOptions,
@@ -250,7 +254,7 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
   })
 })
 
-test('listItems follows endCursor over two pages', async (t) => {
+test('listItems follows endCursor over two pages, and reads an issue: its repository, number, state, body and labels', async (t) => {
   const item = (id: string, archived = false) => ({
     id,
     isArchived: archived,
@@ -263,6 +267,20 @@ test('listItems follows endCursor over two pages', async (t) => {
       ],
     },
   })
+  const issue = {
+    id: '4',
+    isArchived: false,
+    content: {
+      id: 'ISSUE_9',
+      number: 9,
+      title: 'An issue',
+      state: 'CLOSED',
+      body: 'text',
+      repository: { nameWithOwner: 'acme/.rness' },
+      labels: { nodes: [{ name: 'rness' }, { name: 'bug' }] },
+    },
+    fieldValues: { nodes: [] },
+  }
   const { requests, o } = await serve(t, {
     items: (v) =>
       v['cursor'] == null
@@ -285,6 +303,7 @@ test('listItems follows endCursor over two pages', async (t) => {
                     content: {},
                     fieldValues: { nodes: [] },
                   },
+                  issue,
                 ],
                 pageInfo: { hasNextPage: false, endCursor: null },
               },
@@ -294,9 +313,12 @@ test('listItems follows endCursor over two pages', async (t) => {
   const items = await listItems('P_1', o)
   assert.equal(requests.length, 2)
   assert.equal(gql(requests[1]!).variables['cursor'], 'c1')
+  assert.match(gql(requests[0]!).query, /fieldValues\(first: 50\)/)
+  assert.match(gql(requests[0]!).query, /\.\.\. on Issue \{/)
   assert.deepEqual(items[0], {
     id: '1',
     draftId: 'D_1',
+    issue: null,
     title: 't1',
     archived: false,
     values: { Ref: 'x', Status: 'Todo' },
@@ -305,9 +327,74 @@ test('listItems follows endCursor over two pages', async (t) => {
   assert.deepEqual(items[2], {
     id: '3',
     draftId: null,
+    issue: null,
     title: '',
     archived: false,
     values: {},
+  })
+  assert.deepEqual(items[3], {
+    id: '4',
+    draftId: null,
+    issue: {
+      id: 'ISSUE_9',
+      number: 9,
+      open: false,
+      repository: 'acme/.rness',
+      body: 'text',
+      labels: ['rness', 'bug'],
+    },
+    title: 'An issue',
+    archived: false,
+    values: {},
+  })
+})
+
+test('addItem adds an issue to the project and returns the item id', async (t) => {
+  const { requests, o } = await serve(t, {
+    addProjectV2ItemById: () =>
+      data({ addProjectV2ItemById: { item: { id: 'PVTI_1' } } }),
+  })
+  assert.equal(await addItem('P_1', 'ISSUE_1', o), 'PVTI_1')
+  assert.deepEqual(gql(requests[0]!).variables, {
+    projectId: 'P_1',
+    contentId: 'ISSUE_1',
+  })
+})
+
+test('convertDraft makes the draft an issue of the repository; no issue in the answer is an error', async (t) => {
+  let content: unknown = { id: 'ISSUE_4', number: 4 }
+  const { requests, o } = await serve(t, {
+    convertProjectV2DraftIssueItemToIssue: () =>
+      data({
+        convertProjectV2DraftIssueItemToIssue: { item: { id: 'I_1', content } },
+      }),
+  })
+  assert.deepEqual(await convertDraft('I_1', 'R_1', o), {
+    id: 'ISSUE_4',
+    number: 4,
+  })
+  assert.deepEqual(gql(requests[0]!).variables, {
+    itemId: 'I_1',
+    repositoryId: 'R_1',
+  })
+  content = null
+  await assert.rejects(convertDraft('I_1', 'R_1', o), /without an issue/)
+})
+
+test('linkedRepositories lists owner/name; linkRepository links one', async (t) => {
+  const { requests, o } = await serve(t, {
+    'repositories(first': () =>
+      data({
+        node: { repositories: { nodes: [{ nameWithOwner: 'acme/.rness' }] } },
+      }),
+    linkProjectV2ToRepository: () =>
+      data({ linkProjectV2ToRepository: { repository: { id: 'R_1' } } }),
+  })
+  assert.deepEqual(await linkedRepositories('P_1', o), ['acme/.rness'])
+  await linkRepository('P_1', 'R_1', o)
+  assert.deepEqual(gql(requests[1]!).variables, {
+    projectId: 'P_1',
+    repositoryId: 'R_1',
   })
 })
 
