@@ -243,6 +243,15 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## 0.9.2 — the sync summary reads as a sentence
+
+- `rness sync` counts agent files apart from blocks: "4 blocks: 4
+  unchanged; 6 agent files: 6 unchanged". 0.9.1 counted them as blocks
+  ("10 blocks: 10 unchanged").
+- In a terminal the line reads as a sentence, verb first: "Synced 4 blocks:
+  …" instead of "10 blocks: 10 unchanged synced".
+- Blocks are unchanged: no `rness sync` is needed after upgrading.
+
 ## 0.9.1 — upgrade ends in its commit; the MCP server approved per developer
 
 - `rness upgrade` commits `.rness` itself (`chore: rness <version>`), with

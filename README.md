@@ -12,7 +12,6 @@ polyrepo. rness never runs an LLM loop and is not an agent.
 | `packages/cli`          | `@rness/cli` — the CLI, command `rness`: `create`, `add`, `sync`, `context`, `validate`, `upgrade`, `login`, `logout`, `mcp` | 0.9.1   |
 | `packages/create`       | `@rness/create` — `npm create @rness`                                                                                        | 0.9.1   |
 | `packages/create-rness` | `create-rness` — `npm create rness`                                                                                          | 0.9.1   |
-| `packages/mcp`          | `@rness/mcp` — MCP server                                                                                                    | planned |
 | `plugins/claude-code`   | Claude Code plugin; this repository is its marketplace                                                                       | planned |
 | `templates/`, `action/` | demo apps, GitHub projection Action                                                                                          | planned |
 
