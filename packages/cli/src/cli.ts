@@ -8,12 +8,19 @@ import { hookCommand } from './commands/hook.ts'
 import { type LoginOptions, loginCommand } from './commands/login.ts'
 import { logoutCommand } from './commands/logout.ts'
 import { type McpOptions, mcpCommand } from './commands/mcp.ts'
+import {
+  type PulseOptions,
+  pulseCreateCommand,
+  pulseMarkCommand,
+  pulseSyncCommand,
+} from './commands/pulse.ts'
 import { type StatusOptions, statusCommand } from './commands/status.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
 import { PACKAGE_MANAGERS } from './core/pm.ts'
 import { banner, bold, paint } from './core/style.ts'
+import { reportError } from './report.ts'
 import { VERSION } from './version.ts'
 
 interface RunState {
@@ -108,6 +115,55 @@ function buildProgram(state: RunState): Command {
     .action(async (opts: SyncOptions) => {
       state.code = await syncCommand(opts)
     })
+
+  const pulse = program
+    .command('pulse')
+    .description("Show the agent's work on the organization's board")
+  pulse
+    .command('create')
+    .description("Create the organization's Agent Pulse board and sync it")
+    .option('-y, --yes', 'do not ask for confirmation')
+    .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (opts: PulseOptions) => {
+      state.code = await pulseCreateCommand(opts)
+    })
+  pulse
+    .command('sync')
+    .description('Bring the board up to date with the documents of .rness/')
+    .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (opts: PulseOptions) => {
+      state.code = await pulseSyncCommand(opts)
+    })
+  // What the hooks run, detached (spec 0017 §5).
+  pulse
+    .command('mark', { hidden: true })
+    .requiredOption('--session <id>')
+    .option(
+      '--path <path>',
+      'a document of .rness/ (repeatable)',
+      (value: string, previous: string[] = []) => [...previous, value]
+    )
+    .option('--end', 'clear the marks of the session, then sync')
+    .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(
+      async (opts: {
+        session: string
+        path?: string[]
+        end?: boolean
+        cwd?: string
+        githubApi?: string
+      }) => {
+        const { path, ...rest } = opts
+        try {
+          state.code = await pulseMarkCommand({ ...rest, paths: path ?? [] })
+        } catch (e) {
+          state.code = reportError(e)
+        }
+      }
+    )
 
   program
     .command('mcp')

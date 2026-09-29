@@ -7,6 +7,8 @@ export interface WorkspaceSpec {
   org?: string
   /** The manifest's `provider` key; left out, the key is absent. */
   provider?: string
+  /** The manifest's `pulse` key; left out, the key is absent. */
+  pulse?: { project: number }
   /** The team's agents; left out, the key is absent ("never asked"). */
   agents?: string[]
   repos?: Record<string, { url: string }>
@@ -33,6 +35,7 @@ export async function makeWorkspace(
   if (spec.provider !== undefined) manifest['provider'] = spec.provider
   if (spec.org !== undefined) manifest['org'] = spec.org
   if (spec.agents !== undefined) manifest['agents'] = spec.agents
+  if (spec.pulse !== undefined) manifest['pulse'] = spec.pulse
   await writeFile(
     join(root, '.rness', 'rness.json'),
     JSON.stringify(manifest, null, 2)
