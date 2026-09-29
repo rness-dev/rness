@@ -11,15 +11,27 @@ const WORKING = 'working'
 const WORKING_VIEW = 'Working'
 
 /**
- * SPIKE-DEPENDENT CHOICE 1 of 2 (not yet verified live): the board's Status
+ * SPIKE-DEPENDENT CHOICES (not yet verified live): the names of the two
+ * fields rness's board is grouped and filtered by, and `viewFilter` below.
+ * Every use goes through these constants, so a fallback (`rness status`
+ * instead of Status, `Collection` instead of Type) is a change to
+ * `STATUS_FIELD`, `TYPE_FIELD`, `statusField` and `viewFilter` only.
+ */
+export const STATUS_FIELD = 'Status'
+export const TYPE_FIELD = 'Type'
+
+/**
+ * SPIKE-DEPENDENT CHOICE 1 of 2: the board's Status
  * is the built-in single-select field every project has. If the API refuses
  * to edit its options, the fallback is a created field `rness status` — change
  * this one function.
  */
 export function statusField(fields: readonly gh.Field[]): gh.Field {
-  const field = fields.find((f) => f.name === 'Status')
+  const field = fields.find((f) => f.name === STATUS_FIELD)
   if (field === undefined || field.options === null)
-    throw new Error('the GitHub project has no single-select field Status')
+    throw new Error(
+      `the GitHub project has no single-select field ${STATUS_FIELD}`
+    )
   return field
 }
 
@@ -28,7 +40,8 @@ export function statusField(fields: readonly gh.Field[]): gh.Field {
  * a board view of one type, and of the Working table. If GitHub's filter
  * syntax differs from `field:"value"`, change these two lines.
  */
-export const viewFilter = (typeLabel: string): string => `type:"${typeLabel}"`
+export const viewFilter = (typeLabel: string): string =>
+  `${TYPE_FIELD.toLowerCase()}:"${typeLabel}"`
 export const WORKING_FILTER = 'agent:working'
 
 interface Cache {
@@ -141,7 +154,7 @@ export class GitHubBoards implements Pick<
     }
 
     const status = await withOptions(statusField(fields), layout.statuses)
-    const type = await single('Type', layout.types)
+    const type = await single(TYPE_FIELD, layout.types)
     const agent = await single('Agent', [WORKING])
     const session = await text('Session')
     const path = await text('Path')
@@ -179,15 +192,17 @@ export class GitHubBoards implements Pick<
     const cache = await this.#cacheOf(board)
     const raw = await gh.listItems(cache.projectId, this.#o)
     cache.known = new Map(raw.map((r) => [r.id, r]))
-    return raw.map((r) => ({
-      id: r.id,
-      path: r.values['Path'] ?? null,
-      title: r.title,
-      status: r.values['Status'] ?? null,
-      type: r.values['Type'] ?? null,
-      agent: r.values['Agent'] ?? null,
-      session: r.values['Session'] ?? null,
-    }))
+    return raw
+      .filter((r) => !r.archived)
+      .map((r) => ({
+        id: r.id,
+        path: r.values['Path'] ?? null,
+        title: r.title,
+        status: r.values[STATUS_FIELD] ?? null,
+        type: r.values[TYPE_FIELD] ?? null,
+        agent: r.values['Agent'] ?? null,
+        session: r.values['Session'] ?? null,
+      }))
   }
 
   async #set(
@@ -236,8 +251,8 @@ export class GitHubBoards implements Pick<
     const { want } = step
     const values: [string, string | null][] = [
       ['Path', want.path],
-      ['Type', want.type],
-      ['Status', want.status],
+      [TYPE_FIELD, want.type],
+      [STATUS_FIELD, want.status],
     ]
     if (step.kind === 'create') {
       const id = await gh.addDraft(

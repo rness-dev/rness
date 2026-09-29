@@ -354,6 +354,13 @@ test('items: values by field name, missing ones null, archived ones not listed',
     ],
     items: [
       {
+        id: 'I_gone',
+        draftId: 'D_0',
+        title: '0001 — A',
+        archived: true,
+        values: { Status: 'draft', Path: 'adr/a.md' },
+      },
+      {
         id: 'I_1',
         draftId: 'D_1',
         title: '0001 — A',
