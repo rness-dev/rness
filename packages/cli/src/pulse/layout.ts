@@ -113,34 +113,43 @@ function collectionStatuses(tab: StatusTab): string[] {
   const found = tab.rows
     .map((row) => statusOf(row.status))
     .filter((s): s is string => s !== null)
-  return inLifecycleOrder([...(CONTRACT_STATUSES[tab.name] ?? []), ...found])
+  return inLifecycleOrder([
+    ...(Object.hasOwn(CONTRACT_STATUSES, tab.name)
+      ? (CONTRACT_STATUSES[tab.name] ?? [])
+      : []),
+    ...found,
+  ])
+}
+
+/** The collections that have a status field, by label: the one place that says which do. */
+function fieldsOf(
+  tabs: readonly StatusTab[]
+): Map<string, { name: string; statuses: string[] }> {
+  const fields = new Map<string, { name: string; statuses: string[] }>()
+  for (const tab of tabs) {
+    const statuses = collectionStatuses(tab)
+    if (statuses.length > 0)
+      fields.set(tab.label, { name: statusFieldName(tab.label), statuses })
+  }
+  return fields
 }
 
 export function layoutOf(tabs: readonly StatusTab[]): Layout {
-  const fields = tabs
-    .map((tab) => ({
-      name: statusFieldName(tab.label),
-      statuses: collectionStatuses(tab),
-      label: tab.label,
-    }))
-    .filter((f) => f.statuses.length > 0)
+  const fields = fieldsOf(tabs)
   return {
-    statuses: inLifecycleOrder(fields.flatMap((f) => f.statuses)),
-    fields: fields.map(({ name, statuses }) => ({ name, statuses })),
+    statuses: inLifecycleOrder([...fields.values()].flatMap((f) => f.statuses)),
+    fields: [...fields.values()],
     types: tabs.map((t) => t.label),
     views: tabs.map((t) => ({
       name: t.label,
       type: t.label,
-      field: fields.some((f) => f.label === t.label)
-        ? statusFieldName(t.label)
-        : null,
+      field: fields.get(t.label)?.name ?? null,
     })),
   }
 }
 
-const hasField = (tab: StatusTab): boolean => collectionStatuses(tab).length > 0
-
 export function desiredOf(tabs: readonly StatusTab[], org: string): Desired[] {
+  const fields = fieldsOf(tabs)
   return tabs.flatMap((tab) =>
     tab.rows.map((row) => ({
       path: row.path,
@@ -148,7 +157,7 @@ export function desiredOf(tabs: readonly StatusTab[], org: string): Desired[] {
       body: `${row.path}\n\nhttps://github.com/${org}/.rness/blob/main/${row.path}`,
       status: statusOf(row.status),
       type: tab.label,
-      statusField: hasField(tab) ? statusFieldName(tab.label) : null,
+      statusField: fields.get(tab.label)?.name ?? null,
     }))
   )
 }

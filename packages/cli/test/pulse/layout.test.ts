@@ -237,3 +237,23 @@ test('layoutOf: a contract collection has every status of its contract, the othe
     ['Plans status', 'Plans status', 'Marketing status', null]
   )
 })
+
+test('layoutOf: a directory named like an Object.prototype member is a discovered one', () => {
+  const t: StatusTab[] = [
+    {
+      name: 'constructor',
+      label: 'Constructor',
+      rows: [row('a', 'open', 'constructor/a.md')],
+    },
+    { name: 'toString', label: 'ToString', rows: [] },
+  ]
+  const layout = layoutOf(t)
+  assert.deepEqual(layout.fields, [
+    { name: 'Constructor status', statuses: ['open'] },
+  ])
+  assert.deepEqual(layout.statuses, ['open'])
+  assert.deepEqual(
+    layout.views.map((v) => v.field),
+    ['Constructor status', null]
+  )
+})
