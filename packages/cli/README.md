@@ -138,7 +138,7 @@ dependency does this: `util.styleText`, and a banner kept as a constant.
 ### Upgrade
 
     rness upgrade            # the latest release; `rness upgrade 0.5.0` for another
-    npx @rness/cli@latest upgrade     # your global rness is older than the pin, or the pin is below 0.5.0
+    npx @rness/cli@latest upgrade     # your global rness is below 0.8.0, or the pin is below 0.5.0
     pnpm rness upgrade       # inside .rness: the pinned copy merges its own scaffold
 
 The version is written in one place, `.rness/package.json`. `upgrade` pins it
@@ -191,9 +191,10 @@ now names; `rness validate` warns while it is behind.
   drops the scaffold commit, and the next upgrade falls back to an older base.
 
 `upgrade` is never delegated to the pinned copy, which is what it replaces
-— so it runs the copy you typed. A global `rness` older than the pin answers
-"already at" and merges no scaffold: use the `npx` form, or the pinned copy
-from inside `.rness`. A workspace pinned below 0.5.0, whose copy has no such
+— so it runs the copy you typed. From 0.8.0, a global `rness` older than the
+pin merges the scaffold of the copy installed in `.rness`. A global below
+0.8.0 knows no scaffold: it answers "already at" and merges nothing — use the
+`npx` form, or the pinned copy from inside `.rness`. A workspace pinned below 0.5.0, whose copy has no such
 command, starts with the `npx` form.
 
 An upgrade touches `.rness` only: a generated block is current when its hash
@@ -203,10 +204,15 @@ its content does.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.8.1 — adoption without placeholders
 
+- Adopting the scaffold no longer adds a `.gitkeep` to a directory that
+  already holds files (`specs/`, `plans/` of a workspace older than
+  `create`).
 - In a terminal, `upgrade` says "Merging the @rness/cli 0.8.0 scaffold"
   instead of "the @rness/cli 0.8.0 scaffold merging".
+- A test now pins what 0.8.0 already did: a global `rness` older than the pin
+  merges the scaffold of the copy installed in `.rness`.
 
 ## 0.8.0 — upgrade merges the scaffold
 

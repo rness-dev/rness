@@ -241,3 +241,31 @@ export async function isRepository(rnessDir: string): Promise<boolean> {
   const real = (p: string) => realpath(p).catch(() => resolve(p))
   return (await real(r.stdout.trim())) === (await real(rnessDir))
 }
+
+/**
+ * Adoption only: `<dir>/.gitkeep` holds a directory open until it has files.
+ * Where `HEAD` already tracks something in that directory, the scaffold
+ * commit leaves it out, so the merge does not add a placeholder the team
+ * never needed.
+ */
+export async function withoutRedundantKeeps(
+  rnessDir: string,
+  files: readonly ScaffoldFile[]
+): Promise<ScaffoldFile[]> {
+  const kept: ScaffoldFile[] = []
+  for (const file of files) {
+    if (file.path.endsWith('/.gitkeep')) {
+      const dir = file.path.slice(0, -'/.gitkeep'.length)
+      const listed = await run(rnessDir, [
+        'ls-tree',
+        '--name-only',
+        'HEAD',
+        '--',
+        `${dir}/`,
+      ])
+      if (listed.code === 0 && listed.stdout.trim() !== '') continue
+    }
+    kept.push(file)
+  }
+  return kept
+}

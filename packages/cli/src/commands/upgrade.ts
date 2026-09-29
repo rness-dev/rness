@@ -26,6 +26,7 @@ import {
   findScaffoldBase,
   isRepository,
   mergeScaffold,
+  withoutRedundantKeeps,
 } from '../core/scaffold-git.ts'
 import { scaffoldDir } from '../core/scaffold.ts'
 import { status } from '../core/style.ts'
@@ -299,7 +300,9 @@ export async function upgradeCommand(
         const commit = await buildScaffoldCommit(
           ws.rnessDir,
           base?.commit ?? null,
-          files,
+          base === null
+            ? await withoutRedundantKeeps(ws.rnessDir, files)
+            : files,
           target
         )
         const result = await mergeScaffold(

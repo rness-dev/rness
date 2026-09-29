@@ -482,3 +482,49 @@ test('in a terminal one confirmation; declining writes nothing', async (t) => {
     'Upgrade @rness/cli to 0.5.0?',
   ])
 })
+
+test('a global older than the pin merges the scaffold of the copy installed in .rness', async (t) => {
+  // The running copy (these sources) is not 0.5.0; the installed one is.
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.5.0' })
+  const rnessDir = join(root, '.rness')
+  await writeFile(
+    join(rnessDir, 'package.json'),
+    await scaffoldPackage('0.5.0')
+  )
+  await git(
+    rnessDir,
+    'commit',
+    '-qam',
+    'chore(deps-dev): bump @rness/cli from 0.4.0 to 0.5.0'
+  )
+  const installed = join(rnessDir, 'node_modules', '@rness', 'cli', 'scaffold')
+  await cp(scaffoldDir(), installed, { recursive: true })
+  await writeFile(
+    join(installed, 'WORKSPACE.md'),
+    `${await readFile(join(installed, 'WORKSPACE.md'), 'utf8')}\nFrom the installed copy.\n`
+  )
+  const r = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, {})
+  assert.equal(r.code, 0, r.err)
+  assert.match(await read(root, 'WORKSPACE.md'), /From the installed copy\.\n$/)
+  assert.doesNotMatch(r.out, /PINNED/, 'nothing to install')
+})
+
+test('adoption adds no .gitkeep to a directory that already holds files', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, {
+    pin: '0.5.0',
+    installed: '0.5.0',
+    subject: 'chore: baseline',
+    trailer: null,
+  })
+  const rnessDir = join(root, '.rness')
+  await rm(join(rnessDir, 'specs', '.gitkeep'))
+  await writeFile(join(rnessDir, 'specs', '0001-first.md'), '# First\n')
+  await rm(join(rnessDir, 'plans'), { recursive: true })
+  await git(rnessDir, 'add', '-A')
+  await git(rnessDir, 'commit', '-qm', 'ours')
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.doesNotMatch(r.out, /specs\/\.gitkeep/)
+  assert.match(r.out, /^added {4}plans\/\.gitkeep$/m)
+})
