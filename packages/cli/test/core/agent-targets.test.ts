@@ -13,6 +13,32 @@ import { loadManifest } from '../../src/core/manifest.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const SETTINGS = '.claude/settings.json'
+const PLUGIN_JSON = '.claude/skills/rness/.claude-plugin/plugin.json'
+const SKILL = '.claude/skills/rness/skills/status/SKILL.md'
+
+/** Every file the Claude target writes here, in the order it walks them. */
+const LABELS = [
+  SETTINGS,
+  PLUGIN_JSON,
+  SKILL,
+  `org/api/${SETTINGS}`,
+  'org/api/.mcp.json',
+  `org/api/${PLUGIN_JSON}`,
+  `org/api/${SKILL}`,
+]
+const all = (status: 'updated' | 'unchanged') =>
+  LABELS.map((label) => ({ label, status, detail: null }))
+
+async function outcome(
+  root: string,
+  manifest: Awaited<ReturnType<typeof loadManifest>>,
+  label: string,
+  check: boolean
+) {
+  return (await agentTargets(root, manifest, { check })).find(
+    (o) => o.label === label
+  )
+}
 
 /** The `hooks` key the Claude target guarantees, `.rness` reached at `rness`. */
 const hooksFor = (rness: string) => ({
@@ -55,13 +81,20 @@ async function workspace(t: TestContext, agents?: string[]) {
   return { root, manifest }
 }
 
-test('claude declared: the workspace root gets its hooks, each cloned repository its settings and .mcp.json; a missing clone is skipped', async (t) => {
+test('claude declared: the workspace root gets its hooks and the plugin, each cloned repository its settings, .mcp.json and the plugin; a missing clone is skipped', async (t) => {
   const { root, manifest } = await workspace(t, ['claude'])
-  assert.deepEqual(await agentTargets(root, manifest, { check: false }), [
-    { label: SETTINGS, status: 'updated', detail: null },
-    { label: `org/api/${SETTINGS}`, status: 'updated', detail: null },
-    { label: 'org/api/.mcp.json', status: 'updated', detail: null },
-  ])
+  assert.deepEqual(
+    await agentTargets(root, manifest, { check: false }),
+    all('updated')
+  )
+  assert.match(
+    await readFile(join(root, 'org', 'api', ...SKILL.split('/')), 'utf8'),
+    /^!`node "\$\{CLAUDE_PROJECT_DIR\}\/\.\.\/\.\.\/\.rness\/node_modules\//m
+  )
+  assert.match(
+    await readFile(join(root, ...SKILL.split('/')), 'utf8'),
+    /^!`node "\$\{CLAUDE_PROJECT_DIR\}\/\.rness\/node_modules\//m
+  )
   assert.deepEqual(JSON.parse(await readFile(join(root, SETTINGS), 'utf8')), {
     hooks: hooksFor('.rness'),
   })
@@ -86,11 +119,28 @@ test('claude declared: the workspace root gets its hooks, each cloned repository
       },
     }
   )
-  assert.deepEqual(await agentTargets(root, manifest, { check: false }), [
-    { label: SETTINGS, status: 'unchanged', detail: null },
-    { label: `org/api/${SETTINGS}`, status: 'unchanged', detail: null },
-    { label: 'org/api/.mcp.json', status: 'unchanged', detail: null },
-  ])
+  assert.deepEqual(
+    await agentTargets(root, manifest, { check: false }),
+    all('unchanged')
+  )
+})
+
+test('a file of the plugin edited by hand differs; sync writes it back', async (t) => {
+  const { root, manifest } = await workspace(t, ['claude'])
+  await agentTargets(root, manifest, { check: false })
+  const file = join(root, 'org', 'api', ...SKILL.split('/'))
+  const written = await readFile(file, 'utf8')
+  await writeFile(file, `${written}\nAlso run the tests.\n`)
+  assert.deepEqual(await outcome(root, manifest, `org/api/${SKILL}`, true), {
+    label: `org/api/${SKILL}`,
+    status: 'stale',
+    detail: 'differs from what rness writes',
+  })
+  assert.equal(
+    (await outcome(root, manifest, `org/api/${SKILL}`, false))?.status,
+    'updated'
+  )
+  assert.equal(await readFile(file, 'utf8'), written)
 })
 
 test("the team's own hooks stay; rness's are appended after them", async (t) => {
@@ -123,6 +173,8 @@ test('the workspace root file is in no repository: never among the written files
     'CLAUDE.md',
     SETTINGS,
     '.mcp.json',
+    PLUGIN_JSON,
+    SKILL,
   ])
 })
 
@@ -135,6 +187,8 @@ test('check writes nothing and says what is missing; an unreadable file is repor
       detail:
         'hooks.SessionStart lacks the rness session-start hook; hooks.PostToolUse lacks the rness post-tool-use hook',
     },
+    { label: PLUGIN_JSON, status: 'stale', detail: 'missing' },
+    { label: SKILL, status: 'stale', detail: 'missing' },
     {
       label: `org/api/${SETTINGS}`,
       status: 'stale',
@@ -146,15 +200,20 @@ test('check writes nothing and says what is missing; an unreadable file is repor
       status: 'stale',
       detail: 'mcpServers.rness is missing',
     },
+    { label: `org/api/${PLUGIN_JSON}`, status: 'stale', detail: 'missing' },
+    { label: `org/api/${SKILL}`, status: 'stale', detail: 'missing' },
   ])
   await mkdir(join(root, 'org', 'api', '.claude'))
   await writeFile(join(root, 'org', 'api', SETTINGS), '{ oops')
   for (const check of [true, false])
-    assert.deepEqual((await agentTargets(root, manifest, { check }))[1], {
-      label: `org/api/${SETTINGS}`,
-      status: 'invalid',
-      detail: 'not valid JSON',
-    })
+    assert.deepEqual(
+      await outcome(root, manifest, `org/api/${SETTINGS}`, check),
+      {
+        label: `org/api/${SETTINGS}`,
+        status: 'invalid',
+        detail: 'not valid JSON',
+      }
+    )
   assert.equal(
     await readFile(join(root, 'org', 'api', SETTINGS), 'utf8'),
     '{ oops'
@@ -168,15 +227,14 @@ test('check: complete settings, .mcp.json without rness — only .mcp.json is st
     join(root, 'org', 'api', '.mcp.json'),
     '{ "mcpServers": { "db": { "command": "db-mcp" } } }\n'
   )
-  assert.deepEqual(await agentTargets(root, manifest, { check: true }), [
-    { label: SETTINGS, status: 'unchanged', detail: null },
-    { label: `org/api/${SETTINGS}`, status: 'unchanged', detail: null },
-    {
-      label: 'org/api/.mcp.json',
-      status: 'stale',
-      detail: 'mcpServers.rness is missing',
-    },
-  ])
+  assert.deepEqual(
+    await agentTargets(root, manifest, { check: true }),
+    all('unchanged').map((o) =>
+      o.label === 'org/api/.mcp.json'
+        ? { ...o, status: 'stale', detail: 'mcpServers.rness is missing' }
+        : o
+    )
+  )
 })
 
 test('a settings file written by 0.9.0 keeps its enabledMcpjsonServers: rness neither needs nor removes it', async (t) => {
@@ -193,11 +251,10 @@ test('a settings file written by 0.9.0 keeps its enabledMcpjsonServers: rness ne
   )}\n`
   await writeFile(join(root, 'org', 'api', SETTINGS), written)
   for (const check of [true, false])
-    assert.deepEqual((await agentTargets(root, manifest, { check }))[1], {
-      label: `org/api/${SETTINGS}`,
-      status: 'unchanged',
-      detail: null,
-    })
+    assert.deepEqual(
+      await outcome(root, manifest, `org/api/${SETTINGS}`, check),
+      { label: `org/api/${SETTINGS}`, status: 'unchanged', detail: null }
+    )
   assert.equal(
     await readFile(join(root, 'org', 'api', SETTINGS), 'utf8'),
     written
@@ -215,11 +272,10 @@ test('leftovers: a file still carrying the values of an agent no longer declared
   const { root, manifest } = await workspace(t, ['claude'])
   await agentTargets(root, manifest, { check: false })
   assert.deepEqual(await leftoverTargets(root, manifest), [])
-  assert.deepEqual(await leftoverTargets(root, { ...manifest, agents: [] }), [
-    SETTINGS,
-    `org/api/${SETTINGS}`,
-    'org/api/.mcp.json',
-  ])
+  assert.deepEqual(
+    await leftoverTargets(root, { ...manifest, agents: [] }),
+    LABELS
+  )
   // Never asked: nothing to say about files someone wrote by hand.
   assert.deepEqual(
     await leftoverTargets(root, { ...manifest, agents: null }),

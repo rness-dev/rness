@@ -12,14 +12,14 @@ export type Guarantee =
   | { path: readonly string[]; value: unknown }
 
 /**
- * One file of a target and what it guarantees there: relative to the root of
- * each clone, or to the workspace root, once (spec 0015 §2.1).
+ * One file of a target: relative to the root of each clone, or to the
+ * workspace root, once (spec 0015 §2.1). rness either guarantees values in
+ * it — the team's file — or owns it whole, byte for byte (spec 0016 §3.2).
  */
-export interface TargetFile {
+export type TargetFile = {
   file: string
   at: 'clones' | 'root'
-  guarantees: readonly Guarantee[]
-}
+} & ({ guarantees: readonly Guarantee[] } | { content: string })
 
 /** What rness compiles for one agent, in each repository of the workspace. */
 export interface AgentTarget {
@@ -85,6 +85,58 @@ function hooks(rness: string): Guarantee[] {
   ]
 }
 
+/** The Claude Code plugin rness writes, whole: `/rness:status` (spec 0016 §3). */
+const PLUGIN = '.claude/skills/rness'
+
+const PLUGIN_JSON = `${JSON.stringify(
+  {
+    name: 'rness',
+    description: 'The rness workspace in Claude Code: /rness:status.',
+  },
+  null,
+  2
+)}\n`
+
+/**
+ * The `status` skill, `rness` being the path of `.rness` from the project
+ * directory. One fixed command — the arguments never reach a shell — named
+ * exactly in `allowed-tools`, so it runs without a prompt. Nothing in it
+ * depends on the version: an upgrade rewrites nothing.
+ */
+function statusSkill(rness: string): string {
+  const command = `node "\${CLAUDE_PROJECT_DIR}/${rness}/${PINNED_BIN}" status --cwd "\${CLAUDE_PROJECT_DIR}"`
+  return `---
+name: status
+description: The status of every decision, specification, plan and other tracked document of the rness workspace, one table per directory. Read-only.
+argument-hint: '[tab]'
+disable-model-invocation: true
+allowed-tools: Bash(${command})
+---
+
+!\`${command}\`
+
+Show the output above to the user as it is: the heading and the tables,
+nothing added, nothing summarised, no other tool. Arguments: \`$ARGUMENTS\`.
+When they name a tab, show only that tab's section. If the output says the
+module cannot be found, say instead that ${rness} is not installed next to
+this repository.
+
+End with this line: _For the view with tabs and scrolling: Ctrl+Z, then
+\`rness status\` (q to close), then \`fg\`._
+`
+}
+
+function plugin(rness: string, at: TargetFile['at']): TargetFile[] {
+  return [
+    { file: `${PLUGIN}/.claude-plugin/plugin.json`, at, content: PLUGIN_JSON },
+    {
+      file: `${PLUGIN}/skills/status/SKILL.md`,
+      at,
+      content: statusSkill(rness),
+    },
+  ]
+}
+
 /**
  * The agents this version can compile for (spec 0011 §4, tier 1). Any other
  * agent that reads `AGENTS.md` works with the block alone.
@@ -129,6 +181,7 @@ export const TARGETS: Readonly<Record<string, AgentTarget>> = {
           },
         ],
       },
+      ...plugin('../../.rness', 'clones'),
       // A session opened at the workspace root reads this file, one opened
       // in a clone does not (spec 0011 §1): the hooks only, `.rness` inside.
       {
@@ -136,6 +189,7 @@ export const TARGETS: Readonly<Record<string, AgentTarget>> = {
         at: 'root',
         guarantees: hooks('.rness'),
       },
+      ...plugin('.rness', 'root'),
     ],
   },
 }

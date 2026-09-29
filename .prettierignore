@@ -13,6 +13,7 @@ CLAUDE.md
 # Written by `rness sync --agent claude`: rness keeps its own formatting
 .claude/settings.json
 .mcp.json
+.claude/skills/rness/
 
 # Claude Code's own, per developer (ignored by git globally, not by prettier)
 .claude/settings.local.json

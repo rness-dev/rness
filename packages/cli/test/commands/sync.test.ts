@@ -709,7 +709,7 @@ test('sync --agent claude declares it, then writes the Claude settings of every 
   assert.match(r.out, /^declared agent claude in \.rness\/rness\.json\n/)
   assert.match(
     r.out,
-    /\nupdated {2}\.claude\/settings\.json\nupdated {2}org\/api\/\.claude\/settings\.json\nupdated {2}org\/api\/\.mcp\.json\n/
+    /\nupdated {2}\.claude\/settings\.json\nupdated {2}\.claude\/skills\/rness\/\.claude-plugin\/plugin\.json\nupdated {2}\.claude\/skills\/rness\/skills\/status\/SKILL\.md\nupdated {2}org\/api\/\.claude\/settings\.json\nupdated {2}org\/api\/\.mcp\.json\nupdated {2}org\/api\/\.claude\/skills\/rness\/\.claude-plugin\/plugin\.json\nupdated {2}org\/api\/\.claude\/skills\/rness\/skills\/status\/SKILL\.md\n/
   )
   assert.deepEqual((await loadManifestAt(root)).agents, ['claude'])
   const settings = JSON.parse(
