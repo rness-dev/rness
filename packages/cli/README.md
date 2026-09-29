@@ -59,7 +59,8 @@ when dropped, red `?` when missing.
 - Off a terminal — a pipe, CI, an agent's tool — Markdown: a table per tab.
 - From Claude Code, `/rness:status [tab]` shows those tables (see "Agent
   targets"). For the view itself: `Ctrl+Z` suspends Claude Code, run
-  `rness status`, `q`, then `fg` resumes it. Nothing started from inside
+  `npx @rness/cli status` (or `rness status` with a global install), `q`,
+  then `fg` resumes it — the skill ends with that line. Nothing started from inside
   Claude Code gets the terminal, so the view cannot open from there
   (verified with Claude Code 2.1.284 on 2026-09-29).
 

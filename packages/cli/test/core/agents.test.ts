@@ -60,7 +60,7 @@ module cannot be found, say instead that ${rness} is not installed next to
 this repository.
 
 End with this line: _For the view with tabs and scrolling: Ctrl+Z, then
-\`rness status\` (q to close), then \`fg\`._
+\`npx @rness/cli status\` (q to close), then \`fg\`._
 `
 const plugin = (rness: string, at: 'clones' | 'root') => [
   {
