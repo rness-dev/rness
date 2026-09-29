@@ -63,13 +63,48 @@ the files a given agent needs, for the agents the team declares in
   repository reads the context repository without a prompt. Claude Code
   applies it once the repository has been trusted interactively. Verified
   with Claude Code 2.1.284 on 2026-09-29. Each clone also gets `.mcp.json`,
-  which registers the MCP server; see "MCP server".
+  which registers the MCP server; see "MCP server". The same settings file
+  carries two hooks, and so does `.claude/settings.json` at the workspace
+  root, which `sync` writes on every machine; see "Hooks".
 - rness owns values, not files: what is missing is added, nothing else is
   touched, and a file it cannot parse is reported, never rewritten.
   `sync --check` and `validate` report a missing value. Removing an agent
   from `agents` leaves its values in place; `sync` says where.
 - Other agents (Codex, Cursor, GitHub Copilot) read the `AGENTS.md` block;
   `sync` refuses an agent it has no target for.
+
+### Hooks
+
+With `claude` in `agents`, each clone's `.claude/settings.json` and the
+workspace root's carry two Claude Code hooks, both run by the pinned copy:
+
+- **At session start** (`SessionStart`, every source): a line for the
+  developer — `rness 0.10.0 · acme · scope web — 3 standards, 2 decisions`
+  — and, for the model, the scope's documents as `rness_context` lists
+  them. When the context may be wrong, both say why: no `.rness` next to the
+  repository or nothing installed there, a `rness.json` rness refuses, a pin
+  the installed copy does not match, the problems `rness validate` reports.
+  After a compaction, the context only.
+- **After an edit** (`PostToolUse` on `Edit|Write`): when the file is under
+  `.rness/`, its front-matter problems — or those of `rness.json` — go back
+  to the model, which fixes them in the same turn. Any other edit costs one
+  path check. Stale blocks are left to `sync`.
+
+Each hook is one fixed `sh` line: it runs
+`<.rness>/node_modules/@rness/cli/dist/bin/rness.js hook <event>` when that
+file exists, and otherwise says so at session start and nothing after an
+edit. The line never changes between versions — what the hook does lives in
+the CLI — because rness compares its entry as a whole: an entry edited by
+hand counts as missing, and the next `sync` adds a second one. The team's
+own hooks stay where they are.
+
+Claude Code runs hooks from a committed settings file without asking each
+developer, including in `claude -p`. These two read `.rness/` and nothing
+else: they write no file, run no install and reach no network. Review a
+change to them like code. Verified with Claude Code 2.1.284 on 2026-09-29:
+in a clone and at the root, the model received the context; after an edit
+that broke a status, it received the problem. The `sh` line is not verified
+on Windows.
 
 ### MCP server
 
@@ -242,6 +277,18 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.10.0 — hooks: the context at session start, validation after an edit
+
+- With `claude` in `agents`, `sync` adds two hooks to each clone's
+  `.claude/settings.json`, and writes `.claude/settings.json` at the
+  workspace root with the same two. See "Hooks". `rness upgrade` syncs, so
+  it adds them; then commit `.claude/settings.json` in each repository, as
+  its next steps list. Until then `sync --check` and `validate` report the
+  hooks missing.
+- A settings file keeps the team's own hooks: rness appends its entries
+  after them.
+- Blocks are unchanged.
 
 ## 0.9.2 — the sync summary reads as a sentence
 
