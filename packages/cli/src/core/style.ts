@@ -125,6 +125,21 @@ export function badge(
   return painted === padded ? text : painted
 }
 
+/**
+ * Reverse video, for what is selected: the active tab of `rness status`.
+ * Without colour, brackets in place of the text's first and last characters
+ * — spaces by convention — so the width is kept.
+ */
+export function inverse(
+  text: string,
+  stream: NodeJS.WriteStream = process.stdout
+): string {
+  const plain = `[${text.slice(1, -1)}]`
+  if (noColor()) return plain
+  const painted = styleText('inverse', text, { stream, validateStream: true })
+  return painted === text ? plain : painted
+}
+
 /** Grey, for what is read after the rest: a box of next steps. */
 export function grey(
   text: string,

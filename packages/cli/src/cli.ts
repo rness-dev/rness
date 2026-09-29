@@ -8,6 +8,7 @@ import { hookCommand } from './commands/hook.ts'
 import { type LoginOptions, loginCommand } from './commands/login.ts'
 import { logoutCommand } from './commands/logout.ts'
 import { type McpOptions, mcpCommand } from './commands/mcp.ts'
+import { type StatusOptions, statusCommand } from './commands/status.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
@@ -62,6 +63,17 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: ContextOptions) => {
       state.code = await contextCommand(opts)
+    })
+
+  program
+    .command('status')
+    .description(
+      'Show the status of every decision, specification and plan, a tab per directory'
+    )
+    .argument('[tab]', 'open on this tab: adr, specs, plans, …')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (tab: string | undefined, opts: StatusOptions) => {
+      state.code = await statusCommand(tab, opts)
     })
 
   program
