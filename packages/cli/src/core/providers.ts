@@ -27,6 +27,10 @@ export const PROVIDERS: Readonly<Record<ProviderName, ProviderEntry>> = {
   },
 }
 
+export function isProviderName(value: string): value is ProviderName {
+  return Object.hasOwn(PROVIDERS, value)
+}
+
 export function unsupportedProviderMessage(name: ProviderName): string {
   const supported = Object.values(PROVIDERS)
     .filter((p) => p.available)

@@ -689,6 +689,11 @@ interface Script {
    */
   start?: 'github' | 'blank' | typeof CANCEL
   /**
+   * The answer to "Where does your organization live?". Left out, it is
+   * answered "github" without being recorded, like the start question.
+   */
+  provider?: string | typeof CANCEL
+  /**
    * The answer to "Which agents does your team use?" (spec 0011 §3.2). Left
    * out, it is answered [] without being recorded, as the login is declined.
    */
@@ -717,6 +722,7 @@ function terminal(script: Script) {
   const refused: string[] = []
   const offered: unknown[] = []
   const preselected: unknown[] = []
+  const providerOptions: unknown[] = []
   const next = <T>(queue: T[] | undefined, message: string): T => {
     const answer = queue?.shift()
     if (answer === undefined)
@@ -756,6 +762,12 @@ function terminal(script: Script) {
     async select(opts: { message: string; options: { value: string }[] }) {
       if (opts.message === START_Q && script.start === undefined)
         return 'github'
+      if (opts.message === PROVIDER_Q) {
+        providerOptions.push(opts.options)
+        if (script.provider === undefined) return 'github'
+        asked.push(opts.message)
+        return script.provider
+      }
       asked.push(opts.message)
       offered.push(opts.options.map((o) => o.value))
       if (opts.message === START_Q) return script.start
@@ -774,7 +786,7 @@ function terminal(script: Script) {
     isCancel: (value: unknown) => value === CANCEL,
   } as unknown as Prompts
   const deps: CreateDeps = { isTty: () => true, prompts: async () => prompts }
-  return { deps, asked, refused, offered, preselected }
+  return { deps, asked, refused, offered, preselected, providerOptions }
 }
 
 async function wizard(
@@ -801,6 +813,7 @@ async function stagedJoins(): Promise<string[]> {
 }
 
 const START_Q = 'How do you want to start?'
+const PROVIDER_Q = 'Where does your organization live?'
 const AGENTS_Q = 'Which agents does your team use?'
 const NAME_Q = 'What should the workspace be called?'
 const ORG_Q = 'What is your GitHub organization named?'
@@ -2163,4 +2176,161 @@ test('--agent: an unknown agent exits 2 before any question; a join refuses it b
     /acme\/\.rness exists: --agent only applies to a new workspace; after joining, run rness sync --agent claude\n/
   )
   assert.deepEqual(await readdir(cwd), ['.git'])
+})
+
+test('wizard: the organization path asks where it lives, GitLab and Atlassian shown disabled; the answer is written', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const cwd = await scratch(t)
+  const term = terminal({ provider: 'github', confirm: [true] })
+  const r = await wizard(
+    {
+      org: 'acme',
+      repos: 'api',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      cwd,
+    },
+    term.deps
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.equal(term.asked[0], PROVIDER_Q)
+  assert.deepEqual(term.providerOptions, [
+    [
+      { value: 'github', label: 'GitHub', disabled: false },
+      { value: 'gitlab', label: 'GitLab (coming later)', disabled: true },
+      {
+        value: 'atlassian',
+        label: 'Atlassian — Bitbucket + Jira (coming later)',
+        disabled: true,
+      },
+    ],
+  ])
+  assert.match(
+    await readFile(join(cwd, 'acme', '.rness', 'rness.json'), 'utf8'),
+    /"provider": "github"/
+  )
+})
+
+test('wizard: the question follows "how do you want to start"; a cancel writes nothing', async (t) => {
+  const cwd = await scratch(t)
+  const term = terminal({ start: 'github', provider: CANCEL })
+  const r = await wizard({ skipInstall: true, pm: 'npm', cwd }, term.deps)
+  assert.equal(r.code, 0)
+  assert.deepEqual(term.asked, [START_Q, PROVIDER_Q])
+})
+
+test('--provider github -y --org acme: no question, and it is written', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const cwd = await scratch(t)
+  const term = terminal({})
+  const r = await wizard(
+    {
+      org: 'acme',
+      provider: 'github',
+      yes: true,
+      repos: 'api',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      cwd,
+    },
+    term.deps
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.providerOptions, [])
+  assert.match(
+    await readFile(join(cwd, 'acme', '.rness', 'rness.json'), 'utf8'),
+    /"provider": "github"/
+  )
+})
+
+test('without a terminal and without --provider, a new workspace is GitHub', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const cwd = await scratch(t)
+  const r = await create([
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    remote.host,
+    '--repos',
+    'api',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    await readFile(join(cwd, 'acme', '.rness', 'rness.json'), 'utf8'),
+    /"provider": "github"/
+  )
+})
+
+test('--provider: an unavailable or unknown provider exits 2 before anything else', async (t) => {
+  const cwd = await scratch(t)
+  const gitlab = await create(['acme', '--provider', 'gitlab', '--cwd', cwd])
+  assert.equal(gitlab.code, 2)
+  assert.equal(
+    gitlab.err,
+    'provider "gitlab" is not available yet (available: github)\n'
+  )
+  const svn = await create(['acme', '--provider', 'svn', '--cwd', cwd])
+  assert.equal(svn.code, 2)
+  assert.equal(svn.err, 'unknown provider "svn" (github, gitlab, atlassian)\n')
+  await assert.rejects(access(join(cwd, 'acme')))
+})
+
+test('--blank asks no provider and writes none; --provider is refused with it', async (t) => {
+  const cwd = await scratch(t)
+  const term = terminal({ start: 'blank', text: ['demo'] })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', cwd },
+    term.deps,
+    ...offline()
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.providerOptions, [])
+  assert.doesNotMatch(
+    await readFile(join(cwd, 'demo', '.rness', 'rness.json'), 'utf8'),
+    /"provider"/
+  )
+  const clash = await create([
+    'demo2',
+    '--blank',
+    '--provider',
+    'github',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(clash.code, 2)
+  assert.equal(clash.err, '--blank cannot be combined with --provider\n')
+})
+
+test('joining an existing .rness asks nothing and leaves its rness.json as published', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const apiUrl = await remote.addRepo('api', { 'README.md': '# api\n' })
+  const published = manifestText({ api: { url: apiUrl } })
+  await remote.addRepo('.rness', { 'rness.json': published })
+  const cwd = await scratch(t)
+  const r = await create([
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    remote.host,
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 0, r.err)
+  assert.equal(
+    await readFile(join(cwd, 'acme', '.rness', 'rness.json'), 'utf8'),
+    published
+  )
 })

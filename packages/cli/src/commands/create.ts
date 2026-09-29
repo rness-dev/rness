@@ -4,6 +4,7 @@ import { join, relative, resolve } from 'node:path'
 
 import { SUPPORTED_AGENTS, unsupportedAgents } from '../core/agents.ts'
 import { askAgents } from '../core/ask-agents.ts'
+import { askProvider } from '../core/ask-provider.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { clone, publish } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
@@ -31,7 +32,7 @@ import {
   rnessCommand,
 } from '../core/pm.ts'
 import type { GitCredentials, Provider } from '../core/provider.ts'
-import { openProvider } from '../core/providers.ts'
+import { PROVIDERS, isProviderName, openProvider } from '../core/providers.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { PRIVATE_MARK, banner, unicode } from '../core/style.ts'
@@ -53,7 +54,7 @@ import {
   usingRest,
   usingSentence,
 } from '../core/transport.ts'
-import type { Manifest } from '../core/types.ts'
+import type { Manifest, ProviderName } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { clonesIn } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -86,6 +87,8 @@ export interface CreateOptions {
   blank?: boolean
   /** With `blank`: the workspace directory; prompted for when absent. */
   name?: string
+  /** Where the organization lives (`github`, later `gitlab`, `atlassian`); asked when absent in a terminal, `github` otherwise. */
+  provider?: string
   /** A new workspace's agents, declared in rness.json (spec 0011 §3.2). */
   agent?: string[]
   /** Internal (tests): directory to resolve from. */
@@ -373,6 +376,7 @@ function blankConflict(opts: CreateOptions): string | null {
   if (opts.ssh === true) return '--ssh'
   if (opts.https === true) return '--https'
   if (opts.host !== undefined) return '--host'
+  if (opts.provider !== undefined) return '--provider'
   return null
 }
 
@@ -392,6 +396,17 @@ async function chooseStart(
   })
   if (prompts.isCancel(answer)) return null
   return answer === 'blank' ? 'blank' : 'github'
+}
+
+/** Refuses a `--provider` value that names no provider, or one not yet available. */
+function providerFlagError(value: string): string | null {
+  if (!isProviderName(value))
+    return `unknown provider "${value}" (${Object.keys(PROVIDERS).join(', ')})`
+  if (PROVIDERS[value].available) return null
+  const available = Object.values(PROVIDERS)
+    .filter((p) => p.available)
+    .map((p) => p.name)
+  return `provider "${value}" is not available yet (available: ${available.join(', ')})`
 }
 
 const OTHER = Symbol('another organization')
@@ -510,6 +525,13 @@ export async function createCommand(
     )
     return 2
   }
+  if (opts.provider !== undefined) {
+    const named = providerFlagError(opts.provider)
+    if (named !== null) {
+      process.stderr.write(`${named}\n`)
+      return 2
+    }
+  }
   if (opts.ssh === true && opts.https === true) {
     process.stderr.write('--ssh and --https cannot be combined\n')
     return 2
@@ -611,6 +633,17 @@ export async function createCommand(
         ui,
         prompts,
       })
+
+    // Where the organization lives: the flag, else asked in a terminal, else
+    // GitHub. It precedes the organization, which only that provider names.
+    let chosenProvider: ProviderName = 'github'
+    if (opts.provider !== undefined && isProviderName(opts.provider))
+      chosenProvider = opts.provider
+    else if (interactive) {
+      const answer = await askProvider(await prompts())
+      if (typeof answer !== 'string') return cancelled(ui)
+      chosenProvider = answer
+    }
 
     let prompted = false
     let org = opts.org
@@ -721,7 +754,7 @@ export async function createCommand(
     // so the picker can offer it before anything is written there.
     let catalogue: Manifest = {
       contract: 1,
-      provider: null,
+      provider: chosenProvider,
       org,
       agents: null,
       pulse: null,

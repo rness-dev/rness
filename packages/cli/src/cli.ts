@@ -205,6 +205,10 @@ function buildProgram(state: RunState): Command {
       'comma-separated repositories for your workspace (catalogue entries are cloned, others added)'
     )
     .option(
+      '--provider <name>',
+      'where the organization lives: github (gitlab, atlassian later)'
+    )
+    .option(
       '--pm <name>',
       `package manager for .rness/ (${PACKAGE_MANAGERS.join(', ')}; default: the one running this command)`
     )
