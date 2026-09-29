@@ -2,7 +2,7 @@ import type { CommandDeps } from '../core/deps.ts'
 import { GitHubMessageError } from '../core/github.ts'
 import { loadManifest, providerOf, writeManifest } from '../core/manifest.ts'
 import type { Board, Provider } from '../core/provider.ts'
-import { openProvider } from '../core/providers.ts'
+import { PROVIDERS, openProvider } from '../core/providers.ts'
 import { statusTabs } from '../core/status.ts'
 import { defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
@@ -154,6 +154,14 @@ export async function pulseCreateCommand(
       throw new Error(
         `already declared: ${boardUrl(c.org, c.manifest.pulse.project)} — rness pulse sync`
       )
+    // A written provider was already refused by `context`; a detected one is
+    // what create writes, so it is refused here, before GitHub is asked
+    // anything (spec 0017 §2.2).
+    const detected = providerOf(c.manifest)
+    if (!PROVIDERS[detected].available)
+      throw new Error(
+        `the pulse needs a GitHub organization, and this workspace's repositories look like ${detected} (detected): write "provider": "github" in rness.json if the organization is on GitHub`
+      )
     const missing = await missingAccess(c.provider)
     if (missing !== null) {
       if (opts.yes === true || !terminal.isTty()) throw new Error(missing)
@@ -182,7 +190,7 @@ export async function pulseCreateCommand(
     const login = (await c.provider.identity())?.login ?? 'unknown'
     ui.line(
       'checked',
-      `${providerOf(c.manifest)}, logged in as ${login}, scope ${PROJECT_SCOPE}`
+      `${detected}, logged in as ${login}, scope ${PROJECT_SCOPE}`
     )
 
     const board = await fromGithub(c.provider.createBoard(c.org))
@@ -191,7 +199,7 @@ export async function pulseCreateCommand(
     // completes, not one nobody knows about (spec 0017 §3).
     await writeManifest(c.rnessDir, {
       ...c.manifest,
-      provider: providerOf(c.manifest),
+      provider: detected,
       pulse: { project: board.number },
     })
     ui.line('created', `Agent Pulse — ${board.url}`)

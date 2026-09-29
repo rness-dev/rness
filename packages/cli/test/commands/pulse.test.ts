@@ -125,6 +125,58 @@ test('a written provider that is not available is refused first', async (t) => {
   assert.match(r.err, /provider "gitlab" is not supported/)
 })
 
+test('create where the repositories look like an unavailable provider: refused before GitHub is asked anything', async (t) => {
+  await machine(t)
+  const g = await board(t, { other: asUser('repo, read:org, project') })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    repos: { api: { url: 'https://gitlab.com/acme/api.git' } },
+    files: FILES,
+  })
+  const before = await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
+  const r = await run(() =>
+    pulseCreateCommand(
+      { cwd, yes: true, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 1)
+  assert.equal(r.out, '')
+  assert.equal(
+    r.err.trim(),
+    'the pulse needs a GitHub organization, and this workspace\'s repositories look like gitlab (detected): write "provider": "github" in rness.json if the organization is on GitHub'
+  )
+  assert.deepEqual(g.requests, [], 'no GitHub call at all')
+  assert.equal(
+    await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'),
+    before,
+    'rness.json untouched'
+  )
+})
+
+test('create where the repositories are on GitHub writes the detected provider', async (t) => {
+  await machine(t)
+  const g = await board(t, { other: asUser('repo, read:org, project') })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    repos: { api: { url: 'git@github.com:acme/api.git' } },
+    files: FILES,
+  })
+  const r = await run(() =>
+    pulseCreateCommand(
+      { cwd, yes: true, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 0)
+  assert.match(r.out, /^checked\s+github, /)
+  assert.equal(
+    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'))
+      .provider,
+    'github'
+  )
+})
+
 test('scopes without project: refused; -y does not log in', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo, read:org') })
