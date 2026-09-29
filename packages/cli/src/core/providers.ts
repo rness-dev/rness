@@ -1,14 +1,20 @@
 import { VERSION } from '../version.ts'
 import { githubProvider } from './github-oauth-provider.ts'
+import type { RateWait } from './github.ts'
 import type { Provider } from './provider.ts'
 import type { Manifest, ProviderName } from './types.ts'
+
+export interface OpenOptions {
+  apiBase?: string
+  wait?: RateWait
+}
 
 export interface ProviderEntry {
   name: ProviderName
   label: string
   available: boolean
   /** Only when `available`. */
-  open?: (options: { apiBase?: string }) => Promise<Provider>
+  open?: (options: OpenOptions) => Promise<Provider>
 }
 
 /** The hosting providers rness knows by name, in the order it offers them. */
@@ -17,7 +23,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, ProviderEntry>> = {
     name: 'github',
     label: 'GitHub',
     available: true,
-    open: ({ apiBase }) => githubProvider(apiBase),
+    open: ({ apiBase, wait }) => githubProvider(apiBase, wait),
   },
   gitlab: { name: 'gitlab', label: 'GitLab', available: false },
   atlassian: {
@@ -46,7 +52,7 @@ export function unsupportedProviderMessage(name: ProviderName): string {
  */
 export async function openProvider(
   manifest: Manifest | null,
-  options: { apiBase?: string } = {}
+  options: OpenOptions = {}
 ): Promise<Provider> {
   const name = manifest?.provider ?? 'github'
   const entry = PROVIDERS[name]

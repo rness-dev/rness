@@ -3,7 +3,9 @@ import type { BoardItem, Step } from '../pulse/plan.ts'
 import { type ResolvedToken, resolveToken } from './auth.ts'
 import { GitHubBoards } from './github-board.ts'
 import {
+  type ApiOptions,
   type CreateRepositoryResult,
+  type RateWait,
   type RepositoryListing,
   createRepository,
   getOrgMembership,
@@ -29,6 +31,7 @@ const GITHUB_HTTPS = 'https://github.com/'
 export class GitHubOAuthProvider implements Provider {
   readonly #token: ResolvedToken | null
   readonly #apiBase: string | undefined
+  readonly #wait: RateWait | undefined
   #login: Promise<{ login: string } | null> | undefined
   #boardClient: GitHubBoards | undefined
 
@@ -36,15 +39,22 @@ export class GitHubOAuthProvider implements Provider {
     return this.#token !== null
   }
 
-  constructor(options: { token: ResolvedToken | null; apiBase?: string }) {
+  constructor(options: {
+    token: ResolvedToken | null
+    apiBase?: string
+    wait?: RateWait
+  }) {
     this.#token = options.token
     this.#apiBase = options.apiBase
+    this.#wait = options.wait
   }
 
-  #api(token: string): { token: string; apiBase?: string } {
-    return this.#apiBase === undefined
-      ? { token }
-      : { token, apiBase: this.#apiBase }
+  #api(token: string): ApiOptions {
+    return {
+      token,
+      ...(this.#apiBase === undefined ? {} : { apiBase: this.#apiBase }),
+      ...(this.#wait === undefined ? {} : { wait: this.#wait }),
+    }
   }
 
   identity(): Promise<{ login: string } | null> {
@@ -145,9 +155,13 @@ export class GitHubOAuthProvider implements Provider {
 }
 
 /** The CLI's provider: whatever token this machine has, against `apiBase`. */
-export async function githubProvider(apiBase?: string): Promise<Provider> {
+export async function githubProvider(
+  apiBase?: string,
+  wait?: RateWait
+): Promise<Provider> {
   return new GitHubOAuthProvider({
     token: await resolveToken(),
     ...(apiBase === undefined ? {} : { apiBase }),
+    ...(wait === undefined ? {} : { wait }),
   })
 }

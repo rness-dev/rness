@@ -14,12 +14,26 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object'
 }
 
+/** GitHub's GraphQL answers a spent budget with 200 and an error of this type. */
+const rateLimited = (body: unknown): boolean =>
+  isRecord(body) &&
+  Array.isArray(body['errors']) &&
+  body['errors'].some(
+    (e: unknown) => isRecord(e) && e['type'] === 'RATE_LIMITED'
+  )
+
 async function graphqlRaw<T>(
   query: string,
   variables: Record<string, unknown>,
   options: ApiOptions
 ): Promise<GraphqlAnswer<T>> {
-  const body = await postJson('/graphql', { query, variables }, options, true)
+  const body = await postJson(
+    '/graphql',
+    { query, variables },
+    options,
+    true,
+    rateLimited
+  )
   return isRecord(body) ? (body as GraphqlAnswer<T>) : {}
 }
 

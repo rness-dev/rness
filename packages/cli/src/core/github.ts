@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises'
+
 import { rnessCommand } from './pm.ts'
 
 /** The public GitHub REST API; `--github-api` overrides it in tests. */
@@ -224,10 +226,88 @@ export async function listRepositories(
   }
 }
 
+/** What rness waits in all, per process, on GitHub's rate limits (spec 0018 §4). */
+export const WAIT_BUDGET_MS = 600_000
+/** GitHub's advice when a rate limit names no time. */
+const DEFAULT_WAIT_MS = 60_000
+/** A wait is never shorter: a server answering `retry-after: 0` cannot make rness spin. */
+const MIN_WAIT_MS = 1_000
+export const RATE_LIMIT_OUTLASTED =
+  "GitHub's rate limit outlasted the 10 minutes rness waits"
+
+/** How rness waits on a rate limit: the budget left, a clock, a sleep (tests inject them). */
+export interface RateWait {
+  left: number
+  now(): number
+  sleep(ms: number): Promise<void>
+}
+
+export function rateWait(
+  sleep: (ms: number) => Promise<void> = (ms) => delay(ms)
+): RateWait {
+  return { left: WAIT_BUDGET_MS, now: () => Date.now(), sleep }
+}
+
+/** The wait of a process that was given none: one budget for all its requests. */
+const PROCESS_WAIT = rateWait()
+
+/** The budget cannot cover what GitHub asks. */
+export class RateLimitError extends Error {}
+
+const messageOf = (body: unknown): string => {
+  const m =
+    body !== null && typeof body === 'object'
+      ? (body as Record<string, unknown>)['message']
+      : undefined
+  return typeof m === 'string' ? m : ''
+}
+
+/**
+ * How long GitHub asks to wait before the same request, in ms, or null when
+ * the answer is no rate limit. A limit is a 429; a 403 with `retry-after`,
+ * no request left, or "rate limit" in its message; or `limited`, a 200
+ * whose GraphQL errors say RATE_LIMITED. The wait is `retry-after`, else
+ * the reset of a spent primary limit, else a minute (docs.github.com, "Rate
+ * limits for the REST API" and "... for the GraphQL API", read 2026-09-30).
+ */
+export function rateDelay(
+  page: { status: number; headers: Headers; body: unknown },
+  now: number,
+  limited = false
+): number | null {
+  const h = page.headers
+  const spent = h.get('x-ratelimit-remaining') === '0'
+  const hit =
+    limited ||
+    page.status === 429 ||
+    (page.status === 403 &&
+      (h.has('retry-after') ||
+        spent ||
+        /rate limit/i.test(messageOf(page.body))))
+  if (!hit) return null
+  const after = (h.get('retry-after') ?? '').trim()
+  if (/^\d+$/.test(after)) return Number(after) * 1000
+  const reset = (h.get('x-ratelimit-reset') ?? '').trim()
+  if (spent && /^\d+$/.test(reset))
+    return Math.max(0, Number(reset) * 1000 - now)
+  return DEFAULT_WAIT_MS
+}
+
+/** Sleeps `ms` (a second at least) out of the budget, or throws when the budget cannot cover it. */
+export async function waitOut(options: ApiOptions, ms: number): Promise<void> {
+  const wait = options.wait ?? PROCESS_WAIT
+  const spent = Math.max(ms, MIN_WAIT_MS)
+  if (spent > wait.left) throw new RateLimitError(RATE_LIMIT_OUTLASTED)
+  wait.left -= spent
+  await wait.sleep(spent)
+}
+
 export interface ApiOptions {
   token: string
   apiBase?: string
   timeoutMs?: number
+  /** Rate-limit waits; default: this process's. */
+  wait?: RateWait
 }
 
 function apiHeaders(token: string): Record<string, string> {
@@ -260,38 +340,52 @@ async function getJson(
 
 /**
  * One authenticated JSON POST; a non-ok answer becomes `httpError`, the
- * parsed body of an ok one is returned (`undefined` when it is empty).
+ * parsed body of an ok one is returned (`undefined` when it is empty). A rate
+ * limit is waited out of the process's budget and the request sent again.
  */
 export async function postJson(
   path: string,
   payload: unknown,
   options: ApiOptions,
   /** Show GitHub's own `message` when it refuses (the Projects client); 401 and 429 keep `httpError`'s words. */
-  explain = false
+  explain = false,
+  /** An answer of 200 that is a rate limit all the same (GraphQL's RATE_LIMITED). */
+  limited: (body: unknown) => boolean = () => false
 ): Promise<unknown> {
   const base = (options.apiBase ?? DEFAULT_GITHUB_API).replace(/\/+$/, '')
-  const page = await getPage(
-    `${base}${path}`,
-    { ...apiHeaders(options.token), 'Content-Type': 'application/json' },
-    options.timeoutMs ?? 15_000,
-    { method: 'POST', body: JSON.stringify(payload), errorBody: explain }
-  )
-  if (page.status < 200 || page.status >= 300) {
-    const message =
-      explain &&
-      page.status !== 401 &&
-      page.status !== 429 &&
-      page.body !== null &&
-      typeof page.body === 'object'
-        ? (page.body as { message?: unknown }).message
-        : undefined
-    if (typeof message === 'string' && message !== '')
-      throw new GitHubMessageError(message, {
-        cause: { status: page.status, path },
-      })
-    throw httpError(page, path)
+  const clock = options.wait ?? PROCESS_WAIT
+  for (;;) {
+    const page = await getPage(
+      `${base}${path}`,
+      { ...apiHeaders(options.token), 'Content-Type': 'application/json' },
+      options.timeoutMs ?? 15_000,
+      // A refusal's body says whether it is a rate limit. A timeout throws
+      // above and is never retried: the write may have been made.
+      { method: 'POST', body: JSON.stringify(payload), errorBody: true }
+    )
+    const ok = page.status >= 200 && page.status < 300
+    const wait = rateDelay(page, clock.now(), ok && limited(page.body))
+    if (wait !== null) {
+      await waitOut(options, wait)
+      continue
+    }
+    if (!ok) {
+      const message =
+        explain &&
+        page.status !== 401 &&
+        page.status !== 429 &&
+        page.body !== null &&
+        typeof page.body === 'object'
+          ? (page.body as { message?: unknown }).message
+          : undefined
+      if (typeof message === 'string' && message !== '')
+        throw new GitHubMessageError(message, {
+          cause: { status: page.status, path },
+        })
+      throw httpError(page, path)
+    }
+    return page.body
   }
-  return page.body
 }
 
 /**
