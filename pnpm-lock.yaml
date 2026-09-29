@@ -210,13 +210,13 @@ importers:
   packages/create:
     dependencies:
       '@rness/cli':
-        specifier: 0.9.1
+        specifier: 0.9.2
         version: link:../cli
 
   packages/create-rness:
     dependencies:
       '@rness/cli':
-        specifier: 0.9.1
+        specifier: 0.9.2
         version: link:../cli
 
 packages:
