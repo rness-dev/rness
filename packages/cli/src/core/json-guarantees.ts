@@ -12,10 +12,6 @@ export type Ensured =
 
 type Json = Record<string, unknown>
 type Parsed = { ok: true; data: Json } | { ok: false; reason: string }
-type Found =
-  | { kind: 'list'; list: unknown[] }
-  | { kind: 'absent' }
-  | { kind: 'invalid'; reason: string }
 
 function isObject(value: unknown): value is Json {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -33,8 +29,18 @@ function parse(text: string): Parsed {
     : { ok: false, reason: 'not a JSON object' }
 }
 
-/** Walk to the list `g` names; create what is missing when `create`. */
-function listAt(root: Json, g: Guarantee, create: boolean): Found {
+/**
+ * Walk to the object holding `g`'s last key, creating the objects on the way
+ * when `create`.
+ */
+function parentOf(
+  root: Json,
+  g: Guarantee,
+  create: boolean
+):
+  | { kind: 'node'; node: Json }
+  | { kind: 'absent' }
+  | { kind: 'invalid'; reason: string } {
   let node = root
   for (const [i, key] of g.path.slice(0, -1).entries()) {
     const next = node[key]
@@ -48,17 +54,42 @@ function listAt(root: Json, g: Guarantee, create: boolean): Found {
       }
     node = node[key] as Json
   }
+  return { kind: 'node', node }
+}
+
+/**
+ * Whether `g` holds in `root` — and, with `create`, make it hold: an entry
+ * appended to its list, or its key set when missing. `changed` says whether
+ * anything was written; a key already present, whatever its value, holds.
+ */
+function apply(
+  root: Json,
+  g: Guarantee,
+  create: boolean
+): { holds: boolean; changed: boolean } | { invalid: string } {
+  const found = parentOf(root, g, create)
+  if (found.kind === 'absent') return { holds: false, changed: false }
+  if (found.kind === 'invalid') return { invalid: found.reason }
+  const parent = found.node
   const last = g.path[g.path.length - 1] ?? ''
-  const value = node[last]
+  const value = parent[last]
+  if ('value' in g) {
+    if (value !== undefined) return { holds: true, changed: false }
+    if (!create) return { holds: false, changed: false }
+    parent[last] = structuredClone(g.value)
+    return { holds: true, changed: true }
+  }
   if (value === undefined) {
-    if (!create) return { kind: 'absent' }
-    const list: unknown[] = []
-    node[last] = list
-    return { kind: 'list', list }
+    if (!create) return { holds: false, changed: false }
+    parent[last] = [g.contains]
+    return { holds: true, changed: true }
   }
   if (!Array.isArray(value))
-    return { kind: 'invalid', reason: `${g.path.join('.')} is not a list` }
-  return { kind: 'list', list: value }
+    return { invalid: `${g.path.join('.')} is not a list` }
+  if (value.includes(g.contains)) return { holds: true, changed: false }
+  if (!create) return { holds: false, changed: false }
+  value.push(g.contains)
+  return { holds: true, changed: true }
 }
 
 /** The text's own indentation, line ending and final newline, reused on output. */
@@ -88,13 +119,9 @@ export function ensureGuarantees(
   if (!parsed.ok) return { kind: 'invalid', reason: parsed.reason }
   let changed = false
   for (const g of guarantees) {
-    const found = listAt(parsed.data, g, true)
-    if (found.kind === 'invalid')
-      return { kind: 'invalid', reason: found.reason }
-    if (found.kind === 'list' && !found.list.includes(g.contains)) {
-      found.list.push(g.contains)
-      changed = true
-    }
+    const r = apply(parsed.data, g, true)
+    if ('invalid' in r) return { kind: 'invalid', reason: r.invalid }
+    changed ||= r.changed
   }
   if (existing === null)
     return {
@@ -117,14 +144,15 @@ export function missingGuarantees(
   if (!parsed.ok) return { invalid: parsed.reason }
   const missing: Guarantee[] = []
   for (const g of guarantees) {
-    const found = listAt(parsed.data, g, false)
-    if (found.kind === 'invalid') return { invalid: found.reason }
-    if (found.kind === 'absent' || !found.list.includes(g.contains))
-      missing.push(g)
+    const r = apply(parsed.data, g, false)
+    if ('invalid' in r) return { invalid: r.invalid }
+    if (!r.holds) missing.push(g)
   }
   return missing
 }
 
 export function describeGuarantee(g: Guarantee): string {
-  return `${g.path.join('.')} lacks ${g.contains}`
+  return 'value' in g
+    ? `${g.path.join('.')} is missing`
+    : `${g.path.join('.')} lacks ${g.contains}`
 }

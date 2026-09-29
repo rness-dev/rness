@@ -2041,9 +2041,13 @@ test('create --agent declares it in the new workspace and writes its files in ev
         'utf8'
       )
     ),
-    { permissions: { additionalDirectories: ['../../.rness'] } }
+    {
+      permissions: { additionalDirectories: ['../../.rness'] },
+      enabledMcpjsonServers: ['rness'],
+    }
   )
   assert.match(r.out, /updated {2}org\/api\/\.claude\/settings\.json\n/)
+  await access(join(root, 'org', 'api', '.mcp.json'))
 
   const blank = await create([
     'demo',

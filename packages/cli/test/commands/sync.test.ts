@@ -707,11 +707,17 @@ test('sync --agent claude declares it, then writes the Claude settings of every 
   const r = await sync(['--yes', '--agent', 'claude', '--cwd', root])
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /^declared agent claude in \.rness\/rness\.json\n/)
-  assert.match(r.out, /\nupdated {2}org\/api\/\.claude\/settings\.json\n/)
+  assert.match(
+    r.out,
+    /\nupdated {2}org\/api\/\.claude\/settings\.json\nupdated {2}org\/api\/\.mcp\.json\n/
+  )
   assert.deepEqual((await loadManifestAt(root)).agents, ['claude'])
   assert.deepEqual(
     JSON.parse(await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')),
-    { permissions: { additionalDirectories: ['../../.rness'] } }
+    {
+      permissions: { additionalDirectories: ['../../.rness'] },
+      enabledMcpjsonServers: ['rness'],
+    }
   )
   const again = await sync(['--yes', '--cwd', root])
   assert.equal(again.code, 0, again.err)
@@ -744,7 +750,7 @@ test('--check reports a missing guaranteed value; --scope leaves the agent files
   assert.equal(check.code, 1)
   assert.match(
     check.out,
-    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness\)\n/
+    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness; enabledMcpjsonServers lacks rness\)\nstale {4}org\/api\/\.mcp\.json \(mcpServers\.rness is missing\)\n/
   )
   await assert.rejects(readFile(join(root, 'org', 'api', SETTINGS), 'utf8'))
   const scoped = await sync(['--yes', '--scope', 'api', '--cwd', root])
@@ -816,7 +822,7 @@ test('an agent removed from rness.json leaves its values, and sync says where', 
   await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')
 })
 
-test('--pull still pulls a clone whose only change is the agent file sync wrote', async (t) => {
+test('--pull still pulls a clone whose only changes are the agent files sync wrote', async (t) => {
   const url = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {
     org: 'acme',
@@ -827,6 +833,7 @@ test('--pull still pulls a clone whose only change is the agent file sync wrote'
   const first = await sync(['--yes', '--all', '--cwd', root])
   assert.equal(first.code, 0, first.err)
   await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')
+  await readFile(join(root, 'org', 'api', '.mcp.json'), 'utf8')
 
   await commitTo(url, 'NEW.md', 'new\n')
   const pulled = await sync(['--yes', '--pull', '--cwd', root])

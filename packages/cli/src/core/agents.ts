@@ -1,13 +1,19 @@
 import { VERSION } from '../version.ts'
 
 /**
- * A value a target guarantees in a JSON file it shares with the team: the
- * list at `path` contains `contains` (spec 0011 §3.4). rness owns the value,
- * never the file.
+ * A value a target guarantees in a JSON file it shares with the team (spec
+ * 0011 §3.4): the list at `path` contains `contains`, or the key at `path`
+ * is present — set to `value` when missing, never replaced (spec 0014 §3).
+ * rness owns the value, never the file.
  */
-export interface Guarantee {
-  path: readonly string[]
-  contains: string
+export type Guarantee =
+  | { path: readonly string[]; contains: string }
+  | { path: readonly string[]; value: unknown }
+
+/** One file of a target, relative to the repository root, and what it guarantees there. */
+export interface TargetFile {
+  file: string
+  guarantees: readonly Guarantee[]
 }
 
 /** What rness compiles for one agent, in each repository of the workspace. */
@@ -16,9 +22,7 @@ export interface AgentTarget {
   name: string
   /** As the question offers it. */
   label: string
-  /** Relative to the repository root. */
-  file: string
-  guarantees: readonly Guarantee[]
+  files: readonly TargetFile[]
 }
 
 /**
@@ -29,14 +33,37 @@ export const TARGETS: Readonly<Record<string, AgentTarget>> = {
   claude: {
     name: 'claude',
     label: 'Claude Code',
-    file: '.claude/settings.json',
-    // Read the context repository from a repository without a prompt. The
-    // path is resolved against the project directory, and only once Claude
-    // Code has trusted it (verified on 2.1.284, spec 0011 §7).
-    guarantees: [
+    files: [
       {
-        path: ['permissions', 'additionalDirectories'],
-        contains: '../../.rness',
+        file: '.claude/settings.json',
+        guarantees: [
+          // Read the context repository from a repository without a prompt.
+          // Resolved against the project directory, and applied once Claude
+          // Code has trusted it (verified on 2.1.284, spec 0011 §7).
+          {
+            path: ['permissions', 'additionalDirectories'],
+            contains: '../../.rness',
+          },
+          // Start the rness MCP server of .mcp.json without asking.
+          { path: ['enabledMcpjsonServers'], contains: 'rness' },
+        ],
+      },
+      {
+        file: '.mcp.json',
+        guarantees: [
+          // The pinned copy, by a path relative to the repository — the
+          // directory Claude Code starts the server in (spec 0014 §6).
+          {
+            path: ['mcpServers', 'rness'],
+            value: {
+              command: 'node',
+              args: [
+                '../../.rness/node_modules/@rness/cli/dist/bin/rness.js',
+                'mcp',
+              ],
+            },
+          },
+        ],
       },
     ],
   },

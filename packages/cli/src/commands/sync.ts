@@ -343,7 +343,7 @@ export async function syncCommand(
               ...MANAGED_FILES,
               ...(manifest.agents ?? []).flatMap((a) =>
                 Object.hasOwn(TARGETS, a)
-                  ? [(TARGETS[a] as AgentTarget).file]
+                  ? (TARGETS[a] as AgentTarget).files.map((f) => f.file)
                   : []
               ),
             ]

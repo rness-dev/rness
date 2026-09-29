@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { type AgentTarget, TARGETS } from './agents.ts'
+import { type AgentTarget, type Guarantee, TARGETS } from './agents.ts'
 import { exists, readOrNull, writeFileAtomic } from './fs.ts'
 import {
   describeGuarantee,
@@ -19,8 +19,8 @@ export interface TargetOutcome {
   detail: string | null
 }
 
-interface TargetFile {
-  target: AgentTarget
+interface OwnedFile {
+  guarantees: readonly Guarantee[]
   file: string
   label: string
 }
@@ -35,16 +35,17 @@ async function filesOf(
   root: string,
   manifest: Manifest,
   targets: readonly AgentTarget[]
-): Promise<TargetFile[]> {
-  const files: TargetFile[] = []
+): Promise<OwnedFile[]> {
+  const files: OwnedFile[] = []
   for (const repo of Object.keys(manifest.repos)) {
     if (!(await exists(join(root, 'org', repo)))) continue
     for (const target of targets)
-      files.push({
-        target,
-        file: join(root, 'org', repo, ...target.file.split('/')),
-        label: `org/${repo}/${target.file}`,
-      })
+      for (const owned of target.files)
+        files.push({
+          guarantees: owned.guarantees,
+          file: join(root, 'org', repo, ...owned.file.split('/')),
+          label: `org/${repo}/${owned.file}`,
+        })
   }
   return files
 }
@@ -66,14 +67,14 @@ export async function agentTargets(
   opts: { check: boolean }
 ): Promise<TargetOutcome[]> {
   const outcomes: TargetOutcome[] = []
-  for (const { target, file, label } of await filesOf(
+  for (const { guarantees, file, label } of await filesOf(
     root,
     manifest,
     declared(manifest)
   )) {
     const existing = await readOrNull(file)
     if (opts.check) {
-      const missing = missingGuarantees(existing, target.guarantees)
+      const missing = missingGuarantees(existing, guarantees)
       if ('invalid' in missing)
         outcomes.push({ label, status: 'invalid', detail: missing.invalid })
       else if (missing.length > 0)
@@ -85,7 +86,7 @@ export async function agentTargets(
       else outcomes.push({ label, status: 'unchanged', detail: null })
       continue
     }
-    const ensured = ensureGuarantees(existing, target.guarantees)
+    const ensured = ensureGuarantees(existing, guarantees)
     if (ensured.kind === 'invalid') {
       outcomes.push({ label, status: 'invalid', detail: ensured.reason })
       continue
@@ -117,14 +118,14 @@ export async function leftoverTargets(
     (t) => !agents.includes(t.name)
   )
   const leftovers: string[] = []
-  for (const { target, file, label } of await filesOf(
+  for (const { guarantees, file, label } of await filesOf(
     root,
     manifest,
     undeclared
   )) {
     const existing = await readOrNull(file)
     if (existing === null) continue
-    const missing = missingGuarantees(existing, target.guarantees)
+    const missing = missingGuarantees(existing, guarantees)
     if (!('invalid' in missing) && missing.length === 0) leftovers.push(label)
   }
   return leftovers

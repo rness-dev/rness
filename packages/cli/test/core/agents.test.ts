@@ -9,16 +9,36 @@ import {
 } from '../../src/core/agents.ts'
 import { VERSION } from '../../src/version.ts'
 
-test('Claude Code is the one target; it guarantees read access to .rness', () => {
+test('Claude Code is the one target: read access to .rness, and the rness MCP server', () => {
   assert.deepEqual(SUPPORTED_AGENTS, ['claude'])
   assert.deepEqual(TARGETS['claude'], {
     name: 'claude',
     label: 'Claude Code',
-    file: '.claude/settings.json',
-    guarantees: [
+    files: [
       {
-        path: ['permissions', 'additionalDirectories'],
-        contains: '../../.rness',
+        file: '.claude/settings.json',
+        guarantees: [
+          {
+            path: ['permissions', 'additionalDirectories'],
+            contains: '../../.rness',
+          },
+          { path: ['enabledMcpjsonServers'], contains: 'rness' },
+        ],
+      },
+      {
+        file: '.mcp.json',
+        guarantees: [
+          {
+            path: ['mcpServers', 'rness'],
+            value: {
+              command: 'node',
+              args: [
+                '../../.rness/node_modules/@rness/cli/dist/bin/rness.js',
+                'mcp',
+              ],
+            },
+          },
+        ],
       },
     ],
   })

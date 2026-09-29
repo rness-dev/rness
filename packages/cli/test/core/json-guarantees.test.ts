@@ -109,3 +109,36 @@ test('missingGuarantees says what ensure would add, and nothing when all is ther
     'permissions.additionalDirectories lacks ../../.rness'
   )
 })
+
+const SERVER: Guarantee = {
+  path: ['mcpServers', 'rness'],
+  value: { command: 'node', args: ['x.js', 'mcp'] },
+}
+
+test("a key guarantee sets the key when it is missing, and never replaces the team's", () => {
+  const created = ensureGuarantees(null, [SERVER])
+  assert.ok(created.kind === 'created')
+  assert.deepEqual(JSON.parse(created.text), {
+    mcpServers: { rness: { command: 'node', args: ['x.js', 'mcp'] } },
+  })
+  const theirs = '{ "mcpServers": { "db": { "command": "db-mcp" } } }\n'
+  const merged = ensureGuarantees(theirs, [SERVER])
+  assert.ok(merged.kind === 'updated')
+  assert.deepEqual(Object.keys(JSON.parse(merged.text).mcpServers), [
+    'db',
+    'rness',
+  ])
+  const custom =
+    '{ "mcpServers": { "rness": { "command": "rness", "args": ["mcp"] } } }'
+  assert.deepEqual(ensureGuarantees(custom, [SERVER]), {
+    kind: 'unchanged',
+    text: custom,
+  })
+  assert.deepEqual(missingGuarantees(custom, [SERVER]), [])
+  assert.deepEqual(missingGuarantees(theirs, [SERVER]), [SERVER])
+  assert.equal(describeGuarantee(SERVER), 'mcpServers.rness is missing')
+  assert.deepEqual(ensureGuarantees('{ "mcpServers": [] }', [SERVER]), {
+    kind: 'invalid',
+    reason: 'mcpServers is not an object',
+  })
+})
