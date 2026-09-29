@@ -4,6 +4,7 @@ import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { collectMarkdown } from '../core/collect.ts'
 import { COLLECTIONS, assembleContext, ownerScope } from '../core/context.ts'
 import { STATUSES } from '../core/contract.ts'
+import { documentNumber, documentTitle } from '../core/documents.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
 import { resolveScope } from '../core/scope.ts'
 import type { CollectionName, Manifest, Workspace } from '../core/types.ts'
@@ -59,13 +60,6 @@ async function workspaceAt(
   return { ws, manifest: await loadManifest(ws.rnessDir) }
 }
 
-/** The scaffold's heading is `NNNN — Title`; the id is shown once. */
-function titleOf(heading: string, id: string | null): string {
-  if (id === null) return heading
-  const rest = new RegExp(`^${id}\\s*[—–:-]\\s*(.+)$`).exec(heading)?.[1]
-  return rest ?? heading
-}
-
 async function documents(
   rnessDir: string,
   only?: CollectionName
@@ -77,14 +71,14 @@ async function documents(
       const path = `${collection}/${item.rel}`
       if (path === TEMPLATE) continue
       const status = item.fields?.['status']
-      const id = /^(\d{4})-/.exec(posix.basename(item.rel))?.[1] ?? null
+      const id = documentNumber(item.rel)
       docs.push({
         collection,
         path,
         scope: ownerScope(item.rel),
         id,
         status: typeof status === 'string' ? status : null,
-        title: titleOf(item.title ?? posix.basename(item.rel, '.md'), id),
+        title: documentTitle(item.title ?? posix.basename(item.rel, '.md'), id),
         text: item.body,
       })
     }
