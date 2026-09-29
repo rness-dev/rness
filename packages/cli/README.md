@@ -213,10 +213,12 @@ never reads it back; if it is not in rness, it does not belong there.
   `cannot reach GitHub: …`. Two sessions marking one plan both write; the
   last wins.
 - **Rate**: rness sends its requests one after another, without pausing. A
-  first sync makes a draft and sets up to three fields per document — about
-  200 requests for fifty documents; whether that stays under GitHub's
-  limits for creating content is to be confirmed on GitHub. Later syncs
-  touch only what changed.
+  first sync makes a draft and sets up to four fields per document (`Path`,
+  `Collection`, `Status`, its collection's status field) — about 250
+  requests for fifty documents; GitHub's limits for creating content are not
+  documented as a number of requests: the first sync of a 52-document
+  workspace, with three fields each, did not reach them (2026-09-29). Later
+  syncs touch only the items that changed.
 - **Not yet**: GitLab and Atlassian. `create` lists them, disabled; a
   workspace whose `rness.json` names one is refused by `pulse`. `Waiting`
   and `Review` statuses, several agents on one board and hooks for agents
