@@ -119,7 +119,7 @@ workspace root's carry three Claude Code hooks, all run by the pinned copy:
   `.rness/`, its front-matter problems — or those of `rness.json` — go back
   to the model, which fixes them in the same turn. Any other edit costs one
   path check. Stale blocks are left to `sync`. With a pulse declared, the
-  edit also marks the document on the board; see "Pulse".
+  edit is then marked on the board, broken or not; see "Pulse".
 - **At session end** (`SessionEnd`): with a pulse declared, clears the marks
   this session set and syncs the board; see "Pulse". Without one, nothing.
 
@@ -132,13 +132,15 @@ hand counts as missing, and the next `sync` adds a second one. The team's
 own hooks stay where they are.
 
 Claude Code runs hooks from a committed settings file without asking each
-developer, including in `claude -p`. These three read `.rness/` and write no
-file, and run no install. Only with a pulse declared do they reach the
-network, through a detached `rness` process that uses your login; see
-"Pulse". Review a change to them like code. Verified with Claude Code 2.1.284 on 2026-09-29:
-in a clone and at the root, the model received the context; after an edit
-that broke a status, it received the problem. The `sh` line is not verified
-on Windows.
+developer, including in `claude -p`. These three read `.rness/`, write
+nothing in the workspace and run no install. Only with a pulse declared do
+they reach the network, through a detached `rness` process that uses your
+login; when that process fails, it writes why to `pulse.json` in rness's
+configuration directory (`~/.config/rness/` by default), which the next
+session start reads, says once and deletes. See "Pulse". Review a change to
+them like code. Verified with Claude Code 2.1.284 on 2026-09-29: in a clone
+and at the root, the model received the context; after an edit that broke a
+status, it received the problem. The `sh` line is not verified on Windows.
 
 ### Pulse
 
@@ -152,27 +154,44 @@ never reads it back; if it is not in rness, it does not belong there.
 
 - **Layout**: one item per document (a draft issue: its title, its path and a
   link to it in `<org>/.rness`), and the fields `Status` (the statuses found
-  in `.rness/`, at most 50), `Type` (one option per tab of `rness status`),
-  `Agent` (`working`), `Session` (`claude · 1a2b3c4d`, plus the agent type for
-  a subagent) and `Path`. A board per directory, named as `rness status` names
-  its tab, its columns the statuses; a `Working` table, filtered on
-  `Agent: working`. The project is private to the organization.
+  in `.rness/`, at most 50), `Collection` (one option per tab of
+  `rness status`; not `Type`, which is GitHub's own issue-type field and
+  filter), `Agent` (`working`), `Session` (`claude · 1a2b3c4d`, plus the
+  agent type for a subagent) and `Path`. A board per directory, named as
+  `rness status` names its tab, filtered on its `Collection`, its columns
+  the statuses; a `Working` table, filtered on `Agent: working`. rness does
+  not set the project's visibility: the project gets GitHub's default for a
+  new organization project, expected to be private — to be confirmed on
+  GitHub.
 - **Login**: the pulse needs the `project` scope. `rness login` asks for it
   when the workspace declares a pulse, or when `pulse create` needs it (in a
-  terminal it offers to log in again; with `-y` or off a terminal it stops
-  with `run rness login`). A developer who never uses the pulse grants nothing more than `repo read:org`.
-  `GITHUB_TOKEN` works if it carries the scope. An organization that
-  restricts OAuth apps must approve "Rness", as for its private repositories.
+  terminal it offers to log in; with `-y` or off a terminal it stops with
+  `the pulse needs a GitHub login: run rness login` or
+  `the pulse needs the project scope: run rness login`). A developer who
+  never uses the pulse grants nothing more than `repo read:org`. When GitHub
+  cannot be asked, the pulse says so (`cannot reach GitHub: …`, or GitHub's
+  own answer) instead of asking for a login. A classic `GITHUB_TOKEN` works
+  if it carries the scope; a fine-grained or GitHub App token reports no
+  scope, so the pulse refuses it whatever its permissions. An organization
+  that restricts OAuth apps must approve "Rness", as for its private
+  repositories.
 - **`pulse create`** needs an `org` in `rness.json` (a blank workspace is
-  refused) and no pulse yet. It creates the project, its fields and views,
-  runs a first sync and writes `"pulse": { "project": <number> }` into
-  `rness.json`: commit it in `.rness`. The number is that of the project in
-  the organization. A CLI older than 0.12.0 refuses the key, so the pin moves
-  first (`rness upgrade`).
+  refused) and no pulse yet. It creates the project and at once writes
+  `"pulse": { "project": <number> }` (and the `provider`) into `rness.json`,
+  then adds the fields, options and views, and runs a first sync; its
+  `created` lines say what it added. If a step after the project fails, it
+  exits 1 with the pulse declared, and `rness pulse sync` completes the
+  layout. Commit `rness.json` in `.rness`. The number is that of the
+  project in the organization. A CLI older than 0.12.0 refuses the key, so
+  the pin moves first (`rness upgrade`). A workspace without a `provider`
+  whose repositories look like GitLab is refused before anything is
+  created: write `"provider": "github"` if the organization is on GitHub.
 - **`pulse sync`**: creates the items that are missing, updates those whose
-  title, status or type changed, archives those whose document is gone, and
-  adds the option or the board a new status or directory needs. It says
-  `synced 49 items: 2 updated, 47 unchanged`.
+  title, status or collection changed, archives those whose document is
+  gone, and adds the option or the board a new status or directory needs. It
+  says `synced 49 items: 2 updated, 47 unchanged`. An item converted to an
+  issue by hand is the team's: left alone, and its document gets a new
+  draft.
 - **One way**: the board is only read to find rness's items. What someone
   changes there by hand is overwritten at the next sync.
 - **Hooks**, with `claude` in `agents` and a pulse declared: session start
@@ -180,13 +199,19 @@ never reads it back; if it is not in rness, it does not belong there.
   the session; an edit of a document of `.rness/` marks it; session end clears
   the marks of that session (its subagents' included) and syncs. Each one
   starts a detached `rness` process and answers at once, so a slow network
-  never holds Claude Code, and the sync outlives it. It uses your login: with
-  none, or without the scope, nothing is sent, and the next session start's
-  banner says so once (`rness: pulse not updated — run rness login`). Two
-  sessions marking one plan both write; the last wins.
-- **Rate**: a first sync of about fifty documents stays under GitHub's limits
-  for creating content (80 a minute, 500 an hour) by GitHub's documentation
-  (read 2026-09-29); later syncs touch only what changed.
+  never holds Claude Code; that the session-end sync outlives Claude Code's
+  exit is to be confirmed. It uses your login: with none, without the
+  scope, or when GitHub cannot be reached, nothing is sent, and the next
+  session start's banner says why, once:
+  `rness: pulse not updated — <reason>`, such as
+  `the pulse needs the project scope: run rness login` or
+  `cannot reach GitHub: …`. Two sessions marking one plan both write; the
+  last wins.
+- **Rate**: rness sends its requests one after another, without pausing. A
+  first sync makes a draft and sets up to three fields per document — about
+  200 requests for fifty documents; whether that stays under GitHub's
+  limits for creating content is to be confirmed on GitHub. Later syncs
+  touch only what changed.
 - **Not yet**: GitLab and Atlassian. `create` lists them, disabled; a
   workspace whose `rness.json` names one is refused by `pulse`. `Waiting`
   and `Review` statuses, several agents on one board and hooks for agents
@@ -205,10 +230,11 @@ repository, the board).
   `--provider github` answers it off a terminal. A blank workspace asks
   nothing. Joining an organization asks first as well, then takes the
   provider its `rness.json` names.
-- A workspace without the key is read as the provider of its first
-  repository URL, `github` when there is none: nothing to change, and
-  `pulse create` writes it. The order of keys is `contract`, `provider`,
-  `org`, `agents`, `pulse`, `repos`, `scopes`.
+- A workspace without the key is read from its first repository URL: a
+  GitLab host reads as `gitlab`, any other host — or no repository — as
+  `github`. Nothing to change: `pulse create` writes it, and refuses a
+  detected provider this version cannot talk to. The order of keys is
+  `contract`, `provider`, `org`, `agents`, `pulse`, `repos`, `scopes`.
 - A provider _written_ in `rness.json` that this version cannot talk to
   (`gitlab`) is refused by `validate`, `create`, `login` and `pulse`:
   `provider "gitlab" is not supported by @rness/cli 0.12.0 (supported:
