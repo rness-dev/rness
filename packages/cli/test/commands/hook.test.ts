@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -66,7 +67,9 @@ async function hook(
   event: string,
   input: unknown,
   env: NodeJS.ProcessEnv = {},
-  spawned?: Spawned[]
+  spawned?: Spawned[],
+  /** Runs when the mark is spawned: what the hook does after that sees it. */
+  onSpawn?: () => void
 ): Promise<Ran> {
   let out = ''
   let err = ''
@@ -85,7 +88,10 @@ async function hook(
     error: sink((s) => (err += s)),
     env,
     // Always injected: a hook must never start a real process from a test.
-    spawn: (args: string[], cwd: string) => (spawned ?? []).push({ args, cwd }),
+    spawn: (args: string[], cwd: string) => {
+      ;(spawned ?? []).push({ args, cwd })
+      onSpawn?.()
+    },
   })
   return { code, out, err }
 }
@@ -407,6 +413,26 @@ test('post-tool-use marks the edited document, after the check; outside .rness, 
     spawned
   )
   assert.deepEqual(spawned, [])
+})
+
+test('post-tool-use checks the edit before it marks it; a broken edit is marked too', async (t) => {
+  const root = await workspace(
+    t,
+    { 'specs/0001-a.md': spec('Approved') },
+    { project: 7 }
+  )
+  const file = join(root, '.rness', 'specs', '0001-a.md')
+  const input = { ...edit(file, root), session_id: ID }
+  // Whatever the file holds once the mark is started is not what was checked.
+  const breakIt = () => writeFileSync(file, spec('Done'))
+  const valid = await hook('post-tool-use', input, {}, [], breakIt)
+  assert.deepEqual(valid, { code: 0, out: '', err: '' })
+
+  const spawned: Spawned[] = []
+  const broken = await hook('post-tool-use', input, {}, spawned)
+  assert.equal(broken.code, 2)
+  assert.match(broken.err, /^rness: specs\/0001-a\.md: unknown status "Done"/)
+  assert.equal(spawned.length, 1)
 })
 
 test('session end spawns the clearing mark, and says nothing', async (t) => {

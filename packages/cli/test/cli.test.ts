@@ -57,6 +57,17 @@ test('the internal --cwd option is hidden from help', async () => {
   assert.match(c.out(), /--scope <name>/)
 })
 
+test('hook --help names its three events', async () => {
+  const c = capture()
+  const code = await run(['hook', '--help'])
+  c.restore()
+  assert.equal(code, 0)
+  assert.match(
+    c.out(),
+    /^ {2}event\s+session-start, post-tool-use or session-end$/m
+  )
+})
+
 test('help with an unknown command name is bad usage, exit 2', async () => {
   const c = capture()
   const code = await run(['help', 'wat'])

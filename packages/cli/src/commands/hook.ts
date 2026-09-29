@@ -253,13 +253,6 @@ async function postToolUse(input: Input, io: HookIo): Promise<number> {
       await realpath(file).catch(() => file)
     )
   if (rel === null) return 0
-  if (rel.endsWith('.md'))
-    await markDetached(ws, input, io, (session) => [
-      '--session',
-      session,
-      '--path',
-      rel,
-    ])
   const first = rel.split('/')[0] ?? ''
   let problems: string[] = []
   if (rel === 'rness.json') {
@@ -276,6 +269,14 @@ async function postToolUse(input: Input, io: HookIo): Promise<number> {
     problems = (await checkContract(ws.rnessDir)).filter((p) =>
       p.startsWith(`${rel}:`)
     )
+  // Marked after the check, broken or not: the agent is at work on it.
+  if (rel.endsWith('.md'))
+    await markDetached(ws, input, io, (session) => [
+      '--session',
+      session,
+      '--path',
+      rel,
+    ])
   if (problems.length === 0) return 0
   io.error.write(
     [
