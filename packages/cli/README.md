@@ -28,6 +28,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness login [--setup-git|--no-setup-git]
     rness logout
     rness context [--scope <name>] [--json]
+    rness status [<tab>]
     rness validate
     rness mcp
 
@@ -40,6 +41,27 @@ writes nothing and exits 1 when a block is out of date — use it in CI.
 `<name>/org/` and the root `AGENTS.md` and `CLAUDE.md`. Only the install of
 `.rness/` goes to the network. Bring repositories in with
 `rness add <owner>/<repo>` or a git URL — a bare name needs an `"org"`.
+
+### Status
+
+    rness status            # every decision, specification and plan, a tab per directory
+    rness status specs      # open on one tab (off a terminal: print only that one)
+
+A tab for `ADR`, `Specs` and `Plans`, always, then one for each other
+directory of `.rness/` whose Markdown files carry a `status` in their front
+matter (a `marketing/` of dated posts, say). A line per document, newest
+first: its number (or date), its title, its status — green when done, grey
+when dropped, red `?` when missing.
+
+- In a terminal, a full-screen view: `←`/`→` or `Tab` change tab, `↑`/`↓`,
+  `PgUp`/`PgDn`, `Home`/`End` scroll, `q` or `Esc` closes and gives the
+  screen back. Read-only.
+- Off a terminal — a pipe, CI, an agent's tool — Markdown: a table per tab.
+- From Claude Code, `/rness:status [tab]` shows those tables (see "Agent
+  targets"). For the view itself: `Ctrl+Z` suspends Claude Code, run
+  `rness status`, `q`, then `fg` resumes it. Nothing started from inside
+  Claude Code gets the terminal, so the view cannot open from there
+  (verified with Claude Code 2.1.284 on 2026-09-29).
 
 ### Agent targets
 
@@ -65,7 +87,12 @@ the files a given agent needs, for the agents the team declares in
   with Claude Code 2.1.284 on 2026-09-29. Each clone also gets `.mcp.json`,
   which registers the MCP server; see "MCP server". The same settings file
   carries two hooks, and so does `.claude/settings.json` at the workspace
-  root, which `sync` writes on every machine; see "Hooks".
+  root, which `sync` writes on every machine; see "Hooks". Both places also
+  get a Claude Code plugin, `.claude/skills/rness/`, with one command:
+  `/rness:status [tab]`, the tables of `rness status`. rness owns those
+  files whole — an edit by hand is reported by `sync --check` and written
+  back by `sync` — and nothing in them depends on the version. Claude Code
+  loads the plugin once the folder is trusted, in a session started there.
 - rness owns values, not files: what is missing is added, nothing else is
   touched, and a file it cannot parse is reported, never rewritten.
   `sync --check` and `validate` report a missing value. Removing an agent
@@ -277,6 +304,19 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.11.0 — `rness status`; `/rness:status` in Claude Code
+
+- `rness status [tab]`: every decision, specification and plan — and any
+  other directory of `.rness/` whose documents carry a status — a tab per
+  directory, a line per document. A full-screen view in a terminal,
+  Markdown off one. See "Status".
+- With `claude` in `agents`, `sync` writes the `rness` plugin
+  (`.claude/skills/rness/`) in each clone and at the workspace root:
+  `/rness:status` in Claude Code. `rness upgrade` syncs, so it adds them;
+  then commit `.claude/skills/rness/` in each repository, as its next steps
+  list. Until then `sync --check` and `validate` report the files missing.
+- Blocks are unchanged.
 
 ## 0.10.0 — hooks: the context at session start, validation after an edit
 
