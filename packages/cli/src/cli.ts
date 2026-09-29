@@ -4,6 +4,7 @@ import { type AddOptions, addCommand } from './commands/add.ts'
 import { type ContextOptions, contextCommand } from './commands/context.ts'
 import { type CreateOptions, createCommand } from './commands/create.ts'
 import { gitCredentialCommand } from './commands/git-credential.ts'
+import { hookCommand } from './commands/hook.ts'
 import { type LoginOptions, loginCommand } from './commands/login.ts'
 import { logoutCommand } from './commands/logout.ts'
 import { type McpOptions, mcpCommand } from './commands/mcp.ts'
@@ -151,6 +152,14 @@ function buildProgram(state: RunState): Command {
     .argument('<operation>')
     .action(async (operation: string) => {
       state.code = await gitCredentialCommand(operation)
+    })
+
+  // What Claude Code runs for the hooks the Claude target writes (spec 0015).
+  program
+    .command('hook', { hidden: true })
+    .argument('<event>', 'session-start or post-tool-use')
+    .action(async (event: string) => {
+      state.code = await hookCommand(event)
     })
 
   program

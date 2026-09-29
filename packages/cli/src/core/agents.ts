@@ -43,7 +43,7 @@ export type HookEvent = 'session-start' | 'post-tool-use'
  * compared as a whole, so a changed line would be appended next to the old
  * one and run twice (§2.3). What the hook does changes in `rness hook`.
  */
-export function hookCommand(rness: string, event: HookEvent): string {
+export function hookLine(rness: string, event: HookEvent): string {
   const run = `f="$CLAUDE_PROJECT_DIR/${rness}/${PINNED_BIN}"; if [ -f "$f" ]; then node "$f" hook ${event};`
   if (event === 'post-tool-use') return `${run} fi`
   const missing = JSON.stringify({
@@ -61,7 +61,7 @@ function hooks(rness: string): Guarantee[] {
         hooks: [
           {
             type: 'command',
-            command: hookCommand(rness, 'session-start'),
+            command: hookLine(rness, 'session-start'),
             timeout: 10,
           },
         ],
@@ -75,7 +75,7 @@ function hooks(rness: string): Guarantee[] {
         hooks: [
           {
             type: 'command',
-            command: hookCommand(rness, 'post-tool-use'),
+            command: hookLine(rness, 'post-tool-use'),
             timeout: 10,
           },
         ],

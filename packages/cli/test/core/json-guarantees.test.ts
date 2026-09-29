@@ -145,7 +145,9 @@ test("a key guarantee sets the key when it is missing, and never replaces the te
 
 const HOOK: Guarantee = {
   path: ['hooks', 'SessionStart'],
-  contains: { hooks: [{ type: 'command', command: 'rness-hook', timeout: 10 }] },
+  contains: {
+    hooks: [{ type: 'command', command: 'rness-hook', timeout: 10 }],
+  },
   label: 'the rness session-start hook',
 }
 

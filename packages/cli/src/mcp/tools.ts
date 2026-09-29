@@ -124,6 +124,34 @@ async function context(cwd: string, args: Record<string, unknown>) {
       manifest,
       relative(ws.root, cwd).split(sep).join(posix.sep)
     )
+  const summary = await scopeSummary(ws, manifest, scope)
+  return {
+    text: [
+      ...summary.lines,
+      'Read one with rness_read; search with rness_search.',
+    ].join('\n'),
+  }
+}
+
+/** What applies to one scope, as `rness_context` and the session-start hook say it. */
+export interface ScopeSummary {
+  /** `scope web (org/web, extends platform)`, or `global scope`. */
+  where: string
+  /** The documents that apply, by collection; empty collections left out. */
+  counts: Partial<Record<CollectionName, number>>
+  /** The heading line, then each non-empty collection and its documents. */
+  lines: string[]
+}
+
+/**
+ * The documents that apply to `scope` (null: the global scope) — ids,
+ * statuses, titles and paths, no bodies (spec 0014 §2).
+ */
+export async function scopeSummary(
+  ws: Workspace,
+  manifest: Manifest,
+  scope: string | null
+): Promise<ScopeSummary> {
   const entry = scope === null ? undefined : manifest.scopes[scope]
   const where =
     scope === null || entry === undefined
@@ -133,17 +161,18 @@ async function context(cwd: string, args: Record<string, unknown>) {
   const index = new Map(
     (await documents(ws.rnessDir)).map((d) => [d.path, d] as const)
   )
-  const out = [`Workspace ${workspaceName(manifest, ws.root)} · ${where}`]
+  const lines = [`Workspace ${workspaceName(manifest, ws.root)} · ${where}`]
+  const counts: Partial<Record<CollectionName, number>> = {}
   for (const collection of ctx.collections) {
     const docs = collection.files
       .map((f) => index.get(`${collection.name}/${f.rel}`))
       .filter((d): d is Doc => d !== undefined)
     if (docs.length === 0) continue
-    out.push(`${LABELS[collection.name]} (${docs.length}):`)
-    for (const d of docs) out.push(line(d))
+    counts[collection.name] = docs.length
+    lines.push(`${LABELS[collection.name]} (${docs.length}):`)
+    for (const d of docs) lines.push(line(d))
   }
-  out.push('Read one with rness_read; search with rness_search.')
-  return { text: out.join('\n') }
+  return { where, counts, lines }
 }
 
 async function list(cwd: string, args: Record<string, unknown>) {

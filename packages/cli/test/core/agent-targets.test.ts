@@ -8,7 +8,7 @@ import {
   leftoverTargets,
   writtenFiles,
 } from '../../src/core/agent-targets.ts'
-import { hookCommand } from '../../src/core/agents.ts'
+import { hookLine } from '../../src/core/agents.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
@@ -21,7 +21,7 @@ const hooksFor = (rness: string) => ({
       hooks: [
         {
           type: 'command',
-          command: hookCommand(rness, 'session-start'),
+          command: hookLine(rness, 'session-start'),
           timeout: 10,
         },
       ],
@@ -33,7 +33,7 @@ const hooksFor = (rness: string) => ({
       hooks: [
         {
           type: 'command',
-          command: hookCommand(rness, 'post-tool-use'),
+          command: hookLine(rness, 'post-tool-use'),
           timeout: 10,
         },
       ],

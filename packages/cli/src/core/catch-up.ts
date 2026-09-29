@@ -14,6 +14,9 @@ import { findWorkspace } from './workspace.ts'
  * served by the copy the user invoked (spec 0006 §3). The login concerns the
  * machine, not a workspace — and git runs `git-credential` from inside a
  * clone, on every fetch: no delegation, no install and no warning there.
+ * Claude Code runs `hook` at every session start and after every edit, and
+ * it is already the pinned copy: a drift is reported, never installed (spec
+ * 0015 §3).
  */
 export const OWN_COMMANDS: readonly string[] = [
   'create',
@@ -22,6 +25,7 @@ export const OWN_COMMANDS: readonly string[] = [
   'login',
   'logout',
   'git-credential',
+  'hook',
 ]
 
 /**
