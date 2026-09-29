@@ -253,7 +253,7 @@ test('validate refuses an agent this version cannot compile, and a missing guara
   assert.equal(missing, 1)
   assert.match(
     c2.err(),
-    /^org\/api\/\.claude\/settings\.json: permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness \(run rness sync\)$/m
+    /^org\/api\/\.claude\/settings\.json: permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness; hooks\.SessionStart lacks the rness session-start hook; hooks\.PostToolUse lacks the rness post-tool-use hook \(run rness sync\)$/m
   )
   assert.match(
     c2.err(),

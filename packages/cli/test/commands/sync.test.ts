@@ -709,14 +709,19 @@ test('sync --agent claude declares it, then writes the Claude settings of every 
   assert.match(r.out, /^declared agent claude in \.rness\/rness\.json\n/)
   assert.match(
     r.out,
-    /\nupdated {2}org\/api\/\.claude\/settings\.json\nupdated {2}org\/api\/\.mcp\.json\n/
+    /\nupdated {2}\.claude\/settings\.json\nupdated {2}org\/api\/\.claude\/settings\.json\nupdated {2}org\/api\/\.mcp\.json\n/
   )
   assert.deepEqual((await loadManifestAt(root)).agents, ['claude'])
+  const settings = JSON.parse(
+    await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')
+  )
+  assert.deepEqual(settings.permissions, {
+    additionalDirectories: ['../../.rness'],
+  })
+  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart', 'PostToolUse'])
   assert.deepEqual(
-    JSON.parse(await readFile(join(root, 'org', 'api', SETTINGS), 'utf8')),
-    {
-      permissions: { additionalDirectories: ['../../.rness'] },
-    }
+    Object.keys(JSON.parse(await readFile(join(root, SETTINGS), 'utf8'))),
+    ['hooks']
   )
   const again = await sync(['--yes', '--cwd', root])
   assert.equal(again.code, 0, again.err)
@@ -749,9 +754,10 @@ test('--check reports a missing guaranteed value; --scope leaves the agent files
   assert.equal(check.code, 1)
   assert.match(
     check.out,
-    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness\)\nstale {4}org\/api\/\.mcp\.json \(mcpServers\.rness is missing\)\n/
+    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness; hooks\.SessionStart lacks the rness session-start hook; hooks\.PostToolUse lacks the rness post-tool-use hook\)\nstale {4}org\/api\/\.mcp\.json \(mcpServers\.rness is missing\)\n/
   )
   await assert.rejects(readFile(join(root, 'org', 'api', SETTINGS), 'utf8'))
+  await assert.rejects(readFile(join(root, SETTINGS), 'utf8'))
   const scoped = await sync(['--yes', '--scope', 'api', '--cwd', root])
   assert.equal(scoped.code, 0, scoped.err)
   assert.doesNotMatch(scoped.out, /settings\.json/)

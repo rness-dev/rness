@@ -2034,18 +2034,15 @@ test('create --agent declares it in the new workspace and writes its files in ev
   assert.deepEqual((await loadManifest(join(root, '.rness'))).agents, [
     'claude',
   ])
-  assert.deepEqual(
-    JSON.parse(
-      await readFile(
-        join(root, 'org', 'api', '.claude', 'settings.json'),
-        'utf8'
-      )
-    ),
-    {
-      permissions: { additionalDirectories: ['../../.rness'] },
-    }
+  const settings = JSON.parse(
+    await readFile(join(root, 'org', 'api', '.claude', 'settings.json'), 'utf8')
   )
+  assert.deepEqual(settings.permissions, {
+    additionalDirectories: ['../../.rness'],
+  })
+  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart', 'PostToolUse'])
   assert.match(r.out, /updated {2}org\/api\/\.claude\/settings\.json\n/)
+  assert.match(r.out, /updated {2}\.claude\/settings\.json\n/)
   await access(join(root, 'org', 'api', '.mcp.json'))
 
   const blank = await create([

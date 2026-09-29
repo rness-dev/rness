@@ -26,10 +26,10 @@ interface OwnedFile {
 }
 
 /**
- * Every file the given targets own a part of: one per target and per
- * repository of the catalogue that is cloned under `org/`. The root of a
- * clone only — a nested scope's path to `.rness` is not verified (spec 0011
- * §5).
+ * Every file the given targets own a part of: the workspace root's first
+ * (spec 0015 §2.1), then one per target and per repository of the catalogue
+ * that is cloned under `org/`. The root of a clone only — a nested scope's
+ * path to `.rness` is not verified (spec 0011 §5).
  */
 async function filesOf(
   root: string,
@@ -37,15 +37,24 @@ async function filesOf(
   targets: readonly AgentTarget[]
 ): Promise<OwnedFile[]> {
   const files: OwnedFile[] = []
+  for (const target of targets)
+    for (const owned of target.files)
+      if (owned.at === 'root')
+        files.push({
+          guarantees: owned.guarantees,
+          file: join(root, ...owned.file.split('/')),
+          label: owned.file,
+        })
   for (const repo of Object.keys(manifest.repos)) {
     if (!(await exists(join(root, 'org', repo)))) continue
     for (const target of targets)
       for (const owned of target.files)
-        files.push({
-          guarantees: owned.guarantees,
-          file: join(root, 'org', repo, ...owned.file.split('/')),
-          label: `org/${repo}/${owned.file}`,
-        })
+        if (owned.at === 'clones')
+          files.push({
+            guarantees: owned.guarantees,
+            file: join(root, 'org', repo, ...owned.file.split('/')),
+            label: `org/${repo}/${owned.file}`,
+          })
   }
   return files
 }
@@ -61,12 +70,15 @@ export const BLOCK_FILES: readonly string[] = ['AGENTS.md', 'CLAUDE.md']
 
 /**
  * Every file `sync` writes in a clone, relative to it: the block's, and the
- * declared agents' (spec 0011 §3.3).
+ * declared agents' (spec 0011 §3.3). Not the workspace root's: it is in no
+ * repository (spec 0015 §2.1).
  */
 export function writtenFiles(manifest: Manifest): string[] {
   return [
     ...BLOCK_FILES,
-    ...declared(manifest).flatMap((t) => t.files.map((f) => f.file)),
+    ...declared(manifest).flatMap((t) =>
+      t.files.filter((f) => f.at === 'clones').map((f) => f.file)
+    ),
   ]
 }
 

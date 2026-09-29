@@ -11,9 +11,13 @@ export type Guarantee =
   | { path: readonly string[]; contains: unknown; label?: string }
   | { path: readonly string[]; value: unknown }
 
-/** One file of a target, relative to the repository root, and what it guarantees there. */
+/**
+ * One file of a target and what it guarantees there: relative to the root of
+ * each clone, or to the workspace root, once (spec 0015 §2.1).
+ */
 export interface TargetFile {
   file: string
+  at: 'clones' | 'root'
   guarantees: readonly Guarantee[]
 }
 
@@ -24,6 +28,61 @@ export interface AgentTarget {
   /** As the question offers it. */
   label: string
   files: readonly TargetFile[]
+}
+
+/** The pinned copy's launcher, inside `.rness`. */
+const PINNED_BIN = 'node_modules/@rness/cli/dist/bin/rness.js'
+
+export type HookEvent = 'session-start' | 'post-tool-use'
+
+/**
+ * The line Claude Code runs for a hook (spec 0015 §2.2), `rness` being the
+ * path of `.rness` from the project directory: the pinned copy when it is
+ * installed; else, at session start, a line saying why the context is not
+ * loaded — there is no rness to say it. Fixed across versions: the entry is
+ * compared as a whole, so a changed line would be appended next to the old
+ * one and run twice (§2.3). What the hook does changes in `rness hook`.
+ */
+export function hookCommand(rness: string, event: HookEvent): string {
+  const run = `f="$CLAUDE_PROJECT_DIR/${rness}/${PINNED_BIN}"; if [ -f "$f" ]; then node "$f" hook ${event};`
+  if (event === 'post-tool-use') return `${run} fi`
+  const missing = JSON.stringify({
+    systemMessage: `rness: ${rness} is not installed, so the workspace context is not loaded. Clone the workspace, then install its dependencies in .rness.`,
+  })
+  return `${run} else echo '${missing}'; fi`
+}
+
+/** The two hook entries, for a project directory reaching `.rness` at `rness`. */
+function hooks(rness: string): Guarantee[] {
+  return [
+    {
+      path: ['hooks', 'SessionStart'],
+      contains: {
+        hooks: [
+          {
+            type: 'command',
+            command: hookCommand(rness, 'session-start'),
+            timeout: 10,
+          },
+        ],
+      },
+      label: 'the rness session-start hook',
+    },
+    {
+      path: ['hooks', 'PostToolUse'],
+      contains: {
+        matcher: 'Edit|Write',
+        hooks: [
+          {
+            type: 'command',
+            command: hookCommand(rness, 'post-tool-use'),
+            timeout: 10,
+          },
+        ],
+      },
+      label: 'the rness post-tool-use hook',
+    },
+  ]
 }
 
 /**
@@ -37,6 +96,7 @@ export const TARGETS: Readonly<Record<string, AgentTarget>> = {
     files: [
       {
         file: '.claude/settings.json',
+        at: 'clones',
         guarantees: [
           // Read the context repository from a repository without a prompt.
           // Resolved against the project directory, and applied once Claude
@@ -45,10 +105,12 @@ export const TARGETS: Readonly<Record<string, AgentTarget>> = {
             path: ['permissions', 'additionalDirectories'],
             contains: '../../.rness',
           },
+          ...hooks('../../.rness'),
         ],
       },
       {
         file: '.mcp.json',
+        at: 'clones',
         guarantees: [
           // The pinned copy, by a path relative to the repository — the
           // directory Claude Code starts the server in (spec 0014 §6). Not
@@ -66,6 +128,13 @@ export const TARGETS: Readonly<Record<string, AgentTarget>> = {
             },
           },
         ],
+      },
+      // A session opened at the workspace root reads this file, one opened
+      // in a clone does not (spec 0011 §1): the hooks only, `.rness` inside.
+      {
+        file: '.claude/settings.json',
+        at: 'root',
+        guarantees: hooks('.rness'),
       },
     ],
   },
