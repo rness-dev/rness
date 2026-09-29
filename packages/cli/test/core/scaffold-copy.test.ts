@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
-import { copyScaffold } from '../../src/core/scaffold-copy.ts'
-import { SCAFFOLD_FILES } from '../../src/core/scaffold.ts'
+import { copyScaffold, renderScaffold } from '../../src/core/scaffold-copy.ts'
+import { SCAFFOLD_FILES, scaffoldDir } from '../../src/core/scaffold.ts'
 
 test('copies every scaffold file, renames _gitignore, replaces the tokens, keeps the hook executable', async (t) => {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-scaffold-')))
@@ -50,4 +50,27 @@ test('copies every scaffold file, renames _gitignore, replaces the tokens, keeps
   )
   const mode = (await stat(join(dest, '.githooks', 'pre-commit'))).mode & 0o111
   assert.notEqual(mode, 0, 'pre-commit keeps its executable bit')
+})
+
+test('renderScaffold: the files a version writes, tokens filled, no rness.json (spec 0013 §1)', async () => {
+  const files = await renderScaffold(scaffoldDir(), {
+    version: '9.9.9',
+    packageManager: 'pnpm@12.2.1',
+  })
+  const paths = files.map((f) => f.path)
+  assert.deepEqual(
+    paths,
+    SCAFFOLD_FILES.filter((p) => p !== 'rness.json').map((p) =>
+      p === '_gitignore' ? '.gitignore' : p
+    )
+  )
+  const pkg = files.find((f) => f.path === 'package.json')
+  assert.ok(pkg)
+  assert.match(pkg.content, /"@rness\/cli": "9\.9\.9"/)
+  assert.match(pkg.content, /"packageManager": "pnpm@12\.2\.1"/)
+  assert.equal(
+    files.find((f) => f.path === '.githooks/pre-commit')?.executable,
+    true
+  )
+  assert.equal(files.find((f) => f.path === 'AGENTS.md')?.executable, false)
 })

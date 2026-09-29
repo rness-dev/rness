@@ -8,29 +8,54 @@ export interface ScaffoldTokens {
   packageManager: string
 }
 
+/** One file a scaffold version writes into `.rness/`, as it lands there. */
+export interface ScaffoldFile {
+  /** POSIX, relative to `.rness/`. */
+  path: string
+  content: string
+  executable: boolean
+}
+
 // The CI workflow reads the pinned version from package.json (spec 0006 §2).
 const TOKENISED = new Set(['package.json'])
 
-/** Materialise the shipped skeleton into `dest` (spec 0003 §2.1 step 3); `rness.json` is the caller's. */
-export async function copyScaffold(
-  dest: string,
+/**
+ * The files the scaffold in `source` writes, rendered: `_gitignore` as
+ * `.gitignore`, the tokens of `package.json` filled. `rness.json` is the
+ * team's catalogue, never part of it (spec 0013 §1).
+ */
+export async function renderScaffold(
+  source: string,
   tokens: ScaffoldTokens
-): Promise<void> {
-  const source = scaffoldDir()
+): Promise<ScaffoldFile[]> {
+  const files: ScaffoldFile[] = []
   for (const rel of SCAFFOLD_FILES) {
     if (rel === 'rness.json') continue
     const from = join(source, ...rel.split('/'))
-    const targetRel = rel === '_gitignore' ? '.gitignore' : rel
-    const to = join(dest, ...targetRel.split('/'))
-    await mkdir(dirname(to), { recursive: true })
     let content = await readFile(from, 'utf8')
     if (TOKENISED.has(rel)) {
       content = content
         .replaceAll('__RNESS_VERSION__', tokens.version)
         .replaceAll('__RNESS_PM__', tokens.packageManager)
     }
-    await writeFile(to, content, 'utf8')
-    const mode = (await stat(from)).mode & 0o777
-    if (mode & 0o111) await chmod(to, mode)
+    files.push({
+      path: rel === '_gitignore' ? '.gitignore' : rel,
+      content,
+      executable: ((await stat(from)).mode & 0o111) !== 0,
+    })
+  }
+  return files
+}
+
+/** Materialise the shipped skeleton into `dest` (spec 0003 §2.1 step 3); `rness.json` is the caller's. */
+export async function copyScaffold(
+  dest: string,
+  tokens: ScaffoldTokens
+): Promise<void> {
+  for (const file of await renderScaffold(scaffoldDir(), tokens)) {
+    const to = join(dest, ...file.path.split('/'))
+    await mkdir(dirname(to), { recursive: true })
+    await writeFile(to, file.content, 'utf8')
+    if (file.executable) await chmod(to, 0o755)
   }
 }
