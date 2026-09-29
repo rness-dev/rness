@@ -327,6 +327,19 @@ test('validate warns when the scaffold merged in .rness is not the pinned versio
     )
   }
 
+  // The commit that records a scaffold merge runs validate (the scaffold's
+  // pre-commit hook) before it exists: the merge in progress counts.
+  const merging = await at('0.9.0', create('0.8.0'))
+  const repo = join(merging, '.rness')
+  await git(repo, 'checkout', '-q', '-b', 'scaffold')
+  const scaffold = ['commit', '-q', '--allow-empty', '-m']
+  await git(repo, ...scaffold, 'chore: rness scaffold 0.9.0')
+  await git(repo, 'checkout', '-q', 'main')
+  await git(repo, 'merge', '-q', '--no-commit', '--no-ff', 'scaffold')
+  const during = await validate(merging)
+  assert.equal(during.code, 0)
+  assert.doesNotMatch(during.err, /scaffold/)
+
   // A one-commit CI checkout has no history to read: nothing is said.
   const origin = await at('0.9.0', create('0.8.0'))
   await git(

@@ -72,6 +72,12 @@ export function scaffoldMessage(subject: string, version: string): string {
   return `${subject}\n\n${SCAFFOLD_TRAILER}: ${version}`
 }
 
+/** Whether a merge waits for its commit in `dir` (`MERGE_HEAD` exists). */
+export async function mergeInProgress(dir: string): Promise<boolean> {
+  const r = await run(dir, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+  return r.code === 0
+}
+
 /**
  * The last commit in which rness wrote the scaffold (spec 0013 §1): the most
  * recent `chore: rness scaffold <v>`, else a root `chore: rness workspace
@@ -82,12 +88,16 @@ export async function findScaffoldBase(
   rnessDir: string
 ): Promise<{ commit: string; version: string | null } | null> {
   // Topological order: a child before its parent, whatever the commit dates
-  // (two commits in the same second otherwise come in either order).
+  // (two commits in the same second otherwise come in either order). A merge
+  // in progress counts: the commit recording it runs the pre-commit hook
+  // before it exists (spec 0013 §8).
+  const merging = await mergeInProgress(rnessDir)
   const log = await run(rnessDir, [
     'log',
     '--topo-order',
     `--format=%H%x1f%P%x1f%s%x1f%(trailers:key=${SCAFFOLD_TRAILER},valueonly,separator=%x2C)%x1e`,
     'HEAD',
+    ...(merging ? ['MERGE_HEAD'] : []),
   ])
   if (log.code !== 0) return null
   const commits = log.stdout
