@@ -51,13 +51,21 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
     g.fields.map((f) => [f.name, f.options?.map((o) => o.name) ?? 'text']),
     [
       ['Status', ['draft', 'accepted']],
+      ['Title', 'text'],
       ['Collection', ['ADR', 'Marketing']],
       ['Agent', ['working']],
       ['Session', 'text'],
       ['Path', 'text'],
     ]
   )
-  const statusId = g.fields[0]!.databaseId
+  const idOf = (name: string) =>
+    g.fields.find((f) => f.name === name)!.databaseId
+  const statusId = idOf('Status')
+  const [titleId, collectionId, sessionId] = [
+    idOf('Title'),
+    idOf('Collection'),
+    idOf('Session'),
+  ]
   assert.deepEqual(g.restViews, [
     {
       name: 'ADR',
@@ -71,7 +79,12 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
       filter: 'collection:"Marketing"',
       vertical_group_by: [statusId],
     },
-    { name: 'Working', layout: 'table', filter: 'agent:working' },
+    {
+      name: 'Working',
+      layout: 'table',
+      filter: 'agent:working',
+      visible_fields: [titleId, collectionId, statusId, sessionId],
+    },
   ])
 
   // Once laid out, the board is like any other: extended, never replaced.

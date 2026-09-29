@@ -466,6 +466,8 @@ export async function createView(
     layout: 'board' | 'table'
     filter: string
     groupBy?: number
+    /** Fields' `databaseId`s, in column order; sent as `visible_fields`. */
+    visibleFields?: number[]
   },
   o: ApiOptions
 ): Promise<void> {
@@ -480,6 +482,11 @@ export async function createView(
         `a view groups by a field's database id, not ${view.groupBy}`
       )
     body['vertical_group_by'] = [view.groupBy]
+  }
+  if (view.visibleFields !== undefined) {
+    if (!view.visibleFields.every(Number.isInteger))
+      throw new Error('a view shows fields by their database ids')
+    body['visible_fields'] = view.visibleFields
   }
   await postJson(
     `/orgs/${encodeURIComponent(org)}/projectsV2/${number}/views`,

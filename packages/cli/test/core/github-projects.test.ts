@@ -387,6 +387,23 @@ test('createView omits the grouping when there is none', async (t) => {
   })
 })
 
+test('createView sends the visible fields as visible_fields', async (t) => {
+  const github = await fakeGithub(t, () => ({ status: 201, json: {} }))
+  const o = { token: 'tok', apiBase: github.base }
+  await createView(
+    'acme',
+    4,
+    { name: 'T', layout: 'table', filter: '', visibleFields: [3, 1, 2] },
+    o
+  )
+  assert.deepEqual(github.requests[0]?.body, {
+    name: 'T',
+    layout: 'table',
+    filter: '',
+    visible_fields: [3, 1, 2],
+  })
+})
+
 test('createView surfaces a refused request', async (t) => {
   const github = await fakeGithub(t, () => ({ status: 422, json: {} }))
   await assert.rejects(

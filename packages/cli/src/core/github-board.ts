@@ -22,6 +22,14 @@ const WORKING_VIEW = 'Working'
 export const STATUS_FIELD = 'Status'
 export const COLLECTION_FIELD = 'Collection'
 
+/** GitHub's built-in title field, which `fields()` returns like the others. */
+function titleField(fields: readonly gh.Field[]): gh.Field {
+  const field = fields.find((f) => f.name === 'Title')
+  if (field === undefined)
+    throw new Error('the GitHub project has no Title field')
+  return field
+}
+
 /**
  * SPIKE-DEPENDENT CHOICE 1 of 2: the board's Status
  * is the built-in single-select field every project has. If the API refuses
@@ -187,7 +195,18 @@ export class GitHubBoards implements Pick<
       await gh.createView(
         board.org,
         board.number,
-        { name: WORKING_VIEW, layout: 'table', filter: WORKING_FILTER },
+        {
+          name: WORKING_VIEW,
+          layout: 'table',
+          filter: WORKING_FILTER,
+          // Who works is the point of the table: title, then what and who.
+          visibleFields: [
+            titleField(fields).databaseId,
+            collection.databaseId,
+            status.databaseId,
+            session.databaseId,
+          ],
+        },
         this.#o
       )
     }

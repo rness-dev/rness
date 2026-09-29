@@ -46,6 +46,7 @@ export async function board(
       name: 'Status',
       options: [{ id: 'o_todo', name: 'Todo' }],
     },
+    { id: 'F_title', databaseId: 2, name: 'Title', options: null },
   ]
   const views: string[] = seed.views ?? []
   const items: FItem[] = seed.items ?? []
