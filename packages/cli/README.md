@@ -29,6 +29,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness logout
     rness context [--scope <name>] [--json]
     rness validate
+    rness mcp
 
 `create` never runs inside a workspace. `add`, `sync` and `create` ask for
 confirmation in a terminal; pass `-y`/`--yes` in scripts. `sync --check`
@@ -61,13 +62,46 @@ the files a given agent needs, for the agents the team declares in
   `../../.rness` in `permissions.additionalDirectories`, so a session in the
   repository reads the context repository without a prompt. Claude Code
   applies it once the repository has been trusted interactively. Verified
-  with Claude Code 2.1.284 on 2026-09-29.
+  with Claude Code 2.1.284 on 2026-09-29. Each clone also gets `.mcp.json`,
+  which registers the MCP server; see "MCP server".
 - rness owns values, not files: what is missing is added, nothing else is
   touched, and a file it cannot parse is reported, never rewritten.
   `sync --check` and `validate` report a missing value. Removing an agent
   from `agents` leaves its values in place; `sync` says where.
 - Other agents (Codex, Cursor, GitHub Copilot) read the `AGENTS.md` block;
   `sync` refuses an agent it has no target for.
+
+### MCP server
+
+    rness mcp      # started by the agent over stdio, not by hand
+
+A local, read-only MCP server over the workspace's `.rness/`, for an agent to
+find what applies to the repository it works in and where a subject was
+decided:
+
+| Tool                                   | Returns                                                                                                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rness_context({ scope? })`            | the scope of the working directory (or the one named) and what applies to it: standards, decisions, specifications, plans — id, status, title, path |
+| `rness_list({ collection, status? })`  | every document of a collection, across scopes, optionally of one status                                                                             |
+| `rness_read({ path })`                 | one file of `.rness/`, 256 KiB at most; nothing outside it                                                                                          |
+| `rness_search({ query, collection? })` | the documents that match, most matching first, with the matching lines                                                                              |
+
+- MCP over stdio, one message per line: the `2026-07-28` revision and the
+  earlier ones that open with `initialize` (`2025-11-25` back to
+  `2024-11-05`). No MCP SDK, no added dependency.
+- `.rness/` is read again on each call, so an edit shows at once. Nothing is
+  written.
+- With `claude` in `agents`, `sync` registers it in each clone:
+  `.mcp.json` gets `mcpServers.rness`, which runs the pinned copy
+  (`node ../../.rness/node_modules/@rness/cli/dist/bin/rness.js mcp`), and
+  `.claude/settings.json` lists `rness` in `enabledMcpjsonServers`. A
+  team's own `rness` entry is left as it is.
+- Verified with Claude Code 2.1.284 on 2026-09-29: the server starts from the
+  repository and its tools answer. Not verified yet: that
+  `enabledMcpjsonServers` spares the approval prompt in an interactive
+  session.
+- Another agent can run the same command from a clone; rness writes no
+  configuration for it.
 
 ### Log in
 
@@ -203,6 +237,18 @@ its content does.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.9.0 — the context on demand: `rness mcp`
+
+- `rness mcp`: a local, read-only MCP server with four tools —
+  `rness_context`, `rness_list`, `rness_read`, `rness_search`. See "MCP
+  server".
+- The Claude target registers it: each clone gets `.mcp.json`
+  (`mcpServers.rness`) and `rness` in `enabledMcpjsonServers` of
+  `.claude/settings.json`. After upgrading, run `rness sync` once and commit
+  both files in each repository; until then `sync --check` and `validate`
+  report them missing.
+- Blocks are unchanged.
 
 ## 0.8.1 — adoption without placeholders
 
