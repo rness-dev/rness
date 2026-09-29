@@ -34,17 +34,27 @@ const tabs: StatusTab[] = [
   },
 ]
 
-test('layoutOf: unknown statuses in the order found, deduplicated, never ? or null', () => {
-  assert.deepEqual(layoutOf(tabs).statuses, ['accepted', 'draft'])
+test('layoutOf: the contract statuses, then those found outside them, deduplicated, never ? or null', () => {
+  assert.deepEqual(layoutOf(tabs).statuses, [
+    'Draft',
+    'Proposed',
+    'Approved',
+    'Accepted',
+    'Implemented',
+    'Rejected',
+    'Superseded',
+    'accepted',
+    'draft',
+  ])
 })
 
 test('layoutOf: types are the tab labels, one view per tab', () => {
   const layout = layoutOf(tabs)
   assert.deepEqual(layout.types, ['ADR', 'Specs', 'Marketing'])
   assert.deepEqual(layout.views, [
-    { name: 'ADR', type: 'ADR' },
-    { name: 'Specs', type: 'Specs' },
-    { name: 'Marketing', type: 'Marketing' },
+    { name: 'ADR', type: 'ADR', field: 'ADR status' },
+    { name: 'Specs', type: 'Specs', field: 'Specs status' },
+    { name: 'Marketing', type: 'Marketing', field: null },
   ])
 })
 
@@ -55,6 +65,7 @@ test('desiredOf: title, body with path and link, status, type', () => {
     title: '0002 — Title 0002',
     body: 'adr/0002-b.md\n\nhttps://github.com/acme/.rness/blob/main/adr/0002-b.md',
     status: 'accepted',
+    statusField: 'ADR status',
     type: 'ADR',
   })
   assert.equal(second?.status, null, '? is no status')
@@ -107,10 +118,13 @@ test('layoutOf: the contract statuses in lifecycle order, then the others in the
     'Ready',
     'Approved',
     'In progress',
+    'Blocked',
     'Accepted',
     'Implemented',
     'Completed',
+    'Rejected',
     'Superseded',
+    'Abandoned',
     'scheduled',
     'published',
   ])
@@ -158,4 +172,68 @@ test('optionColor: the contract statuses, a discovered status by its tone, colle
     ['purple', 'blue', 'orange', 'pink']
   )
   assert.equal(optionColor('Agent', 'working'), 'green')
+})
+
+test('layoutOf: a contract collection has every status of its contract, the others found last; a directory only what it carries', () => {
+  const t: StatusTab[] = [
+    {
+      name: 'plans',
+      label: 'Plans',
+      rows: [
+        row('1', 'In progress', 'plans/1.md'),
+        row('2', 'Weird', 'plans/2.md'),
+      ],
+    },
+    { name: 'adr', label: 'ADR', rows: [] },
+    {
+      name: 'marketing',
+      label: 'Marketing',
+      rows: [row('a', 'scheduled', 'marketing/a.md')],
+    },
+    { name: 'notes', label: 'Notes', rows: [row('n', null, 'notes/n.md')] },
+  ]
+  const layout = layoutOf(t)
+  assert.deepEqual(layout.fields, [
+    {
+      name: 'Plans status',
+      statuses: [
+        'Draft',
+        'Ready',
+        'In progress',
+        'Blocked',
+        'Completed',
+        'Abandoned',
+        'Weird',
+      ],
+    },
+    {
+      name: 'ADR status',
+      statuses: ['Proposed', 'Accepted', 'Rejected', 'Superseded'],
+    },
+    { name: 'Marketing status', statuses: ['scheduled'] },
+  ])
+  assert.deepEqual(layout.views, [
+    { name: 'Plans', type: 'Plans', field: 'Plans status' },
+    { name: 'ADR', type: 'ADR', field: 'ADR status' },
+    { name: 'Marketing', type: 'Marketing', field: 'Marketing status' },
+    { name: 'Notes', type: 'Notes', field: null },
+  ])
+  assert.deepEqual(layout.statuses, [
+    'Draft',
+    'Proposed',
+    'Ready',
+    'In progress',
+    'Blocked',
+    'Accepted',
+    'Completed',
+    'Rejected',
+    'Superseded',
+    'Abandoned',
+    'Weird',
+    'scheduled',
+  ])
+  assert.deepEqual(
+    desiredOf(t, 'acme').map((d) => d.statusField),
+    ['Plans status', 'Plans status', 'Marketing status', null]
+  )
 })

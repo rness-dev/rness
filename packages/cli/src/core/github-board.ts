@@ -1,4 +1,9 @@
-import { type Layout, type OptionColor, optionColor } from '../pulse/layout.ts'
+import {
+  type Layout,
+  type OptionColor,
+  optionColor,
+  statusFieldName,
+} from '../pulse/layout.ts'
 import type { BoardItem, Step } from '../pulse/plan.ts'
 import * as gh from './github-projects.ts'
 import type { ApiOptions } from './github.ts'
@@ -22,6 +27,7 @@ const WORKING_VIEW = 'Working'
 export const STATUS_FIELD = 'Status'
 /** What rness calls the first view GitHub gives a new project. */
 const ALL_VIEW = 'All'
+const DEFAULT_VIEW = 'View 1'
 export const COLLECTION_FIELD = 'Collection'
 
 /** GitHub's built-in title field, which `fields()` returns like the others. */
@@ -188,16 +194,18 @@ export class GitHubBoards implements Pick<
       )
     }
     const single = async (
-      name: OptionKind,
-      wanted: readonly string[]
+      name: string,
+      kind: OptionKind,
+      wanted: readonly string[],
+      reorder = false
     ): Promise<gh.Field> => {
       const field = fields.find((f) => f.name === name)
-      if (field !== undefined) return withOptions(field, name, wanted)
+      if (field !== undefined) return withOptions(field, kind, wanted, reorder)
       added.push(`field ${name}`)
       return gh.createField(
         cache.projectId,
         name,
-        { options: inputs(null, name, wanted, wanted) },
+        { options: inputs(null, kind, wanted, wanted) },
         this.#o
       )
     }
@@ -210,8 +218,7 @@ export class GitHubBoards implements Pick<
 
     // A new project's Status carries GitHub's default options: replaced, not
     // extended, once. After that, options are only ever added.
-    const laidOut = cache.fresh === true
-    const fresh = laidOut && layout.statuses.length > 0
+    const fresh = cache.fresh === true && layout.statuses.length > 0
     cache.fresh = false
     if (fresh) added.push(...layout.statuses.map((n) => `option ${n}`))
     const status = fresh
@@ -221,43 +228,63 @@ export class GitHubBoards implements Pick<
           this.#o
         )
       : await withOptions(statusField(fields), 'Status', layout.statuses, true)
-    const collection = await single('Collection', layout.types)
-    const agent = await single('Agent', [WORKING])
+    const collection = await single(
+      COLLECTION_FIELD,
+      'Collection',
+      layout.types
+    )
+    // One status field per collection: its board shows its own steps only.
+    const own = new Map<string, gh.Field>()
+    for (const f of layout.fields)
+      own.set(f.name, await single(f.name, 'Status', f.statuses, true))
+    const agent = await single('Agent', 'Agent', [WORKING])
     const session = await text('Session')
     const path = await text('Path')
 
-    // GitHub's first view of a new project becomes `All`; a board that
-    // already existed keeps its views, which are the team's.
-    if (laidOut) {
-      const first = await gh.firstView(cache.projectId, this.#o)
-      if (first !== null) {
-        added.push(`view ${ALL_VIEW}`)
-        await gh.renameView(
-          first.id,
-          ALL_VIEW,
-          [titleField(fields), collection, status, session].map((f) => f.id),
-          this.#o
-        )
-      }
+    const current = await gh.views(cache.projectId, this.#o)
+    // GitHub's first view (`View 1`) becomes `All`; any other first view is
+    // the team's, and so is an `All` that exists.
+    const first = current[0]
+    if (
+      first !== undefined &&
+      first.name === DEFAULT_VIEW &&
+      !current.some((v) => v.name === ALL_VIEW)
+    ) {
+      added.push(`view ${ALL_VIEW}`)
+      await gh.renameView(
+        first.id,
+        ALL_VIEW,
+        [titleField(fields), collection, status, session].map((f) => f.id),
+        this.#o
+      )
     }
 
-    const existing = new Set(await gh.views(board.org, board.number, this.#o))
-    for (const view of layout.views)
-      if (!existing.has(view.name)) {
-        added.push(`view ${view.name}`)
-        await gh.createView(
-          board.org,
-          board.number,
-          {
-            name: view.name,
-            layout: 'board',
-            filter: viewFilter(view.type),
-            groupBy: status.databaseId,
-          },
-          this.#o
+    for (const view of layout.views) {
+      const column = view.field === null ? status : own.get(view.field)!
+      const there = current.find((v) => v.name === view.name)
+      if (there !== undefined) {
+        if (
+          there.layout === 'BOARD_LAYOUT' &&
+          there.columnField === column.name
         )
-      }
-    if (!existing.has(WORKING_VIEW)) {
+          continue
+        // GitHub cannot change what a board's columns follow: the board is made again.
+        await gh.deleteView(there.id, this.#o)
+        added.push(`view ${view.name} remade — columns ${column.name}`)
+      } else added.push(`view ${view.name}`)
+      await gh.createView(
+        board.org,
+        board.number,
+        {
+          name: view.name,
+          layout: 'board',
+          filter: viewFilter(view.type),
+          groupBy: column.databaseId,
+        },
+        this.#o
+      )
+    }
+    if (!current.some((v) => v.name === WORKING_VIEW)) {
       added.push(`view ${WORKING_VIEW}`)
       await gh.createView(
         board.org,
@@ -277,7 +304,7 @@ export class GitHubBoards implements Pick<
         this.#o
       )
     }
-    cache.fields = [status, collection, agent, session, path]
+    cache.fields = [status, collection, ...own.values(), agent, session, path]
     return added
   }
 
@@ -294,6 +321,8 @@ export class GitHubBoards implements Pick<
         path: r.draftId === null ? null : (r.values['Path'] ?? null),
         title: r.title,
         status: r.values[STATUS_FIELD] ?? null,
+        collectionStatus:
+          r.values[statusFieldName(r.values[COLLECTION_FIELD] ?? '')] ?? null,
         type: r.values[COLLECTION_FIELD] ?? null,
         agent: r.values['Agent'] ?? null,
         session: r.values['Session'] ?? null,
@@ -348,6 +377,9 @@ export class GitHubBoards implements Pick<
       ['Path', want.path],
       [COLLECTION_FIELD, want.type],
       [STATUS_FIELD, want.status],
+      ...(want.statusField === null
+        ? []
+        : ([[want.statusField, want.status]] as [string, string | null][])),
     ]
     if (step.kind === 'create') {
       const id = await gh.addDraft(

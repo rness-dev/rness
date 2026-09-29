@@ -18,6 +18,13 @@ export interface FField {
   name: string
   options: { id: string; name: string; color?: string }[] | null
 }
+export interface FView {
+  id?: string
+  name: string
+  layout?: 'BOARD_LAYOUT' | 'TABLE_LAYOUT'
+  /** The field a board's columns follow, by name. */
+  column?: string | null
+}
 export interface FItem {
   id: string
   /** Null: no longer a draft issue — converted to an issue by hand. */
@@ -32,7 +39,11 @@ export async function board(
   t: TestContext,
   seed: {
     fields?: FField[]
-    views?: string[]
+    /**
+     * A name is a view that is right: a table for `Working`, else a board
+     * columned by the collection's own field (`Status` when it has none).
+     */
+    views?: (string | FView)[]
     /** The view GitHub gives a new project; null: none. */
     defaultView?: { id: string; name: string } | null
     items?: FItem[]
@@ -50,11 +61,32 @@ export async function board(
     },
     { id: 'F_title', databaseId: 2, name: 'Title', options: null },
   ]
-  const views: string[] = seed.views ?? []
-  const defaultView =
-    seed.defaultView === undefined
-      ? { id: 'V_1', name: 'View 1' }
-      : seed.defaultView
+  const isView = (v: string | FView): FView =>
+    typeof v === 'string' ? { name: v } : v
+  const viewList: Required<FView>[] = []
+  const addView = (v: FView) => {
+    const table = v.layout === 'TABLE_LAYOUT' || v.name === 'Working'
+    const own = fields.find((f) => f.name === `${v.name} status`)
+    viewList.push({
+      id: v.id ?? `V_${next++}`,
+      name: v.name,
+      layout: v.layout ?? (table ? 'TABLE_LAYOUT' : 'BOARD_LAYOUT'),
+      column:
+        v.column === undefined
+          ? table
+            ? null
+            : (own?.name ?? 'Status')
+          : v.column,
+    })
+  }
+  if (seed.views !== undefined) seed.views.map(isView).forEach(addView)
+  else if (seed.defaultView !== null)
+    viewList.push({
+      id: seed.defaultView?.id ?? 'V_1',
+      name: seed.defaultView?.name ?? 'View 1',
+      layout: 'TABLE_LAYOUT',
+      column: null,
+    })
   const items: FItem[] = seed.items ?? []
   const restViews: unknown[] = []
   const mutations: {
@@ -205,31 +237,40 @@ export async function board(
           }),
       ],
       [
-        'views(first: 10)',
-        () =>
-          data({
-            node: {
-              views: { nodes: defaultView === null ? [] : [defaultView] },
-            },
-          }),
-      ],
-      [
         'updateProjectV2View(',
         (v, q) => {
           mutations.push({ op: 'updateView', variables: v, query: q })
-          if (defaultView !== null) defaultView.name = String(v['name'])
-          views.push(String(v['name']))
+          const renamed = viewList.find((x) => x.id === v['viewId'])
+          if (renamed !== undefined) renamed.name = String(v['name'])
           return data({
             updateProjectV2View: { projectV2View: { id: v['viewId'] } },
           })
         },
       ],
       [
+        'deleteProjectV2View(',
+        (v, q) => {
+          mutations.push({ op: 'deleteView', variables: v, query: q })
+          const at = viewList.findIndex((x) => x.id === v['viewId'])
+          if (at >= 0) viewList.splice(at, 1)
+          return data({ deleteProjectV2View: { clientMutationId: null } })
+        },
+      ],
+      [
         'views(first',
         () =>
           data({
-            organization: {
-              projectV2: { views: { nodes: views.map((name) => ({ name })) } },
+            node: {
+              views: {
+                nodes: viewList.map((x) => ({
+                  id: x.id,
+                  name: x.name,
+                  layout: x.layout,
+                  verticalGroupByFields: {
+                    nodes: x.column === null ? [] : [{ name: x.column }],
+                  },
+                })),
+              },
             },
           }),
       ],
@@ -278,8 +319,18 @@ export async function board(
       assert.equal(r.method, 'POST')
       assert.equal(r.path, '/orgs/acme/projectsV2/7/views')
       restViews.push(r.body)
-      const name = (r.body as { name: string }).name
-      views.push(name)
+      const body = r.body as {
+        name: string
+        layout: string
+        vertical_group_by?: number[]
+      }
+      addView({
+        name: body.name,
+        layout: body.layout === 'table' ? 'TABLE_LAYOUT' : 'BOARD_LAYOUT',
+        column:
+          fields.find((f) => f.databaseId === body.vertical_group_by?.[0])
+            ?.name ?? null,
+      })
       return { json: {} }
     }
     const { query, variables } = gql(r)
@@ -293,7 +344,10 @@ export async function board(
     base: gh.base,
     provider,
     fields,
-    views,
+    get views() {
+      return viewList.map((v) => v.name)
+    },
+    viewList,
     items,
     restViews,
     mutations,

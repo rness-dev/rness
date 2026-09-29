@@ -429,14 +429,32 @@ test('createView surfaces a refused request', async (t) => {
   )
 })
 
-test('views lists view names through GraphQL', async (t) => {
+test('views lists the views of a project, with the field a board is columned by', async (t) => {
   const { o } = await serve(t, {
     views: () =>
       data({
-        organization: {
-          projectV2: { views: { nodes: [{ name: 'A' }, { name: 'B' }] } },
+        node: {
+          views: {
+            nodes: [
+              {
+                id: 'V_1',
+                name: 'A',
+                layout: 'BOARD_LAYOUT',
+                verticalGroupByFields: { nodes: [{ name: 'Status' }] },
+              },
+              {
+                id: 'V_2',
+                name: 'B',
+                layout: 'TABLE_LAYOUT',
+                verticalGroupByFields: { nodes: [] },
+              },
+            ],
+          },
         },
       }),
   })
-  assert.deepEqual(await views('acme', 4, o), ['A', 'B'])
+  assert.deepEqual(await views('P_1', o), [
+    { id: 'V_1', name: 'A', layout: 'BOARD_LAYOUT', columnField: 'Status' },
+    { id: 'V_2', name: 'B', layout: 'TABLE_LAYOUT', columnField: null },
+  ])
 })

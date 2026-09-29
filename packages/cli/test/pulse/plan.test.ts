@@ -10,6 +10,7 @@ const want = (path: string, over: Partial<Desired> = {}): Desired => ({
   body: path,
   status: 'draft',
   type: 'Specs',
+  statusField: null,
   ...over,
 })
 const have = (
@@ -21,6 +22,7 @@ const have = (
   path,
   title: path === null ? 'by hand' : `T ${path}`,
   status: 'draft',
+  collectionStatus: null,
   type: 'Specs',
   agent: null,
   session: null,
@@ -84,5 +86,16 @@ test('a second item on the same path is archived', () => {
       { kind: 'unchanged', id: 'i1' },
       { kind: 'archive', id: 'i2' },
     ]
+  )
+})
+
+test("a collection's own status field is compared when the collection has one", () => {
+  const w = want('a.md', { statusField: 'Specs status' })
+  assert.deepEqual(planSync([w], [have('i1', 'a.md')]), [
+    { kind: 'update', id: 'i1', want: w },
+  ])
+  assert.deepEqual(
+    planSync([w], [have('i1', 'a.md', { collectionStatus: 'draft' })]),
+    [{ kind: 'unchanged', id: 'i1' }]
   )
 })

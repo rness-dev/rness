@@ -159,7 +159,11 @@ never reads it back; if it is not in rness, it does not belong there.
   filter), `Agent` (`working`), `Session` (`claude · 1a2b3c4d`, plus the
   agent type for a subagent) and `Path`. A board per directory, named as
   `rness status` names its tab, filtered on its `Collection`, its columns
-  the statuses; a `Working` table, filtered on `Agent: working`. `pulse create` (never a sync) turns GitHub's first view into `All`, showing Title, Collection, Status and Session. Options are coloured (statuses by lifecycle: blue proposed, purple approved, yellow in progress, red blocked, green done, gray dropped; collections and `working` too); a sync recolours rness's options and leaves other options' colours alone. rness does
+  that collection's own steps: each collection has its own status field
+  (`ADR status`, `Specs status`, …; a directory without statuses is columned
+  by `Status`, which holds them all for the `All` table). `pulse sync`
+  remakes a board built by an earlier version (its URL changes once) and
+  names GitHub's `View 1` `All`; a `Working` table, filtered on `Agent: working`. `pulse create` (never a sync) turns GitHub's first view into `All`, showing Title, Collection, Status and Session. Options are coloured (statuses by lifecycle: blue proposed, purple approved, yellow in progress, red blocked, green done, gray dropped; collections and `working` too); a sync recolours rness's options and leaves other options' colours alone. rness does
   not set the project's visibility: the project gets GitHub's default for a
   new organization project, which is private (`public: false`). Verified
   with Claude Code 2.1.284 on 2026-09-29.
@@ -435,6 +439,7 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   existing hook lines do not change.
 - With a pulse declared, the hooks mark and clear the plans an agent works
   on, through a detached process. See "Hooks".
+- One status field per collection (`ADR status`, `Specs status`, `Plans status`, …); each board's columns are that collection's steps and only them. `rness pulse sync` remakes a board built by an earlier version (its URL changes once) and names GitHub's first view `All`.
 - Blocks are unchanged.
 
 ## 0.11.0 — `rness status`; `/rness:status` in Claude Code

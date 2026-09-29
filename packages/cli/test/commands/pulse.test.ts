@@ -63,18 +63,41 @@ async function run<T>(work: () => Promise<T>) {
   }
 }
 
-/** Status options in the lifecycle order of a workspace with all three statuses. */
-const seededFields = (
-  statuses = ['Draft', 'In progress', 'Accepted']
-): FField[] => [
+const ALL_STATUSES = [
+  'Draft',
+  'Proposed',
+  'Ready',
+  'Approved',
+  'In progress',
+  'Blocked',
+  'Accepted',
+  'Implemented',
+  'Completed',
+  'Rejected',
+  'Superseded',
+  'Abandoned',
+]
+const OWN_STATUSES: Record<string, string[]> = {
+  ADR: ['Proposed', 'Accepted', 'Rejected', 'Superseded'],
+  Specs: [
+    'Draft',
+    'Proposed',
+    'Approved',
+    'Implemented',
+    'Rejected',
+    'Superseded',
+  ],
+  Plans: ['Draft', 'Ready', 'In progress', 'Blocked', 'Completed', 'Abandoned'],
+}
+const optionsOf = (names: string[]) =>
+  names.map((name) => ({ id: `s_${name}`, name }))
+/** A board laid out for FILES: Status by lifecycle, one status field per collection. */
+const seededFields = (): FField[] => [
   {
     id: 'F_status',
     databaseId: 1,
     name: 'Status',
-    options: statuses.map((name) => ({
-      id: `s_${name}`,
-      name,
-    })),
+    options: optionsOf(ALL_STATUSES),
   },
   {
     id: 'F_Collection',
@@ -82,6 +105,12 @@ const seededFields = (
     name: 'Collection',
     options: ['ADR', 'Specs', 'Plans'].map((name) => ({ id: name, name })),
   },
+  ...Object.entries(OWN_STATUSES).map(([label, names], i) => ({
+    id: `F_${label} status`,
+    databaseId: 10 + i,
+    name: `${label} status`,
+    options: optionsOf(names),
+  })),
   {
     id: 'F_Agent',
     databaseId: 3,
@@ -356,8 +385,14 @@ test('create: the project, then the layout it built and a first sync, and the ma
     /^created\s+Agent Pulse — https:\/\/github\.com\/orgs\/acme\/projects\/7$/
   )
   // What ensureLayout added: Status is GitHub's own field, its options rness's.
-  assert.match(lines[2]!, /^created\s+fields Collection, Agent, Session, Path$/)
-  assert.match(lines[3]!, /^created\s+options In progress, Accepted$/)
+  assert.match(
+    lines[2]!,
+    /^created\s+fields Collection, ADR status, Specs status, Plans status, Agent, Session, Path$/
+  )
+  assert.match(
+    lines[3]!,
+    /^created\s+options Draft, Proposed, Ready, Approved, In progress, Blocked, Accepted, Implemented, Completed, Rejected, Superseded, Abandoned$/
+  )
   assert.match(lines[4]!, /^created\s+views All, ADR, Specs, Plans, Working$/)
   assert.match(lines[5]!, /^synced\s+2 items: 2 created$/)
   assert.match(
@@ -478,12 +513,22 @@ test('sync: created, updated, unchanged and archived, each counted, the steps ap
     items: [
       item(
         'i1',
-        { Path: 'adr/0001-a.md', Collection: 'ADR', Status: 'Accepted' },
+        {
+          Path: 'adr/0001-a.md',
+          Collection: 'ADR',
+          Status: 'Accepted',
+          'ADR status': 'Accepted',
+        },
         '0001 — A'
       ),
       item(
         'i2',
-        { Path: 'plans/0002-b.md', Collection: 'Plans', Status: 'Draft' },
+        {
+          Path: 'plans/0002-b.md',
+          Collection: 'Plans',
+          Status: 'Draft',
+          'Plans status': 'Draft',
+        },
         '0002 — B'
       ),
       item('i9', {
@@ -519,7 +564,7 @@ test('sync: created, updated, unchanged and archived, each counted, the steps ap
 test("sync: an item converted to an issue by hand is the team's — left alone, its document gets a new draft, every sync succeeds", async (t) => {
   await machine(t)
   const g = await board(t, {
-    fields: seededFields(['In progress', 'Accepted', 'Draft']),
+    fields: seededFields(),
     views: VIEWS,
     items: [
       {
@@ -531,7 +576,12 @@ test("sync: an item converted to an issue by hand is the team's — left alone, 
       },
       item(
         'i2',
-        { Path: 'plans/0002-b.md', Collection: 'Plans', Status: 'In progress' },
+        {
+          Path: 'plans/0002-b.md',
+          Collection: 'Plans',
+          Status: 'In progress',
+          'Plans status': 'In progress',
+        },
         '0002 — B'
       ),
     ],
@@ -574,7 +624,7 @@ test("sync: an item converted to an issue by hand is the team's — left alone, 
 test('sync says what it added to the layout first', async (t) => {
   await machine(t)
   const g = await board(t, {
-    fields: seededFields(['In progress', 'Accepted', 'Draft']),
+    fields: seededFields(),
     views: ['ADR', 'Specs', 'Working'],
     other: asUser('repo, project'),
   })
@@ -599,7 +649,12 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
     items: [
       item(
         'i1',
-        { Path: 'adr/0001-a.md', Collection: 'ADR', Status: 'Accepted' },
+        {
+          Path: 'adr/0001-a.md',
+          Collection: 'ADR',
+          Status: 'Accepted',
+          'ADR status': 'Accepted',
+        },
         '0001 — A'
       ),
       item(
@@ -608,6 +663,7 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
           Path: 'plans/0002-b.md',
           Collection: 'Plans',
           Status: 'In progress',
+          'Plans status': 'In progress',
           Agent: 'working',
           Session: 'claude · s1',
         },

@@ -7,10 +7,11 @@ import { type FItem, board } from '../helpers/fake-project.ts'
 
 const layout: Layout = {
   statuses: ['draft', 'accepted'],
+  fields: [],
   types: ['ADR', 'Marketing'],
   views: [
-    { name: 'ADR', type: 'ADR' },
-    { name: 'Marketing', type: 'Marketing' },
+    { name: 'ADR', type: 'ADR', field: null },
+    { name: 'Marketing', type: 'Marketing', field: null },
   ],
 }
 
@@ -221,6 +222,7 @@ test('items: values by field name, missing ones null, archived ones not listed, 
       title: '0001 — A',
       status: 'draft',
       type: null,
+      collectionStatus: null,
       agent: null,
       session: null,
     },
@@ -230,6 +232,7 @@ test('items: values by field name, missing ones null, archived ones not listed, 
       title: 'by hand',
       status: null,
       type: null,
+      collectionStatus: null,
       agent: null,
       session: null,
     },
@@ -240,6 +243,7 @@ test('items: values by field name, missing ones null, archived ones not listed, 
       title: '',
       status: 'draft',
       type: null,
+      collectionStatus: null,
       agent: null,
       session: null,
     },
@@ -259,6 +263,7 @@ const want = {
   body: 'adr/a.md\n\nlink',
   status: 'draft',
   type: 'ADR',
+  statusField: null,
 }
 
 test('apply create: a draft, then Path, Collection and Status', async (t) => {
@@ -462,6 +467,7 @@ test('a new board: every option is sent with its colour', async (t) => {
   await g.provider.ensureLayout(created, {
     statuses: ['Draft', 'Approved', 'In progress', 'Accepted', 'scheduled'],
     types: ['ADR', 'Specs', 'Plans', 'Marketing'],
+    fields: [],
     views: [],
   })
   assert.deepEqual(sentColours(g, 'setOptions'), [
@@ -570,9 +576,154 @@ test('a new board without a first view: nothing is renamed', async (t) => {
   assert.equal(g.mutations.filter((m) => m.op === 'updateView').length, 0)
 })
 
-test('an existing board keeps its views: ensureLayout never renames one', async (t) => {
-  const g = await board(t)
+test('an existing board keeps its views: ensureLayout never renames a first view that is not View 1', async (t) => {
+  const g = await board(t, { views: ['Roadmap'] })
   await g.provider.board('acme', 7)
   await g.provider.ensureLayout(BOARD, layout)
   assert.equal(g.mutations.filter((m) => m.op === 'updateView').length, 0)
+})
+
+const own: Layout = {
+  statuses: ['Proposed', 'Accepted'],
+  fields: [{ name: 'ADR status', statuses: ['Proposed', 'Accepted'] }],
+  types: ['ADR', 'Marketing'],
+  views: [
+    { name: 'ADR', type: 'ADR', field: 'ADR status' },
+    { name: 'Marketing', type: 'Marketing', field: null },
+  ],
+}
+
+test('a new board: a status field per collection, coloured, each board columned by its own; a statusless directory by Status', async (t) => {
+  const g = await board(t)
+  const created = await g.provider.createBoard('acme')
+  const lines = await g.provider.ensureLayout(created, own)
+  assert.ok(lines.includes('field ADR status'), lines.join(', '))
+  const adr = g.fields.find((f) => f.name === 'ADR status')!
+  assert.deepEqual(
+    adr.options?.map((o) => [o.name, o.color]),
+    [
+      ['Proposed', 'BLUE'],
+      ['Accepted', 'GREEN'],
+    ]
+  )
+  const columns = Object.fromEntries(
+    g.restViews.map((v) => {
+      const b = v as { name: string; vertical_group_by?: number[] }
+      return [b.name, b.vertical_group_by?.[0]]
+    })
+  )
+  assert.equal(columns['ADR'], adr.databaseId)
+  assert.equal(
+    columns['Marketing'],
+    g.fields.find((f) => f.name === 'Status')!.databaseId
+  )
+})
+
+test('an existing board columned by Status is made again by its own field; one already right and a team view are left alone', async (t) => {
+  const g = await board(t, {
+    fields: [
+      ...boardFields([
+        { id: 's1', name: 'Proposed' },
+        { id: 's2', name: 'Accepted' },
+      ]),
+      {
+        id: 'F_adr',
+        databaseId: 9,
+        name: 'ADR status',
+        options: [
+          { id: 'a1', name: 'Proposed', color: 'BLUE' },
+          { id: 'a2', name: 'Accepted', color: 'GREEN' },
+        ],
+      },
+    ],
+    views: [
+      { name: 'ADR', column: 'Status' },
+      'Marketing',
+      'Working',
+      { name: 'Roadmap', column: 'Status' },
+    ],
+  })
+  const lines = await g.provider.ensureLayout(BOARD, own)
+  assert.deepEqual(lines, ['view ADR remade — columns ADR status'])
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['deleteView']
+  )
+  assert.match(
+    g.mutations[0]!.query!,
+    /deleteProjectV2View\(input: \{ viewId: \$viewId \}\)/
+  )
+  assert.equal(g.restViews.length, 1)
+  assert.equal(
+    (g.restViews[0] as { vertical_group_by: number[] }).vertical_group_by[0],
+    9
+  )
+  assert.deepEqual(
+    g.viewList.map((v) => [v.name, v.column]),
+    [
+      ['Marketing', 'Status'],
+      ['Working', null],
+      ['Roadmap', 'Status'],
+      ['ADR', 'ADR status'],
+    ]
+  )
+  g.mutations.length = 0
+  g.restViews.length = 0
+  assert.deepEqual(await g.provider.ensureLayout(BOARD, own), [])
+  assert.deepEqual(g.mutations, [])
+  assert.equal(g.restViews.length, 0)
+})
+
+test('an existing board: View 1 becomes All when no All exists; an All, or another first view, is left alone', async (t) => {
+  const named = async (views: string[]) => {
+    const g = await board(t, { views })
+    await g.provider.ensureLayout(BOARD, layout)
+    return g.mutations.filter((m) => m.op === 'updateView')
+  }
+  const renamed = await named(['View 1', 'ADR', 'Marketing', 'Working'])
+  assert.equal(renamed.length, 1)
+  assert.equal(renamed[0]!.variables['name'], 'All')
+  assert.equal(
+    (await named(['View 1', 'All', 'ADR', 'Marketing', 'Working'])).length,
+    0
+  )
+  assert.equal(
+    (await named(['Roadmap', 'ADR', 'Marketing', 'Working'])).length,
+    0
+  )
+})
+
+test('apply writes the collection field on create, and on update only when it differs', async (t) => {
+  const g = await board(t)
+  await g.provider.ensureLayout(await g.provider.createBoard('acme'), own)
+  g.mutations.length = 0
+  const w = { ...want, status: 'Proposed', statusField: 'ADR status' }
+  await g.provider.apply(BOARD, { kind: 'create', want: w })
+  assert.deepEqual(
+    g.mutations
+      .filter((m) => m.op === 'set')
+      .map((m) => m.variables['fieldId']),
+    ['F_Path', 'F_Collection', 'F_status', 'F_ADR status']
+  )
+  g.mutations.length = 0
+  g.items.push({
+    id: 'I_9',
+    draftId: 'D_9',
+    title: w.title,
+    archived: false,
+    values: {
+      Path: w.path,
+      Collection: 'ADR',
+      Status: 'Proposed',
+      'ADR status': 'Accepted',
+    },
+  })
+  await g.provider.items(BOARD)
+  await g.provider.apply(BOARD, { kind: 'update', id: 'I_9', want: w })
+  assert.deepEqual(
+    g.mutations
+      .filter((m) => m.op === 'set')
+      .map((m) => m.variables['fieldId']),
+    ['F_ADR status']
+  )
 })

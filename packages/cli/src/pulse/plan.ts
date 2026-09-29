@@ -7,6 +7,8 @@ export interface BoardItem {
   path: string | null
   title: string
   status: string | null
+  /** The value of the collection's own status field. */
+  collectionStatus: string | null
   type: string | null
   agent: string | null
   session: string | null
@@ -44,6 +46,7 @@ export function planSync(
     else if (
       item.title !== w.title ||
       item.status !== w.status ||
+      (w.statusField !== null && item.collectionStatus !== w.status) ||
       item.type !== w.type
     )
       steps.push({ kind: 'update', id: item.id, want: w })

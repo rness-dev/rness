@@ -502,55 +502,45 @@ export async function createView(
   )
 }
 
-/** View names, through GraphQL: the REST docs list no endpoint for them. */
-export async function views(
-  org: string,
-  number: number,
-  o: ApiOptions
-): Promise<string[]> {
-  const d = await graphql<{
-    organization: {
-      projectV2: { views: { nodes: { name: string }[] } } | null
-    } | null
-  }>(
-    `
-      query ($login: String!, $number: Int!) {
-        organization(login: $login) {
-          projectV2(number: $number) {
-            views(first: 50) {
-              nodes {
-                name
-              }
-            }
-          }
-        }
-      }
-    `,
-    { login: org, number },
-    o
-  )
-  return (d.organization?.projectV2?.views.nodes ?? []).map((n) => n.name)
+export interface View {
+  id: string
+  name: string
+  /** GitHub's `BOARD_LAYOUT`, `TABLE_LAYOUT` or `ROADMAP_LAYOUT`. */
+  layout: string
+  /** The name of the field a board's columns follow; null: none. */
+  columnField: string | null
 }
 
-/**
- * The first view of a new project (GitHub's "View 1"): its id and name, or
- * null when it has none.
- */
-export async function firstView(
-  projectId: string,
-  o: ApiOptions
-): Promise<{ id: string; name: string } | null> {
+/** The views of a project, in order, through GraphQL: the REST docs list no endpoint for them. */
+export async function views(projectId: string, o: ApiOptions): Promise<View[]> {
   const d = await graphql<{
-    node: { views: { nodes: { id: string; name: string }[] } } | null
+    node: {
+      views: {
+        nodes: {
+          id: string
+          name: string
+          layout: string
+          verticalGroupByFields: { nodes: { name?: string }[] } | null
+        }[]
+      }
+    } | null
   }>(
     `
       query ($projectId: ID!) {
         node(id: $projectId) {
           ... on ProjectV2 {
-            views(first: 10) {
+            views(first: 50) {
               nodes {
                 id
                 name
+                layout
+                verticalGroupByFields(first: 1) {
+                  nodes {
+                    ... on ProjectV2FieldCommon {
+                      name
+                    }
+                  }
+                }
               }
             }
           }
@@ -560,7 +550,27 @@ export async function firstView(
     { projectId },
     o
   )
-  return d.node?.views.nodes[0] ?? null
+  return (d.node?.views.nodes ?? []).map((n) => ({
+    id: n.id,
+    name: n.name,
+    layout: n.layout,
+    columnField: n.verticalGroupByFields?.nodes[0]?.name ?? null,
+  }))
+}
+
+/** Deletes a view (`deleteProjectV2View`): the way to change what a board's columns follow. */
+export async function deleteView(viewId: string, o: ApiOptions): Promise<void> {
+  await graphql(
+    `
+      mutation ($viewId: ID!) {
+        deleteProjectV2View(input: { viewId: $viewId }) {
+          clientMutationId
+        }
+      }
+    `,
+    { viewId },
+    o
+  )
 }
 
 /**
