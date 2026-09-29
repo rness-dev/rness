@@ -151,6 +151,13 @@ test('new: ./<org> is scaffolded with org and tokens, commits it, adds --repos, 
     'exactly one commit'
   )
   assert.match(stdout, /chore: rness workspace context/)
+  // The create commit is the first scaffold commit (spec 0013 §1).
+  const { stdout: trailer } = await execFileP(
+    'git',
+    ['log', '-1', '--format=%(trailers:key=Rness-Scaffold,valueonly)', 'main'],
+    { cwd: join(root, '.rness') }
+  )
+  assert.equal(trailer.trim(), VERSION)
   const { stdout: committed } = await execFileP(
     'git',
     ['show', 'main:rness.json'],

@@ -14,6 +14,7 @@ import {
   rnessCommand,
 } from './pm.ts'
 import { copyScaffold } from './scaffold-copy.ts'
+import { CREATE_SUBJECT, scaffoldMessage } from './scaffold-git.ts'
 import type { Manifest } from './types.ts'
 import type { Ui } from './ui.ts'
 import { findWorkspace } from './workspace.ts'
@@ -149,7 +150,9 @@ export async function commitContext(input: {
   const { ui, rnessDir, shown } = input
   await init(rnessDir)
   try {
-    await commitAll(rnessDir, 'chore: rness workspace context')
+    // The first scaffold commit: the base of every later scaffold merge
+    // (spec 0013 §1).
+    await commitAll(rnessDir, scaffoldMessage(CREATE_SUBJECT, VERSION))
     ui.line('committed', `${shown}/.rness`)
   } catch (e) {
     ui.warn(
