@@ -58,12 +58,12 @@ test('layoutOf: types are the tab labels, one view per tab', () => {
   ])
 })
 
-test('desiredOf: title, body with path and link, status, type', () => {
+test('desiredOf: title, the first line of its body, status, type', () => {
   const [first, second, , , third] = desiredOf(tabs, 'acme')
   assert.deepEqual(first, {
     path: 'adr/0002-b.md',
     title: '0002 — Title 0002',
-    body: 'adr/0002-b.md\n\nhttps://github.com/acme/.rness/blob/main/adr/0002-b.md',
+    body: '`adr/0002-b.md` · [on GitHub](https://github.com/acme/.rness/blob/main/adr/0002-b.md)',
     status: 'accepted',
     statusField: 'ADR status',
     type: 'ADR',

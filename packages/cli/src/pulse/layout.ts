@@ -1,5 +1,6 @@
 import { STATUSES } from '../core/contract.ts'
 import { type StatusTab, statusTone } from '../core/status.ts'
+import { headerOf } from './body.ts'
 
 /** The board's shape, from the documents of `rness status` (spec 0017 §3). */
 export interface Layout {
@@ -20,6 +21,7 @@ export interface Layout {
 export interface Desired {
   path: string
   title: string
+  /** What a new issue carries until pass 2 writes its body: the first line. */
   body: string
   status: string | null
   type: string
@@ -154,7 +156,7 @@ export function desiredOf(tabs: readonly StatusTab[], org: string): Desired[] {
     tab.rows.map((row) => ({
       path: row.path,
       title: `${row.id} — ${row.title}`,
-      body: `${row.path}\n\nhttps://github.com/${org}/.rness/blob/main/${row.path}`,
+      body: headerOf(row.path, org),
       status: statusOf(row.status),
       type: tab.label,
       statusField: fields.get(tab.label)?.name ?? null,
