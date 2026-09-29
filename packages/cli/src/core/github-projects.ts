@@ -116,9 +116,15 @@ interface RawField {
 }
 
 function toField(raw: RawField): Field {
+  const databaseId = raw.databaseId
+  // REST views address fields by this id: a missing one must not become 0.
+  if (typeof databaseId !== 'number')
+    throw new Error(
+      `GitHub returned the field "${raw.name ?? raw.id ?? ''}" without a database id`
+    )
   return {
     id: raw.id ?? '',
-    databaseId: raw.databaseId ?? 0,
+    databaseId,
     name: raw.name ?? '',
     options: raw.options ?? null,
   }
@@ -135,16 +141,7 @@ export async function fields(
           ... on ProjectV2 {
             fields(first: 100) {
               nodes {
-                ... on ProjectV2FieldCommon {
-                  id
-                  name
-                }
-                ... on ProjectV2SingleSelectField {
-                  options {
-                    id
-                    name
-                  }
-                }
+                ${FIELD_SELECTION}
               }
             }
           }

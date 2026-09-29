@@ -31,14 +31,20 @@ interface Gql {
 const gql = (r: Recorded): Gql => r.body as Gql
 const data = (d: unknown): Reply => ({ json: { data: d } })
 
+/** The field as GitHub answers it: `databaseId` only when the query selects it. */
+const asked = (query: string, field: Record<string, unknown>) => {
+  const { databaseId, ...rest } = field
+  return /\bdatabaseId\b/.test(query) ? { ...rest, databaseId } : rest
+}
+
 async function serve(
   t: Parameters<typeof fakeGithub>[0],
-  answers: Record<string, (v: Record<string, unknown>) => Reply>
+  answers: Record<string, (v: Record<string, unknown>, query: string) => Reply>
 ) {
   const github = await fakeGithub(t, (r) => {
     const { query, variables } = gql(r)
     for (const [needle, answer] of Object.entries(answers))
-      if (query.includes(needle)) return answer(variables)
+      if (query.includes(needle)) return answer(variables, query)
     return { status: 500, json: { message: `unexpected ${query}` } }
   })
   return { ...github, o: { token: 'tok', apiBase: github.base } }
@@ -126,26 +132,28 @@ test('findProject treats a NOT_FOUND error as null', async (t) => {
 })
 
 test('fields lists names and single-select options', async (t) => {
-  const { o } = await serve(t, {
-    fields: () =>
+  const { requests, o } = await serve(t, {
+    fields: (_v, q) =>
       data({
         node: {
           fields: {
             nodes: [
-              { id: 'PVTF_1', databaseId: 11, name: 'Title' },
-              {
+              asked(q, { id: 'PVTF_1', databaseId: 11, name: 'Title' }),
+              asked(q, {
                 id: 'PVTSSF_2',
                 databaseId: 22,
                 name: 'Status',
                 options: [{ id: 'A', name: 'Todo' }],
-              },
+              }),
               {},
             ],
           },
         },
       }),
   })
-  assert.deepEqual(await fields('P_1', o), [
+  const listed = await fields('P_1', o)
+  assert.match(gql(requests[0]!).query, /\bdatabaseId\b/)
+  assert.deepEqual(listed, [
     { id: 'PVTF_1', databaseId: 11, name: 'Title', options: null },
     {
       id: 'PVTSSF_2',
@@ -158,19 +166,26 @@ test('fields lists names and single-select options', async (t) => {
 
 test('createField TEXT sends the dataType', async (t) => {
   const { requests, o } = await serve(t, {
-    createProjectV2Field: () =>
+    createProjectV2Field: (_v, q) =>
       data({
         createProjectV2Field: {
-          projectV2Field: { id: 'PVTF_9', databaseId: 99, name: 'Ref' },
+          projectV2Field: asked(q, {
+            id: 'PVTF_9',
+            databaseId: 99,
+            name: 'Ref',
+          }),
         },
       }),
   })
-  assert.deepEqual(await createField('P_1', 'Ref', 'TEXT', o), {
+  const created = await createField('P_1', 'Ref', 'TEXT', o)
+  assert.match(gql(requests[0]!).query, /\bdatabaseId\b/)
+  assert.deepEqual(created, {
     id: 'PVTF_9',
     databaseId: 99,
     name: 'Ref',
     options: null,
   })
+  assert.match(gql(requests[0]!).query, /mutation[\s\S]*createProjectV2Field\(/)
   assert.deepEqual(gql(requests[0]!).variables, {
     projectId: 'P_1',
     name: 'Ref',
@@ -178,21 +193,31 @@ test('createField TEXT sends the dataType', async (t) => {
   })
 })
 
+test('a field without a database id is an error, not 0', async (t) => {
+  const { o } = await serve(t, {
+    fields: () =>
+      data({ node: { fields: { nodes: [{ id: 'PVTF_1', name: 'Title' }] } } }),
+  })
+  await assert.rejects(fields('P_1', o), /field "Title" without a database id/)
+})
+
 test('createField single-select sends gray options with a description', async (t) => {
   const { requests, o } = await serve(t, {
-    createProjectV2Field: () =>
+    createProjectV2Field: (_v, q) =>
       data({
         createProjectV2Field: {
-          projectV2Field: {
+          projectV2Field: asked(q, {
             id: 'PVTSSF_9',
             databaseId: 99,
             name: 'Status',
             options: [{ id: 'A', name: 'Todo' }],
-          },
+          }),
         },
       }),
   })
   const field = await createField('P_1', 'Status', { options: ['Todo'] }, o)
+  assert.match(gql(requests[0]!).query, /\bdatabaseId\b/)
+  assert.match(gql(requests[0]!).query, /singleSelectOptions/)
   assert.equal(field.databaseId, 99)
   assert.deepEqual(field.options, [{ id: 'A', name: 'Todo' }])
   assert.deepEqual(gql(requests[0]!).variables, {
@@ -205,10 +230,10 @@ test('createField single-select sends gray options with a description', async (t
 
 test('setOptions resends the ids of the options it keeps', async (t) => {
   const { requests, o } = await serve(t, {
-    updateProjectV2Field: () =>
+    updateProjectV2Field: (_v, q) =>
       data({
         updateProjectV2Field: {
-          projectV2Field: {
+          projectV2Field: asked(q, {
             id: 'F2',
             databaseId: 22,
             name: 'Status',
@@ -216,7 +241,7 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
               { id: 'A', name: 'Todo' },
               { id: 'C', name: 'Done' },
             ],
-          },
+          }),
         },
       }),
   })
@@ -230,6 +255,8 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
     ],
   }
   const out = await setOptions(field, ['Todo', 'Done'], o)
+  assert.match(gql(requests[0]!).query, /\bdatabaseId\b/)
+  assert.match(gql(requests[0]!).query, /mutation[\s\S]*updateProjectV2Field\(/)
   assert.equal(out.options?.length, 2)
   assert.equal(out.databaseId, 22)
   assert.deepEqual(gql(requests[0]!).variables, {
@@ -328,6 +355,16 @@ test('editDraft, setValue and archive send their mutations', async (t) => {
   await setValue('P', 'I', 'F', null, o)
   await archive('P', 'I', o)
   const sent = requests.map(gql)
+  const names = [
+    'updateProjectV2DraftIssue',
+    'updateProjectV2ItemFieldValue',
+    'updateProjectV2ItemFieldValue',
+    'clearProjectV2ItemFieldValue',
+    'archiveProjectV2Item',
+  ]
+  sent.forEach((r, i) =>
+    assert.match(r.query, new RegExp(`mutation[\\s\\S]*${names[i]}\\(`))
+  )
   assert.deepEqual(sent[0]?.variables, {
     draftIssueId: 'D1',
     title: 'T',
