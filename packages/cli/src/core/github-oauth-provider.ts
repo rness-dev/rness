@@ -1,4 +1,7 @@
+import type { Layout } from '../pulse/layout.ts'
+import type { BoardItem, Step } from '../pulse/plan.ts'
 import { type ResolvedToken, resolveToken } from './auth.ts'
+import { GitHubBoards } from './github-board.ts'
 import {
   type CreateRepositoryResult,
   type RepositoryListing,
@@ -10,6 +13,7 @@ import {
   listUserOrganizations,
 } from './github.ts'
 import type {
+  Board,
   GitCredentials,
   Organization,
   OrganizationAccess,
@@ -26,6 +30,7 @@ export class GitHubOAuthProvider implements Provider {
   readonly #token: ResolvedToken | null
   readonly #apiBase: string | undefined
   #login: Promise<{ login: string } | null> | undefined
+  #boardClient: GitHubBoards | undefined
 
   get authenticated(): boolean {
     return this.#token !== null
@@ -99,6 +104,42 @@ export class GitHubOAuthProvider implements Provider {
     } catch {
       return null
     }
+  }
+
+  #boards(): GitHubBoards {
+    if (this.#token === null)
+      throw new Error('the pulse needs a GitHub login: run rness login')
+    this.#boardClient ??= new GitHubBoards(this.#api(this.#token.token))
+    return this.#boardClient
+  }
+
+  // The board methods are async so that a missing login rejects, never throws.
+  async createBoard(org: string, layout: Layout): Promise<Board> {
+    return this.#boards().createBoard(org, layout)
+  }
+
+  async board(org: string, number: number): Promise<Board | null> {
+    return this.#boards().board(org, number)
+  }
+
+  async ensureLayout(board: Board, layout: Layout): Promise<string[]> {
+    return this.#boards().ensureLayout(board, layout)
+  }
+
+  async items(board: Board): Promise<BoardItem[]> {
+    return this.#boards().items(board)
+  }
+
+  async apply(board: Board, step: Step): Promise<void> {
+    return this.#boards().apply(board, step)
+  }
+
+  async mark(
+    board: Board,
+    itemIds: readonly string[],
+    session: string | null
+  ): Promise<void> {
+    return this.#boards().mark(board, itemIds, session)
   }
 
   credentialsFor(url: string): GitCredentials | null {

@@ -21,6 +21,9 @@ export function fakeProvider(spec: {
   created: string[]
 } {
   const login = spec.login ?? null
+  // The board is not what these tests are about.
+  const refused = (): Promise<never> =>
+    Promise.reject(new Error('the board is not scripted'))
   const asked: string[] = []
   const listed: string[] = []
   const created: string[] = []
@@ -52,6 +55,12 @@ export function fakeProvider(spec: {
           }
         )
       },
+      createBoard: refused,
+      board: refused,
+      ensureLayout: refused,
+      items: refused,
+      apply: refused,
+      mark: refused,
       credentialsFor: (url) => {
         asked.push(url)
         return login === null

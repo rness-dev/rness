@@ -1,0 +1,273 @@
+import type { Layout } from '../pulse/layout.ts'
+import type { BoardItem, Step } from '../pulse/plan.ts'
+import * as gh from './github-projects.ts'
+import type { ApiOptions } from './github.ts'
+import type { Board, Provider } from './provider.ts'
+
+/** The pulse's board on a GitHub project (spec 0017 §3–§4). */
+
+export const PROJECT_TITLE = 'Agent Pulse'
+const WORKING = 'working'
+const WORKING_VIEW = 'Working'
+
+/**
+ * SPIKE-DEPENDENT CHOICE 1 of 2 (not yet verified live): the board's Status
+ * is the built-in single-select field every project has. If the API refuses
+ * to edit its options, the fallback is a created field `rness status` — change
+ * this one function.
+ */
+export function statusField(fields: readonly gh.Field[]): gh.Field {
+  const field = fields.find((f) => f.name === 'Status')
+  if (field === undefined || field.options === null)
+    throw new Error('the GitHub project has no single-select field Status')
+  return field
+}
+
+/**
+ * SPIKE-DEPENDENT CHOICE 2 of 2 (not yet verified live): the filter string of
+ * a board view of one type, and of the Working table. If GitHub's filter
+ * syntax differs from `field:"value"`, change these two lines.
+ */
+export const viewFilter = (typeLabel: string): string => `type:"${typeLabel}"`
+export const WORKING_FILTER = 'agent:working'
+
+interface Cache {
+  projectId: string
+  fields?: gh.Field[]
+  /** The items as last read: the values `apply` compares against. */
+  known: Map<string, gh.RawItem>
+}
+
+const namesOf = (field: gh.Field): string[] =>
+  (field.options ?? []).map((o) => o.name)
+
+/** The adapter's board methods, for one process: project ids and fields are cached per board. */
+export class GitHubBoards implements Pick<
+  Provider,
+  'createBoard' | 'board' | 'ensureLayout' | 'items' | 'apply' | 'mark'
+> {
+  readonly #o: ApiOptions
+  readonly #cache = new Map<string, Cache>()
+
+  constructor(options: ApiOptions) {
+    this.#o = options
+  }
+
+  #key = (b: { org: string; number: number }): string => `${b.org}/${b.number}`
+
+  async #cacheOf(board: Board): Promise<Cache> {
+    const cached = this.#cache.get(this.#key(board))
+    if (cached !== undefined) return cached
+    const project = await gh.findProject(board.org, board.number, this.#o)
+    if (project === null)
+      throw new Error(`GitHub has no project ${board.number} in ${board.org}`)
+    return this.#remember(board, project.id)
+  }
+
+  #remember(board: Board, projectId: string): Cache {
+    const cache: Cache = { projectId, known: new Map() }
+    this.#cache.set(this.#key(board), cache)
+    return cache
+  }
+
+  async #fields(board: Board): Promise<gh.Field[]> {
+    const cache = await this.#cacheOf(board)
+    cache.fields ??= await gh.fields(cache.projectId, this.#o)
+    return cache.fields
+  }
+
+  async createBoard(org: string, layout: Layout): Promise<Board> {
+    const project = await gh.createProject(
+      await gh.orgId(org, this.#o),
+      PROJECT_TITLE,
+      this.#o
+    )
+    const board = { org, number: project.number, url: project.url }
+    this.#remember(board, project.id)
+    // A new project's Status carries GitHub's default options: replaced, not extended.
+    if (layout.statuses.length > 0)
+      await gh.setOptions(
+        statusField(await gh.fields(project.id, this.#o)),
+        layout.statuses,
+        this.#o
+      )
+    await this.ensureLayout(board, layout)
+    return board
+  }
+
+  async board(org: string, number: number): Promise<Board | null> {
+    const project = await gh.findProject(org, number, this.#o)
+    if (project === null) return null
+    const board = { org, number, url: project.url }
+    this.#remember(board, project.id)
+    return board
+  }
+
+  async ensureLayout(board: Board, layout: Layout): Promise<string[]> {
+    const cache = await this.#cacheOf(board)
+    const fields = await gh.fields(cache.projectId, this.#o)
+    const added: string[] = []
+
+    const withOptions = async (
+      field: gh.Field,
+      wanted: readonly string[]
+    ): Promise<gh.Field> => {
+      const have = new Set(namesOf(field))
+      const missing = wanted.filter((n) => !have.has(n))
+      if (missing.length === 0) return field
+      added.push(...missing.map((n) => `option ${n}`))
+      // Existing options stay: a hand-made one is not rness's to remove.
+      return gh.setOptions(field, [...namesOf(field), ...missing], this.#o)
+    }
+    const single = async (
+      name: string,
+      wanted: readonly string[]
+    ): Promise<gh.Field> => {
+      const field = fields.find((f) => f.name === name)
+      if (field !== undefined) return withOptions(field, wanted)
+      added.push(`field ${name}`)
+      return gh.createField(
+        cache.projectId,
+        name,
+        { options: [...wanted] },
+        this.#o
+      )
+    }
+    const text = async (name: string): Promise<gh.Field> => {
+      const field = fields.find((f) => f.name === name)
+      if (field !== undefined) return field
+      added.push(`field ${name}`)
+      return gh.createField(cache.projectId, name, 'TEXT', this.#o)
+    }
+
+    const status = await withOptions(statusField(fields), layout.statuses)
+    const type = await single('Type', layout.types)
+    const agent = await single('Agent', [WORKING])
+    const session = await text('Session')
+    const path = await text('Path')
+
+    const existing = new Set(await gh.views(board.org, board.number, this.#o))
+    for (const view of layout.views)
+      if (!existing.has(view.name)) {
+        added.push(`view ${view.name}`)
+        await gh.createView(
+          board.org,
+          board.number,
+          {
+            name: view.name,
+            layout: 'board',
+            filter: viewFilter(view.type),
+            groupBy: status.databaseId,
+          },
+          this.#o
+        )
+      }
+    if (!existing.has(WORKING_VIEW)) {
+      added.push(`view ${WORKING_VIEW}`)
+      await gh.createView(
+        board.org,
+        board.number,
+        { name: WORKING_VIEW, layout: 'table', filter: WORKING_FILTER },
+        this.#o
+      )
+    }
+    cache.fields = [status, type, agent, session, path]
+    return added
+  }
+
+  async items(board: Board): Promise<BoardItem[]> {
+    const cache = await this.#cacheOf(board)
+    const raw = await gh.listItems(cache.projectId, this.#o)
+    cache.known = new Map(raw.map((r) => [r.id, r]))
+    return raw.map((r) => ({
+      id: r.id,
+      path: r.values['Path'] ?? null,
+      title: r.title,
+      status: r.values['Status'] ?? null,
+      type: r.values['Type'] ?? null,
+      agent: r.values['Agent'] ?? null,
+      session: r.values['Session'] ?? null,
+    }))
+  }
+
+  async #set(
+    board: Board,
+    itemId: string,
+    name: string,
+    value: string | null
+  ): Promise<void> {
+    const cache = await this.#cacheOf(board)
+    const field = (await this.#fields(board)).find((f) => f.name === name)
+    if (field === undefined) throw new Error(`the board has no field ${name}`)
+    if (value === null) {
+      await gh.setValue(cache.projectId, itemId, field.id, null, this.#o)
+      return
+    }
+    if (field.options === null) {
+      await gh.setValue(
+        cache.projectId,
+        itemId,
+        field.id,
+        { text: value },
+        this.#o
+      )
+      return
+    }
+    const option = field.options.find((opt) => opt.name === value)
+    if (option === undefined)
+      throw new Error(`the field ${name} has no option ${value}`)
+    await gh.setValue(
+      cache.projectId,
+      itemId,
+      field.id,
+      { optionId: option.id },
+      this.#o
+    )
+  }
+
+  async apply(board: Board, step: Step): Promise<void> {
+    if (step.kind === 'unchanged') return
+    const cache = await this.#cacheOf(board)
+    if (step.kind === 'archive') {
+      await gh.archive(cache.projectId, step.id, this.#o)
+      cache.known.delete(step.id)
+      return
+    }
+    const { want } = step
+    const values: [string, string | null][] = [
+      ['Path', want.path],
+      ['Type', want.type],
+      ['Status', want.status],
+    ]
+    if (step.kind === 'create') {
+      const id = await gh.addDraft(
+        cache.projectId,
+        want.title,
+        want.body,
+        this.#o
+      )
+      for (const [name, value] of values)
+        if (value !== null) await this.#set(board, id, name, value)
+      return
+    }
+    if (!cache.known.has(step.id)) await this.items(board)
+    const known = cache.known.get(step.id)
+    if (known?.draftId == null)
+      throw new Error(`the board has no draft item ${step.id}`)
+    await gh.editDraft(known.draftId, want.title, want.body, this.#o)
+    for (const [name, value] of values)
+      if ((known.values[name] ?? null) !== value)
+        await this.#set(board, step.id, name, value)
+  }
+
+  async mark(
+    board: Board,
+    itemIds: readonly string[],
+    session: string | null
+  ): Promise<void> {
+    for (const id of itemIds) {
+      await this.#set(board, id, 'Agent', session === null ? null : WORKING)
+      await this.#set(board, id, 'Session', session)
+    }
+  }
+}

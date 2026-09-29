@@ -1,3 +1,5 @@
+import type { Layout } from '../pulse/layout.ts'
+import type { BoardItem, Step } from '../pulse/plan.ts'
 import type { CreateRepositoryResult, RepositoryListing } from './github.ts'
 
 // The seam between the commands and the place the repositories live (spec
@@ -22,6 +24,13 @@ export interface Organization {
 export type OrganizationAccess =
   'member' | 'not-member' | 'restricted' | 'unknown'
 
+/** The pulse's board on the provider (spec 0017 §2.3). */
+export interface Board {
+  org: string
+  number: number
+  url: string
+}
+
 export interface Provider {
   /** False when rness sees GitHub anonymously: public repositories only. */
   readonly authenticated: boolean
@@ -44,6 +53,21 @@ export interface Provider {
    * SSH comes first (spec 0005).
    */
   credentialsFor(url: string): GitCredentials | null
+  /** The board (spec 0017 §3): a new one for `org` with `layout`. Anonymous: refused. */
+  createBoard(org: string, layout: Layout): Promise<Board>
+  /** The board `number` of `org`, or null when the provider has none. */
+  board(org: string, number: number): Promise<Board | null>
+  /** Adds the fields, options and views `layout` needs; returns what it added, removes nothing. */
+  ensureLayout(board: Board, layout: Layout): Promise<string[]>
+  /** The items of the board, not the archived ones. */
+  items(board: Board): Promise<BoardItem[]>
+  apply(board: Board, step: Step): Promise<void>
+  /** Marks items as being worked on by `session`; null clears the mark. */
+  mark(
+    board: Board,
+    itemIds: readonly string[],
+    session: string | null
+  ): Promise<void>
 }
 
 /** @deprecated the pre-0.12 name, kept for the package's API. */
