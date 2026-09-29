@@ -158,7 +158,7 @@ test('ensureLayout adds only what is missing, and removes nothing', async (t) =>
   assert.deepEqual(again, [])
 })
 
-test('items: values by field name, missing ones null, archived ones not listed', async (t) => {
+test('items: values by field name, missing ones null, archived ones not listed, converted ones without a path', async (t) => {
   const g = await board(t, {
     fields: [
       {
@@ -191,6 +191,13 @@ test('items: values by field name, missing ones null, archived ones not listed',
         archived: false,
         values: {},
       },
+      {
+        id: 'I_3',
+        draftId: null,
+        title: '',
+        archived: false,
+        values: { Status: 'draft', Path: 'adr/b.md' },
+      },
     ],
   })
   assert.deepEqual(await g.provider.items(BOARD), [
@@ -208,6 +215,16 @@ test('items: values by field name, missing ones null, archived ones not listed',
       path: null,
       title: 'by hand',
       status: null,
+      type: null,
+      agent: null,
+      session: null,
+    },
+    // Converted to an issue by hand: the team's now, like an item without Path.
+    {
+      id: 'I_3',
+      path: null,
+      title: '',
+      status: 'draft',
       type: null,
       agent: null,
       session: null,

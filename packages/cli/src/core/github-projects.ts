@@ -1,4 +1,4 @@
-import { type ApiOptions, postJson } from './github.ts'
+import { type ApiOptions, GitHubMessageError, postJson } from './github.ts'
 
 /**
  * GitHub Projects (v2) over HTTP: GraphQL for projects, fields and items,
@@ -27,7 +27,7 @@ function firstError(answer: GraphqlAnswer<unknown>): Error | null {
   const first = answer.errors?.[0]
   return first === undefined
     ? null
-    : new Error(first.message ?? 'GitHub GraphQL error')
+    : new GitHubMessageError(first.message ?? 'GitHub GraphQL error')
 }
 
 export async function graphql<T>(

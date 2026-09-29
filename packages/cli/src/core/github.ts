@@ -66,6 +66,13 @@ interface Page {
   body: unknown
 }
 
+/**
+ * GitHub's own words, relayed as they came: the `message` of a refusal, a
+ * GraphQL error. The pulse names them as GitHub's; rness's own errors are
+ * plain `Error`s and keep their words.
+ */
+export class GitHubMessageError extends Error {}
+
 async function getPage(
   url: string,
   headers: Record<string, string>,
@@ -279,7 +286,9 @@ export async function postJson(
         ? (page.body as { message?: unknown }).message
         : undefined
     if (typeof message === 'string' && message !== '')
-      throw new Error(message, { cause: { status: page.status, path } })
+      throw new GitHubMessageError(message, {
+        cause: { status: page.status, path },
+      })
     throw httpError(page, path)
   }
   return page.body

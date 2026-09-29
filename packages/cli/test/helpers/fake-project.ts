@@ -20,13 +20,14 @@ export interface FField {
 }
 export interface FItem {
   id: string
-  draftId: string
+  /** Null: no longer a draft issue — converted to an issue by hand. */
+  draftId: string | null
   title: string
   archived: boolean
   values: Record<string, string>
 }
 
-/** A GitHub project that remembers what it was told. */
+/** A GitHub project that remembers what it was told: fields, views, items and their values. */
 export async function board(
   t: TestContext,
   seed: {
@@ -53,6 +54,11 @@ export async function board(
 
   const optionsOf = (list: { name: string; id?: string }[]) =>
     list.map((o) => ({ id: o.id ?? `o_${next++}`, name: o.name }))
+  const itemField = (v: Record<string, unknown>) =>
+    [
+      items.find((i) => i.id === v['itemId']),
+      fields.find((f) => f.id === v['fieldId']),
+    ] as const
   const answers: [string, (v: Record<string, unknown>, q: string) => Reply][] =
     [
       [
@@ -119,6 +125,8 @@ export async function board(
         'updateProjectV2DraftIssue',
         (v) => {
           mutations.push({ op: 'editDraft', variables: v })
+          const edited = items.find((i) => i.draftId === v['draftIssueId'])
+          if (edited !== undefined) edited.title = String(v['title'])
           return data({
             updateProjectV2DraftIssue: { draftIssue: { id: 'x' } },
           })
@@ -128,6 +136,8 @@ export async function board(
         'clearProjectV2ItemFieldValue',
         (v) => {
           mutations.push({ op: 'clear', variables: v })
+          const [i, f] = itemField(v)
+          if (i !== undefined && f !== undefined) delete i.values[f.name]
           return data({
             clearProjectV2ItemFieldValue: { projectV2Item: { id: 'x' } },
           })
@@ -137,6 +147,16 @@ export async function board(
         'updateProjectV2ItemFieldValue',
         (v) => {
           mutations.push({ op: 'set', variables: v })
+          const [i, f] = itemField(v)
+          const value = v['value'] as {
+            text?: string
+            singleSelectOptionId?: string
+          }
+          const name =
+            value.text ??
+            f?.options?.find((o) => o.id === value.singleSelectOptionId)?.name
+          if (i !== undefined && f !== undefined && name !== undefined)
+            i.values[f.name] = name
           return data({
             updateProjectV2ItemFieldValue: { projectV2Item: { id: 'x' } },
           })
@@ -146,6 +166,8 @@ export async function board(
         'archiveProjectV2Item',
         (v) => {
           mutations.push({ op: 'archive', variables: v })
+          const archived = items.find((i) => i.id === v['itemId'])
+          if (archived !== undefined) archived.archived = true
           return data({ archiveProjectV2Item: { item: { id: 'x' } } })
         },
       ],
@@ -194,7 +216,9 @@ export async function board(
                 nodes: items.map((i) => ({
                   id: i.id,
                   isArchived: i.archived,
-                  content: { id: i.draftId, title: i.title },
+                  // The query selects DraftIssue only: other content is {}.
+                  content:
+                    i.draftId === null ? {} : { id: i.draftId, title: i.title },
                   fieldValues: {
                     nodes: Object.entries(i.values).map(([name, value]) => ({
                       ...(fields.find((f) => f.name === name)?.options

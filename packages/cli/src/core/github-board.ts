@@ -203,7 +203,9 @@ export class GitHubBoards implements Pick<
       .filter((r) => !r.archived)
       .map((r) => ({
         id: r.id,
-        path: r.values['Path'] ?? null,
+        // No longer a draft issue (converted by hand): the team's, like an
+        // item without Path — the plan leaves it alone (spec 0017 §4).
+        path: r.draftId === null ? null : (r.values['Path'] ?? null),
         title: r.title,
         status: r.values[STATUS_FIELD] ?? null,
         type: r.values[COLLECTION_FIELD] ?? null,

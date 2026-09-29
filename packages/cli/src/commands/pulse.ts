@@ -1,4 +1,5 @@
 import type { CommandDeps } from '../core/deps.ts'
+import { GitHubMessageError } from '../core/github.ts'
 import { loadManifest, providerOf, writeManifest } from '../core/manifest.ts'
 import type { Board, Provider } from '../core/provider.ts'
 import { openProvider } from '../core/providers.ts'
@@ -27,12 +28,15 @@ const NEEDS_SCOPE = 'the pulse needs the project scope: run rness login'
 const boardUrl = (org: string, project: number): string =>
   `https://github.com/orgs/${org}/projects/${project}`
 
-/** GitHub's own words, named as GitHub's unless they already say so. */
+/**
+ * GitHub's own words, named as GitHub's unless they already say so. rness's
+ * own errors (`the board has no field Agent`) keep their words.
+ */
 async function fromGithub<T>(work: Promise<T>): Promise<T> {
   try {
     return await work
   } catch (e) {
-    if (e instanceof Error && !/github/i.test(e.message))
+    if (e instanceof GitHubMessageError && !/github/i.test(e.message))
       throw new Error(`GitHub: ${e.message}`, { cause: e })
     throw e
   }

@@ -402,6 +402,61 @@ test('sync: created, updated, unchanged and archived, each counted, the steps ap
   )
 })
 
+test("sync: an item converted to an issue by hand is the team's — left alone, its document gets a new draft, every sync succeeds", async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    items: [
+      {
+        id: 'i1',
+        draftId: null,
+        title: '',
+        archived: false,
+        values: { Path: 'adr/0001-a.md', Collection: 'ADR', Status: 'Draft' },
+      },
+      item(
+        'i2',
+        { Path: 'plans/0002-b.md', Collection: 'Plans', Status: 'In progress' },
+        '0002 — B'
+      ),
+    ],
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const sync = () =>
+    run(() =>
+      pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    )
+  const first = await sync()
+  assert.equal(first.err, '')
+  assert.equal(first.code, 0)
+  assert.match(first.out.trim(), /^synced\s+2 items: 1 created, 1 unchanged$/)
+  assert.deepEqual(
+    g.mutations
+      .filter((m) => m.op === 'addDraft')
+      .map((m) => m.variables['title']),
+    ['0001 — A']
+  )
+  const second = await sync()
+  assert.equal(second.code, 0)
+  assert.match(second.out.trim(), /^synced\s+2 items: 2 unchanged$/)
+  assert.deepEqual(
+    g.mutations.filter(
+      (m) =>
+        m.variables['itemId'] === 'i1' ||
+        m.op === 'editDraft' ||
+        m.op === 'archive'
+    ),
+    [],
+    'the converted item is neither edited, nor set, nor archived'
+  )
+})
+
 test('sync says what it added to the layout first', async (t) => {
   await machine(t)
   const g = await board(t, {
@@ -513,6 +568,31 @@ test('mark that cannot reach the pulse records why, for the next session start, 
   const reason = await takeFailure()
   assert.ok(reason !== null && reason !== '')
   assert.equal(await takeFailure(), null)
+})
+
+test("rness's own errors keep their words: only GitHub's are named GitHub's", async (t) => {
+  await machine(t)
+  // A declared board whose layout a failed create left half-built: no Agent.
+  const g = await board(t, {
+    fields: seededFields().filter((f) => f.name !== 'Agent'),
+    items: [item('i1', { Path: 'adr/0001-a.md' })],
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const r = await run(() =>
+    pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session: 'claude · s1',
+      paths: ['adr/0001-a.md'],
+    })
+  )
+  assert.equal(r.code, 0)
+  assert.equal(await takeFailure(), 'the board has no field Agent')
 })
 
 test('--end clears the session and its subagents (same id, any agent type), not another session', async (t) => {
