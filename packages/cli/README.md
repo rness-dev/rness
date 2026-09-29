@@ -138,7 +138,8 @@ dependency does this: `util.styleText`, and a banner kept as a constant.
 ### Upgrade
 
     rness upgrade            # the latest release; `rness upgrade 0.5.0` for another
-    npx @rness/cli@latest upgrade     # from a workspace pinned below 0.5.0
+    npx @rness/cli@latest upgrade     # your global rness is older than the pin, or the pin is below 0.5.0
+    pnpm rness upgrade       # inside .rness: the pinned copy merges its own scaffold
 
 The version is written in one place, `.rness/package.json`. `upgrade` pins it
 there (exact, the rest of the file untouched), installs with the workspace's
@@ -156,18 +157,44 @@ or later, which checks for itself whatever launched it. With an older global
 and a workspace below 0.5.3, a pin that moved is neither installed nor
 announced: `npm i -g @rness/cli@latest` once.
 
-Usually nobody runs `upgrade` at all. A workspace ships
-`.github/dependabot.yml`, so each release opens a pull request on the
-organization's `.rness`: the pin and the lockfile in the diff, `validate`
-running on the new version, review, merge. `upgrade` writes that file into
-workspaces created before 0.5.1. The pull request arrives 3 to 10 days after
-a release: the check is weekly, and Dependabot holds any new version back for
-3 days by default, a guard against a compromised release. The file's header
-says how to lift that delay for `@rness/cli`.
+A workspace ships `.github/dependabot.yml`, so each release opens a pull
+request on the organization's `.rness`: the pin and the lockfile in the diff,
+`validate` running on the new version, review, merge. The pull request
+arrives 3 to 10 days after a release: the check is weekly, and Dependabot
+holds any new version back for 3 days by default, a guard against a
+compromised release. The file's header says how to lift that delay for
+`@rness/cli`.
+
+`upgrade` also merges the scaffold of the target version into `.rness`, with
+git: the CI workflow, the hooks, the starter documents. After a Dependabot
+pull request, run it once more to merge the scaffold of the version the pin
+now names; `rness validate` warns while it is behind.
+
+    rness upgrade
+    merging  the @rness/cli 0.8.0 scaffold
+    added    .github/workflows/validate.yml
+    updated  .githooks/pre-commit
+    merged   AGENTS.md
+
+- The base is the last scaffold commit of `.rness`: the commit `create` made,
+  or the previous `chore: rness scaffold <version>`. A file the team never
+  touched takes the new version; an edited one keeps its edits where the
+  scaffold did not change; overlapping lines conflict, and `upgrade` stops
+  before installing — resolve with git (`git checkout --ours <file>` keeps
+  yours, `--theirs` takes the scaffold's), commit, run `upgrade` again.
+- `.rness` must be a clean git repository. The merge is staged, not
+  committed: the next steps end in one commit.
+- A workspace with no scaffold commit (made by hand, or older than
+  `create`) is adopted: identical files merge silently, a differing one
+  conflicts once.
+- Merge an upgrade pull request with a merge commit, not a squash: a squash
+  drops the scaffold commit, and the next upgrade falls back to an older base.
 
 `upgrade` is never delegated to the pinned copy, which is what it replaces
-— so a workspace pinned below 0.5.0, whose copy has no such command, starts
-with the `npx` form.
+— so it runs the copy you typed. A global `rness` older than the pin answers
+"already at" and merges no scaffold: use the `npx` form, or the pinned copy
+from inside `.rness`. A workspace pinned below 0.5.0, whose copy has no such
+command, starts with the `npx` form.
 
 An upgrade touches `.rness` only: a generated block is current when its hash
 is, whatever wrote it, so no `AGENTS.md` of the organization changes unless
@@ -175,6 +202,20 @@ its content does.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.8.0 — upgrade merges the scaffold
+
+- `rness upgrade` merges the target version's scaffold into `.rness` with
+  git, three-way, from the last scaffold commit: files the team never
+  touched are updated, edits are kept, overlaps conflict and stop the
+  upgrade before the install. See "Upgrade". After a Dependabot pull request,
+  run `rness upgrade` once to merge the scaffold; nothing is installed.
+- `rness validate` warns while the merged scaffold is behind the pin.
+- The commit `create` makes carries `Rness-Scaffold: <version>`.
+- Breaking: `upgrade` refuses a `.rness` that is not a clean git repository.
+  The two migrations it carried (an old `validate.yml` line, a missing
+  `dependabot.yml`) are what the merge does now.
+- Blocks are unchanged: no `rness sync` is needed after upgrading.
 
 ## 0.7.0 — agent targets: Claude Code
 
