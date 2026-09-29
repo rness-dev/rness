@@ -161,8 +161,8 @@ never reads it back; if it is not in rness, it does not belong there.
   `rness status` names its tab, filtered on its `Collection`, its columns
   the statuses; a `Working` table, filtered on `Agent: working`. rness does
   not set the project's visibility: the project gets GitHub's default for a
-  new organization project, expected to be private — to be confirmed on
-  GitHub.
+  new organization project, which is private (`public: false`). Verified
+  with Claude Code 2.1.284 on 2026-09-29.
 - **Login**: the pulse needs the `project` scope. `rness login` asks for it
   when the workspace declares a pulse, or when `pulse create` needs it (in a
   terminal it offers to log in; with `-y` or off a terminal it stops with
@@ -199,8 +199,9 @@ never reads it back; if it is not in rness, it does not belong there.
   the session; an edit of a document of `.rness/` marks it; session end clears
   the marks of that session (its subagents' included) and syncs. Each one
   starts a detached `rness` process and answers at once, so a slow network
-  never holds Claude Code; that the session-end sync outlives Claude Code's
-  exit is to be confirmed. It uses your login: with none, without the
+  never holds Claude Code; the session-end sync outlives Claude Code's exit.
+  Verified with Claude Code 2.1.284 on 2026-09-29: the detached process wrote
+  its file 3 s after `/exit`. It uses your login: with none, without the
   scope, or when GitHub cannot be reached, nothing is sent, and the next
   session start's banner says why, once:
   `rness: pulse not updated — <reason>`, such as
