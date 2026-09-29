@@ -1,7 +1,7 @@
 # rness workspace member — scope: rness
 
 <!-- BEGIN rness -->
-<!-- rness · scope: rness · contract: 1 · hash: ee0dc45b82a1 · generated: run `rness sync`, never edit inside this block -->
+<!-- rness · scope: rness · contract: 1 · hash: 780c42f93d86 · generated: run `rness sync`, never edit inside this block -->
 This directory is scope `rness` of rness workspace `rness-dev`. Full context lives in
 `../../.rness/` — start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
 live: `rness context --scope rness`. If `.rness/` is not reachable, this is a
@@ -29,9 +29,6 @@ This standard is how to apply that day to day.
   `pnpm format:check` run before typecheck, tests and build, locally and in CI.
   Generated `AGENTS.md`/`CLAUDE.md`, the scaffold and the test fixtures are
   never reformatted: their bytes are part of the contract.
-- `.rness/scripts/` — this workspace's context tooling (`STATUS.md`, the HTML
-  dashboard for GitHub Pages) — stays dependency-free: it runs in git hooks
-  and must never need an install to work.
 
 <!-- rness: standards/architecture.md -->
 # Architecture and repository strategy
@@ -227,9 +224,6 @@ and choose the language’s conventional, lightweight option.
 - Run fast automated checks before slower integration or end-to-end checks.
 - Treat coverage as a diagnostic, not a target; map important claims to the
   test that proves them.
-
-The context utilities in `.rness/scripts/` use the built-in Node test runner to
-avoid adding a second test framework solely for this scaffold.
 
 <!-- rness: standards/ui.md -->
 # UI and styling standards
