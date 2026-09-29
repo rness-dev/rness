@@ -7,13 +7,13 @@ polyrepo. rness never runs an LLM loop and is not an agent.
 
 ## Packages
 
-| Path                    | npm                                                                                                                          | Status  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `packages/cli`          | `@rness/cli` — the CLI, command `rness`: `create`, `add`, `sync`, `context`, `validate`, `upgrade`, `login`, `logout`, `mcp` | 0.11.0  |
-| `packages/create`       | `@rness/create` — `npm create @rness`                                                                                        | 0.11.0  |
-| `packages/create-rness` | `create-rness` — `npm create rness`                                                                                          | 0.11.0  |
-| `plugins/claude-code`   | Claude Code plugin; this repository is its marketplace                                                                       | planned |
-| `templates/`, `action/` | demo apps, GitHub projection Action                                                                                          | planned |
+| Path                    | npm                                                                                                                                             | Status  |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `packages/cli`          | `@rness/cli` — the CLI, command `rness`: `create`, `add`, `sync`, `context`, `status`, `pulse`, `validate`, `upgrade`, `login`, `logout`, `mcp` | 0.11.0  |
+| `packages/create`       | `@rness/create` — `npm create @rness`                                                                                                           | 0.11.0  |
+| `packages/create-rness` | `create-rness` — `npm create rness`                                                                                                             | 0.11.0  |
+| `plugins/claude-code`   | Claude Code plugin; this repository is its marketplace                                                                                          | planned |
+| `templates/`, `action/` | demo apps, GitHub projection Action                                                                                                             | planned |
 
 ## Develop
 

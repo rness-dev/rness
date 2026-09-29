@@ -20,7 +20,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
 
 ## Commands
 
-    rness create [<org>] [--repos a,b] [--agent claude] [--pm npm|pnpm|yarn|bun] [--ssh|--https] [--skip-install] -y
+    rness create [<org>] [--provider github] [--repos a,b] [--agent claude] [--pm npm|pnpm|yarn|bun] [--ssh|--https] [--skip-install] -y
     rness create <name> --blank [--agent claude] [--pm npm|pnpm|yarn|bun] [--skip-install] -y
     rness add <repo> [--scopes apps/web,packages/ui] [--ssh|--https] -y
     rness sync [--all] [--scope <name>] [--check] [--pull] [--agent <name>] -y
@@ -29,6 +29,8 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness logout
     rness context [--scope <name>] [--json]
     rness status [<tab>]
+    rness pulse create [-y]
+    rness pulse sync
     rness validate
     rness mcp
 
@@ -87,7 +89,7 @@ the files a given agent needs, for the agents the team declares in
   applies it once the repository has been trusted interactively. Verified
   with Claude Code 2.1.284 on 2026-09-29. Each clone also gets `.mcp.json`,
   which registers the MCP server; see "MCP server". The same settings file
-  carries two hooks, and so does `.claude/settings.json` at the workspace
+  carries three hooks, and so does `.claude/settings.json` at the workspace
   root, which `sync` writes on every machine; see "Hooks". Both places also
   get a Claude Code plugin, `.claude/skills/rness/`, with one command:
   `/rness:status [tab]`, the tables of `rness status`. rness owns those
@@ -104,7 +106,7 @@ the files a given agent needs, for the agents the team declares in
 ### Hooks
 
 With `claude` in `agents`, each clone's `.claude/settings.json` and the
-workspace root's carry two Claude Code hooks, both run by the pinned copy:
+workspace root's carry three Claude Code hooks, all run by the pinned copy:
 
 - **At session start** (`SessionStart`, every source): a line for the
   developer — `rness 0.10.0 · acme · scope web — 3 standards, 2 decisions`
@@ -116,7 +118,10 @@ workspace root's carry two Claude Code hooks, both run by the pinned copy:
 - **After an edit** (`PostToolUse` on `Edit|Write`): when the file is under
   `.rness/`, its front-matter problems — or those of `rness.json` — go back
   to the model, which fixes them in the same turn. Any other edit costs one
-  path check. Stale blocks are left to `sync`.
+  path check. Stale blocks are left to `sync`. With a pulse declared, the
+  edit also marks the document on the board; see "Pulse".
+- **At session end** (`SessionEnd`): with a pulse declared, clears the marks
+  this session set and syncs the board; see "Pulse". Without one, nothing.
 
 Each hook is one fixed `sh` line: it runs
 `<.rness>/node_modules/@rness/cli/dist/bin/rness.js hook <event>` when that
@@ -127,12 +132,88 @@ hand counts as missing, and the next `sync` adds a second one. The team's
 own hooks stay where they are.
 
 Claude Code runs hooks from a committed settings file without asking each
-developer, including in `claude -p`. These two read `.rness/` and nothing
-else: they write no file, run no install and reach no network. Review a
-change to them like code. Verified with Claude Code 2.1.284 on 2026-09-29:
+developer, including in `claude -p`. These three read `.rness/` and write no
+file, and run no install. Only with a pulse declared do they reach the
+network, through a detached `rness` process that uses your login; see
+"Pulse". Review a change to them like code. Verified with Claude Code 2.1.284 on 2026-09-29:
 in a clone and at the root, the model received the context; after an edit
 that broke a status, it received the problem. The `sh` line is not verified
 on Windows.
+
+### Pulse
+
+    rness pulse create      # once per organization: the board, then a first sync
+    rness pulse sync        # as often as wanted
+
+A projection of rness's state on the organization's GitHub Projects: a
+project named **Agent Pulse**, where the team sees every document of
+`.rness/` and when an agent is at work on one. rness writes the board and
+never reads it back; if it is not in rness, it does not belong there.
+
+- **Layout**: one item per document (a draft issue: its title, its path and a
+  link to it in `<org>/.rness`), and the fields `Status` (the statuses found
+  in `.rness/`, at most 50), `Type` (one option per tab of `rness status`),
+  `Agent` (`working`), `Session` (`claude · 1a2b3c4d`, plus the agent type for
+  a subagent) and `Path`. A board per directory, named as `rness status` names
+  its tab, its columns the statuses; a `Working` table, filtered on
+  `Agent: working`. The project is private to the organization.
+- **Login**: the pulse needs the `project` scope. `rness login` asks for it
+  when the workspace declares a pulse, or when `pulse create` needs it (in a
+  terminal it offers to log in again; with `-y` or off a terminal it stops
+  with `run rness login`). A developer who never uses the pulse grants nothing more than `repo read:org`.
+  `GITHUB_TOKEN` works if it carries the scope. An organization that
+  restricts OAuth apps must approve "Rness", as for its private repositories.
+- **`pulse create`** needs an `org` in `rness.json` (a blank workspace is
+  refused) and no pulse yet. It creates the project, its fields and views,
+  runs a first sync and writes `"pulse": { "project": <number> }` into
+  `rness.json`: commit it in `.rness`. The number is that of the project in
+  the organization. A CLI older than 0.12.0 refuses the key, so the pin moves
+  first (`rness upgrade`).
+- **`pulse sync`**: creates the items that are missing, updates those whose
+  title, status or type changed, archives those whose document is gone, and
+  adds the option or the board a new status or directory needs. It says
+  `synced 49 items: 2 updated, 47 unchanged`.
+- **One way**: the board is only read to find rness's items. What someone
+  changes there by hand is overwritten at the next sync.
+- **Hooks**, with `claude` in `agents` and a pulse declared: session start
+  marks the `In progress` plans of the session's scope `Agent: working`, with
+  the session; an edit of a document of `.rness/` marks it; session end clears
+  the marks of that session (its subagents' included) and syncs. Each one
+  starts a detached `rness` process and answers at once, so a slow network
+  never holds Claude Code, and the sync outlives it. It uses your login: with
+  none, or without the scope, nothing is sent, and the next session start's
+  banner says so once (`rness: pulse not updated — run rness login`). Two
+  sessions marking one plan both write; the last wins.
+- **Rate**: a first sync of about fifty documents stays under GitHub's limits
+  for creating content (80 a minute, 500 an hour) by GitHub's documentation
+  (read 2026-09-29); later syncs touch only what changed.
+- **Not yet**: GitLab and Atlassian. `create` lists them, disabled; a
+  workspace whose `rness.json` names one is refused by `pulse`. `Waiting`
+  and `Review` statuses, several agents on one board and hooks for agents
+  other than Claude Code are not built.
+
+### Provider
+
+`rness.json` records where the organization lives:
+`"provider": "github"`, between `contract` and `org`. Every command talks to
+it through one adapter; `git` still does what git does (clone, pull, push,
+credentials), and the provider's API the rest (organizations, creating a
+repository, the board).
+
+- `rness create` asks `Where does your organization live?`: GitHub, and
+  GitLab and Atlassian (Bitbucket + Jira) shown disabled, coming later.
+  `--provider github` answers it off a terminal. A blank workspace asks
+  nothing. Joining an organization asks first as well, then takes the
+  provider its `rness.json` names.
+- A workspace without the key is read as the provider of its first
+  repository URL, `github` when there is none: nothing to change, and
+  `pulse create` writes it. The order of keys is `contract`, `provider`,
+  `org`, `agents`, `pulse`, `repos`, `scopes`.
+- A provider _written_ in `rness.json` that this version cannot talk to
+  (`gitlab`) is refused by `validate`, `create`, `login` and `pulse`:
+  `provider "gitlab" is not supported by @rness/cli 0.12.0 (supported:
+github)`. `add`, `sync` and the local commands never refuse. `null` is not a
+  value: an absent key means none.
 
 ### MCP server
 
@@ -184,7 +265,8 @@ anonymously.
   hours and is renewed on its own. `GITHUB_TOKEN`, then `GH_TOKEN`, win over
   it — CI needs no login.
 - rness asks for `repo` and `read:org`: GitHub has no read-only scope for
-  private repositories. It only lists and clones.
+  private repositories. It only lists and clones. Where the workspace
+  declares a pulse it asks for `project` too; see "Pulse".
 - A new workspace has to reach GitHub before teammates can join it. Logged
   in, the `create` wizard offers to do it: it creates the private repository
   `<org>/.rness` and pushes the context with `git`. Declined, refused by
@@ -305,6 +387,28 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.12.0 — `rness pulse`; the provider
+
+- `rness pulse create` and `rness pulse sync`: the Agent Pulse board on the
+  organization's GitHub Projects, a projection of `.rness/`. See "Pulse".
+  `rness login` asks for the `project` scope where the workspace declares a
+  pulse.
+- `rness.json` gains two optional keys of contract 1: `provider` (`github`;
+  `gitlab` and `atlassian` are listed as not available) and
+  `pulse: { "project": <number> }`. A CLI older than 0.12.0 refuses them:
+  move the pin (`rness upgrade`) before either is written. `create` asks
+  `Where does your organization live?`, or takes `--provider github`. See
+  "Provider".
+- With `claude` in `agents`, `sync` adds a third hook, `SessionEnd`
+  (`rness hook session-end`), to each clone's `.claude/settings.json` and to
+  the workspace root's. `rness upgrade` syncs, so it adds it; then commit
+  `.claude/settings.json` in each repository, as its next steps list. Until
+  then `sync --check` and `validate` report the hook missing. The two
+  existing hook lines do not change.
+- With a pulse declared, the hooks mark and clear the plans an agent works
+  on, through a detached process. See "Hooks".
+- Blocks are unchanged.
 
 ## 0.11.0 — `rness status`; `/rness:status` in Claude Code
 
