@@ -105,14 +105,14 @@ export interface Field {
   /** The numeric id REST project views refer to fields by. */
   databaseId: number
   name: string
-  options: { id: string; name: string }[] | null
+  options: { id: string; name: string; color?: string }[] | null
 }
 
 interface RawField {
   id?: string
   databaseId?: number
   name?: string
-  options?: { id: string; name: string }[]
+  options?: { id: string; name: string; color?: string }[]
 }
 
 function toField(raw: RawField): Field {
@@ -157,20 +157,26 @@ export async function fields(
     .map((n) => toField(n))
 }
 
-const grayOption = (name: string, id?: string) => ({
+/** An option to send: `color` is a ProjectV2SingleSelectFieldOptionColor (GRAY, BLUE, …). */
+export interface OptionInput {
+  name: string
+  color: string
+}
+
+const optionInput = (o: OptionInput, id?: string) => ({
   ...(id === undefined ? {} : { id }),
-  name,
-  color: 'GRAY',
+  name: o.name,
+  color: o.color,
   description: '',
 })
 
 const FIELD_SELECTION = `... on ProjectV2FieldCommon { id databaseId name }
-  ... on ProjectV2SingleSelectField { options { id name } }`
+  ... on ProjectV2SingleSelectField { options { id name color } }`
 
 export async function createField(
   projectId: string,
   name: string,
-  kind: 'TEXT' | { options: string[] },
+  kind: 'TEXT' | { options: OptionInput[] },
   o: ApiOptions
 ): Promise<Field> {
   const single = kind !== 'TEXT'
@@ -190,17 +196,17 @@ export async function createField(
       projectId,
       name,
       dataType: single ? 'SINGLE_SELECT' : 'TEXT',
-      ...(single ? { options: kind.options.map((n) => grayOption(n)) } : {}),
+      ...(single ? { options: kind.options.map((n) => optionInput(n)) } : {}),
     },
     o
   )
   return toField(d.createProjectV2Field.projectV2Field)
 }
 
-/** Sets a single-select field's options to `names`, resending existing ids so item values survive. */
+/** Sets a single-select field's options to `options`, resending existing ids so item values survive. */
 export async function setOptions(
   field: Field,
-  names: string[],
+  options: OptionInput[],
   o: ApiOptions
 ): Promise<Field> {
   const ids = new Map((field.options ?? []).map((opt) => [opt.name, opt.id]))
@@ -214,7 +220,7 @@ export async function setOptions(
     }`,
     {
       fieldId: field.id,
-      options: names.map((n) => grayOption(n, ids.get(n))),
+      options: options.map((n) => optionInput(n, ids.get(n.name))),
     },
     o
   )

@@ -1,4 +1,4 @@
-import type { StatusTab } from '../core/status.ts'
+import { type StatusTab, statusTone } from '../core/status.ts'
 
 /** The board's shape, from the documents of `rness status` (spec 0017 §3). */
 export interface Layout {
@@ -36,6 +36,47 @@ const LIFECYCLE = [
   'Superseded',
   'Abandoned',
 ]
+
+export type OptionColor =
+  'gray' | 'blue' | 'green' | 'yellow' | 'orange' | 'red' | 'pink' | 'purple'
+
+const STATUS_COLORS: Readonly<Record<string, OptionColor>> = {
+  Draft: 'gray',
+  Proposed: 'blue',
+  Ready: 'blue',
+  Approved: 'purple',
+  'In progress': 'yellow',
+  Blocked: 'red',
+  Accepted: 'green',
+  Implemented: 'green',
+  Completed: 'green',
+  Rejected: 'gray',
+  Superseded: 'gray',
+  Abandoned: 'gray',
+}
+const COLLECTION_COLORS: Readonly<Record<string, OptionColor>> = {
+  ADR: 'purple',
+  Specs: 'blue',
+  Plans: 'orange',
+}
+const TONE_COLORS = {
+  done: 'green',
+  dropped: 'gray',
+  active: 'yellow',
+} as const
+
+/** The colour of a single-select option of the board, by neutral name; the adapter maps it to its provider's. */
+export function optionColor(
+  field: 'Status' | 'Collection' | 'Agent',
+  name: string
+): OptionColor {
+  if (field === 'Agent') return 'green'
+  if (field === 'Collection') return COLLECTION_COLORS[name] ?? 'pink'
+  const known = STATUS_COLORS[name]
+  if (known !== undefined) return known
+  const tone = statusTone(name)
+  return tone === 'missing' ? 'gray' : TONE_COLORS[tone]
+}
 
 export function layoutOf(tabs: readonly StatusTab[]): Layout {
   const statuses = new Set<string>()

@@ -185,7 +185,12 @@ test('createField single-select sends gray options with a description', async (t
         },
       }),
   })
-  const field = await createField('P_1', 'Status', { options: ['Todo'] }, o)
+  const field = await createField(
+    'P_1',
+    'Status',
+    { options: [{ name: 'Todo', color: 'GRAY' }] },
+    o
+  )
   assert.match(gql(requests[0]!).query, /\bdatabaseId\b/)
   assert.match(gql(requests[0]!).query, /singleSelectOptions/)
   assert.equal(field.databaseId, 99)
@@ -224,7 +229,14 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
       { id: 'B', name: 'Old' },
     ],
   }
-  const out = await setOptions(field, ['Todo', 'Done'], o)
+  const out = await setOptions(
+    field,
+    [
+      { name: 'Todo', color: 'GRAY' },
+      { name: 'Done', color: 'GRAY' },
+    ],
+    o
+  )
   assert.match(gql(requests[0]!).query, /\bdatabaseId\b/)
   assert.match(gql(requests[0]!).query, /mutation[\s\S]*updateProjectV2Field\(/)
   assert.equal(out.options?.length, 2)

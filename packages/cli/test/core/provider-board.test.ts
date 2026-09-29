@@ -441,3 +441,102 @@ test('ensureLayout leaves Status alone when its options are in order', async (t)
   assert.deepEqual(await g.provider.ensureLayout(BOARD, layout), [])
   assert.equal(g.mutations.filter((m) => m.op === 'setOptions').length, 0)
 })
+
+const sentColours = (
+  g: Awaited<ReturnType<typeof board>>,
+  op: string
+): [string, string][][] =>
+  g.mutations
+    .filter((m) => m.op === op && m.variables['options'] !== undefined)
+    .map((m) =>
+      (m.variables['options'] as { name: string; color: string }[]).map((o) => [
+        o.name,
+        o.color,
+      ])
+    )
+
+test('a new board: every option is sent with its colour', async (t) => {
+  const g = await board(t)
+  const created = await g.provider.createBoard('acme')
+  await g.provider.ensureLayout(created, {
+    statuses: ['Draft', 'Approved', 'In progress', 'Accepted', 'scheduled'],
+    types: ['ADR', 'Specs', 'Plans', 'Marketing'],
+    views: [],
+  })
+  assert.deepEqual(sentColours(g, 'setOptions'), [
+    [
+      ['Draft', 'GRAY'],
+      ['Approved', 'PURPLE'],
+      ['In progress', 'YELLOW'],
+      ['Accepted', 'GREEN'],
+      ['scheduled', 'YELLOW'],
+    ],
+  ])
+  assert.deepEqual(sentColours(g, 'createField'), [
+    [
+      ['ADR', 'PURPLE'],
+      ['Specs', 'BLUE'],
+      ['Plans', 'ORANGE'],
+      ['Marketing', 'PINK'],
+    ],
+    [['working', 'GREEN']],
+  ])
+})
+
+test('ensureLayout recolours gray options keeping ids, and leaves the colour of options it does not know', async (t) => {
+  const gray = (id: string, name: string) => ({ id, name, color: 'GRAY' })
+  const g = await board(t, {
+    fields: [
+      {
+        id: 'F_status',
+        databaseId: 1,
+        name: 'Status',
+        options: [
+          gray('s1', 'Draft'),
+          gray('s2', 'Accepted'),
+          { id: 's9', name: 'obsolete', color: 'RED' },
+        ],
+      },
+      {
+        id: 'F_Collection',
+        databaseId: 2,
+        name: 'Collection',
+        options: [gray('t1', 'ADR'), gray('t2', 'Marketing')],
+      },
+      {
+        id: 'F_Agent',
+        databaseId: 3,
+        name: 'Agent',
+        options: [gray('a1', 'working')],
+      },
+      { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
+      { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
+    ],
+    views: ['ADR', 'Marketing', 'Working'],
+  })
+  const lines = await g.provider.ensureLayout(BOARD, {
+    ...layout,
+    statuses: ['Draft', 'Accepted'],
+  })
+  assert.deepEqual(lines, ['coloured options'])
+  const shown = (i: number) =>
+    g.fields[i]!.options?.map((o) => [o.id, o.name, o.color])
+  assert.deepEqual(shown(0), [
+    ['s1', 'Draft', 'GRAY'],
+    ['s2', 'Accepted', 'GREEN'],
+    ['s9', 'obsolete', 'RED'],
+  ])
+  assert.deepEqual(shown(1), [
+    ['t1', 'ADR', 'PURPLE'],
+    ['t2', 'Marketing', 'PINK'],
+  ])
+  assert.deepEqual(shown(2), [['a1', 'working', 'GREEN']])
+  assert.deepEqual(
+    await g.provider.ensureLayout(BOARD, {
+      ...layout,
+      statuses: ['Draft', 'Accepted'],
+    }),
+    [],
+    'coloured once'
+  )
+})

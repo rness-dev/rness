@@ -16,7 +16,7 @@ export interface FField {
   id: string
   databaseId: number
   name: string
-  options: { id: string; name: string }[] | null
+  options: { id: string; name: string; color?: string }[] | null
 }
 export interface FItem {
   id: string
@@ -53,8 +53,12 @@ export async function board(
   const restViews: unknown[] = []
   const mutations: { op: string; variables: Record<string, unknown> }[] = []
 
-  const optionsOf = (list: { name: string; id?: string }[]) =>
-    list.map((o) => ({ id: o.id ?? `o_${next++}`, name: o.name }))
+  const optionsOf = (list: { name: string; id?: string; color?: string }[]) =>
+    list.map((o) => ({
+      id: o.id ?? `o_${next++}`,
+      name: o.name,
+      ...(o.color === undefined ? {} : { color: o.color }),
+    }))
   const itemField = (v: Record<string, unknown>) =>
     [
       items.find((i) => i.id === v['itemId']),
@@ -72,7 +76,7 @@ export async function board(
             databaseId: next++,
             name: String(v['name']),
             options: single
-              ? optionsOf(v['options'] as { name: string }[])
+              ? optionsOf(v['options'] as { name: string; color?: string }[])
               : null,
           }
           fields.push(f)
@@ -86,7 +90,9 @@ export async function board(
         (v, q) => {
           mutations.push({ op: 'setOptions', variables: v })
           const f = fields.find((x) => x.id === v['fieldId'])!
-          f.options = optionsOf(v['options'] as { id?: string; name: string }[])
+          f.options = optionsOf(
+            v['options'] as { id?: string; name: string; color?: string }[]
+          )
           return data({
             updateProjectV2Field: { projectV2Field: asked(q, { ...f }) },
           })

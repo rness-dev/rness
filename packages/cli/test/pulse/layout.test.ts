@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { StatusTab } from '../../src/core/status.ts'
-import { desiredOf, layoutOf } from '../../src/pulse/layout.ts'
+import { desiredOf, layoutOf, optionColor } from '../../src/pulse/layout.ts'
 
 const row = (id: string, status: string | null, path: string) => ({
   id,
@@ -114,4 +114,48 @@ test('layoutOf: the contract statuses in lifecycle order, then the others in the
     'scheduled',
     'published',
   ])
+})
+
+test('optionColor: the contract statuses, a discovered status by its tone, collections and the working marker', () => {
+  const status = (n: string) => optionColor('Status', n)
+  assert.deepEqual(
+    [
+      'Draft',
+      'Proposed',
+      'Ready',
+      'Approved',
+      'In progress',
+      'Blocked',
+      'Accepted',
+      'Implemented',
+      'Completed',
+      'Rejected',
+      'Superseded',
+      'Abandoned',
+    ].map(status),
+    [
+      'gray',
+      'blue',
+      'blue',
+      'purple',
+      'yellow',
+      'red',
+      'green',
+      'green',
+      'green',
+      'gray',
+      'gray',
+      'gray',
+    ]
+  )
+  assert.equal(status('published'), 'green')
+  assert.equal(status('rejected'), 'gray')
+  assert.equal(status('scheduled'), 'yellow')
+  assert.deepEqual(
+    ['ADR', 'Specs', 'Plans', 'Marketing'].map((n) =>
+      optionColor('Collection', n)
+    ),
+    ['purple', 'blue', 'orange', 'pink']
+  )
+  assert.equal(optionColor('Agent', 'working'), 'green')
 })

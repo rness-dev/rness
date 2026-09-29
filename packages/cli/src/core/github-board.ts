@@ -1,4 +1,4 @@
-import type { Layout } from '../pulse/layout.ts'
+import { type Layout, type OptionColor, optionColor } from '../pulse/layout.ts'
 import type { BoardItem, Step } from '../pulse/plan.ts'
 import * as gh from './github-projects.ts'
 import type { ApiOptions } from './github.ts'
@@ -65,6 +65,9 @@ interface Cache {
    */
   fresh?: boolean
 }
+
+/** The single-select fields rness colours. */
+type OptionKind = 'Status' | 'Collection' | 'Agent'
 
 const namesOf = (field: gh.Field): string[] =>
   (field.options ?? []).map((o) => o.name)
@@ -138,34 +141,61 @@ export class GitHubBoards implements Pick<
     const fields = await gh.fields(cache.projectId, this.#o)
     const added: string[] = []
 
+    const enumOf = (c: OptionColor): string => c.toUpperCase()
+    const inputs = (
+      existing: gh.Field['options'],
+      kind: OptionKind,
+      wanted: readonly string[],
+      names: readonly string[]
+    ): gh.OptionInput[] =>
+      names.map((name) => ({
+        name,
+        // An option rness does not know keeps the colour it has.
+        color: wanted.includes(name)
+          ? enumOf(optionColor(kind, name))
+          : (existing?.find((o) => o.name === name)?.color ?? 'GRAY'),
+      }))
     const withOptions = async (
       field: gh.Field,
+      kind: OptionKind,
       wanted: readonly string[],
       reorder = false
     ): Promise<gh.Field> => {
-      const have = new Set(namesOf(field))
-      const missing = wanted.filter((n) => !have.has(n))
       const now = namesOf(field)
+      const missing = wanted.filter((n) => !now.includes(n))
       // Existing options stay: a hand-made one is not rness's to remove.
       const grown = [...now, ...missing]
       const next = reorder ? orderedFirst(wanted, grown) : grown
-      if (next.every((n, i) => n === now[i])) return field
+      const ordered = !next.every((n, i) => n === now[i])
+      const recoloured = (field.options ?? []).some(
+        (o) =>
+          wanted.includes(o.name) &&
+          o.color !== undefined &&
+          o.color !== enumOf(optionColor(kind, o.name))
+      )
+      if (!ordered && !recoloured) return field
       added.push(...missing.map((n) => `option ${n}`))
-      if (missing.length === 0) added.push('ordered options')
+      if (missing.length === 0 && ordered) added.push('ordered options')
+      if (recoloured && !added.includes('coloured options'))
+        added.push('coloured options')
       // setOptions resends the ids of the kept options: items keep their value.
-      return gh.setOptions(field, next, this.#o)
+      return gh.setOptions(
+        field,
+        inputs(field.options, kind, wanted, next),
+        this.#o
+      )
     }
     const single = async (
-      name: string,
+      name: OptionKind,
       wanted: readonly string[]
     ): Promise<gh.Field> => {
       const field = fields.find((f) => f.name === name)
-      if (field !== undefined) return withOptions(field, wanted)
+      if (field !== undefined) return withOptions(field, name, wanted)
       added.push(`field ${name}`)
       return gh.createField(
         cache.projectId,
         name,
-        { options: [...wanted] },
+        { options: inputs(null, name, wanted, wanted) },
         this.#o
       )
     }
@@ -182,9 +212,13 @@ export class GitHubBoards implements Pick<
     cache.fresh = false
     if (fresh) added.push(...layout.statuses.map((n) => `option ${n}`))
     const status = fresh
-      ? await gh.setOptions(statusField(fields), layout.statuses, this.#o)
-      : await withOptions(statusField(fields), layout.statuses, true)
-    const collection = await single(COLLECTION_FIELD, layout.types)
+      ? await gh.setOptions(
+          statusField(fields),
+          inputs(null, 'Status', layout.statuses, layout.statuses),
+          this.#o
+        )
+      : await withOptions(statusField(fields), 'Status', layout.statuses, true)
+    const collection = await single('Collection', layout.types)
     const agent = await single('Agent', [WORKING])
     const session = await text('Session')
     const path = await text('Path')
