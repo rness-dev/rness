@@ -12,6 +12,7 @@ CLAUDE.md
 
 # Written by `rness sync --agent claude`: rness keeps its own formatting
 .claude/settings.json
+.mcp.json
 
 # Copied verbatim into user workspaces by `rness create`
 packages/cli/scaffold/
