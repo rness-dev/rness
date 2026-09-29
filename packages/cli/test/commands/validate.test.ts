@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -363,4 +366,20 @@ test('validate warns when the scaffold merged in .rness is not the pinned versio
   await git(origin, 'init', '-q', join(shallow, 'org'))
   const ci = await validate(shallow)
   assert.doesNotMatch(ci.err, /scaffold/)
+})
+
+test('a standalone checkout of .rness with claude declared validates: the root hooks need an org/', async (t) => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-standalone-')))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const ctx = join(dir, 'ctx')
+  await mkdir(ctx)
+  await writeFile(
+    join(ctx, 'rness.json'),
+    JSON.stringify({ contract: 1, agents: ['claude'], repos: {}, scopes: {} })
+  )
+  const c = capture()
+  const code = await run(['validate', '--cwd', ctx])
+  c.restore()
+  assert.equal(code, 0, c.err())
+  assert.equal(c.out(), 'context ok\n')
 })

@@ -226,3 +226,11 @@ test('leftovers: a file still carrying the values of an agent no longer declared
     []
   )
 })
+
+test('no org/ — a standalone checkout of .rness, as in its CI: nothing at the root either', async (t) => {
+  const root = await makeWorkspace(t, { org: 'acme', agents: ['claude'] })
+  const manifest = await loadManifest(join(root, '.rness'))
+  for (const check of [true, false])
+    assert.deepEqual(await agentTargets(root, manifest, { check }), [])
+  await assert.rejects(readFile(join(root, SETTINGS), 'utf8'))
+})

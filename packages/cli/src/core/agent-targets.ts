@@ -29,7 +29,9 @@ interface OwnedFile {
  * Every file the given targets own a part of: the workspace root's first
  * (spec 0015 §2.1), then one per target and per repository of the catalogue
  * that is cloned under `org/`. The root of a clone only — a nested scope's
- * path to `.rness` is not verified (spec 0011 §5).
+ * path to `.rness` is not verified (spec 0011 §5). Nothing where there is no
+ * `org/`: a standalone checkout of `.rness` (its CI) has no workspace root of
+ * its own, as `checkBlocks` has no block to check there.
  */
 async function filesOf(
   root: string,
@@ -37,6 +39,7 @@ async function filesOf(
   targets: readonly AgentTarget[]
 ): Promise<OwnedFile[]> {
   const files: OwnedFile[] = []
+  if (!(await exists(join(root, 'org')))) return files
   for (const target of targets)
     for (const owned of target.files)
       if (owned.at === 'root')
