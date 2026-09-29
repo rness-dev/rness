@@ -69,12 +69,13 @@ interface Page {
 async function getPage(
   url: string,
   headers: Record<string, string>,
-  timeoutMs: number
+  timeoutMs: number,
+  init: { method?: string; body?: string } = {}
 ): Promise<Page> {
   const signal = AbortSignal.timeout(timeoutMs)
   let res: Response
   try {
-    res = await fetch(url, { headers, signal })
+    res = await fetch(url, { headers, signal, ...init })
   } catch (e) {
     throw new Error(`cannot reach the GitHub API: ${reason(e)}`, { cause: e })
   }
@@ -99,7 +100,7 @@ async function getPage(
   }
 }
 
-function httpError(page: Page, path: string): Error {
+export function httpError(page: Page, path: string): Error {
   const cause = { status: page.status, path }
   if (page.status === 401)
     return new Error('GitHub rejected the token (401)', { cause })
@@ -243,6 +244,26 @@ async function getJson(
   }
   const body: unknown = await res.json().catch(() => undefined)
   return { status: res.status, body }
+}
+
+/**
+ * One authenticated JSON POST; a non-ok answer becomes `httpError`, the
+ * parsed body of an ok one is returned (`undefined` when it is empty).
+ */
+export async function postJson(
+  path: string,
+  payload: unknown,
+  options: ApiOptions
+): Promise<unknown> {
+  const base = (options.apiBase ?? DEFAULT_GITHUB_API).replace(/\/+$/, '')
+  const page = await getPage(
+    `${base}${path}`,
+    { ...apiHeaders(options.token), 'Content-Type': 'application/json' },
+    options.timeoutMs ?? 15_000,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+  if (page.status < 200 || page.status >= 300) throw httpError(page, path)
+  return page.body
 }
 
 /**

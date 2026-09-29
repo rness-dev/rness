@@ -12,6 +12,8 @@ export interface Recorded {
   headers: IncomingMessage['headers']
   /** Form fields of a POST body. */
   form: Record<string, string>
+  /** The parsed body of a JSON request; undefined otherwise. */
+  body?: unknown
 }
 
 export type Reply = {
@@ -34,13 +36,21 @@ export async function fakeGithub(
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8')
+      let body: unknown
+      if (String(req.headers['content-type']).includes('json')) {
+        try {
+          body = JSON.parse(raw)
+        } catch {
+          body = undefined
+        }
+      }
       const recorded: Recorded = {
         method: req.method ?? 'GET',
         path: req.url ?? '/',
         headers: req.headers,
-        form: Object.fromEntries(
-          new URLSearchParams(Buffer.concat(chunks).toString('utf8'))
-        ),
+        form: Object.fromEntries(new URLSearchParams(raw)),
+        body,
       }
       requests.push(recorded)
       const reply = route(recorded)
