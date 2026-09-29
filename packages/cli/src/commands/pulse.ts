@@ -1,4 +1,5 @@
 import type { CommandDeps } from '../core/deps.ts'
+import { COLLECTION_FIELD, STATUS_FIELD } from '../core/github-board.ts'
 import { loadManifest, providerOf, writeManifest } from '../core/manifest.ts'
 import type { Board, Provider } from '../core/provider.ts'
 import { openProvider } from '../core/providers.ts'
@@ -23,7 +24,7 @@ export interface PulseOptions {
 
 const PROJECT_SCOPE = 'project'
 const NEEDS_SCOPE = 'the pulse needs the project scope: run rness login'
-const FIELDS = ['Status', 'Type', 'Agent', 'Session', 'Path']
+const FIELDS = [STATUS_FIELD, COLLECTION_FIELD, 'Agent', 'Session', 'Path']
 const WORKING_VIEW = 'Working'
 
 const boardUrl = (org: string, project: number): string =>

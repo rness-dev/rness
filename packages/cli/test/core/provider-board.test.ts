@@ -36,7 +36,7 @@ test('createBoard: the project, its fields, the Status options, one view per typ
     g.fields.map((f) => [f.name, f.options?.map((o) => o.name) ?? 'text']),
     [
       ['Status', ['draft', 'accepted']],
-      ['Type', ['ADR', 'Marketing']],
+      ['Collection', ['ADR', 'Marketing']],
       ['Agent', ['working']],
       ['Session', 'text'],
       ['Path', 'text'],
@@ -47,13 +47,13 @@ test('createBoard: the project, its fields, the Status options, one view per typ
     {
       name: 'ADR',
       layout: 'board',
-      filter: 'type:"ADR"',
+      filter: 'collection:"ADR"',
       vertical_group_by: [statusId],
     },
     {
       name: 'Marketing',
       layout: 'board',
-      filter: 'type:"Marketing"',
+      filter: 'collection:"Marketing"',
       vertical_group_by: [statusId],
     },
     { name: 'Working', layout: 'table', filter: 'agent:working' },
@@ -78,9 +78,9 @@ test('ensureLayout adds only what is missing, and removes nothing', async (t) =>
         ],
       },
       {
-        id: 'F_Type',
+        id: 'F_Collection',
         databaseId: 2,
-        name: 'Type',
+        name: 'Collection',
         options: [{ id: 't1', name: 'ADR' }],
       },
       {
@@ -191,7 +191,7 @@ const want = {
   type: 'ADR',
 }
 
-test('apply create: a draft, then Path, Type and Status', async (t) => {
+test('apply create: a draft, then Path, Collection and Status', async (t) => {
   const g = await laidOut(t)
   await g.provider.apply(BOARD, { kind: 'create', want })
   const ops = g.mutations.map((m) => m.op)
@@ -210,7 +210,7 @@ test('apply create: a draft, then Path, Type and Status', async (t) => {
       .options!.find((o) => o.name === name)!.id
   assert.deepEqual(sent, [
     ['F_Path', { text: 'adr/a.md' }],
-    ['F_Type', { singleSelectOptionId: optionId('Type', 'ADR') }],
+    ['F_Collection', { singleSelectOptionId: optionId('Collection', 'ADR') }],
     ['F_status', { singleSelectOptionId: optionId('Status', 'draft') }],
   ])
 })
@@ -234,7 +234,7 @@ test('apply update: the draft is edited, only the values that differ are sent, a
       draftId: 'D_1',
       title: 'old',
       archived: false,
-      values: { Path: 'adr/a.md', Type: 'ADR', Status: 'accepted' },
+      values: { Path: 'adr/a.md', Collection: 'ADR', Status: 'accepted' },
     },
   ])
   await g.provider.items(BOARD)

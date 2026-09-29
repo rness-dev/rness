@@ -69,9 +69,9 @@ const seededFields = (): FField[] => [
     })),
   },
   {
-    id: 'F_Type',
+    id: 'F_Collection',
     databaseId: 2,
-    name: 'Type',
+    name: 'Collection',
     options: ['ADR', 'Specs', 'Plans'].map((name) => ({ id: name, name })),
   },
   {
@@ -243,7 +243,7 @@ test('create: the lines of the spec in order, and the manifest declares the puls
   )
   assert.match(
     lines[2]!,
-    /^created\s+fields Status, Type, Agent, Session, Path$/
+    /^created\s+fields Status, Collection, Agent, Session, Path$/
   )
   assert.match(lines[3]!, /^created\s+views ADR, Specs, Plans, Working$/)
   assert.match(lines[4]!, /^synced\s+2 items: 2 created$/)
@@ -281,15 +281,19 @@ test('sync: created, updated, unchanged and archived, each counted, the steps ap
     items: [
       item(
         'i1',
-        { Path: 'adr/0001-a.md', Type: 'ADR', Status: 'Accepted' },
+        { Path: 'adr/0001-a.md', Collection: 'ADR', Status: 'Accepted' },
         '0001 — A'
       ),
       item(
         'i2',
-        { Path: 'plans/0002-b.md', Type: 'Plans', Status: 'Draft' },
+        { Path: 'plans/0002-b.md', Collection: 'Plans', Status: 'Draft' },
         '0002 — B'
       ),
-      item('i9', { Path: 'adr/0009-gone.md', Type: 'ADR', Status: 'Draft' }),
+      item('i9', {
+        Path: 'adr/0009-gone.md',
+        Collection: 'ADR',
+        Status: 'Draft',
+      }),
     ],
     other: asUser('repo, project'),
   })
@@ -343,14 +347,14 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
     items: [
       item(
         'i1',
-        { Path: 'adr/0001-a.md', Type: 'ADR', Status: 'Accepted' },
+        { Path: 'adr/0001-a.md', Collection: 'ADR', Status: 'Accepted' },
         '0001 — A'
       ),
       item(
         'i2',
         {
           Path: 'plans/0002-b.md',
-          Type: 'Plans',
+          Collection: 'Plans',
           Status: 'In progress',
           Agent: 'working',
           Session: 'claude · s1',

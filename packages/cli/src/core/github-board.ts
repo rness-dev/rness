@@ -14,11 +14,13 @@ const WORKING_VIEW = 'Working'
  * SPIKE-DEPENDENT CHOICES (not yet verified live): the names of the two
  * fields rness's board is grouped and filtered by, and `viewFilter` below.
  * Every use goes through these constants, so a fallback (`rness status`
- * instead of Status, `Collection` instead of Type) is a change to
- * `STATUS_FIELD`, `TYPE_FIELD`, `statusField` and `viewFilter` only.
+ * instead of Status) is a change to `STATUS_FIELD`, `statusField` and
+ * `viewFilter` only. The collection field is `Collection`, not `Type`:
+ * `type:` is GitHub's own filter qualifier for issue types, and an
+ * organization using issue types has a built-in `Type` field (spec 0017 §3).
  */
 export const STATUS_FIELD = 'Status'
-export const TYPE_FIELD = 'Type'
+export const COLLECTION_FIELD = 'Collection'
 
 /**
  * SPIKE-DEPENDENT CHOICE 1 of 2: the board's Status
@@ -37,11 +39,11 @@ export function statusField(fields: readonly gh.Field[]): gh.Field {
 
 /**
  * SPIKE-DEPENDENT CHOICE 2 of 2 (not yet verified live): the filter string of
- * a board view of one type, and of the Working table. If GitHub's filter
- * syntax differs from `field:"value"`, change these two lines.
+ * a board view of one collection, and of the Working table. If GitHub's
+ * filter syntax differs from `field:"value"`, change these two lines.
  */
-export const viewFilter = (typeLabel: string): string =>
-  `${TYPE_FIELD.toLowerCase()}:"${typeLabel}"`
+export const viewFilter = (collection: string): string =>
+  `${COLLECTION_FIELD.toLowerCase()}:"${collection}"`
 export const WORKING_FILTER = 'agent:working'
 
 interface Cache {
@@ -154,7 +156,7 @@ export class GitHubBoards implements Pick<
     }
 
     const status = await withOptions(statusField(fields), layout.statuses)
-    const type = await single(TYPE_FIELD, layout.types)
+    const collection = await single(COLLECTION_FIELD, layout.types)
     const agent = await single('Agent', [WORKING])
     const session = await text('Session')
     const path = await text('Path')
@@ -184,7 +186,7 @@ export class GitHubBoards implements Pick<
         this.#o
       )
     }
-    cache.fields = [status, type, agent, session, path]
+    cache.fields = [status, collection, agent, session, path]
     return added
   }
 
@@ -199,7 +201,7 @@ export class GitHubBoards implements Pick<
         path: r.values['Path'] ?? null,
         title: r.title,
         status: r.values[STATUS_FIELD] ?? null,
-        type: r.values[TYPE_FIELD] ?? null,
+        type: r.values[COLLECTION_FIELD] ?? null,
         agent: r.values['Agent'] ?? null,
         session: r.values['Session'] ?? null,
       }))
@@ -251,7 +253,7 @@ export class GitHubBoards implements Pick<
     const { want } = step
     const values: [string, string | null][] = [
       ['Path', want.path],
-      [TYPE_FIELD, want.type],
+      [COLLECTION_FIELD, want.type],
       [STATUS_FIELD, want.status],
     ]
     if (step.kind === 'create') {
