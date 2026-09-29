@@ -392,12 +392,16 @@ test('npm pack is the source when neither the running nor the installed copy is 
     'WORKSPACE.md',
     (s) => `${s}\nFrom the registry.\n`
   )
-  await fakeNpm(t, { latest: '0.9.0', scaffold: next })
+  // Never the running version, whatever it is.
+  await fakeNpm(t, { latest: '99.0.0', scaffold: next })
   const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
   const r = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, {})
   assert.equal(r.code, 0, r.err)
   assert.match(await read(root, 'WORKSPACE.md'), /From the registry\.\n$/)
-  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.9.0'))
+  assert.equal(
+    await read(root, 'package.json'),
+    await scaffoldPackage('99.0.0')
+  )
 })
 
 test('usage and refusals', async (t) => {
