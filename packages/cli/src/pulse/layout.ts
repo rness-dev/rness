@@ -21,6 +21,22 @@ export interface Desired {
 const statusOf = (status: string | null): string | null =>
   status === null || status === '?' ? null : status
 
+/** The contract's statuses, in lifecycle order; the board's options follow it. */
+const LIFECYCLE = [
+  'Draft',
+  'Proposed',
+  'Ready',
+  'Approved',
+  'In progress',
+  'Blocked',
+  'Accepted',
+  'Implemented',
+  'Completed',
+  'Rejected',
+  'Superseded',
+  'Abandoned',
+]
+
 export function layoutOf(tabs: readonly StatusTab[]): Layout {
   const statuses = new Set<string>()
   for (const tab of tabs)
@@ -29,7 +45,10 @@ export function layoutOf(tabs: readonly StatusTab[]): Layout {
       if (status !== null) statuses.add(status)
     }
   return {
-    statuses: [...statuses],
+    statuses: [
+      ...LIFECYCLE.filter((s) => statuses.has(s)),
+      ...[...statuses].filter((s) => !LIFECYCLE.includes(s)),
+    ],
     types: tabs.map((t) => t.label),
     views: tabs.map((t) => ({ name: t.label, type: t.label })),
   }

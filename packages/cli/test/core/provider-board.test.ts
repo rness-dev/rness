@@ -98,7 +98,7 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
   )
   assert.deepEqual(
     g.fields[0]!.options?.map((o) => o.name),
-    ['draft', 'accepted', 'review']
+    ['review', 'draft', 'accepted']
   )
 })
 
@@ -154,7 +154,7 @@ test('ensureLayout adds only what is missing, and removes nothing', async (t) =>
   ])
   assert.deepEqual(
     g.fields[0]!.options?.map((o) => o.name),
-    ['draft', 'obsolete', 'accepted']
+    ['draft', 'accepted', 'obsolete']
   )
   assert.equal(
     g.fields[0]!.options?.[0]?.id,
@@ -384,4 +384,60 @@ test('anonymous: every board method needs a login', async () => {
     refused
   )
   await assert.rejects(provider.mark(BOARD, ['I'], null), refused)
+})
+
+const boardFields = (statuses: { id: string; name: string }[]) => [
+  { id: 'F_status', databaseId: 1, name: 'Status', options: statuses },
+  {
+    id: 'F_Collection',
+    databaseId: 2,
+    name: 'Collection',
+    options: [
+      { id: 't1', name: 'ADR' },
+      { id: 't2', name: 'Marketing' },
+    ],
+  },
+  {
+    id: 'F_Agent',
+    databaseId: 3,
+    name: 'Agent',
+    options: [{ id: 'a1', name: 'working' }],
+  },
+  { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
+  { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
+]
+
+test("ensureLayout reorders an out-of-order Status, keeping ids and options it does not know after rness's", async (t) => {
+  const g = await board(t, {
+    fields: boardFields([
+      { id: 's2', name: 'accepted' },
+      { id: 's9', name: 'obsolete' },
+      { id: 's1', name: 'draft' },
+    ]),
+    views: ['ADR', 'Marketing', 'Working'],
+  })
+  const lines = await g.provider.ensureLayout(BOARD, layout)
+  assert.deepEqual(lines, ['ordered options'])
+  assert.deepEqual(
+    g.fields[0]!.options?.map((o) => [o.name, o.id]),
+    [
+      ['draft', 's1'],
+      ['accepted', 's2'],
+      ['obsolete', 's9'],
+    ]
+  )
+  assert.equal(g.mutations.filter((m) => m.op === 'setOptions').length, 1)
+})
+
+test('ensureLayout leaves Status alone when its options are in order', async (t) => {
+  const g = await board(t, {
+    fields: boardFields([
+      { id: 's1', name: 'draft' },
+      { id: 's2', name: 'accepted' },
+      { id: 's9', name: 'obsolete' },
+    ]),
+    views: ['ADR', 'Marketing', 'Working'],
+  })
+  assert.deepEqual(await g.provider.ensureLayout(BOARD, layout), [])
+  assert.equal(g.mutations.filter((m) => m.op === 'setOptions').length, 0)
 })

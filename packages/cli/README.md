@@ -154,7 +154,7 @@ never reads it back; if it is not in rness, it does not belong there.
 
 - **Layout**: one item per document (a draft issue: its title, its path and a
   link to it in `<org>/.rness`), and the fields `Status` (the statuses found
-  in `.rness/`, at most 50), `Collection` (one option per tab of
+  in `.rness/`, in lifecycle order, at most 50), `Collection` (one option per tab of
   `rness status`; not `Type`, which is GitHub's own issue-type field and
   filter), `Agent` (`working`), `Session` (`claude · 1a2b3c4d`, plus the
   agent type for a subagent) and `Path`. A board per directory, named as

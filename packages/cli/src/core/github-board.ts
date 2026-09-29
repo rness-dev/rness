@@ -69,6 +69,15 @@ interface Cache {
 const namesOf = (field: gh.Field): string[] =>
   (field.options ?? []).map((o) => o.name)
 
+/** `wanted` first, in its order, then the rest as they were. */
+const orderedFirst = (
+  wanted: readonly string[],
+  all: readonly string[]
+): string[] => {
+  const first = wanted.filter((n) => all.includes(n))
+  return [...first, ...all.filter((n) => !first.includes(n))]
+}
+
 /** The adapter's board methods, for one process: project ids and fields are cached per board. */
 export class GitHubBoards implements Pick<
   Provider,
@@ -131,14 +140,20 @@ export class GitHubBoards implements Pick<
 
     const withOptions = async (
       field: gh.Field,
-      wanted: readonly string[]
+      wanted: readonly string[],
+      reorder = false
     ): Promise<gh.Field> => {
       const have = new Set(namesOf(field))
       const missing = wanted.filter((n) => !have.has(n))
-      if (missing.length === 0) return field
-      added.push(...missing.map((n) => `option ${n}`))
+      const now = namesOf(field)
       // Existing options stay: a hand-made one is not rness's to remove.
-      return gh.setOptions(field, [...namesOf(field), ...missing], this.#o)
+      const grown = [...now, ...missing]
+      const next = reorder ? orderedFirst(wanted, grown) : grown
+      if (next.every((n, i) => n === now[i])) return field
+      added.push(...missing.map((n) => `option ${n}`))
+      if (missing.length === 0) added.push('ordered options')
+      // setOptions resends the ids of the kept options: items keep their value.
+      return gh.setOptions(field, next, this.#o)
     }
     const single = async (
       name: string,
@@ -168,7 +183,7 @@ export class GitHubBoards implements Pick<
     if (fresh) added.push(...layout.statuses.map((n) => `option ${n}`))
     const status = fresh
       ? await gh.setOptions(statusField(fields), layout.statuses, this.#o)
-      : await withOptions(statusField(fields), layout.statuses)
+      : await withOptions(statusField(fields), layout.statuses, true)
     const collection = await single(COLLECTION_FIELD, layout.types)
     const agent = await single('Agent', [WORKING])
     const session = await text('Session')

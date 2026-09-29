@@ -34,7 +34,7 @@ const tabs: StatusTab[] = [
   },
 ]
 
-test('layoutOf: statuses in tab order, deduplicated, never ? or null', () => {
+test('layoutOf: unknown statuses in the order found, deduplicated, never ? or null', () => {
   assert.deepEqual(layoutOf(tabs).statuses, ['accepted', 'draft'])
 })
 
@@ -60,4 +60,58 @@ test('desiredOf: title, body with path and link, status, type', () => {
   assert.equal(second?.status, null, '? is no status')
   assert.equal(third?.status, null)
   assert.equal(third?.type, 'Marketing')
+})
+
+test('layoutOf: the contract statuses in lifecycle order, then the others in the order found', () => {
+  const t: StatusTab[] = [
+    {
+      name: 'adr',
+      label: 'ADR',
+      rows: [
+        row('2', 'Accepted', 'adr/2.md'),
+        row('1', 'Proposed', 'adr/1.md'),
+        row('0', 'Superseded', 'adr/0.md'),
+      ],
+    },
+    {
+      name: 'specs',
+      label: 'Specs',
+      rows: [
+        row('3', 'Approved', 'specs/3.md'),
+        row('4', 'Implemented', 'specs/4.md'),
+        row('5', 'Draft', 'specs/5.md'),
+      ],
+    },
+    {
+      name: 'plans',
+      label: 'Plans',
+      rows: [
+        row('6', 'Ready', 'plans/6.md'),
+        row('7', 'Completed', 'plans/7.md'),
+        row('8', 'In progress', 'plans/8.md'),
+      ],
+    },
+    {
+      name: 'marketing',
+      label: 'Marketing',
+      rows: [
+        row('a', 'scheduled', 'marketing/a.md'),
+        row('b', 'published', 'marketing/b.md'),
+        row('c', 'scheduled', 'marketing/c.md'),
+      ],
+    },
+  ]
+  assert.deepEqual(layoutOf(t).statuses, [
+    'Draft',
+    'Proposed',
+    'Ready',
+    'Approved',
+    'In progress',
+    'Accepted',
+    'Implemented',
+    'Completed',
+    'Superseded',
+    'scheduled',
+    'published',
+  ])
 })
