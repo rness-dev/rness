@@ -14,6 +14,9 @@ CLAUDE.md
 .claude/settings.json
 .mcp.json
 
+# Claude Code's own, per developer (ignored by git globally, not by prettier)
+.claude/settings.local.json
+
 # Copied verbatim into user workspaces by `rness create`
 packages/cli/scaffold/
 
