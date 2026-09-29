@@ -145,10 +145,18 @@ async function workspace(
   )
   if (spec.installed !== undefined) {
     const pkg = join(rnessDir, 'node_modules', '@rness', 'cli')
-    await mkdir(pkg, { recursive: true })
+    await mkdir(join(pkg, 'dist', 'bin'), { recursive: true })
     await writeFile(
       join(pkg, 'package.json'),
-      JSON.stringify({ name: '@rness/cli', version: spec.installed })
+      JSON.stringify({
+        name: '@rness/cli',
+        version: spec.installed,
+        bin: { rness: 'dist/bin/rness.js' },
+      })
+    )
+    await writeFile(
+      join(pkg, 'dist', 'bin', 'rness.js'),
+      `console.log('PINNED ${spec.installed} ' + process.argv.slice(2).join(' '))\n`
     )
   }
   return root
@@ -198,7 +206,7 @@ async function upgrade(
 const read = (root: string, ...rel: string[]) =>
   readFile(join(root, '.rness', ...rel), 'utf8')
 
-test('upgrade merges the target scaffold, pins, installs, and syncs through the new copy', async (t) => {
+test('upgrade merges the target scaffold, pins, installs, syncs through the new copy, and commits', async (t) => {
   await fakeNpm(t, { latest: '0.5.0' })
   const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
   const label = `${basename(root)}/.rness`
@@ -214,17 +222,18 @@ test('upgrade merges the target scaffold, pins, installs, and syncs through the 
       'updated  package.json',
       'installed dependencies with npm',
       'PINNED 0.5.0 sync --yes',
+      `committed ${label} — chore: rness 0.5.0`,
       '',
       `upgraded ${label} to @rness/cli 0.5.0`,
       '',
       'Next:',
-      '  git -C .rness add -A && git -C .rness commit -m "chore: rness 0.5.0"',
+      '  git -C .rness push',
       '  # teammates: git pull — the next rness command installs it',
       '',
     ].join('\n')
   )
-  // The merge is staged: one commit records it, and the next base is 0.5.0.
-  await git(join(root, '.rness'), 'commit', '-q', '-m', 'chore: rness 0.5.0')
+  // One commit records the merge, and the next base is 0.5.0.
+  assert.equal(await git(join(root, '.rness'), 'status', '--porcelain'), '')
   assert.match(
     await git(join(root, '.rness'), 'log', '--topo-order', '--format=%s'),
     /^chore: rness 0\.5\.0\nchore: rness scaffold 0\.5\.0\nchore: rness workspace context$/
@@ -307,7 +316,7 @@ test('adoption: no scaffold commit — identical files pass, a differing one con
   assert.doesNotMatch(r.err, /README\.md/)
 })
 
-test('only the scaffold is behind (the pin moved by pull request): merged, nothing installed', async (t) => {
+test('only the scaffold is behind (the pin moved by pull request): merged, synced, committed, nothing installed', async (t) => {
   await fakeNpm(t, { latest: '0.5.0' })
   const root = await workspace(t, { pin: '0.4.0', installed: '0.5.0' })
   const rnessDir = join(root, '.rness')
@@ -333,7 +342,20 @@ test('only the scaffold is behind (the pin moved by pull request): merged, nothi
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /^scaffold @rness\/cli 0\.5\.0 — merging it into /m)
   assert.match(r.out, /^updated {2}WORKSPACE\.md$/m)
-  assert.doesNotMatch(r.out, /installed|PINNED|package\.json/)
+  assert.doesNotMatch(r.out, /^installed|package\.json/m)
+  // The sync runs all the same: a release may add to the agent files.
+  assert.match(r.out, /^PINNED 0\.5\.0 sync --yes$/m)
+  assert.match(r.out, /^committed .*\.rness — chore: rness 0\.5\.0$/m)
+  // The merge commit: the pull request's history, and the scaffold's.
+  assert.equal(
+    await git(rnessDir, 'log', '-1', '--format=%s'),
+    'chore: rness 0.5.0'
+  )
+  assert.equal(
+    (await git(rnessDir, 'log', '-1', '--format=%P')).split(' ').length,
+    2
+  )
+  assert.equal(await git(rnessDir, 'status', '--porcelain'), '')
 })
 
 test('already at the target, scaffold included: nothing runs; a pin ahead of the installed copy is installed', async (t) => {
@@ -511,7 +533,8 @@ test('a global older than the pin merges the scaffold of the copy installed in .
   const r = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, {})
   assert.equal(r.code, 0, r.err)
   assert.match(await read(root, 'WORKSPACE.md'), /From the installed copy\.\n$/)
-  assert.doesNotMatch(r.out, /PINNED/, 'nothing to install')
+  assert.doesNotMatch(r.out, /^installed/m, 'nothing to install')
+  assert.match(r.out, /^PINNED 0\.5\.0 sync --yes$/m)
 })
 
 test('adoption adds no .gitkeep to a directory that already holds files', async (t) => {
@@ -531,4 +554,88 @@ test('adoption adds no .gitkeep to a directory that already holds files', async 
   const r = await upgrade(undefined, { yes: true, cwd: root })
   assert.doesNotMatch(r.out, /specs\/\.gitkeep/)
   assert.match(r.out, /^added {4}plans\/\.gitkeep$/m)
+})
+
+test('a hook refusing the commit: exit 1, everything staged, what the hook said and the commit to make', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  // Inside .git: a hook that is no file of the tree.
+  const hooks = join(rnessDir, '.git', 'test-hooks')
+  await mkdir(hooks)
+  await writeFile(
+    join(hooks, 'pre-commit'),
+    '#!/bin/sh\necho "org/api/.mcp.json: mcpServers.rness is missing (run rness sync)" >&2\nexit 1\n',
+    { mode: 0o755 }
+  )
+  await git(rnessDir, 'config', 'core.hooksPath', hooks)
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /^org\/api\/\.mcp\.json: mcpServers\.rness is missing \(run rness sync\)$/m
+  )
+  assert.match(r.err, /the commit of .*\.rness was refused/)
+  assert.match(r.out, /^ {2}git -C \.rness commit -m "chore: rness 0\.5\.0"$/m)
+  assert.doesNotMatch(r.out, /git -C \.rness push/)
+  // The merge waits, everything staged.
+  await git(rnessDir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')
+  assert.equal(await git(rnessDir, 'diff', '--name-only'), '')
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.5.0'))
+})
+
+test('a merge in progress in .rness is refused before anything', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  await git(rnessDir, 'checkout', '-q', '-b', 'side')
+  await git(rnessDir, 'commit', '-q', '--allow-empty', '-m', 'side')
+  await git(rnessDir, 'checkout', '-q', 'main')
+  await git(rnessDir, 'merge', '-q', '--no-commit', '--no-ff', 'side')
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /\.rness has a merge in progress; commit it, or abort it with git -C \.rness merge --abort, then rness upgrade\n$/
+  )
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.4.0'))
+})
+
+test('next steps name, per repository, the files sync writes that changed — nothing else', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  await writeFile(
+    join(rnessDir, 'rness.json'),
+    JSON.stringify({
+      contract: 1,
+      org: 'acme',
+      agents: ['claude'],
+      repos: {
+        api: { url: 'https://github.com/acme/api.git' },
+        web: { url: 'https://github.com/acme/web.git' },
+      },
+      scopes: {},
+    })
+  )
+  await git(rnessDir, 'commit', '-qam', 'chore: two repositories')
+  for (const repo of ['api', 'web']) {
+    const dir = join(root, 'org', repo)
+    await mkdir(dir, { recursive: true })
+    await git(dir, 'init', '-q', '-b', 'main')
+    await git(dir, 'commit', '-q', '--allow-empty', '-m', 'init')
+  }
+  // What a sync writes (the fake pinned copy writes nothing), and a
+  // developer's own file, which is none of upgrade's business.
+  const api = join(root, 'org', 'api')
+  await writeFile(join(api, 'AGENTS.md'), 'block\n')
+  await writeFile(join(api, '.mcp.json'), '{}\n')
+  await writeFile(join(api, 'notes.md'), 'mine\n')
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^ {2}git -C org\/api add \.mcp\.json AGENTS\.md && git -C org\/api commit -m "chore: rness 0\.5\.0"$/m
+  )
+  assert.doesNotMatch(r.out, /org\/web|notes\.md/)
 })

@@ -56,6 +56,20 @@ function declared(manifest: Manifest): AgentTarget[] {
   )
 }
 
+/** The files holding the generated block, in every clone. */
+export const BLOCK_FILES: readonly string[] = ['AGENTS.md', 'CLAUDE.md']
+
+/**
+ * Every file `sync` writes in a clone, relative to it: the block's, and the
+ * declared agents' (spec 0011 §3.3).
+ */
+export function writtenFiles(manifest: Manifest): string[] {
+  return [
+    ...BLOCK_FILES,
+    ...declared(manifest).flatMap((t) => t.files.map((f) => f.file)),
+  ]
+}
+
 /**
  * Compile the declared agents into every clone (spec 0011 §3.3), or with
  * `check` only say what is missing. Unsupported names are the caller's to

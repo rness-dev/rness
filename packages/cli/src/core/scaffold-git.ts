@@ -72,6 +72,31 @@ export function scaffoldMessage(subject: string, version: string): string {
   return `${subject}\n\n${SCAFFOLD_TRAILER}: ${version}`
 }
 
+/**
+ * Commit everything in `rnessDir` — the end of an upgrade, which found it
+ * clean (spec 0013 §8). The hooks run: a refusal hands back what they said,
+ * and leaves everything staged. Nothing to commit and no merge: `nothing`.
+ */
+export async function commitUpgrade(
+  rnessDir: string,
+  message: string
+): Promise<
+  { kind: 'committed' | 'nothing' } | { kind: 'refused'; output: string }
+> {
+  const add = await run(rnessDir, ['add', '-A'])
+  if (add.code !== 0) return { kind: 'refused', output: add.stderr.trim() }
+  const staged = await run(rnessDir, ['diff', '--cached', '--quiet'])
+  if (staged.code === 0 && !(await mergeInProgress(rnessDir)))
+    return { kind: 'nothing' }
+  const commit = await run(rnessDir, ['commit', '-q', '-m', message])
+  if (commit.code !== 0)
+    return {
+      kind: 'refused',
+      output: `${commit.stdout}\n${commit.stderr}`.trim(),
+    }
+  return { kind: 'committed' }
+}
+
 /** Whether a merge waits for its commit in `dir` (`MERGE_HEAD` exists). */
 export async function mergeInProgress(dir: string): Promise<boolean> {
   const r = await run(dir, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])

@@ -1,10 +1,13 @@
 import { join } from 'node:path'
 
-import { agentTargets, leftoverTargets } from '../core/agent-targets.ts'
 import {
-  type AgentTarget,
+  BLOCK_FILES,
+  agentTargets,
+  leftoverTargets,
+  writtenFiles,
+} from '../core/agent-targets.ts'
+import {
   SUPPORTED_AGENTS,
-  TARGETS,
   unsupportedAgents,
   unsupportedMessage,
 } from '../core/agents.ts'
@@ -66,11 +69,6 @@ interface Target {
   depth: number
   label: string
 }
-
-// Excluded from the cleanliness check whatever their status: sync writes them itself. A
-// user's uncommitted edit to a tracked AGENTS.md is therefore not a veto — git pull
-// --ff-only still refuses to overwrite it and that surfaces as a problem.
-const MANAGED_FILES = ['AGENTS.md', 'CLAUDE.md']
 
 function targetsOf(
   manifest: Manifest,
@@ -338,16 +336,11 @@ export async function syncCommand(
         } else if (opts.pull === true && !check) {
           try {
             // The files sync writes itself are not the developer's changes:
-            // the blocks, and the declared agents' files (spec 0011 §3.3).
-            const written = [
-              ...MANAGED_FILES,
-              ...(manifest.agents ?? []).flatMap((a) =>
-                Object.hasOwn(TARGETS, a)
-                  ? (TARGETS[a] as AgentTarget).files.map((f) => f.file)
-                  : []
-              ),
-            ]
-            if (!(await isClean(dir, written))) {
+            // the blocks, and the declared agents' files (spec 0011 §3.3). A
+            // user's uncommitted edit to a tracked AGENTS.md is therefore not
+            // a veto — git pull --ff-only still refuses to overwrite it and
+            // that surfaces as a problem.
+            if (!(await isClean(dir, writtenFiles(manifest)))) {
               lines.push(['skipped', `${label} (working tree not clean)`])
               continue
             }
@@ -406,7 +399,7 @@ export async function syncCommand(
           // a duplicate of its target. At the root a link is still never
           // rewritten, but the other file is (spec 0011 §2).
           const [agentsLinked, claudeLinked] = await Promise.all(
-            MANAGED_FILES.map((f) => isSymlink(join(t.dir, f)))
+            BLOCK_FILES.map((f) => isSymlink(join(t.dir, f)))
           )
           const atRoot = t.scope === null
           if (!atRoot && (agentsLinked === true || claudeLinked === true)) {

@@ -124,6 +124,32 @@ export async function isClean(
   )
 }
 
+/**
+ * Which of `paths` differ from `HEAD` in `dir` — modified, added or untracked
+ * (ignored ones are not). Paths relative to `dir`, in git's order.
+ */
+export async function changedPaths(
+  dir: string,
+  paths: readonly string[]
+): Promise<string[]> {
+  if (paths.length === 0) return []
+  const entries = (
+    await git(
+      ['status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths],
+      dir
+    )
+  ).split('\0')
+  const changed: string[] = []
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i] ?? ''
+    if (entry.length < 4) continue
+    changed.push(entry.slice(3))
+    // A rename or copy is followed by its source path.
+    if (entry[0] === 'R' || entry[0] === 'C') i++
+  }
+  return changed
+}
+
 export async function pullFastForward(
   dir: string,
   credentials?: GitCredentials | null

@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os'
 import { basename, join, relative } from 'node:path'
 import { promisify } from 'node:util'
 
+import { writtenFiles } from '../core/agent-targets.ts'
 import { readPinnedCli } from '../core/delegate.ts'
 import { exists, writeFileAtomic } from '../core/fs.ts'
-import { isClean } from '../core/git.ts'
+import { changedPaths, isClean } from '../core/git.ts'
+import { loadManifest } from '../core/manifest.ts'
 import {
   EXACT_VERSION,
   compareVersions,
@@ -23,8 +25,10 @@ import {
 import { renderScaffold } from '../core/scaffold-copy.ts'
 import {
   buildScaffoldCommit,
+  commitUpgrade,
   findScaffoldBase,
   isRepository,
+  mergeInProgress,
   mergeScaffold,
   withoutRedundantKeeps,
 } from '../core/scaffold-git.ts'
@@ -32,6 +36,7 @@ import { scaffoldDir } from '../core/scaffold.ts'
 import { status } from '../core/style.ts'
 import { syncBlocks } from '../core/sync-blocks.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
+import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -132,21 +137,67 @@ async function declaredManager(
   return `${pm}@${await packageManagerVersion(pm)}`
 }
 
-/** The next steps: one commit, which records the merge when there was one. */
+/** A clone whose files sync writes changed: its path from `cwd`, and those files. */
+interface CloneChanges {
+  dir: string
+  paths: string[]
+}
+
+/**
+ * The clones where the sync changed a file it writes — never the developer's
+ * other files. Other repositories, other review flows: `upgrade` commits
+ * none of them, the next steps say what to add (spec 0013 §8).
+ */
+async function clonesToCommit(
+  root: string,
+  cwd: string,
+  manifest: Manifest
+): Promise<CloneChanges[]> {
+  const files = writtenFiles(manifest)
+  const clones: CloneChanges[] = []
+  for (const repo of Object.keys(manifest.repos)) {
+    const dir = join(root, 'org', repo)
+    if (!(await exists(dir))) continue
+    try {
+      const paths = await changedPaths(dir, files)
+      if (paths.length > 0)
+        clones.push({ dir: relative(cwd, dir) || '.', paths })
+    } catch {
+      // Not a repository: sync reported it already.
+    }
+  }
+  return clones
+}
+
+/**
+ * The next steps: what `upgrade` did not do. A refused commit is the
+ * maintainer's to make, and the command's exit code.
+ */
 function finish(
   ui: Ui,
   cwd: string,
   rnessDir: string,
   label: string,
-  target: string
+  target: string,
+  ending: {
+    commit: 'committed' | 'nothing' | 'refused'
+    clones: readonly CloneChanges[]
+  }
 ): number {
   const rel = relative(cwd, rnessDir) || '.'
-  const next = [
-    `git -C ${rel} add -A && git -C ${rel} commit -m "chore: rness ${target}"`,
-    '# teammates: git pull — the next rness command installs it',
-  ]
+  const message = `chore: rness ${target}`
+  const next: string[] = []
+  if (ending.commit === 'committed') next.push(`git -C ${rel} push`)
+  if (ending.commit === 'refused')
+    next.push(`git -C ${rel} commit -m "${message}"`)
+  for (const c of ending.clones)
+    next.push(
+      `git -C ${c.dir} add ${c.paths.join(' ')} && git -C ${c.dir} commit -m "${message}"`
+    )
+  if (ending.commit !== 'nothing')
+    next.push('# teammates: git pull — the next rness command installs it')
   if (ui.session) {
-    ui.note('Next steps', next)
+    if (next.length > 0) ui.note('Next steps', next)
     ui.outro(`${label} runs @rness/cli ${target}`)
   } else
     process.stdout.write(
@@ -154,19 +205,20 @@ function finish(
         '',
         status('upgraded', `${label} to @rness/cli ${target}`),
         '',
-        'Next:',
-        ...next.map((line) => `  ${line}`),
-        '',
+        ...(next.length > 0
+          ? ['Next:', ...next.map((line) => `  ${line}`), '']
+          : []),
       ].join('\n')
     )
-  return 0
+  return ending.commit === 'refused' ? 1 : 0
 }
 
 /**
- * `rness upgrade [version]`: move a workspace to another `@rness/cli` — pin it
- * in `.rness/package.json` (the one place the version is written), install
- * with the workspace's package manager, sync through the new copy (spec 0006
- * §3). Never delegated: the pinned copy is what is being replaced.
+ * `rness upgrade [version]`: move a workspace to another `@rness/cli` — merge
+ * its scaffold, pin it in `.rness/package.json` (the one place the version is
+ * written), install with the workspace's package manager, sync through the
+ * new copy (spec 0006 §3), commit `.rness` (spec 0013 §8). Never delegated:
+ * the pinned copy is what is being replaced.
  */
 export async function upgradeCommand(
   version: string | undefined,
@@ -219,6 +271,12 @@ export async function upgradeCommand(
     // repository with nothing uncommitted.
     if (!(await isRepository(ws.rnessDir))) {
       process.stderr.write(`${label} is not a git repository\n`)
+      return 1
+    }
+    if (await mergeInProgress(ws.rnessDir)) {
+      process.stderr.write(
+        `${label} has a merge in progress; commit it, or abort it with git -C ${relative(cwd, ws.rnessDir) || '.'} merge --abort, then ${rnessCommand()} upgrade\n`
+      )
       return 1
     }
     if (!(await isClean(ws.rnessDir))) {
@@ -337,53 +395,79 @@ export async function upgradeCommand(
       await writePin(ws.rnessDir, moved.spec, target)
 
     // Only the scaffold was behind: the pinned copy is already installed.
-    if (pin.spec === target && installed === target)
-      return finish(ui, cwd, ws.rnessDir, label, target)
-
-    try {
-      await ui.step(
-        { doing: `installing dependencies with ${pm}` },
-        () => installDependencies(pm, ws.rnessDir),
-        () => ['installed', `dependencies with ${pm}`]
-      )
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      ui.error(message)
-      // After a merge, `git merge --abort` puts package.json back; rewriting
-      // it here, even byte for byte, would make git refuse the abort.
-      if (!merged) {
-        for (const [file, text] of restore) await writeFileAtomic(file, text)
-        ui.hint(
-          `restored ${relative(cwd, packageFile) || packageFile}`,
-          'stderr'
+    const mustInstall = !(pin.spec === target && installed === target)
+    if (mustInstall) {
+      try {
+        await ui.step(
+          { doing: `installing dependencies with ${pm}` },
+          () => installDependencies(pm, ws.rnessDir),
+          () => ['installed', `dependencies with ${pm}`]
         )
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        ui.error(message)
+        // After a merge, `git merge --abort` puts package.json back; rewriting
+        // it here, even byte for byte, would make git refuse the abort.
+        if (!merged) {
+          for (const [file, text] of restore) await writeFileAtomic(file, text)
+          ui.hint(
+            `restored ${relative(cwd, packageFile) || packageFile}`,
+            'stderr'
+          )
+        }
+        if (merged)
+          ui.hint(
+            `the scaffold merge is still staged; undo it with: git -C ${relative(cwd, ws.rnessDir) || '.'} merge --abort`,
+            'stderr'
+          )
+        if (/minimum.?release.?age|NO_MATURE/i.test(message))
+          ui.hint(
+            "pnpm refuses versions published less than 24 h ago: add '@rness/cli' under minimumReleaseAgeExclude in .rness/pnpm-workspace.yaml",
+            'stderr'
+          )
+        return 1
       }
-      if (merged)
-        ui.hint(
-          `the scaffold merge is still staged; undo it with: git -C ${relative(cwd, ws.rnessDir) || '.'} merge --abort`,
-          'stderr'
+      const now = (await readPinnedCli(ws.rnessDir))?.version ?? null
+      if (now !== target) {
+        process.stderr.write(
+          `${pm} install left @rness/cli ${now ?? 'not installed'} in ${label}, not ${target}\n`
         )
-      if (/minimum.?release.?age|NO_MATURE/i.test(message))
-        ui.hint(
-          "pnpm refuses versions published less than 24 h ago: add '@rness/cli' under minimumReleaseAgeExclude in .rness/pnpm-workspace.yaml",
-          'stderr'
-        )
-      return 1
-    }
-    const now = (await readPinnedCli(ws.rnessDir))?.version ?? null
-    if (now !== target) {
-      process.stderr.write(
-        `${pm} install left @rness/cli ${now ?? 'not installed'} in ${label}, not ${target}\n`
-      )
-      return 1
+        return 1
+      }
     }
 
-    // The installed copy is a child with plain output: never a prompt.
+    // Whatever the upgrade had to do: a release may add to the agent files
+    // as well as to the blocks (spec 0013 §8). The installed copy is a child
+    // with plain output: never a prompt.
     ui.gitIsSilent = true
     const code = await syncBlocks(ui, ws.root, basename(ws.root))
     if (code !== 0) return code
 
-    return finish(ui, cwd, ws.rnessDir, label, target)
+    // 3. The commit, the end of the upgrade (spec 0013 §8): `.rness` was
+    // clean, so everything in it now is the upgrade's.
+    const message = `chore: rness ${target}`
+    const committed = await commitUpgrade(ws.rnessDir, message)
+    if (committed.kind === 'committed')
+      ui.line(
+        'committed',
+        `${label} — ${message}`,
+        `Committed ${label}: ${message}`
+      )
+    if (committed.kind === 'refused') {
+      ui.error(
+        `the commit of ${label} was refused; everything is staged — deal with what git said, then commit`
+      )
+      for (const line of committed.output.split('\n'))
+        if (line.trim() !== '') ui.hint(line, 'stderr')
+    }
+    return finish(ui, cwd, ws.rnessDir, label, target, {
+      commit: committed.kind,
+      clones: await clonesToCommit(
+        ws.root,
+        cwd,
+        await loadManifest(ws.rnessDir)
+      ),
+    })
   } catch (e) {
     return reportError(e)
   }
