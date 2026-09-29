@@ -65,6 +65,17 @@ const hooksFor = (rness: string) => ({
       ],
     },
   ],
+  SessionEnd: [
+    {
+      hooks: [
+        {
+          type: 'command',
+          command: hookLine(rness, 'session-end'),
+          timeout: 10,
+        },
+      ],
+    },
+  ],
 })
 
 async function workspace(t: TestContext, agents?: string[]) {
@@ -164,6 +175,7 @@ test("the team's own hooks stay; rness's are appended after them", async (t) => 
     ...hooksFor('../../.rness').SessionStart,
   ])
   assert.deepEqual(hooks.PostToolUse, hooksFor('../../.rness').PostToolUse)
+  assert.deepEqual(hooks.SessionEnd, hooksFor('../../.rness').SessionEnd)
 })
 
 test('the workspace root file is in no repository: never among the written files of a clone', async (t) => {
@@ -185,7 +197,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
       label: SETTINGS,
       status: 'stale',
       detail:
-        'hooks.SessionStart lacks the rness session-start hook; hooks.PostToolUse lacks the rness post-tool-use hook',
+        'hooks.SessionStart lacks the rness session-start hook; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
     },
     { label: PLUGIN_JSON, status: 'stale', detail: 'missing' },
     { label: SKILL, status: 'stale', detail: 'missing' },
@@ -193,7 +205,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
       label: `org/api/${SETTINGS}`,
       status: 'stale',
       detail:
-        'permissions.additionalDirectories lacks ../../.rness; hooks.SessionStart lacks the rness session-start hook; hooks.PostToolUse lacks the rness post-tool-use hook',
+        'permissions.additionalDirectories lacks ../../.rness; hooks.SessionStart lacks the rness session-start hook; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
     },
     {
       label: 'org/api/.mcp.json',

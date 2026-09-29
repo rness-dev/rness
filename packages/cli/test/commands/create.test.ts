@@ -2053,7 +2053,11 @@ test('create --agent declares it in the new workspace and writes its files in ev
   assert.deepEqual(settings.permissions, {
     additionalDirectories: ['../../.rness'],
   })
-  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart', 'PostToolUse'])
+  assert.deepEqual(Object.keys(settings.hooks), [
+    'SessionStart',
+    'PostToolUse',
+    'SessionEnd',
+  ])
   assert.match(r.out, /updated {2}org\/api\/\.claude\/settings\.json\n/)
   assert.match(r.out, /updated {2}\.claude\/settings\.json\n/)
   await access(join(root, 'org', 'api', '.mcp.json'))

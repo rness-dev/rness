@@ -20,7 +20,12 @@ const ROOT_START =
 const ROOT_EDIT =
   'f="$CLAUDE_PROJECT_DIR/.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook post-tool-use; fi'
 
-const hooks = (start: string, edit: string) => [
+const CLONE_END =
+  'f="$CLAUDE_PROJECT_DIR/../../.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook session-end; fi'
+const ROOT_END =
+  'f="$CLAUDE_PROJECT_DIR/.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook session-end; fi'
+
+const hooks = (start: string, edit: string, end: string) => [
   {
     path: ['hooks', 'SessionStart'],
     contains: { hooks: [{ type: 'command', command: start, timeout: 10 }] },
@@ -33,6 +38,11 @@ const hooks = (start: string, edit: string) => [
       hooks: [{ type: 'command', command: edit, timeout: 10 }],
     },
     label: 'the rness post-tool-use hook',
+  },
+  {
+    path: ['hooks', 'SessionEnd'],
+    contains: { hooks: [{ type: 'command', command: end, timeout: 10 }] },
+    label: 'the rness session-end hook',
   },
 ]
 
@@ -89,7 +99,7 @@ test('Claude Code is the one target: read access to .rness, the rness MCP server
             path: ['permissions', 'additionalDirectories'],
             contains: '../../.rness',
           },
-          ...hooks(CLONE_START, CLONE_EDIT),
+          ...hooks(CLONE_START, CLONE_EDIT, CLONE_END),
         ],
       },
       {
@@ -112,7 +122,7 @@ test('Claude Code is the one target: read access to .rness, the rness MCP server
       {
         file: '.claude/settings.json',
         at: 'root',
-        guarantees: hooks(ROOT_START, ROOT_EDIT),
+        guarantees: hooks(ROOT_START, ROOT_EDIT, ROOT_END),
       },
       ...plugin('.rness', 'root'),
     ],
@@ -130,14 +140,15 @@ test('the session-start line is valid sh, and its fallback is one JSON object', 
     systemMessage:
       'rness: ../../.rness is not installed, so the workspace context is not loaded. Clone the workspace, then install its dependencies in .rness.',
   })
-  // The edit hook says nothing and succeeds.
-  assert.equal(
-    execFileSync('sh', ['-c', CLONE_EDIT], {
-      env: { ...process.env, CLAUDE_PROJECT_DIR: '/nonexistent/org/web' },
-      encoding: 'utf8',
-    }),
-    ''
-  )
+  // The edit and end hooks say nothing and succeed.
+  for (const line of [CLONE_EDIT, CLONE_END])
+    assert.equal(
+      execFileSync('sh', ['-c', line], {
+        env: { ...process.env, CLAUDE_PROJECT_DIR: '/nonexistent/org/web' },
+        encoding: 'utf8',
+      }),
+      ''
+    )
 })
 
 test('unsupportedAgents keeps the names this version has no target for', () => {

@@ -20,7 +20,6 @@ import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
 import { PACKAGE_MANAGERS } from './core/pm.ts'
 import { banner, bold, paint } from './core/style.ts'
-import { reportError } from './report.ts'
 import { VERSION } from './version.ts'
 
 interface RunState {
@@ -157,11 +156,7 @@ function buildProgram(state: RunState): Command {
         githubApi?: string
       }) => {
         const { path, ...rest } = opts
-        try {
-          state.code = await pulseMarkCommand({ ...rest, paths: path ?? [] })
-        } catch (e) {
-          state.code = reportError(e)
-        }
+        state.code = await pulseMarkCommand({ ...rest, paths: path ?? [] })
       }
     )
 

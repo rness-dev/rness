@@ -3,14 +3,16 @@ import { isAbsolute, posix, relative, resolve, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
 import { checkWorkspace } from '../core/check-workspace.ts'
-import { COLLECTIONS } from '../core/context.ts'
+import { COLLECTIONS, assembleContext } from '../core/context.ts'
 import { checkContract } from '../core/contract.ts'
+import { parseFrontMatter } from '../core/frontmatter.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
 import { pinDrift, workspacePackageManager } from '../core/pinned.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
 import type { CollectionName, Workspace } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { scopeSummary } from '../mcp/tools.ts'
+import { type Spawn, detached, takeFailure } from '../pulse/detached.ts'
 import { VERSION } from '../version.ts'
 
 /**
@@ -24,6 +26,8 @@ export interface HookIo {
   output: Writable
   error: Writable
   env: NodeJS.ProcessEnv
+  /** Runs `rness <args>` detached (the pulse); tests record instead. */
+  spawn?: Spawn
 }
 
 type Input = Record<string, unknown>
@@ -93,15 +97,80 @@ async function safetyNet(
   return notes
 }
 
+/** `claude · <first 8 of session_id>`, with the agent type when there is one. */
+function sessionOf(input: Input): string | null {
+  const id = input['session_id']
+  if (typeof id !== 'string' || id === '') return null
+  const type = input['agent_type']
+  return [
+    'claude',
+    ...(typeof type === 'string' && type !== '' ? [type] : []),
+    id.slice(0, 8),
+  ].join(' · ')
+}
+
+/** Whether the workspace declares a pulse; never throws. */
+async function hasPulse(ws: Workspace): Promise<boolean> {
+  try {
+    return (await loadManifest(ws.rnessDir)).pulse !== null
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Starts `pulse mark` detached when the workspace declares a pulse and the
+ * input names a session. The hooks never fail the session over it.
+ */
+async function markDetached(
+  ws: Workspace,
+  input: Input,
+  io: HookIo,
+  rest: (session: string) => string[] | null
+): Promise<void> {
+  try {
+    const session = sessionOf(input)
+    if (session === null || !(await hasPulse(ws))) return
+    const args = rest(session)
+    if (args !== null)
+      (io.spawn ?? detached)(['pulse', 'mark', ...args], ws.root)
+  } catch {
+    // The pulse is a courtesy: nothing here may reach the session.
+  }
+}
+
+/** The plans of the scope whose status is In progress, as `.rness/`-relative paths. */
+async function plansInProgress(
+  ws: Workspace,
+  manifest: Awaited<ReturnType<typeof loadManifest>>,
+  scope: string | null
+): Promise<string[]> {
+  const context = await assembleContext({
+    rnessDir: ws.rnessDir,
+    manifest,
+    scope,
+  })
+  const plans = context.collections.find((c) => c.name === 'plans')
+  return (plans?.files ?? [])
+    .filter((f) => {
+      try {
+        return parseFrontMatter(f.body)?.['status'] === 'In progress'
+      } catch {
+        return false
+      }
+    })
+    .map((f) => `plans/${f.rel}`)
+}
+
 /**
  * A banner for the developer and the scope's summary for the model (spec
  * 0015 §3). One JSON object, always, and exit 0: a failure is a line of it.
  */
 async function sessionStart(
   input: Input,
-  env: NodeJS.ProcessEnv
+  io: HookIo
 ): Promise<Record<string, unknown>> {
-  const cwd = cwdOf(input, env)
+  const cwd = cwdOf(input, io.env)
   let banner: string | null = null
   let context: string[] = []
   let notes: string[]
@@ -121,9 +190,17 @@ async function sessionStart(
       `These documents are in ${at}: read one there, or with rness_read when the rness MCP server is connected.`,
     ]
     notes = await safetyNet(ws, manifest)
+    const paths = await plansInProgress(ws, manifest, scope)
+    await markDetached(ws, input, io, (session) =>
+      paths.length === 0
+        ? null
+        : ['--session', session, ...paths.flatMap((p) => ['--path', p])]
+    )
   } catch (e) {
     notes = [message(e)]
   }
+  const failure = await takeFailure()
+  if (failure !== null) notes.push(`pulse not updated — ${failure}`)
   const warnings = notes.map((n) => `rness: ${n}`)
   const shown = [
     ...(banner !== null && input['source'] !== 'compact' ? [banner] : []),
@@ -176,6 +253,13 @@ async function postToolUse(input: Input, io: HookIo): Promise<number> {
       await realpath(file).catch(() => file)
     )
   if (rel === null) return 0
+  if (rel.endsWith('.md'))
+    await markDetached(ws, input, io, (session) => [
+      '--session',
+      session,
+      '--path',
+      rel,
+    ])
   const first = rel.split('/')[0] ?? ''
   let problems: string[] = []
   if (rel === 'rness.json') {
@@ -203,6 +287,21 @@ async function postToolUse(input: Input, io: HookIo): Promise<number> {
   return 2
 }
 
+/** Clears the session's marks, detached; says nothing. */
+async function sessionEnd(input: Input, io: HookIo): Promise<number> {
+  try {
+    const ws = await findWorkspace(cwdOf(input, io.env))
+    await markDetached(ws, input, io, (session) => [
+      '--end',
+      '--session',
+      session,
+    ])
+  } catch {
+    // No workspace, nothing to clear.
+  }
+  return 0
+}
+
 export async function hookCommand(
   event: string,
   io: HookIo = {
@@ -212,14 +311,19 @@ export async function hookCommand(
     env: process.env,
   }
 ): Promise<number> {
-  if (event !== 'session-start' && event !== 'post-tool-use') {
+  if (
+    event !== 'session-start' &&
+    event !== 'post-tool-use' &&
+    event !== 'session-end'
+  ) {
     io.error.write(
-      `unknown hook event ${JSON.stringify(event)} (known: session-start, post-tool-use)\n`
+      `unknown hook event ${JSON.stringify(event)} (known: session-start, post-tool-use, session-end)\n`
     )
     return 1
   }
   const input = await readInput(io.input)
   if (event === 'post-tool-use') return postToolUse(input, io)
-  io.output.write(`${JSON.stringify(await sessionStart(input, io.env))}\n`)
+  if (event === 'session-end') return sessionEnd(input, io)
+  io.output.write(`${JSON.stringify(await sessionStart(input, io))}\n`)
   return 0
 }

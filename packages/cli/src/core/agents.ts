@@ -33,7 +33,7 @@ export interface AgentTarget {
 /** The pinned copy's launcher, inside `.rness`. */
 const PINNED_BIN = 'node_modules/@rness/cli/dist/bin/rness.js'
 
-export type HookEvent = 'session-start' | 'post-tool-use'
+export type HookEvent = 'session-start' | 'post-tool-use' | 'session-end'
 
 /**
  * The line Claude Code runs for a hook (spec 0015 §2.2), `rness` being the
@@ -45,14 +45,14 @@ export type HookEvent = 'session-start' | 'post-tool-use'
  */
 export function hookLine(rness: string, event: HookEvent): string {
   const run = `f="$CLAUDE_PROJECT_DIR/${rness}/${PINNED_BIN}"; if [ -f "$f" ]; then node "$f" hook ${event};`
-  if (event === 'post-tool-use') return `${run} fi`
+  if (event !== 'session-start') return `${run} fi`
   const missing = JSON.stringify({
     systemMessage: `rness: ${rness} is not installed, so the workspace context is not loaded. Clone the workspace, then install its dependencies in .rness.`,
   })
   return `${run} else echo '${missing}'; fi`
 }
 
-/** The two hook entries, for a project directory reaching `.rness` at `rness`. */
+/** The three hook entries, for a project directory reaching `.rness` at `rness`. */
 function hooks(rness: string): Guarantee[] {
   return [
     {
@@ -81,6 +81,19 @@ function hooks(rness: string): Guarantee[] {
         ],
       },
       label: 'the rness post-tool-use hook',
+    },
+    {
+      path: ['hooks', 'SessionEnd'],
+      contains: {
+        hooks: [
+          {
+            type: 'command',
+            command: hookLine(rness, 'session-end'),
+            timeout: 10,
+          },
+        ],
+      },
+      label: 'the rness session-end hook',
     },
   ]
 }

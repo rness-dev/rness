@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 import { hookCommand } from '../../src/commands/hook.ts'
 import { OWN_COMMANDS } from '../../src/core/catch-up.ts'
+import { recordFailure } from '../../src/pulse/detached.ts'
 import { VERSION } from '../../src/version.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
@@ -29,9 +30,14 @@ status: ${status}
 # ${title}
 `
 
-async function workspace(t: TestContext, files: Record<string, string> = {}) {
+async function workspace(
+  t: TestContext,
+  files: Record<string, string> = {},
+  pulse?: { project: number }
+) {
   return makeWorkspace(t, {
     org: 'acme',
+    ...(pulse === undefined ? {} : { pulse }),
     repos: { web: { url: 'https://github.com/acme/web.git' } },
     scopes: { web: { path: 'org/web' } },
     files: {
@@ -44,6 +50,11 @@ async function workspace(t: TestContext, files: Record<string, string> = {}) {
   })
 }
 
+interface Spawned {
+  args: string[]
+  cwd: string
+}
+
 interface Ran {
   code: number
   out: string
@@ -54,7 +65,8 @@ interface Ran {
 async function hook(
   event: string,
   input: unknown,
-  env: NodeJS.ProcessEnv = {}
+  env: NodeJS.ProcessEnv = {},
+  spawned?: Spawned[]
 ): Promise<Ran> {
   let out = ''
   let err = ''
@@ -72,6 +84,11 @@ async function hook(
     output: sink((s) => (out += s)),
     error: sink((s) => (err += s)),
     env,
+    ...(spawned === undefined
+      ? {}
+      : {
+          spawn: (args: string[], cwd: string) => spawned.push({ args, cwd }),
+        }),
   })
   return { code, out, err }
 }
@@ -265,4 +282,168 @@ test('an edit elsewhere in .rness (a script, a README at the root) is not checke
   const file = join(root, '.rness', 'scripts', 'x.mjs')
   await writeFile(file, '')
   assert.equal((await hook('post-tool-use', edit(file, root))).code, 0)
+})
+
+// --- the pulse (spec 0017 §5) ------------------------------------------------
+
+const plan = (status: string) => `---
+status: ${status}
+---
+
+# 0026 — A plan
+`
+const PULSE_FILES = {
+  'plans/0026-cli-pulse.md': plan('In progress'),
+  'plans/web/0027-web.md': plan('In progress'),
+  'plans/0028-done.md': plan('Completed'),
+}
+const ID = '1a2b3c4d-5e6f-7a8b-9c0d-e1f2a3b4c5d6'
+
+test('session start with a pulse: marks the plans in progress of the scope, detached; the answer is unchanged', async (t) => {
+  const root = await workspace(t, PULSE_FILES, { project: 7 })
+  const web = join(root, 'org', 'web')
+  const spawned: Spawned[] = []
+  const r = await hook(
+    'session-start',
+    { cwd: web, source: 'startup', session_id: ID },
+    {},
+    spawned
+  )
+  assert.equal(r.code, 0)
+  assert.deepEqual(spawned, [
+    {
+      cwd: root,
+      args: [
+        'pulse',
+        'mark',
+        '--session',
+        'claude · 1a2b3c4d',
+        '--path',
+        'plans/web/0027-web.md',
+        '--path',
+        'plans/0026-cli-pulse.md',
+      ],
+    },
+  ])
+  assert.deepEqual(
+    JSON.parse(r.out),
+    JSON.parse(
+      (
+        await hook('session-start', {
+          cwd: web,
+          source: 'startup',
+          session_id: ID,
+        })
+      ).out
+    )
+  )
+})
+
+test('session start of a subagent: its type is in the session', async (t) => {
+  const root = await workspace(t, PULSE_FILES, { project: 7 })
+  const spawned: Spawned[] = []
+  await hook(
+    'session-start',
+    { cwd: root, session_id: ID, agent_type: 'reviewer' },
+    {},
+    spawned
+  )
+  assert.deepEqual(spawned[0]?.args.slice(0, 4), [
+    'pulse',
+    'mark',
+    '--session',
+    'claude · reviewer · 1a2b3c4d',
+  ])
+})
+
+test('no pulse declared, no session, or no plan in progress: nothing is spawned', async (t) => {
+  const spawned: Spawned[] = []
+  const none = await workspace(t, PULSE_FILES)
+  await hook('session-start', { cwd: none, session_id: ID }, {}, spawned)
+  await hook(
+    'post-tool-use',
+    edit(join(none, '.rness', 'plans', '0026-cli-pulse.md'), none),
+    {},
+    spawned
+  )
+  await hook('session-end', { cwd: none, session_id: ID }, {}, spawned)
+  const idle = await workspace(
+    t,
+    { 'plans/0028-done.md': plan('Completed') },
+    { project: 7 }
+  )
+  await hook('session-start', { cwd: idle, session_id: ID }, {}, spawned)
+  const pulse = await workspace(t, PULSE_FILES, { project: 7 })
+  await hook('session-start', { cwd: pulse }, {}, spawned)
+  assert.deepEqual(spawned, [])
+})
+
+test('post-tool-use marks the edited document, after the check; outside .rness, nothing', async (t) => {
+  const root = await workspace(
+    t,
+    { 'specs/0001-a.md': spec('Approved') },
+    { project: 7 }
+  )
+  const web = join(root, 'org', 'web')
+  const spawned: Spawned[] = []
+  const file = join(root, '.rness', 'specs', '0001-a.md')
+  const input = { ...edit(file, web), session_id: ID }
+  assert.equal((await hook('post-tool-use', input, {}, spawned)).code, 0)
+  assert.deepEqual(spawned, [
+    {
+      cwd: root,
+      args: [
+        'pulse',
+        'mark',
+        '--session',
+        'claude · 1a2b3c4d',
+        '--path',
+        'specs/0001-a.md',
+      ],
+    },
+  ])
+  spawned.length = 0
+  await hook(
+    'post-tool-use',
+    { ...edit(join(web, 'src', 'app.ts'), web), session_id: ID },
+    {},
+    spawned
+  )
+  assert.deepEqual(spawned, [])
+})
+
+test('session end spawns the clearing mark, and says nothing', async (t) => {
+  const root = await workspace(t, {}, { project: 7 })
+  const spawned: Spawned[] = []
+  const r = await hook(
+    'session-end',
+    { cwd: root, session_id: ID },
+    {},
+    spawned
+  )
+  assert.deepEqual(r, { code: 0, out: '', err: '' })
+  assert.deepEqual(spawned, [
+    {
+      cwd: root,
+      args: ['pulse', 'mark', '--end', '--session', 'claude · 1a2b3c4d'],
+    },
+  ])
+})
+
+test('a failure recorded by an earlier mark is in the next session start, once', async (t) => {
+  const root = await workspace(t)
+  const reason = 'the pulse needs the project scope: run rness login'
+  await recordFailure(reason)
+  const line = `rness: pulse not updated — ${reason}`
+  const first = JSON.parse((await hook('session-start', { cwd: root })).out)
+  assert.ok(first.systemMessage.split('\n').includes(line))
+  assert.ok(
+    first.hookSpecificOutput.additionalContext.split('\n').includes(line)
+  )
+  const second = JSON.parse((await hook('session-start', { cwd: root })).out)
+  assert.doesNotMatch(second.systemMessage, /pulse not updated/)
+  assert.doesNotMatch(
+    second.hookSpecificOutput.additionalContext,
+    /pulse not updated/
+  )
 })

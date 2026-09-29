@@ -10,6 +10,7 @@ import {
   pulseSyncCommand,
 } from '../../src/commands/pulse.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
+import { takeFailure } from '../../src/pulse/detached.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
 import { type FField, type FItem, board } from '../helpers/fake-project.ts'
@@ -404,4 +405,25 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
     ['clear', 'i2', 'F_Session'],
   ])
   assert.match(ended.out, /^synced\s+2 items: /m)
+})
+
+test('mark that cannot reach the pulse records why, for the next session start, and exits 0', async (t) => {
+  await machine(t)
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const r = await run(() =>
+    pulseMarkCommand({
+      cwd,
+      githubApi: 'http://127.0.0.1:1',
+      session: 'claude · s1',
+      paths: ['adr/0001-a.md'],
+    })
+  )
+  assert.equal(r.code, 0)
+  const reason = await takeFailure()
+  assert.ok(reason !== null && reason !== '')
+  assert.equal(await takeFailure(), null)
 })

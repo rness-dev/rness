@@ -718,7 +718,11 @@ test('sync --agent claude declares it, then writes the Claude settings of every 
   assert.deepEqual(settings.permissions, {
     additionalDirectories: ['../../.rness'],
   })
-  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart', 'PostToolUse'])
+  assert.deepEqual(Object.keys(settings.hooks), [
+    'SessionStart',
+    'PostToolUse',
+    'SessionEnd',
+  ])
   assert.deepEqual(
     Object.keys(JSON.parse(await readFile(join(root, SETTINGS), 'utf8'))),
     ['hooks']
@@ -754,7 +758,7 @@ test('--check reports a missing guaranteed value; --scope leaves the agent files
   assert.equal(check.code, 1)
   assert.match(
     check.out,
-    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness; hooks\.SessionStart lacks the rness session-start hook; hooks\.PostToolUse lacks the rness post-tool-use hook\)\nstale {4}org\/api\/\.mcp\.json \(mcpServers\.rness is missing\)\n/
+    /\nstale {4}org\/api\/\.claude\/settings\.json \(permissions\.additionalDirectories lacks \.\.\/\.\.\/\.rness; hooks\.SessionStart lacks the rness session-start hook; hooks\.PostToolUse lacks the rness post-tool-use hook; hooks\.SessionEnd lacks the rness session-end hook\)\nstale {4}org\/api\/\.mcp\.json \(mcpServers\.rness is missing\)\n/
   )
   await assert.rejects(readFile(join(root, 'org', 'api', SETTINGS), 'utf8'))
   await assert.rejects(readFile(join(root, SETTINGS), 'utf8'))

@@ -7,6 +7,7 @@ import { defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
+import { recordFailure } from '../pulse/detached.ts'
 import { desiredOf, layoutOf } from '../pulse/layout.ts'
 import { planSync } from '../pulse/plan.ts'
 import { reportError } from '../report.ts'
@@ -203,18 +204,30 @@ export async function pulseSyncCommand(
   }
 }
 
-/**
- * Hidden, for the hooks: marks the items of `paths` as worked on by `session`,
- * or — with `end` — clears that session's marks and syncs. It never prompts,
- * and it throws: the hook that starts it records why it failed.
- */
-export async function pulseMarkCommand(opts: {
+interface MarkOptions {
   cwd?: string
   githubApi?: string
   session: string
   paths: string[]
   end?: boolean
-}): Promise<number> {
+}
+
+/**
+ * Hidden, for the hooks: marks the items of `paths` as worked on by `session`,
+ * or — with `end` — clears that session's marks and syncs. It never prompts
+ * and no one reads its output: a failure is recorded, for the next session
+ * start to say (spec 0017 §5), and the exit is 0.
+ */
+export async function pulseMarkCommand(opts: MarkOptions): Promise<number> {
+  try {
+    return await mark(opts)
+  } catch (e) {
+    await recordFailure(e instanceof Error ? e.message : String(e))
+    return 0
+  }
+}
+
+async function mark(opts: MarkOptions): Promise<number> {
   const c = await context(opts)
   const board = await declaredBoard(c)
   const items = await fromGithub(c.provider.items(board))
