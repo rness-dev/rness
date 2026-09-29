@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import {
   chmod,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -9,37 +11,45 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { type TestContext, test } from 'node:test'
+import { promisify } from 'node:util'
 
-import { upgradeCommand } from '../../src/commands/upgrade.ts'
+import { type UpgradeDeps, upgradeCommand } from '../../src/commands/upgrade.ts'
+import { renderScaffold } from '../../src/core/scaffold-copy.ts'
+import { scaffoldDir } from '../../src/core/scaffold.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import { capture } from '../helpers/capture.ts'
 
-const NEW_WORKFLOW_RUN = `npx --yes "@rness/cli@$(node -p "require('./package.json').devDependencies['@rness/cli']")" validate`
+process.env['GIT_AUTHOR_NAME'] = 'rness-test'
+process.env['GIT_AUTHOR_EMAIL'] = 'test@rness.invalid'
+process.env['GIT_COMMITTER_NAME'] = 'rness-test'
+process.env['GIT_COMMITTER_EMAIL'] = 'test@rness.invalid'
 
-const packageJson = (pin: string) => `{
-  "name": "rness-context",
-  "private": true,
-  "packageManager": "npm@11.0.0",
-  "engines": { "node": ">=24" },
-  "devDependencies": {
-    "@rness/cli": "${pin}"
-  }
+const execFileP = promisify(execFile)
+const git = async (dir: string, ...args: string[]) =>
+  (await execFileP('git', args, { cwd: dir })).stdout.trim()
+
+const PM = 'npm@11.0.0'
+
+/** package.json as the scaffold renders it for `pin`. */
+async function scaffoldPackage(pin: string): Promise<string> {
+  const files = await renderScaffold(scaffoldDir(), {
+    version: pin,
+    packageManager: PM,
+  })
+  return files.find((f) => f.path === 'package.json')?.content ?? ''
 }
-`
-
-const workflow = (run: string) =>
-  `jobs:\n  validate:\n    steps:\n      - run: ${run}\n`
 
 /**
  * `npm` first on PATH: `view` answers FAKE_NPM_LATEST (or fails), `install`
  * materialises the pinned @rness/cli — a bin that prints what it was asked —
- * or fails as npm does when FAKE_NPM_FAIL is set.
+ * or fails as npm does when FAKE_NPM_FAIL is set; `pack` builds a tarball of
+ * FAKE_NPM_SCAFFOLD as the package's scaffold.
  */
 async function fakeNpm(
   t: TestContext,
-  env: { latest?: string; fail?: boolean }
+  env: { latest?: string; fail?: boolean; scaffold?: string }
 ): Promise<void> {
   const binDir = await mkdtemp(join(tmpdir(), 'rness-npm-'))
   t.after(() => rm(binDir, { recursive: true, force: true }))
@@ -52,6 +62,10 @@ async function fakeNpm(
       '  view)',
       '    [ -n "$FAKE_NPM_LATEST" ] || { echo "npm error code ENOTFOUND" >&2; exit 1; }',
       '    echo "$FAKE_NPM_LATEST" ;;',
+      '  pack)',
+      '    dest="$4"; stage=$(mktemp -d)',
+      '    mkdir -p "$stage/package" && cp -R "$FAKE_NPM_SCAFFOLD" "$stage/package/scaffold"',
+      '    tar -czf "$dest/rness-cli.tgz" -C "$stage" package && echo rness-cli.tgz ;;',
       '  install)',
       '    if [ -n "$FAKE_NPM_FAIL" ]; then',
       '      echo "npm error code ETARGET" >&2',
@@ -71,34 +85,64 @@ async function fakeNpm(
     PATH: process.env['PATH'],
     FAKE_NPM_LATEST: process.env['FAKE_NPM_LATEST'],
     FAKE_NPM_FAIL: process.env['FAKE_NPM_FAIL'],
+    FAKE_NPM_SCAFFOLD: process.env['FAKE_NPM_SCAFFOLD'],
   }
   process.env['PATH'] = `${binDir}:${saved.PATH ?? ''}`
-  if (env.latest === undefined) delete process.env['FAKE_NPM_LATEST']
-  else process.env['FAKE_NPM_LATEST'] = env.latest
-  if (env.fail === true) process.env['FAKE_NPM_FAIL'] = '1'
-  else delete process.env['FAKE_NPM_FAIL']
+  const set = (key: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  set('FAKE_NPM_LATEST', env.latest)
+  set('FAKE_NPM_FAIL', env.fail === true ? '1' : undefined)
+  set('FAKE_NPM_SCAFFOLD', env.scaffold)
   t.after(() => {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
+    for (const [key, value] of Object.entries(saved)) set(key, value)
   })
 }
 
+/**
+ * A workspace as `create` leaves it: `.rness` a repository whose one commit
+ * holds the scaffold rendered for `pin` — the base of the next merge. The
+ * subject and trailer can be changed to model older or hand-made ones.
+ */
 async function workspace(
   t: TestContext,
-  spec: { pin: string; installed?: string; workflows?: Record<string, string> }
+  spec: {
+    pin: string
+    installed?: string
+    subject?: string
+    trailer?: string | null
+  }
 ): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'rness-up-')))
   t.after(() => rm(root, { recursive: true, force: true }))
   const rnessDir = join(root, '.rness')
   await mkdir(join(root, 'org'), { recursive: true })
   await mkdir(rnessDir, { recursive: true })
+  for (const f of await renderScaffold(scaffoldDir(), {
+    version: spec.pin,
+    packageManager: PM,
+  })) {
+    const to = join(rnessDir, ...f.path.split('/'))
+    await mkdir(dirname(to), { recursive: true })
+    await writeFile(to, f.content, { mode: f.executable ? 0o755 : 0o644 })
+  }
   await writeFile(
     join(rnessDir, 'rness.json'),
     JSON.stringify({ contract: 1, org: 'acme', repos: {}, scopes: {} })
   )
-  await writeFile(join(rnessDir, 'package.json'), packageJson(spec.pin))
+  await git(rnessDir, 'init', '-q', '-b', 'main')
+  await git(rnessDir, 'add', '-A')
+  const trailer =
+    spec.trailer === undefined ? `Rness-Scaffold: ${spec.pin}` : spec.trailer
+  const subject = spec.subject ?? 'chore: rness workspace context'
+  await git(
+    rnessDir,
+    'commit',
+    '-q',
+    '-m',
+    trailer === null ? subject : `${subject}\n\n${trailer}`
+  )
   if (spec.installed !== undefined) {
     const pkg = join(rnessDir, 'node_modules', '@rness', 'cli')
     await mkdir(pkg, { recursive: true })
@@ -107,11 +151,21 @@ async function workspace(
       JSON.stringify({ name: '@rness/cli', version: spec.installed })
     )
   }
-  for (const [name, content] of Object.entries(spec.workflows ?? {})) {
-    await mkdir(join(rnessDir, '.github', 'workflows'), { recursive: true })
-    await writeFile(join(rnessDir, '.github', 'workflows', name), content)
-  }
   return root
+}
+
+/** A copy of the scaffold with one file changed, as a later version would ship it. */
+async function changedScaffold(
+  t: TestContext,
+  path: string,
+  change: (text: string) => string
+): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'rness-next-scaffold-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await cp(scaffoldDir(), dir, { recursive: true })
+  const file = join(dir, ...path.split('/'))
+  await writeFile(file, change(await readFile(file, 'utf8')))
+  return dir
 }
 
 const NO_TTY: Terminal = {
@@ -121,14 +175,20 @@ const NO_TTY: Terminal = {
   },
 }
 
+/** The scaffold of every target is the one in these sources, unless a test says otherwise. */
+const SAME_SCAFFOLD: UpgradeDeps = {
+  scaffoldFor: async () => ({ dir: scaffoldDir() }),
+}
+
 async function upgrade(
   version: string | undefined,
   opts: Parameters<typeof upgradeCommand>[1],
-  terminal: Terminal = NO_TTY
+  terminal: Terminal = NO_TTY,
+  deps: UpgradeDeps = SAME_SCAFFOLD
 ) {
   const c = capture()
   try {
-    const code = await upgradeCommand(version, opts, terminal)
+    const code = await upgradeCommand(version, opts, terminal, deps)
     return { code, out: c.out(), err: c.err() }
   } finally {
     c.restore()
@@ -138,19 +198,20 @@ async function upgrade(
 const read = (root: string, ...rel: string[]) =>
   readFile(join(root, '.rness', ...rel), 'utf8')
 
-test('upgrade pins the latest version in place, installs, and syncs through the new copy', async (t) => {
+test('upgrade merges the target scaffold, pins, installs, and syncs through the new copy', async (t) => {
   await fakeNpm(t, { latest: '0.5.0' })
   const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
   const label = `${basename(root)}/.rness`
   const r = await upgrade(undefined, { yes: true, cwd: root })
   assert.equal(r.code, 0, r.err)
-  assert.equal(await read(root, 'package.json'), packageJson('0.5.0'))
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.5.0'))
   assert.equal(
     r.out,
     [
       `upgrade  @rness/cli 0.4.0 → 0.5.0 in ${label} (npm)`,
       'notes    https://github.com/rness-dev/rness/tree/main/packages/cli#readme',
-      'wrote    .rness/.github/dependabot.yml (@rness/cli now moves by pull request)',
+      'merging  the @rness/cli 0.5.0 scaffold',
+      'updated  package.json',
       'installed dependencies with npm',
       'PINNED 0.5.0 sync --yes',
       '',
@@ -162,55 +223,120 @@ test('upgrade pins the latest version in place, installs, and syncs through the 
       '',
     ].join('\n')
   )
+  // The merge is staged: one commit records it, and the next base is 0.5.0.
+  await git(join(root, '.rness'), 'commit', '-q', '-m', 'chore: rness 0.5.0')
+  assert.match(
+    await git(join(root, '.rness'), 'log', '--topo-order', '--format=%s'),
+    /^chore: rness 0\.5\.0\nchore: rness scaffold 0\.5\.0\nchore: rness workspace context$/
+  )
 })
 
-test("the scaffold's old workflow line is migrated; a foreign workflow naming the old version is reported", async (t) => {
+test("a scaffold change reaches an untouched file; the team's edit of another stays", async (t) => {
   await fakeNpm(t, { latest: '0.5.0' })
-  const foreign = workflow('npx @rness/cli@0.4.0 sync --check')
-  const root = await workspace(t, {
-    pin: '0.4.0',
-    installed: '0.4.0',
-    workflows: {
-      'validate.yml': workflow('npx --yes @rness/cli@0.4.0 validate'),
-      'other.yml': foreign,
-    },
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  await writeFile(
+    join(rnessDir, 'README.md'),
+    `Team intro.\n\n${await read(root, 'README.md')}`
+  )
+  await git(rnessDir, 'commit', '-qam', 'docs: our intro')
+  const next = await changedScaffold(
+    t,
+    'WORKSPACE.md',
+    (s) => `${s}\nNew in 0.5.0.\n`
+  )
+  const r = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, {
+    scaffoldFor: async () => ({ dir: next }),
   })
-  const r = await upgrade(undefined, { yes: true, cwd: root })
   assert.equal(r.code, 0, r.err)
-  assert.equal(
-    await read(root, '.github', 'workflows', 'validate.yml'),
-    workflow(NEW_WORKFLOW_RUN)
-  )
-  assert.equal(await read(root, '.github', 'workflows', 'other.yml'), foreign)
-  assert.match(
-    r.out,
-    /^updated {2}\.github\/workflows\/validate\.yml \(it now reads the version from package\.json\)$/m
-  )
-  assert.match(
-    r.err,
-    /^warning: \.github\/workflows\/other\.yml names @rness\/cli@0\.4\.0; update it by hand$/m
-  )
+  assert.match(r.out, /^updated {2}WORKSPACE\.md$/m)
+  assert.match(await read(root, 'WORKSPACE.md'), /New in 0\.5\.0\.\n$/)
+  assert.match(await read(root, 'README.md'), /^Team intro\./)
 })
 
-test('a failed install restores package.json and the workflow', async (t) => {
-  await fakeNpm(t, { latest: '0.5.0', fail: true })
-  const old = workflow('npx --yes @rness/cli@0.4.0 validate')
+test('overlapping edits conflict: nothing is installed; once resolved, a second run goes on', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  await writeFile(join(rnessDir, 'WORKSPACE.md'), 'Ours entirely.\n')
+  await git(rnessDir, 'commit', '-qam', 'docs: ours')
+  const next = await changedScaffold(
+    t,
+    'WORKSPACE.md',
+    () => 'Theirs entirely.\n'
+  )
+  const deps: UpgradeDeps = { scaffoldFor: async () => ({ dir: next }) }
+
+  const r = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, deps)
+  assert.equal(r.code, 1)
+  assert.match(r.err, /conflict WORKSPACE\.md/)
+  assert.match(r.err, /git checkout --ours <file> keeps yours/)
+  assert.doesNotMatch(r.out, /PINNED/)
+
+  await git(rnessDir, 'checkout', '--ours', 'WORKSPACE.md')
+  await git(rnessDir, 'add', '-A')
+  await git(rnessDir, 'commit', '-q', '--no-edit')
+  const again = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, deps)
+  assert.equal(again.code, 0, again.err)
+  assert.doesNotMatch(again.out, /merging/)
+  assert.match(again.out, /^PINNED 0\.5\.0 sync --yes$/m)
+  assert.equal(await read(root, 'WORKSPACE.md'), 'Ours entirely.\n')
+})
+
+test('adoption: no scaffold commit — identical files pass, a differing one conflicts once, a missing one is added', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
   const root = await workspace(t, {
-    pin: '0.4.0',
-    installed: '0.4.0',
-    workflows: { 'validate.yml': old },
+    pin: '0.5.0',
+    installed: '0.5.0',
+    subject: 'chore: baseline',
+    trailer: null,
   })
+  const rnessDir = join(root, '.rness')
+  await rm(join(rnessDir, '.github', 'workflows', 'validate.yml'))
+  await writeFile(join(rnessDir, 'CONVENTIONS.md'), 'Our conventions.\n')
+  await git(rnessDir, 'add', '-A')
+  await git(rnessDir, 'commit', '-qm', 'ours')
   const r = await upgrade(undefined, { yes: true, cwd: root })
   assert.equal(r.code, 1)
   assert.match(
-    r.err,
-    /npm install failed in .*: npm error notarget No matching version found for @rness\/cli\.\nrestored .*\.rness\/package\.json/
+    r.out,
+    /^adopting the @rness\/cli 0\.5\.0 scaffold \(no scaffold commit in .*\.rness yet\)$/m
   )
-  assert.equal(await read(root, 'package.json'), packageJson('0.4.0'))
-  assert.equal(await read(root, '.github', 'workflows', 'validate.yml'), old)
+  assert.match(r.out, /^added {4}\.github\/workflows\/validate\.yml$/m)
+  assert.match(r.err, /^.*conflict CONVENTIONS\.md$/m)
+  assert.doesNotMatch(r.err, /README\.md/)
 })
 
-test('already at the target: nothing runs; a pin ahead of the installed copy is repaired by installing', async (t) => {
+test('only the scaffold is behind (the pin moved by pull request): merged, nothing installed', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.5.0' })
+  const rnessDir = join(root, '.rness')
+  // What the Dependabot pull request does: the pin, nothing else.
+  await writeFile(
+    join(rnessDir, 'package.json'),
+    await scaffoldPackage('0.5.0')
+  )
+  await git(
+    rnessDir,
+    'commit',
+    '-qam',
+    'chore(deps-dev): bump @rness/cli from 0.4.0 to 0.5.0'
+  )
+  const next = await changedScaffold(
+    t,
+    'WORKSPACE.md',
+    (s) => `${s}\nNew in 0.5.0.\n`
+  )
+  const r = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, {
+    scaffoldFor: async () => ({ dir: next }),
+  })
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^scaffold @rness\/cli 0\.5\.0 — merging it into /m)
+  assert.match(r.out, /^updated {2}WORKSPACE\.md$/m)
+  assert.doesNotMatch(r.out, /installed|PINNED|package\.json/)
+})
+
+test('already at the target, scaffold included: nothing runs; a pin ahead of the installed copy is installed', async (t) => {
   await fakeNpm(t, { latest: '0.5.0' })
   const done = await workspace(t, { pin: '0.5.0', installed: '0.5.0' })
   const r = await upgrade(undefined, { yes: true, cwd: done })
@@ -224,8 +350,54 @@ test('already at the target: nothing runs; a pin ahead of the installed copy is 
     r2.out,
     /^install {2}@rness\/cli 0\.5\.0 in .*\.rness \(npm\) — 0\.4\.0 is installed\n/
   )
+  assert.doesNotMatch(r2.out, /merging/)
   assert.match(r2.out, /^PINNED 0\.5\.0 sync --yes$/m)
-  assert.equal(await read(drifted, 'package.json'), packageJson('0.5.0'))
+})
+
+test('a dirty .rness, or one that is not a repository, is refused before anything', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  await writeFile(join(root, '.rness', 'notes.md'), 'wip\n')
+  const dirty = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(dirty.code, 1)
+  assert.match(
+    dirty.err,
+    /\.rness has uncommitted changes; commit or stash them, then rness upgrade\n$/
+  )
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.4.0'))
+
+  await rm(join(root, '.rness', '.git'), { recursive: true, force: true })
+  const plain = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(plain.code, 1)
+  assert.match(plain.err, /\.rness is not a git repository\n$/)
+})
+
+test('a failed install keeps the merge staged and says how to undo it', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0', fail: true })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /npm install failed in .*: npm error notarget No matching version found for @rness\/cli\./
+  )
+  assert.match(r.err, /undo it with: git -C \.rness merge --abort/)
+  await git(join(root, '.rness'), 'merge', '--abort')
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.4.0'))
+})
+
+test('npm pack is the source when neither the running nor the installed copy is the target', async (t) => {
+  const next = await changedScaffold(
+    t,
+    'WORKSPACE.md',
+    (s) => `${s}\nFrom the registry.\n`
+  )
+  await fakeNpm(t, { latest: '0.9.0', scaffold: next })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const r = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, {})
+  assert.equal(r.code, 0, r.err)
+  assert.match(await read(root, 'WORKSPACE.md'), /From the registry\.\n$/)
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.9.0'))
 })
 
 test('usage and refusals', async (t) => {
@@ -246,7 +418,7 @@ test('usage and refusals', async (t) => {
   const outside = await upgrade(undefined, { yes: true, cwd: '/' })
   assert.equal(outside.code, 1)
   assert.match(outside.err, /no rness workspace/)
-  assert.equal(await read(root, 'package.json'), packageJson('0.4.0'))
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.4.0'))
 })
 
 test('the registry is asked only when no version is named; unreachable, it says what to type', async (t) => {
@@ -260,7 +432,7 @@ test('the registry is asked only when no version is named; unreachable, it says 
   )
   const named = await upgrade('0.6.0', { yes: true, cwd: root })
   assert.equal(named.code, 0, named.err)
-  assert.equal(await read(root, 'package.json'), packageJson('0.6.0'))
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.6.0'))
 })
 
 test('a lower version is a downgrade only when it is named', async (t) => {
@@ -301,28 +473,12 @@ test('in a terminal one confirmation; declining writes nothing', async (t) => {
   const no = await upgrade(undefined, { cwd: root }, terminal(false))
   assert.equal(no.code, 1)
   assert.equal(no.err, 'cancelled\n')
-  assert.equal(await read(root, 'package.json'), packageJson('0.4.0'))
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.4.0'))
+  assert.equal(await git(join(root, '.rness'), 'status', '--porcelain'), '')
   const yes = await upgrade(undefined, { cwd: root }, terminal(true))
   assert.equal(yes.code, 0, yes.err)
   assert.deepEqual(asked, [
     'Upgrade @rness/cli to 0.5.0?',
     'Upgrade @rness/cli to 0.5.0?',
   ])
-})
-
-test('upgrade writes dependabot.yml, and leaves one that is already there', async (t) => {
-  await fakeNpm(t, { latest: '0.5.0' })
-  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
-  const first = await upgrade(undefined, { yes: true, cwd: root })
-  assert.equal(first.code, 0, first.err)
-  const written = await read(root, '.github', 'dependabot.yml')
-  assert.match(written, /dependency-name: "@rness\/cli"/)
-
-  // A second upgrade finds it and does not touch it.
-  await writeFile(join(root, '.rness', '.github', 'dependabot.yml'), '# ours\n')
-  await fakeNpm(t, { latest: '0.6.0' })
-  const second = await upgrade(undefined, { yes: true, cwd: root })
-  assert.equal(second.code, 0, second.err)
-  assert.equal(await read(root, '.github', 'dependabot.yml'), '# ours\n')
-  assert.match(second.out, /dependabot\.yml is already there/)
 })

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -81,8 +81,11 @@ export function scaffoldMessage(subject: string, version: string): string {
 export async function findScaffoldBase(
   rnessDir: string
 ): Promise<{ commit: string; version: string | null } | null> {
+  // Topological order: a child before its parent, whatever the commit dates
+  // (two commits in the same second otherwise come in either order).
   const log = await run(rnessDir, [
     'log',
+    '--topo-order',
     `--format=%H%x1f%P%x1f%s%x1f%(trailers:key=${SCAFFOLD_TRAILER},valueonly,separator=%x2C)%x1e`,
     'HEAD',
   ])
@@ -228,4 +231,13 @@ export async function mergeScaffold(
 export async function isShallow(rnessDir: string): Promise<boolean> {
   const r = await run(rnessDir, ['rev-parse', '--is-shallow-repository'])
   return r.code === 0 && r.stdout.trim() === 'true'
+}
+
+/** Whether `rnessDir` is itself a git repository (not merely inside one). */
+export async function isRepository(rnessDir: string): Promise<boolean> {
+  const r = await run(rnessDir, ['rev-parse', '--show-toplevel'])
+  if (r.code !== 0) return false
+  // Real paths on both sides: /tmp is a link to /private/tmp on macOS.
+  const real = (p: string) => realpath(p).catch(() => resolve(p))
+  return (await real(r.stdout.trim())) === (await real(rnessDir))
 }
