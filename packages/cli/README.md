@@ -203,6 +203,11 @@ its content does.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## Unreleased
+
+- In a terminal, `upgrade` says "Merging the @rness/cli 0.8.0 scaffold"
+  instead of "the @rness/cli 0.8.0 scaffold merging".
+
 ## 0.8.0 — upgrade merges the scaffold
 
 - `rness upgrade` merges the target version's scaffold into `.rness` with

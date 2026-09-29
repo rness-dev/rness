@@ -244,7 +244,11 @@ export async function upgradeCommand(
 
     const pm = await workspacePackageManager(ws.rnessDir)
     if (pin.spec === target && installed === target)
-      ui.line('scaffold', `@rness/cli ${target} — merging it into ${label}`)
+      ui.line(
+        'scaffold',
+        `@rness/cli ${target} — merging it into ${label}`,
+        `Merging the @rness/cli ${target} scaffold into ${label}`
+      )
     else if (pin.spec === target)
       ui.line(
         'install',
@@ -283,9 +287,15 @@ export async function upgradeCommand(
         if (base === null)
           ui.line(
             'adopting',
-            `the @rness/cli ${target} scaffold (no scaffold commit in ${label} yet)`
+            `the @rness/cli ${target} scaffold (no scaffold commit in ${label} yet)`,
+            `Adopting the @rness/cli ${target} scaffold — ${label} has no scaffold commit yet`
           )
-        else ui.line('merging', `the @rness/cli ${target} scaffold`)
+        else
+          ui.line(
+            'merging',
+            `the @rness/cli ${target} scaffold`,
+            `Merging the @rness/cli ${target} scaffold`
+          )
         const commit = await buildScaffoldCommit(
           ws.rnessDir,
           base?.commit ?? null,
