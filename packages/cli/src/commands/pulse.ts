@@ -176,6 +176,8 @@ export async function pulseCreateCommand(
       const code = await loginCommand(
         {
           project: true,
+          // The git question is `rness login`'s own, not the pulse's to ask.
+          setupGit: false,
           ...(opts.githubApi === undefined
             ? {}
             : { githubApi: opts.githubApi }),

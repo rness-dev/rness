@@ -226,6 +226,60 @@ test('in a terminal, create offers the login; declined, it is refused', async (t
   )
 })
 
+test('the login create offers asks nothing about git', async (t) => {
+  await machine(t, null)
+  const g = await board(t, {
+    other: (r) => {
+      if (r.path === '/login/device/code')
+        return {
+          json: {
+            device_code: 'dev-1',
+            user_code: '8F43-6B2A',
+            verification_uri: 'https://github.com/login/device',
+            expires_in: 900,
+            interval: 0,
+          },
+        }
+      if (r.path === '/login/oauth/access_token')
+        return {
+          json: {
+            access_token: 'ghu_access',
+            expires_in: 28800,
+            refresh_token: 'ghr_refresh',
+            refresh_token_expires_in: 15897600,
+            scope: 'repo,project',
+          },
+        }
+      return asUser('repo, project')(r)
+    },
+  })
+  // SSH_CONNECTION keeps the login from opening a real browser.
+  withEnv(t, {
+    RNESS_GITHUB_WEB: g.base,
+    RNESS_GITHUB_CLIENT_ID: 'client-test',
+    SSH_CONNECTION: 'test',
+  })
+  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const asked: string[] = []
+  const terminal: Terminal = {
+    isTty: () => true,
+    prompts: async () =>
+      ({
+        async confirm(o: { message: string }) {
+          asked.push(o.message)
+          return true
+        },
+        isCancel: () => false,
+      }) as unknown as Prompts,
+  }
+  const r = await run(() =>
+    pulseCreateCommand({ cwd, githubApi: g.base }, { terminal })
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.equal(asked.length, 1, `asked: ${asked.join(' | ')}`)
+  assert.match(asked[0]!, /project scope/)
+})
+
 test("GitHub's refusal comes as GitHub: <message>, without a stack", async (t) => {
   await machine(t)
   const g = await board(t, {
