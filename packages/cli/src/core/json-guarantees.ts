@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util'
+
 import type { Guarantee } from './agents.ts'
 
 /**
@@ -81,14 +83,15 @@ function apply(
   }
   if (value === undefined) {
     if (!create) return { holds: false, changed: false }
-    parent[last] = [g.contains]
+    parent[last] = [structuredClone(g.contains)]
     return { holds: true, changed: true }
   }
   if (!Array.isArray(value))
     return { invalid: `${g.path.join('.')} is not a list` }
-  if (value.includes(g.contains)) return { holds: true, changed: false }
+  if (value.some((entry) => isDeepStrictEqual(entry, g.contains)))
+    return { holds: true, changed: false }
   if (!create) return { holds: false, changed: false }
-  value.push(g.contains)
+  value.push(structuredClone(g.contains))
   return { holds: true, changed: true }
 }
 
@@ -152,7 +155,9 @@ export function missingGuarantees(
 }
 
 export function describeGuarantee(g: Guarantee): string {
-  return 'value' in g
-    ? `${g.path.join('.')} is missing`
-    : `${g.path.join('.')} lacks ${g.contains}`
+  if ('value' in g) return `${g.path.join('.')} is missing`
+  const what =
+    g.label ??
+    (typeof g.contains === 'string' ? g.contains : JSON.stringify(g.contains))
+  return `${g.path.join('.')} lacks ${what}`
 }

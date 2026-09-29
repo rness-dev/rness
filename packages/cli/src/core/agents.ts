@@ -2,12 +2,13 @@ import { VERSION } from '../version.ts'
 
 /**
  * A value a target guarantees in a JSON file it shares with the team (spec
- * 0011 §3.4): the list at `path` contains `contains`, or the key at `path`
- * is present — set to `value` when missing, never replaced (spec 0014 §3).
- * rness owns the value, never the file.
+ * 0011 §3.4): the list at `path` contains `contains` — a string, or an object
+ * compared deeply (spec 0015 §2.3) — or the key at `path` is present, set to
+ * `value` when missing, never replaced (spec 0014 §3). rness owns the value,
+ * never the file. `label` names an object entry in messages.
  */
 export type Guarantee =
-  | { path: readonly string[]; contains: string }
+  | { path: readonly string[]; contains: unknown; label?: string }
   | { path: readonly string[]; value: unknown }
 
 /** One file of a target, relative to the repository root, and what it guarantees there. */

@@ -142,3 +142,60 @@ test("a key guarantee sets the key when it is missing, and never replaces the te
     reason: 'mcpServers is not an object',
   })
 })
+
+const HOOK: Guarantee = {
+  path: ['hooks', 'SessionStart'],
+  contains: { hooks: [{ type: 'command', command: 'rness-hook', timeout: 10 }] },
+  label: 'the rness session-start hook',
+}
+
+test("an object entry is appended after the team's own hooks, compared deeply", () => {
+  const team = {
+    hooks: {
+      SessionStart: [{ hooks: [{ type: 'command', command: 'team-hook' }] }],
+    },
+  }
+  const r = ensureGuarantees(`${JSON.stringify(team, null, 2)}\n`, [HOOK])
+  assert.ok(r.kind === 'updated')
+  assert.deepEqual(JSON.parse(r.text).hooks.SessionStart, [
+    { hooks: [{ type: 'command', command: 'team-hook' }] },
+    { hooks: [{ type: 'command', command: 'rness-hook', timeout: 10 }] },
+  ])
+  // Key order inside the entry does not matter; the entry is there.
+  const reordered = JSON.stringify({
+    hooks: {
+      SessionStart: [
+        { hooks: [{ timeout: 10, command: 'rness-hook', type: 'command' }] },
+      ],
+    },
+  })
+  assert.deepEqual(ensureGuarantees(reordered, [HOOK]), {
+    kind: 'unchanged',
+    text: reordered,
+  })
+})
+
+test('an edited copy of the entry does not count: it is missing', () => {
+  const edited = JSON.stringify({
+    hooks: {
+      SessionStart: [
+        { hooks: [{ type: 'command', command: 'rness-hook', timeout: 30 }] },
+      ],
+    },
+  })
+  assert.deepEqual(missingGuarantees(edited, [HOOK]), [HOOK])
+  const r = ensureGuarantees(edited, [HOOK])
+  assert.ok(r.kind === 'updated')
+  assert.equal(JSON.parse(r.text).hooks.SessionStart.length, 2)
+})
+
+test('an object entry is described by its label, a string entry by its value', () => {
+  assert.equal(
+    describeGuarantee(HOOK),
+    'hooks.SessionStart lacks the rness session-start hook'
+  )
+  assert.equal(
+    describeGuarantee(DIRS),
+    'permissions.additionalDirectories lacks ../../.rness'
+  )
+})
