@@ -4,16 +4,22 @@ import { realpath } from 'node:fs/promises'
 import { envToken, readAuth, resolveToken, writeAuth } from '../core/auth.ts'
 import {
   LoginError,
+  PULSE_SCOPE,
   type PollDeps,
+  SCOPES,
   clientId,
   pollForToken,
   requestDeviceCode,
 } from '../core/device-flow.ts'
 import { DEFAULT_GITHUB_API, getUser } from '../core/github.ts'
+import { loadManifest } from '../core/manifest.ts'
 import { rnessCommand } from '../core/pm.ts'
+import { PROVIDERS, unsupportedProviderMessage } from '../core/providers.ts'
 import { isStableInstall, setupGit } from '../core/setup-git.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
+import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi } from '../core/ui.ts'
+import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 
 export interface LoginOptions {
@@ -21,6 +27,8 @@ export interface LoginOptions {
   setupGit?: boolean
   /** Internal (tests): GitHub REST API base. */
   githubApi?: string
+  /** Ask for the `project` scope even where no pulse is declared (`pulse create`). */
+  project?: boolean
 }
 
 export interface LoginDeps extends PollDeps {
@@ -31,6 +39,8 @@ export interface LoginDeps extends PollDeps {
   open?: (url: string) => void
   /** This rness's launcher, as git will have to find it. */
   bin?: string
+  /** Where to look for the workspace; the current directory by default. */
+  cwd?: string
 }
 
 function openInBrowser(url: string): void {
@@ -80,6 +90,20 @@ async function offerSetupGit(
   )
 }
 
+/** The manifest of the workspace around `cwd`; null outside one (or when it is unreadable: login concerns the machine). */
+async function manifestAround(cwd: string): Promise<Manifest | null> {
+  try {
+    return await loadManifest((await findWorkspace(cwd)).rnessDir)
+  } catch {
+    return null
+  }
+}
+
+/** Scopes as GitHub words them: separated by commas, spaces, or both. */
+function splitScopes(scopes: string): string[] {
+  return scopes.split(/[\s,]+/).filter((s) => s !== '')
+}
+
 /**
  * `rness login`: GitHub's device flow (spec 0004 §2). Concerns the machine,
  * not a workspace: never delegated to a pinned copy.
@@ -94,13 +118,24 @@ export async function loginCommand(
   const ui = deps.ui ?? (await makeUi(terminal))
   if (own) ui.intro('Log in to GitHub')
   try {
+    const manifest = await manifestAround(deps.cwd ?? process.cwd())
+    if (manifest?.provider != null && !PROVIDERS[manifest.provider].available) {
+      ui.error(unsupportedProviderMessage(manifest.provider))
+      return 1
+    }
+    const needsProject = opts.project === true || manifest?.pulse != null
     const bin =
       deps.bin ?? (await realpath(process.argv[1] ?? '').catch(() => ''))
     const env = envToken()
     if (env !== null)
       ui.hint(`${env.source} is set and wins over a stored login`)
     const stored = await readAuth()
-    if (stored !== null && (await resolveToken()) !== null) {
+    const resolved = stored === null ? null : await resolveToken()
+    const lacksProject =
+      needsProject &&
+      resolved?.source === 'login' &&
+      !splitScopes(stored?.tokens.scopes ?? '').includes(PULSE_SCOPE)
+    if (stored !== null && resolved !== null && !lacksProject) {
       ui.line(
         'logged in',
         `as ${stored.login} (github.com); ${rnessCommand()} logout to switch`
@@ -110,7 +145,10 @@ export async function loginCommand(
       return 0
     }
 
-    const code = await requestDeviceCode()
+    if (lacksProject) ui.line('login', 'logging in again for the project scope')
+    const code = await requestDeviceCode(
+      needsProject ? `${SCOPES} ${PULSE_SCOPE}` : SCOPES
+    )
     if (ui.session)
       ui.line(
         'open',

@@ -14,7 +14,11 @@ export interface Recorded {
   form: Record<string, string>
 }
 
-export type Reply = { status?: number; json: unknown }
+export type Reply = {
+  status?: number
+  json: unknown
+  headers?: Record<string, string>
+}
 export type Route = (request: Recorded) => Reply
 
 /**
@@ -40,7 +44,10 @@ export async function fakeGithub(
       }
       requests.push(recorded)
       const reply = route(recorded)
-      res.writeHead(reply.status ?? 200, { 'content-type': 'application/json' })
+      res.writeHead(reply.status ?? 200, {
+        'content-type': 'application/json',
+        ...reply.headers,
+      })
       res.end(JSON.stringify(reply.json))
     })
   })

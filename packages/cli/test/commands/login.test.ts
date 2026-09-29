@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
@@ -310,4 +317,137 @@ test('git-credential answers `get` for https://github.com, and nothing else', as
   withEnv(t, { GITHUB_TOKEN: undefined })
   await logoutCommand()
   assert.equal((await ask('get', 'protocol=https\nhost=github.com\n')).out, '')
+})
+
+/** A workspace whose `rness.json` holds `extra`; returns the root. */
+async function workspace(
+  t: TestContext,
+  extra: Record<string, unknown>
+): Promise<string> {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'rness-ws-')))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, '.rness'))
+  await writeFile(
+    join(root, '.rness', 'rness.json'),
+    JSON.stringify({ contract: 1, org: 'acme', ...extra })
+  )
+  return root
+}
+
+const deviceScope = (gh: { requests: Recorded[] }) =>
+  gh.requests.find((r) => r.path === '/login/device/code')?.form['scope']
+
+test('login asks for the project scope where a pulse is declared, and only there', async (t) => {
+  await machine(t)
+  const gh = await fakeGithub(t, github)
+  const pulse = await workspace(t, { pulse: { project: 3 } })
+  const plain = await workspace(t, {})
+
+  const a = await run(() =>
+    loginCommand(
+      { githubApi: gh.base, setupGit: false },
+      { terminal: NO_TTY, sleep, bin: BIN, cwd: pulse }
+    )
+  )
+  assert.equal(a.code, 0, a.err)
+  assert.equal(deviceScope(gh), 'repo read:org project')
+
+  await logoutCommand()
+  gh.requests.length = 0
+  await run(() =>
+    loginCommand(
+      { githubApi: gh.base, setupGit: false },
+      { terminal: NO_TTY, sleep, bin: BIN, cwd: plain }
+    )
+  )
+  assert.equal(deviceScope(gh), 'repo read:org')
+
+  await logoutCommand()
+  gh.requests.length = 0
+  await run(() =>
+    loginCommand(
+      { githubApi: gh.base, setupGit: false, project: true },
+      { terminal: NO_TTY, sleep, bin: BIN, cwd: plain }
+    )
+  )
+  assert.equal(deviceScope(gh), 'repo read:org project')
+})
+
+test('a stored login without the project scope is not reused when it is needed', async (t) => {
+  await machine(t)
+  const gh = await fakeGithub(t, github)
+  const stored = (scopes: string) =>
+    writeAuth({
+      login: 'octo',
+      tokens: {
+        accessToken: 'ghu_old',
+        expiresAt: null,
+        refreshToken: null,
+        refreshExpiresAt: null,
+        scopes,
+      },
+    })
+  const login = () =>
+    run(() =>
+      loginCommand(
+        { githubApi: gh.base, setupGit: false, project: true },
+        { terminal: NO_TTY, sleep, bin: BIN }
+      )
+    )
+
+  await stored('repo,read:org')
+  const again = await login()
+  assert.equal(again.code, 0, again.err)
+  assert.match(again.out, /logging in again for the project scope/)
+  assert.equal(deviceScope(gh), 'repo read:org project')
+
+  gh.requests.length = 0
+  await stored('repo,read:org,project')
+  const reuse = await login()
+  assert.match(reuse.out, /logged in as octo/)
+  assert.equal(gh.requests.length, 0)
+
+  await stored('repo read:org project')
+  assert.equal((await login()).out.includes('again'), false)
+  assert.equal(gh.requests.length, 0)
+})
+
+test('an environment token is kept as it is, whatever scopes are needed', async (t) => {
+  await machine(t)
+  const gh = await fakeGithub(t, github)
+  withEnv(t, { GITHUB_TOKEN: 'ghp_env' })
+  await writeAuth({
+    login: 'octo',
+    tokens: {
+      accessToken: 'ghu_old',
+      expiresAt: null,
+      refreshToken: null,
+      refreshExpiresAt: null,
+      scopes: 'repo',
+    },
+  })
+  const r = await run(() =>
+    loginCommand(
+      { githubApi: gh.base, setupGit: false, project: true },
+      { terminal: NO_TTY, sleep, bin: BIN }
+    )
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.equal(gh.requests.length, 0)
+})
+
+test('login refuses a workspace whose written provider is unavailable', async (t) => {
+  await machine(t)
+  const gh = await fakeGithub(t, github)
+  const root = await workspace(t, { provider: 'gitlab' })
+  const r = await run(() =>
+    loginCommand(
+      { githubApi: gh.base },
+      { terminal: NO_TTY, sleep, bin: BIN, cwd: root }
+    )
+  )
+  assert.equal(r.code, 1)
+  assert.match(r.err, /^rness\.json: provider "gitlab" is not supported/)
+  assert.equal(gh.requests.length, 0)
+  assert.equal(await readAuth(), null)
 })

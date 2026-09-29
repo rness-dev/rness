@@ -34,6 +34,7 @@ export function fakeProvider(spec: {
       listOrganizations: async () =>
         (spec.organizations ?? []).map((name) => ({ login: name })),
       organizationAccess: async () => spec.access ?? 'unknown',
+      scopes: async () => null,
       listRepositories: async (owner) => {
         listed.push(owner)
         return {

@@ -6,6 +6,8 @@
 const GITHUB_CLIENT_ID = 'Ov23liv1ia2UWeWttsOK'
 const GITHUB_WEB = 'https://github.com'
 export const SCOPES = 'repo read:org'
+/** The extra scope the pulse needs to read a GitHub Project. */
+export const PULSE_SCOPE = 'project'
 
 export function clientId(): string {
   return process.env['RNESS_GITHUB_CLIENT_ID'] ?? GITHUB_CLIENT_ID
@@ -96,7 +98,9 @@ function tokenSet(body: Record<string, unknown>, now: number): TokenSet | null {
   }
 }
 
-export async function requestDeviceCode(): Promise<DeviceCode> {
+export async function requestDeviceCode(
+  scopes: string = SCOPES
+): Promise<DeviceCode> {
   const id = clientId()
   if (id === '')
     throw new LoginError(
@@ -104,7 +108,7 @@ export async function requestDeviceCode(): Promise<DeviceCode> {
     )
   const body = await post('/login/device/code', {
     client_id: id,
-    scope: SCOPES,
+    scope: scopes,
   })
   const deviceCode = str(body['device_code'])
   const userCode = str(body['user_code'])

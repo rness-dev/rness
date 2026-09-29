@@ -245,6 +245,27 @@ async function getJson(
   return { status: res.status, body }
 }
 
+/**
+ * The scopes of a classic or OAuth token: `X-OAuth-Scopes` of GET /user,
+ * split on ", ". Null when the header is absent (a fine-grained or App
+ * token) or the answer is not a 200.
+ */
+export async function getScopes(options: ApiOptions): Promise<string[] | null> {
+  const base = (options.apiBase ?? DEFAULT_GITHUB_API).replace(/\/+$/, '')
+  const page = await getPage(
+    `${base}/user`,
+    apiHeaders(options.token),
+    options.timeoutMs ?? 15_000
+  )
+  if (page.status !== 200) return null
+  const header = page.headers.get('x-oauth-scopes')
+  if (header === null) return null
+  return header
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+}
+
 /** The login a token belongs to. */
 export async function getUser(options: ApiOptions): Promise<{ login: string }> {
   const { status, body } = await getJson('/user', options)

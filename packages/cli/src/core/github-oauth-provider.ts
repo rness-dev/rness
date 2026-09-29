@@ -4,6 +4,7 @@ import {
   type RepositoryListing,
   createRepository,
   getOrgMembership,
+  getScopes,
   getUser,
   listRepositories,
   listUserOrganizations,
@@ -89,6 +90,15 @@ export class GitHubOAuthProvider implements Provider {
       ...this.#api(this.#token.token),
       self: (await this.identity())?.login ?? null,
     })
+  }
+
+  async scopes(): Promise<string[] | null> {
+    if (this.#token === null) return null
+    try {
+      return await getScopes(this.#api(this.#token.token))
+    } catch {
+      return null
+    }
   }
 
   credentialsFor(url: string): GitCredentials | null {

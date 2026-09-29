@@ -36,6 +36,8 @@ export interface Provider {
    * `.rness` gets to GitHub (spec 0004 §3b). Anonymous: refused.
    */
   createRepository(owner: string, name: string): Promise<CreateRepositoryResult>
+  /** The scopes the token holds; null when anonymous, unknown, or on any failure. */
+  scopes(): Promise<string[] | null>
   /**
    * Credentials for `url`, or null: an SSH URL, another host, no login.
    * Cloning itself is not the provider's: `rness.json` says which URL, and

@@ -158,3 +158,30 @@ test('createRepository: in the organization, under the user for their own accoun
     reason: 'not logged in',
   })
 })
+
+test('scopes: the X-OAuth-Scopes header, null without it or on failure', async (t) => {
+  let reply: {
+    status?: number
+    json: unknown
+    headers?: Record<string, string>
+  } = {
+    json: { login: 'octo' },
+    headers: { 'x-oauth-scopes': 'repo, read:org, project' },
+  }
+  const gh = await fakeGithub(t, () => reply)
+  const provider = new GitHubOAuthProvider({ token: TOKEN, apiBase: gh.base })
+  assert.deepEqual(await provider.scopes(), ['repo', 'read:org', 'project'])
+  assert.equal(gh.requests[0]?.path, '/user')
+
+  reply = { json: { login: 'octo' } }
+  assert.equal(await provider.scopes(), null)
+  reply = { status: 401, json: {}, headers: { 'x-oauth-scopes': 'repo' } }
+  assert.equal(await provider.scopes(), null)
+  const anonymous = new GitHubOAuthProvider({ token: null, apiBase: gh.base })
+  assert.equal(await anonymous.scopes(), null)
+  const dead = new GitHubOAuthProvider({
+    token: TOKEN,
+    apiBase: 'http://127.0.0.1:1',
+  })
+  assert.equal(await dead.scopes(), null)
+})
