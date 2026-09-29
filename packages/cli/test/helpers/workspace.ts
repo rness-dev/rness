@@ -5,6 +5,8 @@ import type { TestContext } from 'node:test'
 
 export interface WorkspaceSpec {
   org?: string
+  /** The manifest's `provider` key; left out, the key is absent. */
+  provider?: string
   /** The team's agents; left out, the key is absent ("never asked"). */
   agents?: string[]
   repos?: Record<string, { url: string }>
@@ -28,6 +30,7 @@ export async function makeWorkspace(
     repos: spec.repos ?? {},
     scopes: spec.scopes ?? {},
   }
+  if (spec.provider !== undefined) manifest['provider'] = spec.provider
   if (spec.org !== undefined) manifest['org'] = spec.org
   if (spec.agents !== undefined) manifest['agents'] = spec.agents
   await writeFile(

@@ -22,7 +22,7 @@ export interface Organization {
 export type OrganizationAccess =
   'member' | 'not-member' | 'restricted' | 'unknown'
 
-export interface GitProvider {
+export interface Provider {
   /** False when rness sees GitHub anonymously: public repositories only. */
   readonly authenticated: boolean
   /** Who rness acts as; null when anonymous. */
@@ -43,3 +43,6 @@ export interface GitProvider {
    */
   credentialsFor(url: string): GitCredentials | null
 }
+
+/** @deprecated the pre-0.12 name, kept for the package's API. */
+export type GitProvider = Provider

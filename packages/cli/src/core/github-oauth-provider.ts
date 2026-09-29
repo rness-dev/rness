@@ -10,9 +10,9 @@ import {
 } from './github.ts'
 import type {
   GitCredentials,
-  GitProvider,
   Organization,
   OrganizationAccess,
+  Provider,
 } from './provider.ts'
 
 const GITHUB_HTTPS = 'https://github.com/'
@@ -21,7 +21,7 @@ const GITHUB_HTTPS = 'https://github.com/'
  * GitHub as a user: the token of `GITHUB_TOKEN`, `GH_TOKEN` or `rness login`
  * — or none, and then it is GitHub seen anonymously (public repositories).
  */
-export class GitHubOAuthProvider implements GitProvider {
+export class GitHubOAuthProvider implements Provider {
   readonly #token: ResolvedToken | null
   readonly #apiBase: string | undefined
   #login: Promise<{ login: string } | null> | undefined
@@ -98,7 +98,7 @@ export class GitHubOAuthProvider implements GitProvider {
 }
 
 /** The CLI's provider: whatever token this machine has, against `apiBase`. */
-export async function githubProvider(apiBase?: string): Promise<GitProvider> {
+export async function githubProvider(apiBase?: string): Promise<Provider> {
   return new GitHubOAuthProvider({
     token: await resolveToken(),
     ...(apiBase === undefined ? {} : { apiBase }),

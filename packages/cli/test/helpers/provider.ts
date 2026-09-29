@@ -2,12 +2,9 @@ import type {
   CreateRepositoryResult,
   OrgRepository,
 } from '../../src/core/github.ts'
-import type {
-  GitProvider,
-  OrganizationAccess,
-} from '../../src/core/provider.ts'
+import type { OrganizationAccess, Provider } from '../../src/core/provider.ts'
 
-/** A scripted `GitProvider`; `asked` records every URL credentials were asked for. */
+/** A scripted `Provider`; `asked` records every URL credentials were asked for. */
 export function fakeProvider(spec: {
   /** Null (the default) is GitHub seen anonymously. */
   login?: string | null
@@ -18,7 +15,7 @@ export function fakeProvider(spec: {
   /** What `createRepository` does and answers; default: refused. */
   create?: (owner: string, name: string) => Promise<CreateRepositoryResult>
 }): {
-  provider: GitProvider
+  provider: Provider
   asked: string[]
   listed: string[]
   created: string[]

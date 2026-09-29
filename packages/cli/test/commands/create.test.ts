@@ -30,7 +30,7 @@ import {
 } from '../../src/commands/create.ts'
 import { originUrl } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
-import type { GitProvider } from '../../src/core/provider.ts'
+import type { Provider } from '../../src/core/provider.ts'
 import {
   INSTEAD_OF_LINES,
   type Transport,
@@ -781,7 +781,7 @@ async function wizard(
   opts: Parameters<typeof createCommand>[0],
   deps: CreateDeps,
   transport?: Transport,
-  provider?: GitProvider
+  provider?: Provider
 ) {
   const c = capture()
   try {
@@ -1680,9 +1680,9 @@ function forbidden<T extends object>(what: string): T {
   })
 }
 
-const offline = (): [Transport, GitProvider] => [
+const offline = (): [Transport, Provider] => [
   forbidden<Transport>('transport'),
-  forbidden<GitProvider>('provider'),
+  forbidden<Provider>('provider'),
 ]
 
 const BLANK_NEXT = [

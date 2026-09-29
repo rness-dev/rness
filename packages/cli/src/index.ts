@@ -51,6 +51,7 @@ export type { CommandDeps } from './core/deps.ts'
 export type {
   GitCredentials,
   GitProvider,
+  Provider,
   Organization,
   OrganizationAccess,
 } from './core/provider.ts'

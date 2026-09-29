@@ -30,7 +30,8 @@ import {
   isPackageManager,
   rnessCommand,
 } from '../core/pm.ts'
-import type { GitCredentials, GitProvider } from '../core/provider.ts'
+import type { GitCredentials, Provider } from '../core/provider.ts'
+import { openProvider } from '../core/providers.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { PRIVATE_MARK, banner, unicode } from '../core/style.ts'
@@ -131,7 +132,7 @@ function cancelled(ui: Ui): number {
  */
 async function pickRepositories(input: {
   org: string
-  provider: GitProvider
+  provider: Provider
   prompts: Prompts
   ui: Ui
   catalogue: Readonly<Record<string, unknown>>
@@ -290,7 +291,7 @@ async function cloneSelection(input: {
   org: string
   host: string
   specs: readonly string[]
-  provider: GitProvider
+  provider: Provider
   ui: Ui
 }): Promise<Failure[]> {
   const { ui } = input
@@ -401,7 +402,7 @@ const OTHER = Symbol('another organization')
  * having nothing to offer; null is a cancel.
  */
 async function chooseOrganization(
-  provider: GitProvider,
+  provider: Provider,
   prompts: Prompts
 ): Promise<string | typeof OTHER | null> {
   if (!provider.authenticated) return OTHER
@@ -434,7 +435,7 @@ async function chooseOrganization(
 async function publishContext(input: {
   ui: Ui
   prompts: Prompts
-  provider: GitProvider
+  provider: Provider
   org: string
   rnessDir: string
   url: string
@@ -490,7 +491,7 @@ export async function createCommand(
   const transport = deps.transport ?? defaultTransport
   // Built on first use: it reads the stored login, which most paths never need.
   let provider = deps.provider
-  const getProvider = async (): Promise<GitProvider> =>
+  const getProvider = async (): Promise<Provider> =>
     (provider ??= await githubProvider(opts.githubApi))
   const cwd = opts.cwd ?? process.cwd()
   if (opts.template !== undefined) {
@@ -684,7 +685,7 @@ export async function createCommand(
 
     const host = await chooseHost()
     const contextUrl = repoUrl(host, org, '.rness')
-    const gitProvider = await getProvider()
+    let gitProvider = await getProvider()
     const probe = await probeRemote(
       contextUrl,
       undefined,
@@ -745,6 +746,11 @@ export async function createCommand(
       // Validates that the clone is a workspace context: throws on a
       // malformed or absent rness.json.
       catalogue = await loadManifest(await staged())
+      // The catalogue names the provider; the clone above had only GitHub.
+      if (deps.provider === undefined)
+        gitProvider = await openProvider(catalogue, {
+          ...(opts.githubApi === undefined ? {} : { apiBase: opts.githubApi }),
+        })
       // An SSH workspace is not negotiable: without SSH access its
       // repositories cannot be cloned, so stop before any question or write.
       // `--ssh` is the user's word that SSH works; git reports otherwise.

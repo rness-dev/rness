@@ -21,7 +21,6 @@ import { assembleContext } from '../core/context.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
-import { githubProvider } from '../core/github-oauth-provider.ts'
 import { loadManifest, workspaceName, writeManifest } from '../core/manifest.ts'
 import {
   type MergeResult,
@@ -32,6 +31,7 @@ import {
 } from '../core/merge.ts'
 import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
+import { openProvider } from '../core/providers.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING,
@@ -190,8 +190,11 @@ export async function syncCommand(
   const transport = deps.transport ?? defaultTransport
   // Only a clone or a pull needs it, and it reads the stored login.
   let provider = deps.provider
-  const credentialsFor = async (url: string): Promise<GitCredentials | null> =>
-    (provider ??= await githubProvider()).credentialsFor(url)
+  const credentialsFor = async (
+    manifest: Manifest,
+    url: string
+  ): Promise<GitCredentials | null> =>
+    (provider ??= await openProvider(manifest)).credentialsFor(url)
   const cwd = opts.cwd ?? process.cwd()
   const check = opts.check === true
   // Inside another command's session (`add`, `create`) its reporter is used;
@@ -323,7 +326,7 @@ export async function syncCommand(
             continue
           }
           try {
-            const credentials = await credentialsFor(repo.url)
+            const credentials = await credentialsFor(manifest, repo.url)
             await ui.step({ doing: `cloning  ${label}`, git: true }, () =>
               clone(repo.url, dir, credentials)
             )
@@ -344,7 +347,7 @@ export async function syncCommand(
               lines.push(['skipped', `${label} (working tree not clean)`])
               continue
             }
-            const credentials = await credentialsFor(repo.url)
+            const credentials = await credentialsFor(manifest, repo.url)
             await ui.step({ doing: `pulling  ${label}`, git: true }, () =>
               pullFastForward(dir, credentials)
             )

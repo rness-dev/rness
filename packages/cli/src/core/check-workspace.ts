@@ -2,8 +2,9 @@ import { type TargetOutcome, agentTargets } from './agent-targets.ts'
 import { unsupportedAgents, unsupportedMessage } from './agents.ts'
 import { type CheckBlocksResult, checkBlocks } from './blocks.ts'
 import { checkContract } from './contract.ts'
-import { workspaceName } from './manifest.ts'
+import { providerOf, workspaceName } from './manifest.ts'
 import { rnessCommand } from './pm.ts'
+import { PROVIDERS, unsupportedProviderMessage } from './providers.ts'
 import { scopeChain } from './scope.ts'
 import type { Manifest, Workspace } from './types.ts'
 
@@ -37,6 +38,9 @@ export async function checkWorkspace(
   problems.push(...blocks.problems)
   for (const name of unsupportedAgents(manifest.agents ?? []))
     problems.push(unsupportedMessage(name))
+  const provider = providerOf(manifest)
+  if (!PROVIDERS[provider].available)
+    problems.push(unsupportedProviderMessage(provider))
   const targets = await agentTargets(ws.root, manifest, { check: true })
   for (const o of targets)
     if (o.status === 'stale')

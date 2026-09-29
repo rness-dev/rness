@@ -2,7 +2,6 @@ import { basename, join } from 'node:path'
 
 import type { CommandDeps } from '../core/deps.ts'
 import { exists } from '../core/fs.ts'
-import { githubProvider } from '../core/github-oauth-provider.ts'
 import {
   CONTEXT_REPO,
   loadManifest,
@@ -10,6 +9,7 @@ import {
   workspaceName,
 } from '../core/manifest.ts'
 import type { GitCredentials } from '../core/provider.ts'
+import { openProvider } from '../core/providers.ts'
 import {
   type AddRepositoryResult,
   addRepository,
@@ -26,6 +26,7 @@ import {
   usingRest,
   usingSentence,
 } from '../core/transport.ts'
+import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -77,8 +78,11 @@ export async function addCommand(
   const terminal = deps.terminal ?? defaultTerminal
   const transport = deps.transport ?? defaultTransport
   let provider = deps.provider
-  const credentialsFor = async (url: string): Promise<GitCredentials | null> =>
-    (provider ??= await githubProvider()).credentialsFor(url)
+  const credentialsFor = async (
+    manifest: Manifest,
+    url: string
+  ): Promise<GitCredentials | null> =>
+    (provider ??= await openProvider(manifest)).credentialsFor(url)
   const cwd = opts.cwd ?? process.cwd()
   if (opts.ssh === true && opts.https === true) {
     process.stderr.write('--ssh and --https cannot be combined\n')
@@ -188,7 +192,7 @@ export async function addCommand(
       }
     }
 
-    const credentials = await credentialsFor(parsed.url)
+    const credentials = await credentialsFor(manifest, parsed.url)
     const chosenHost = host
     let result = await ui.step(
       {
