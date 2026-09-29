@@ -99,11 +99,7 @@ export class GitHubOAuthProvider implements Provider {
 
   async scopes(): Promise<string[] | null> {
     if (this.#token === null) return null
-    try {
-      return await getScopes(this.#api(this.#token.token))
-    } catch {
-      return null
-    }
+    return getScopes(this.#api(this.#token.token))
   }
 
   #boards(): GitHubBoards {

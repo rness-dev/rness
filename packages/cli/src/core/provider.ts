@@ -45,7 +45,11 @@ export interface Provider {
    * `.rness` gets to GitHub (spec 0004 §3b). Anonymous: refused.
    */
   createRepository(owner: string, name: string): Promise<CreateRepositoryResult>
-  /** The scopes the token holds; null when anonymous, unknown, or on any failure. */
+  /**
+   * The scopes the token holds; null when anonymous or when the provider
+   * names none. Rejects when the provider cannot be asked (offline, a
+   * rejected token): that is not a missing scope.
+   */
   scopes(): Promise<string[] | null>
   /**
    * Credentials for `url`, or null: an SSH URL, another host, no login.

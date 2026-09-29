@@ -159,7 +159,7 @@ test('createRepository: in the organization, under the user for their own accoun
   })
 })
 
-test('scopes: the X-OAuth-Scopes header, null without it or on failure', async (t) => {
+test('scopes: the X-OAuth-Scopes header; null anonymous or without it; a failure rejects', async (t) => {
   let reply: {
     status?: number
     json: unknown
@@ -173,15 +173,31 @@ test('scopes: the X-OAuth-Scopes header, null without it or on failure', async (
   assert.deepEqual(await provider.scopes(), ['repo', 'read:org', 'project'])
   assert.equal(gh.requests[0]?.path, '/user')
 
+  // A fine-grained or App token: GitHub names no scope.
   reply = { json: { login: 'octo' } }
-  assert.equal(await provider.scopes(), null)
-  reply = { status: 401, json: {}, headers: { 'x-oauth-scopes': 'repo' } }
   assert.equal(await provider.scopes(), null)
   const anonymous = new GitHubOAuthProvider({ token: null, apiBase: gh.base })
   assert.equal(await anonymous.scopes(), null)
+
+  // GitHub could not be asked: never mistaken for a missing scope.
+  reply = { status: 401, json: {}, headers: { 'x-oauth-scopes': 'repo' } }
+  await assert.rejects(provider.scopes(), {
+    message: 'GitHub rejected the token (401)',
+  })
+  reply = {
+    status: 403,
+    json: { message: 'API rate limit exceeded for user ID 1.' },
+  }
+  await assert.rejects(provider.scopes(), {
+    message: 'API rate limit exceeded for user ID 1.',
+  })
+  reply = { status: 502, json: {} }
+  await assert.rejects(provider.scopes(), {
+    message: 'GitHub API answered 502 for /user',
+  })
   const dead = new GitHubOAuthProvider({
     token: TOKEN,
     apiBase: 'http://127.0.0.1:1',
   })
-  assert.equal(await dead.scopes(), null)
+  await assert.rejects(dead.scopes(), /^Error: cannot reach GitHub: \S/)
 })

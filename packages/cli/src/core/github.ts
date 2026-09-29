@@ -297,17 +297,35 @@ export async function postJson(
 /**
  * The scopes of a classic or OAuth token: `X-OAuth-Scopes` of GET /user,
  * split on ", ". Null when the header is absent (a fine-grained or App
- * token) or the answer is not a 200.
+ * token). Throws when GitHub cannot be asked, so that no one mistakes it for
+ * a missing scope: `cannot reach GitHub: <why>`, the 401 line, or GitHub's
+ * own message.
  */
 export async function getScopes(options: ApiOptions): Promise<string[] | null> {
   const base = (options.apiBase ?? DEFAULT_GITHUB_API).replace(/\/+$/, '')
-  const page = await getPage(
-    `${base}/user`,
-    apiHeaders(options.token),
-    options.timeoutMs ?? 15_000
-  )
-  if (page.status !== 200) return null
-  const header = page.headers.get('x-oauth-scopes')
+  let res: Response
+  try {
+    res = await fetch(`${base}/user`, {
+      headers: apiHeaders(options.token),
+      signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+    })
+  } catch (e) {
+    throw new Error(`cannot reach GitHub: ${reason(e)}`, { cause: e })
+  }
+  const body: unknown = await res.json().catch(() => undefined)
+  if (res.status !== 200) {
+    const cause = { status: res.status, path: '/user' }
+    if (res.status === 401)
+      throw new Error('GitHub rejected the token (401)', { cause })
+    const message =
+      body !== null && typeof body === 'object'
+        ? (body as Record<string, unknown>)['message']
+        : undefined
+    if (typeof message === 'string' && message !== '')
+      throw new GitHubMessageError(message, { cause })
+    throw new Error(`GitHub API answered ${res.status} for /user`, { cause })
+  }
+  const header = res.headers.get('x-oauth-scopes')
   if (header === null) return null
   return header
     .split(',')

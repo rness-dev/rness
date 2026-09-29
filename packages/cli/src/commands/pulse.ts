@@ -23,6 +23,7 @@ export interface PulseOptions {
 }
 
 const PROJECT_SCOPE = 'project'
+const NEEDS_LOGIN = 'the pulse needs a GitHub login: run rness login'
 const NEEDS_SCOPE = 'the pulse needs the project scope: run rness login'
 
 const boardUrl = (org: string, project: number): string =>
@@ -62,14 +63,23 @@ async function context(opts: PulseOptions): Promise<Context> {
 const apiOf = (opts: PulseOptions): { apiBase?: string } =>
   opts.githubApi === undefined ? {} : { apiBase: opts.githubApi }
 
-const hasProjectScope = async (provider: Provider): Promise<boolean> =>
-  (await provider.scopes())?.includes(PROJECT_SCOPE) ?? false
+/**
+ * What the login lacks for the pulse — a login, or the project scope — or
+ * null. Throws when GitHub cannot be asked: an offline machine or a rejected
+ * token is never told that a scope is missing.
+ */
+async function missingAccess(provider: Provider): Promise<string | null> {
+  if (!provider.authenticated) return NEEDS_LOGIN
+  const scopes = await fromGithub(provider.scopes())
+  return scopes?.includes(PROJECT_SCOPE) === true ? null : NEEDS_SCOPE
+}
 
 /** The declared board, opened; `sync` and `mark` need one. */
 async function declaredBoard(c: Context): Promise<Board> {
   if (c.manifest.pulse === null)
     throw new Error('no pulse declared — rness pulse create')
-  if (!(await hasProjectScope(c.provider))) throw new Error(NEEDS_SCOPE)
+  const missing = await missingAccess(c.provider)
+  if (missing !== null) throw new Error(missing)
   const number = c.manifest.pulse.project
   const board = await fromGithub(c.provider.board(c.org, number))
   if (board === null)
@@ -144,14 +154,17 @@ export async function pulseCreateCommand(
       throw new Error(
         `already declared: ${boardUrl(c.org, c.manifest.pulse.project)} — rness pulse sync`
       )
-    if (!(await hasProjectScope(c.provider))) {
-      if (opts.yes === true || !terminal.isTty()) throw new Error(NEEDS_SCOPE)
+    const missing = await missingAccess(c.provider)
+    if (missing !== null) {
+      if (opts.yes === true || !terminal.isTty()) throw new Error(missing)
       const p = await terminal.prompts()
       const ok = await p.confirm({
         message:
-          'The pulse needs the project scope of your GitHub login. Log in again to grant it?',
+          missing === NEEDS_LOGIN
+            ? 'The pulse needs a GitHub login with the project scope. Log in now?'
+            : 'The pulse needs the project scope of your GitHub login. Log in again to grant it?',
       })
-      if (p.isCancel(ok) || ok !== true) throw new Error(NEEDS_SCOPE)
+      if (p.isCancel(ok) || ok !== true) throw new Error(missing)
       const code = await loginCommand(
         {
           project: true,
@@ -163,7 +176,8 @@ export async function pulseCreateCommand(
       )
       if (code !== 0) return code
       c = { ...c, provider: await openProvider(c.manifest, apiOf(opts)) }
-      if (!(await hasProjectScope(c.provider))) throw new Error(NEEDS_SCOPE)
+      const still = await missingAccess(c.provider)
+      if (still !== null) throw new Error(still)
     }
     const login = (await c.provider.identity())?.login ?? 'unknown'
     ui.line(

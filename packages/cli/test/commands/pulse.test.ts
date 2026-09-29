@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
@@ -30,13 +32,16 @@ const NO_TTY: Terminal = {
   },
 }
 
-/** A private config dir and a token; `scopes` is what GET /user says it holds. */
-async function machine(t: TestContext) {
+/**
+ * A private config dir and a token — none with `null`, and no stored login
+ * either; `scopes` is what GET /user says the token holds.
+ */
+async function machine(t: TestContext, token: string | null = 'tok') {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-pulse-')))
   t.after(() => rm(dir, { recursive: true, force: true }))
   withEnv(t, {
     XDG_CONFIG_HOME: dir,
-    GITHUB_TOKEN: 'tok',
+    GITHUB_TOKEN: token ?? undefined,
     GH_TOKEN: undefined,
   })
 }
@@ -549,8 +554,11 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
   assert.match(ended.out, /^synced\s+2 items: /m)
 })
 
-test('mark that cannot reach the pulse records why, for the next session start, and exits 0', async (t) => {
-  await machine(t)
+/** What `pulse mark` recorded for the next session start, once. */
+async function recordedBy(
+  t: TestContext,
+  githubApi: string
+): Promise<string | null> {
   const cwd = await makeWorkspace(t, {
     org: 'acme',
     pulse: { project: 7 },
@@ -559,15 +567,89 @@ test('mark that cannot reach the pulse records why, for the next session start, 
   const r = await run(() =>
     pulseMarkCommand({
       cwd,
-      githubApi: 'http://127.0.0.1:1',
+      githubApi,
       session: 'claude · s1',
       paths: ['adr/0001-a.md'],
     })
   )
   assert.equal(r.code, 0)
+  assert.equal(r.out + r.err, '', 'no one reads a detached mark')
   const reason = await takeFailure()
-  assert.ok(reason !== null && reason !== '')
-  assert.equal(await takeFailure(), null)
+  assert.equal(await takeFailure(), null, 'said once')
+  return reason
+}
+
+test('mark without a login records that the pulse needs one, and exits 0', async (t) => {
+  await machine(t, null)
+  assert.equal(
+    await recordedBy(t, 'http://127.0.0.1:1'),
+    'the pulse needs a GitHub login: run rness login'
+  )
+})
+
+test('mark with a login that lacks the project scope records the scope', async (t) => {
+  await machine(t)
+  const g = await board(t, { other: asUser('repo, read:org') })
+  assert.equal(
+    await recordedBy(t, g.base),
+    'the pulse needs the project scope: run rness login'
+  )
+})
+
+/** An address nothing listens on: a port just closed. */
+async function offline(): Promise<string> {
+  const server = createServer()
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  await new Promise<void>((resolve) => server.close(() => resolve()))
+  return `http://127.0.0.1:${port}`
+}
+
+test('mark offline records that GitHub cannot be reached, not the scope', async (t) => {
+  await machine(t)
+  const api = await offline()
+  // The platform's own words for a refused connection, as the mark sees them.
+  const why = await fetch(`${api}/user`).then(
+    () => assert.fail(`something listens on ${api}`),
+    (e: Error) => (e.cause as Error).message
+  )
+  assert.match(why, /ECONNREFUSED/)
+  assert.equal(await recordedBy(t, api), `cannot reach GitHub: ${why}`)
+})
+
+test('mark whose token GitHub rejects records the rejection, not the scope', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    other: (r) =>
+      r.path === '/user'
+        ? { status: 401, json: { message: 'Bad credentials' } }
+        : undefined,
+  })
+  assert.equal(await recordedBy(t, g.base), 'GitHub rejected the token (401)')
+})
+
+test('create offline: GitHub cannot be reached, and no login is offered', async (t) => {
+  await machine(t)
+  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const asked: string[] = []
+  const terminal: Terminal = {
+    isTty: () => true,
+    prompts: async () =>
+      ({
+        async confirm(o: { message: string }) {
+          asked.push(o.message)
+          return false
+        },
+        isCancel: () => false,
+      }) as unknown as Prompts,
+  }
+  const githubApi = await offline()
+  const r = await run(() =>
+    pulseCreateCommand({ cwd, githubApi }, { terminal })
+  )
+  assert.equal(r.code, 1)
+  assert.match(r.err.trim(), /^cannot reach GitHub: \S/)
+  assert.deepEqual(asked, [])
 })
 
 test("rness's own errors keep their words: only GitHub's are named GitHub's", async (t) => {
