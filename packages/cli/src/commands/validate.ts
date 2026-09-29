@@ -1,7 +1,4 @@
-import { agentTargets } from '../core/agent-targets.ts'
-import { unsupportedAgents, unsupportedMessage } from '../core/agents.ts'
-import { checkBlocks } from '../core/blocks.ts'
-import { checkContract } from '../core/contract.ts'
+import { checkWorkspace } from '../core/check-workspace.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
 import { EXACT_VERSION, readPin } from '../core/pinned.ts'
@@ -11,7 +8,6 @@ import {
   isRepository,
   isShallow,
 } from '../core/scaffold-git.ts'
-import { scopeChain } from '../core/scope.ts'
 import { warn } from '../core/style.ts'
 import { defaultTerminal } from '../core/terminal.ts'
 import { makeUi } from '../core/ui.ts'
@@ -41,30 +37,8 @@ export async function validateCommand(
   try {
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
-    // loadManifest only checks that extends targets exist; walk every scope so
-    // an extends cycle is reported here rather than breaking `context` later.
-    for (const s of Object.keys(manifest.scopes)) scopeChain(manifest, s)
     const org = workspaceName(manifest, ws.root)
-    const problems = await checkContract(ws.rnessDir)
-    const blocks = await checkBlocks({
-      root: ws.root,
-      rnessDir: ws.rnessDir,
-      manifest,
-      org,
-    })
-    problems.push(...blocks.problems)
-    // The team's agents (spec 0011 §3): a name this copy cannot compile, and
-    // a value a declared target guarantees but a clone lacks.
-    for (const name of unsupportedAgents(manifest.agents ?? []))
-      problems.push(unsupportedMessage(name))
-    const targets = await agentTargets(ws.root, manifest, { check: true })
-    for (const o of targets)
-      if (o.status === 'stale')
-        problems.push(
-          `${o.label}: ${o.detail ?? ''} (run ${rnessCommand()} sync)`
-        )
-      else if (o.status === 'invalid')
-        problems.push(`${o.label}: ${o.detail ?? 'unreadable'}`)
+    const { problems, blocks, targets } = await checkWorkspace(ws, manifest)
 
     // The scaffold (spec 0013 §4): a warning, never a problem — and nothing
     // in a one-commit CI checkout, whose history is not there to read.
