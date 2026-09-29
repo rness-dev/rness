@@ -27,6 +27,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/../../.rness/node_modules/@rness/cli/dist/bin/rness.js\"; if [ -f \"$f\" ]; then node \"$f\" hook session-end; fi",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
