@@ -23,9 +23,10 @@ async function fixture(t: TestContext) {
       'standards/web/seo.md': '# SEO\n\nEvery page sets a title.\n',
       'standards/api/errors.md': '# Errors\n',
       'adr/0000-template.md': doc('Proposed', 'Template'),
+      // The scaffold's heading: the id, a dash, the title.
       'adr/0006-workspace.md': doc(
         'Accepted',
-        'A workspace is a GitHub organisation',
+        '0006 — A workspace is a GitHub organisation',
         '\nNever squash an upgrade.\n'
       ),
       'adr/0009-landing.md': doc('Proposed', 'The landing shows the target'),
@@ -36,7 +37,7 @@ async function fixture(t: TestContext) {
       ),
       'plans/platform/0019-agents.md': doc(
         'Completed',
-        'Agent targets, the plan'
+        '0019 - Agent targets, the plan'
       ),
     },
     dirs: ['org/platform/apps/web', 'org/api'],
