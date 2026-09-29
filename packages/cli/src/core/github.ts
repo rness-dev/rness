@@ -70,16 +70,21 @@ async function getPage(
   url: string,
   headers: Record<string, string>,
   timeoutMs: number,
-  init: { method?: string; body?: string } = {}
+  init: { method?: string; body?: string; errorBody?: boolean } = {}
 ): Promise<Page> {
+  const { errorBody, ...request } = init
   const signal = AbortSignal.timeout(timeoutMs)
   let res: Response
   try {
-    res = await fetch(url, { headers, signal, ...init })
+    res = await fetch(url, { headers, signal, ...request })
   } catch (e) {
     throw new Error(`cannot reach the GitHub API: ${reason(e)}`, { cause: e })
   }
   if (!res.ok) {
+    if (errorBody === true) {
+      const parsed: unknown = await res.json().catch(() => undefined)
+      return { status: res.status, headers: res.headers, body: parsed }
+    }
     // Drain the body so the connection is released; its content is not used.
     await res.body?.cancel().catch(() => undefined)
     return { status: res.status, headers: res.headers, body: undefined }
@@ -253,16 +258,30 @@ async function getJson(
 export async function postJson(
   path: string,
   payload: unknown,
-  options: ApiOptions
+  options: ApiOptions,
+  /** Show GitHub's own `message` when it refuses (the Projects client); 401 and 429 keep `httpError`'s words. */
+  explain = false
 ): Promise<unknown> {
   const base = (options.apiBase ?? DEFAULT_GITHUB_API).replace(/\/+$/, '')
   const page = await getPage(
     `${base}${path}`,
     { ...apiHeaders(options.token), 'Content-Type': 'application/json' },
     options.timeoutMs ?? 15_000,
-    { method: 'POST', body: JSON.stringify(payload) }
+    { method: 'POST', body: JSON.stringify(payload), errorBody: explain }
   )
-  if (page.status < 200 || page.status >= 300) throw httpError(page, path)
+  if (page.status < 200 || page.status >= 300) {
+    const message =
+      explain &&
+      page.status !== 401 &&
+      page.status !== 429 &&
+      page.body !== null &&
+      typeof page.body === 'object'
+        ? (page.body as { message?: unknown }).message
+        : undefined
+    if (typeof message === 'string' && message !== '')
+      throw new Error(message, { cause: { status: page.status, path } })
+    throw httpError(page, path)
+  }
   return page.body
 }
 

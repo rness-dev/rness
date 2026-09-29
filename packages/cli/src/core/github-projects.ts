@@ -19,7 +19,7 @@ async function graphqlRaw<T>(
   variables: Record<string, unknown>,
   options: ApiOptions
 ): Promise<GraphqlAnswer<T>> {
-  const body = await postJson('/graphql', { query, variables }, options)
+  const body = await postJson('/graphql', { query, variables }, options, true)
   return isRecord(body) ? (body as GraphqlAnswer<T>) : {}
 }
 
@@ -484,7 +484,8 @@ export async function createView(
   await postJson(
     `/orgs/${encodeURIComponent(org)}/projectsV2/${number}/views`,
     body,
-    o
+    o,
+    true
   )
 }
 

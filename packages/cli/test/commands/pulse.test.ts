@@ -195,6 +195,30 @@ test("GitHub's refusal comes as GitHub: <message>, without a stack", async (t) =
   )
 })
 
+test('an organization that restricts OAuth apps: its 403 message, as it comes', async (t) => {
+  await machine(t)
+  const message =
+    'Although you appear to have the correct authorization credentials, the `rness-dev` organization has enabled OAuth App access restrictions, meaning that data access to third-parties is limited.'
+  const g = await board(t, {
+    other: (r) =>
+      asUser('repo, project')(r) ??
+      (r.path === '/graphql' &&
+      JSON.stringify(r.body).includes('createProjectV2(')
+        ? { status: 403, json: { message } }
+        : undefined),
+  })
+  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const r = await run(() =>
+    pulseCreateCommand(
+      { cwd, yes: true, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 1)
+  assert.equal(r.err.trim(), `GitHub: ${message}`)
+  assert.doesNotMatch(r.err, /\n\s+at |add repositories/)
+})
+
 test('create: the lines of the spec in order, and the manifest declares the pulse', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo, read:org, project') })
