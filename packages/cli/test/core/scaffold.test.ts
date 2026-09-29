@@ -21,8 +21,10 @@ test('the scaffold manifest is a valid empty workspace', async () => {
   const m = await loadManifest(scaffoldDir())
   assert.deepEqual(m, {
     contract: 1,
+    provider: null,
     org: null,
     agents: null,
+    pulse: null,
     repos: {},
     scopes: {},
   })

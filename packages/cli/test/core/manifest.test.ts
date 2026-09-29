@@ -10,9 +10,11 @@ import {
   isWorkspaceClone,
   loadManifest,
   parseRepoSpec,
+  providerOf,
   workspaceName,
   writeManifest,
 } from '../../src/core/manifest.ts'
+import type { Manifest } from '../../src/core/types.ts'
 
 async function fixture(json: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'rness-'))
@@ -192,8 +194,10 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   await writeManifest(d, {
     contract: 1,
+    provider: null,
     org: null,
     agents: null,
+    pulse: null,
     repos: { web: { url: 'https://github.com/acme/web.git' } },
     scopes: {
       web: { path: 'org/web', extends: [] },
@@ -217,8 +221,10 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
   )
   await writeManifest(d, {
     contract: 1,
+    provider: null,
     org: 'acme',
     agents: null,
+    pulse: null,
     repos: {},
     scopes: {},
   })
@@ -228,8 +234,10 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
   )
   assert.deepEqual(await loadManifest(d), {
     contract: 1,
+    provider: null,
     org: 'acme',
     agents: null,
+    pulse: null,
     repos: {},
     scopes: {},
   })
@@ -276,8 +284,10 @@ test('writeManifest puts agents after org, and writes [] too', async (t) => {
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   await writeManifest(d, {
     contract: 1,
+    provider: null,
     org: 'acme',
     agents: ['claude'],
+    pulse: null,
     repos: {},
     scopes: {},
   })
@@ -287,8 +297,10 @@ test('writeManifest puts agents after org, and writes [] too', async (t) => {
   )
   await writeManifest(d, {
     contract: 1,
+    provider: null,
     org: null,
     agents: [],
+    pulse: null,
     repos: {},
     scopes: {},
   })
@@ -297,6 +309,131 @@ test('writeManifest puts agents after org, and writes [] too', async (t) => {
     /^\{\n {2}"contract": 1,\n {2}"agents": \[\],\n/
   )
   assert.deepEqual((await loadManifest(d)).agents, [])
+})
+
+// --- provider and pulse (spec 0017 §2.1) ---------------------------------------
+
+test('provider: one of the three names, absent is null, anything else is an error', async (t) => {
+  for (const [provider, expected] of [
+    [undefined, null],
+    ['github', 'github'],
+    ['gitlab', 'gitlab'],
+    ['atlassian', 'atlassian'],
+  ] as const) {
+    const d = await fixture({ contract: 1, provider, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    assert.equal((await loadManifest(d)).provider, expected)
+  }
+  for (const provider of ['svn', 'GitHub', 1, null]) {
+    const d = await fixture({ contract: 1, provider, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      new Error(
+        `rness.json: "provider" must be one of github, gitlab, atlassian (got ${JSON.stringify(provider)})`
+      )
+    )
+  }
+})
+
+test('pulse: { "project": <positive integer> }, absent is null, anything else is an error', async (t) => {
+  for (const [pulse, expected] of [
+    [undefined, null],
+    [{ project: 3 }, { project: 3 }],
+  ] as const) {
+    const d = await fixture({ contract: 1, pulse, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    assert.deepEqual((await loadManifest(d)).pulse, expected)
+  }
+  for (const pulse of [
+    3,
+    null,
+    {},
+    { project: 0 },
+    { project: -1 },
+    { project: 1.5 },
+    { project: '3' },
+    { project: 3, extra: true },
+  ]) {
+    const d = await fixture({ contract: 1, pulse, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      new Error(
+        `rness.json: "pulse" must be { "project": <number> } (got ${JSON.stringify(pulse)})`
+      )
+    )
+  }
+})
+
+test('writeManifest writes provider after contract and pulse after agents', async (t) => {
+  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const manifest: Manifest = {
+    contract: 1,
+    provider: 'github',
+    org: 'acme',
+    agents: ['claude'],
+    pulse: { project: 3 },
+    repos: {},
+    scopes: {},
+  }
+  await writeManifest(d, manifest)
+  assert.equal(
+    await readFile(join(d, 'rness.json'), 'utf8'),
+    `{
+  "contract": 1,
+  "provider": "github",
+  "org": "acme",
+  "agents": ["claude"],
+  "pulse": { "project": 3 },
+  "repos": {
+  },
+  "scopes": {
+  }
+}
+`
+  )
+  assert.deepEqual(await loadManifest(d), manifest)
+  await writeManifest(d, { ...manifest, provider: null, pulse: null })
+  assert.equal(
+    (await readFile(join(d, 'rness.json'), 'utf8')).includes('provider'),
+    false
+  )
+  assert.equal(
+    (await readFile(join(d, 'rness.json'), 'utf8')).includes('pulse'),
+    false
+  )
+})
+
+test('providerOf: the key wins, else the first repository host, else github', () => {
+  const base: Manifest = {
+    contract: 1,
+    provider: null,
+    org: null,
+    agents: null,
+    pulse: null,
+    repos: {},
+    scopes: {},
+  }
+  const web = (url: string) => ({ web: { url } })
+  assert.equal(providerOf(base), 'github')
+  assert.equal(
+    providerOf({
+      ...base,
+      provider: 'atlassian',
+      repos: web('https://gitlab.com/acme/web.git'),
+    }),
+    'atlassian'
+  )
+  assert.equal(
+    providerOf({ ...base, repos: web('https://gitlab.com/acme/web.git') }),
+    'gitlab'
+  )
+  assert.equal(
+    providerOf({ ...base, repos: web('git@github.com:acme/web.git') }),
+    'github'
+  )
 })
 
 test('parseRepoSpec accepts repo, owner/repo and full URLs, and validates the name', () => {

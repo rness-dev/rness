@@ -720,8 +720,10 @@ export async function createCommand(
     // so the picker can offer it before anything is written there.
     let catalogue: Manifest = {
       contract: 1,
+      provider: null,
       org,
       agents: null,
+      pulse: null,
       repos: {},
       scopes: {},
     }

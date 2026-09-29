@@ -25,11 +25,22 @@ export interface ScopeEntry {
   extends: string[]
 }
 
+/** The hosting providers a workspace can name (spec 0017 §2.1). */
+export type ProviderName = 'github' | 'gitlab' | 'atlassian'
+
+/** The GitHub Project the pulse reads. */
+export interface PulseEntry {
+  project: number
+}
+
 export interface Manifest {
   contract: 1
+  /** Null when not written: `providerOf()` infers it. */
+  provider: ProviderName | null
   org: string | null
   /** The team's agents (spec 0011 §3.1); null when never asked, [] for none. */
   agents: string[] | null
+  pulse: PulseEntry | null
   repos: Record<string, RepoEntry>
   scopes: Record<string, ScopeEntry>
 }

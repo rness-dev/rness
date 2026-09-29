@@ -6,8 +6,10 @@ import type { Manifest } from '../../src/core/types.ts'
 
 const manifest: Manifest = {
   contract: 1,
+  provider: null,
   org: null,
   agents: null,
+  pulse: null,
   repos: {},
   scopes: {
     web: { path: 'org/platform/apps/web', extends: ['platform'] },

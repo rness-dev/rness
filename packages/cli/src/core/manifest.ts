@@ -3,7 +3,13 @@ import { basename, join } from 'node:path'
 
 import { writeFileAtomic } from './fs.ts'
 import { repoUrl } from './remote.ts'
-import type { Manifest, RepoEntry, ScopeEntry } from './types.ts'
+import type {
+  Manifest,
+  ProviderName,
+  PulseEntry,
+  RepoEntry,
+  ScopeEntry,
+} from './types.ts'
 
 /**
  * A repository or scope name: what GitHub allows in a repository name, in
@@ -73,7 +79,15 @@ export const NAME_RULE =
 export const ORG_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/
 
 /** Every top-level key contract 1 defines. */
-const KEYS = ['contract', 'org', 'agents', 'repos', 'scopes']
+const KEYS = [
+  'contract',
+  'provider',
+  'org',
+  'agents',
+  'pulse',
+  'repos',
+  'scopes',
+]
 
 function fail(message: string): never {
   throw new Error(`rness.json: ${message}`)
@@ -128,6 +142,49 @@ function readAgents(value: unknown): string[] | null {
       `"agents" must be a list of unique agent names (got ${JSON.stringify(value)})`
     )
   return [...(value as string[])]
+}
+
+/** The hosting providers `provider` may name (spec 0017 §2.1). */
+export const PROVIDER_NAMES: readonly ProviderName[] = [
+  'github',
+  'gitlab',
+  'atlassian',
+]
+
+/** `provider`, when present: one of {@link PROVIDER_NAMES}. */
+function readProvider(value: unknown): ProviderName | null {
+  if (value === undefined) return null
+  const name = PROVIDER_NAMES.find((n) => n === value)
+  if (name === undefined)
+    fail(
+      `"provider" must be one of ${PROVIDER_NAMES.join(', ')} (got ${JSON.stringify(value)})`
+    )
+  return name
+}
+
+/** `pulse`, when present: the GitHub Project the pulse reads, by number. */
+function readPulse(value: unknown): PulseEntry | null {
+  if (value === undefined) return null
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 1 ||
+    typeof value.project !== 'number' ||
+    !Number.isInteger(value.project) ||
+    value.project < 1
+  )
+    fail(
+      `"pulse" must be { "project": <number> } (got ${JSON.stringify(value)})`
+    )
+  return { project: value.project }
+}
+
+/** The key, else the first repository URL's host (github.com → github), else github. */
+export function providerOf(manifest: Manifest): ProviderName {
+  if (manifest.provider !== null) return manifest.provider
+  const url = Object.values(manifest.repos)[0]?.url ?? ''
+  const host = /^(?:[a-z+]+:\/\/(?:[^@/]*@)?|[^@/]+@)([^/:]+)/i.exec(url)?.[1]
+  if (host?.toLowerCase().includes('gitlab')) return 'gitlab'
+  return 'github'
 }
 
 function readRepos(value: unknown): Record<string, RepoEntry> {
@@ -192,8 +249,10 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
   }
   return {
     contract: 1,
+    provider: readProvider(data.provider),
     org: readOrg(data.org),
     agents: readAgents(data.agents),
+    pulse: readPulse(data.pulse),
     repos: readRepos(data.repos),
     scopes: readScopes(data.scopes),
   }
@@ -216,12 +275,16 @@ export async function writeManifest(
     return `    ${JSON.stringify(name)}: { "path": ${JSON.stringify(s.path)}${ext} }`
   })
   const lines = ['{', '  "contract": 1,']
+  if (manifest.provider !== null)
+    lines.push(`  "provider": ${JSON.stringify(manifest.provider)},`)
   if (manifest.org !== null)
     lines.push(`  "org": ${JSON.stringify(manifest.org)},`)
   if (manifest.agents !== null)
     lines.push(
       `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`
     )
+  if (manifest.pulse !== null)
+    lines.push(`  "pulse": { "project": ${manifest.pulse.project} },`)
   lines.push(
     '  "repos": {',
     repos.join(',\n'),
