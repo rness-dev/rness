@@ -6,6 +6,7 @@ import { type CreateOptions, createCommand } from './commands/create.ts'
 import { gitCredentialCommand } from './commands/git-credential.ts'
 import { type LoginOptions, loginCommand } from './commands/login.ts'
 import { logoutCommand } from './commands/logout.ts'
+import { type McpOptions, mcpCommand } from './commands/mcp.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
@@ -93,6 +94,16 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: SyncOptions) => {
       state.code = await syncCommand(opts)
+    })
+
+  program
+    .command('mcp')
+    .description(
+      'Serve the workspace context to agents over MCP (stdio, read-only)'
+    )
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (opts: McpOptions) => {
+      state.code = await mcpCommand(opts)
     })
 
   program
