@@ -132,9 +132,10 @@ test('fields lists names and single-select options', async (t) => {
         node: {
           fields: {
             nodes: [
-              { id: 'F1', name: 'Title' },
+              { id: 'PVTF_1', databaseId: 11, name: 'Title' },
               {
-                id: 'F2',
+                id: 'PVTSSF_2',
+                databaseId: 22,
                 name: 'Status',
                 options: [{ id: 'A', name: 'Todo' }],
               },
@@ -145,8 +146,13 @@ test('fields lists names and single-select options', async (t) => {
       }),
   })
   assert.deepEqual(await fields('P_1', o), [
-    { id: 'F1', name: 'Title', options: null },
-    { id: 'F2', name: 'Status', options: [{ id: 'A', name: 'Todo' }] },
+    { id: 'PVTF_1', databaseId: 11, name: 'Title', options: null },
+    {
+      id: 'PVTSSF_2',
+      databaseId: 22,
+      name: 'Status',
+      options: [{ id: 'A', name: 'Todo' }],
+    },
   ])
 })
 
@@ -154,11 +160,14 @@ test('createField TEXT sends the dataType', async (t) => {
   const { requests, o } = await serve(t, {
     createProjectV2Field: () =>
       data({
-        createProjectV2Field: { projectV2Field: { id: 'F9', name: 'Ref' } },
+        createProjectV2Field: {
+          projectV2Field: { id: 'PVTF_9', databaseId: 99, name: 'Ref' },
+        },
       }),
   })
   assert.deepEqual(await createField('P_1', 'Ref', 'TEXT', o), {
-    id: 'F9',
+    id: 'PVTF_9',
+    databaseId: 99,
     name: 'Ref',
     options: null,
   })
@@ -175,7 +184,8 @@ test('createField single-select sends gray options with a description', async (t
       data({
         createProjectV2Field: {
           projectV2Field: {
-            id: 'F9',
+            id: 'PVTSSF_9',
+            databaseId: 99,
             name: 'Status',
             options: [{ id: 'A', name: 'Todo' }],
           },
@@ -183,6 +193,7 @@ test('createField single-select sends gray options with a description', async (t
       }),
   })
   const field = await createField('P_1', 'Status', { options: ['Todo'] }, o)
+  assert.equal(field.databaseId, 99)
   assert.deepEqual(field.options, [{ id: 'A', name: 'Todo' }])
   assert.deepEqual(gql(requests[0]!).variables, {
     projectId: 'P_1',
@@ -199,6 +210,7 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
         updateProjectV2Field: {
           projectV2Field: {
             id: 'F2',
+            databaseId: 22,
             name: 'Status',
             options: [
               { id: 'A', name: 'Todo' },
@@ -210,6 +222,7 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
   })
   const field = {
     id: 'F2',
+    databaseId: 22,
     name: 'Status',
     options: [
       { id: 'A', name: 'Todo' },
@@ -218,6 +231,7 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
   }
   const out = await setOptions(field, ['Todo', 'Done'], o)
   assert.equal(out.options?.length, 2)
+  assert.equal(out.databaseId, 22)
   assert.deepEqual(gql(requests[0]!).variables, {
     fieldId: 'F2',
     options: [
@@ -341,7 +355,7 @@ test('createView POSTs the documented REST body', async (t) => {
   await createView(
     'acme',
     4,
-    { name: 'Board', layout: 'board', filter: 'is:open', groupBy: '123' },
+    { name: 'Board', layout: 'board', filter: 'is:open', groupBy: 123 },
     o
   )
   const r = github.requests[0]!
@@ -355,7 +369,7 @@ test('createView POSTs the documented REST body', async (t) => {
   })
 })
 
-test('createView omits the grouping when there is none, and refuses a non-numeric one', async (t) => {
+test('createView omits the grouping when there is none', async (t) => {
   const github = await fakeGithub(t, () => ({ status: 201, json: {} }))
   const o = { token: 'tok', apiBase: github.base }
   await createView('acme', 4, { name: 'T', layout: 'table', filter: '' }, o)
@@ -364,15 +378,6 @@ test('createView omits the grouping when there is none, and refuses a non-numeri
     layout: 'table',
     filter: '',
   })
-  await assert.rejects(
-    createView(
-      'acme',
-      4,
-      { name: 'B', layout: 'board', filter: '', groupBy: 'PVTSSF_x' },
-      o
-    ),
-    /numeric/
-  )
 })
 
 test('createView surfaces a refused request', async (t) => {

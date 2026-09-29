@@ -102,12 +102,15 @@ export async function findProject(
 
 export interface Field {
   id: string
+  /** The numeric id REST project views refer to fields by. */
+  databaseId: number
   name: string
   options: { id: string; name: string }[] | null
 }
 
 interface RawField {
   id?: string
+  databaseId?: number
   name?: string
   options?: { id: string; name: string }[]
 }
@@ -115,6 +118,7 @@ interface RawField {
 function toField(raw: RawField): Field {
   return {
     id: raw.id ?? '',
+    databaseId: raw.databaseId ?? 0,
     name: raw.name ?? '',
     options: raw.options ?? null,
   }
@@ -163,7 +167,7 @@ const grayOption = (name: string, id?: string) => ({
   description: '',
 })
 
-const FIELD_SELECTION = `... on ProjectV2FieldCommon { id name }
+const FIELD_SELECTION = `... on ProjectV2FieldCommon { id databaseId name }
   ... on ProjectV2SingleSelectField { options { id name } }`
 
 export async function createField(
@@ -454,7 +458,7 @@ export async function archive(
 
 /**
  * REST `POST /orgs/{org}/projectsV2/{number}/views` (docs.github.com/en/rest/projects/views,
- * read 2026-09-29). `groupBy` is the numeric REST id of a field, sent as
+ * read 2026-09-29). `groupBy` is a field's `databaseId`, sent as
  * `vertical_group_by` (board columns), which the API takes as a one-item array.
  */
 export async function createView(
@@ -464,7 +468,7 @@ export async function createView(
     name: string
     layout: 'board' | 'table'
     filter: string
-    groupBy?: string
+    groupBy?: number
   },
   o: ApiOptions
 ): Promise<void> {
@@ -474,11 +478,11 @@ export async function createView(
     filter: view.filter,
   }
   if (view.groupBy !== undefined) {
-    if (!/^\d+$/.test(view.groupBy))
+    if (!Number.isInteger(view.groupBy))
       throw new Error(
-        `a view groups by the numeric field id, not "${view.groupBy}"`
+        `a view groups by a field's database id, not ${view.groupBy}`
       )
-    body['vertical_group_by'] = [Number(view.groupBy)]
+    body['vertical_group_by'] = [view.groupBy]
   }
   await postJson(
     `/orgs/${encodeURIComponent(org)}/projectsV2/${number}/views`,
