@@ -31,7 +31,7 @@ import {
 } from '../core/merge.ts'
 import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
-import { openProvider } from '../core/providers.ts'
+import { openGitProvider } from '../core/providers.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING,
@@ -194,7 +194,9 @@ export async function syncCommand(
     manifest: Manifest,
     url: string
   ): Promise<GitCredentials | null> =>
-    (provider ??= await openProvider(manifest)).credentialsFor(url)
+    (provider ??=
+      (await openGitProvider(manifest)) ?? undefined)?.credentialsFor(url) ??
+    null
   const cwd = opts.cwd ?? process.cwd()
   const check = opts.check === true
   // Inside another command's session (`add`, `create`) its reporter is used;

@@ -851,3 +851,16 @@ test('--pull still pulls a clone whose only changes are the agent files sync wro
   const dirty = await sync(['--yes', '--pull', '--cwd', root])
   assert.match(dirty.out, /^skipped {2}org\/api \(working tree not clean\)\n/)
 })
+
+test('a written provider this copy lacks does not stop sync: git does the cloning', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    provider: 'gitlab',
+    repos: { api: { url: 'git@gitlab.com:acme/api.git' } },
+    dirs: ['org/api'],
+    scopes: { api: { path: 'org/api' } },
+  })
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /updated {2}AGENTS\.md/)
+})

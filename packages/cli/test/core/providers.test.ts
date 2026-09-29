@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { GitHubOAuthProvider } from '../../src/core/github-oauth-provider.ts'
 import {
   PROVIDERS,
+  openGitProvider,
   openProvider,
   unsupportedProviderMessage,
 } from '../../src/core/providers.ts'
@@ -47,4 +48,17 @@ test('openProvider opens GitHub for a manifest without a key, or none', async ()
     (await openProvider(manifest('github'), { apiBase: 'http://x' })) instanceof
       GitHubOAuthProvider
   )
+})
+
+test('a host detected from a repository URL still opens GitHub', async () => {
+  const m = {
+    ...manifest(null),
+    repos: { api: { url: 'https://gitlab.com/acme/api.git' } },
+  }
+  assert.ok((await openProvider(m)) instanceof GitHubOAuthProvider)
+  assert.ok((await openGitProvider(m)) instanceof GitHubOAuthProvider)
+})
+
+test('openGitProvider gives none for a written provider it lacks', async () => {
+  assert.equal(await openGitProvider(manifest('gitlab')), null)
 })

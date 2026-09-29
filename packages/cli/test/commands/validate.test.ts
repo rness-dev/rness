@@ -395,3 +395,13 @@ test('reports a provider this copy does not support', async (t) => {
     /rness\.json: provider "gitlab" is not supported by @rness\/cli \S+ \(supported: github\)/
   )
 })
+
+test('a host detected from a repository URL is not a problem', async (t) => {
+  const cwd = await makeWorkspace(t, {
+    repos: { api: { url: 'https://gitlab.com/acme/api.git' } },
+  })
+  const c = capture()
+  const code = await run(['validate', '--cwd', cwd])
+  c.restore()
+  assert.equal(code, 0, c.err())
+})

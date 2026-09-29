@@ -1,6 +1,5 @@
 import { VERSION } from '../version.ts'
 import { githubProvider } from './github-oauth-provider.ts'
-import { providerOf } from './manifest.ts'
 import type { Provider } from './provider.ts'
 import type { Manifest, ProviderName } from './types.ts'
 
@@ -35,14 +34,32 @@ export function unsupportedProviderMessage(name: ProviderName): string {
   return `rness.json: provider "${name}" is not supported by @rness/cli ${VERSION} (supported: ${supported.join(', ')})`
 }
 
-/** The workspace's provider, opened — or throws the message above. */
+/**
+ * The workspace's provider, opened — or throws the message above. Only a
+ * provider written in `rness.json` is refused: a host detected from a
+ * repository URL is git's business (spec 0017 §1), and opens GitHub, whose
+ * credentials answer null for other hosts.
+ */
 export async function openProvider(
   manifest: Manifest | null,
   options: { apiBase?: string } = {}
 ): Promise<Provider> {
-  const name = manifest === null ? 'github' : providerOf(manifest)
+  const name = manifest?.provider ?? 'github'
   const entry = PROVIDERS[name]
   if (entry.open === undefined)
     throw new Error(unsupportedProviderMessage(name))
   return entry.open(options)
+}
+
+/**
+ * For the commands that only clone and pull (`add`, `sync`): the provider as
+ * `openProvider` opens it, or null when the written one is unavailable — git
+ * then uses its own credentials instead of refusing.
+ */
+export async function openGitProvider(
+  manifest: Manifest
+): Promise<Provider | null> {
+  if (manifest.provider !== null && !PROVIDERS[manifest.provider].available)
+    return null
+  return openProvider(manifest)
 }

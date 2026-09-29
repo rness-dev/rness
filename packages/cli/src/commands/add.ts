@@ -9,7 +9,7 @@ import {
   workspaceName,
 } from '../core/manifest.ts'
 import type { GitCredentials } from '../core/provider.ts'
-import { openProvider } from '../core/providers.ts'
+import { openGitProvider } from '../core/providers.ts'
 import {
   type AddRepositoryResult,
   addRepository,
@@ -82,7 +82,9 @@ export async function addCommand(
     manifest: Manifest,
     url: string
   ): Promise<GitCredentials | null> =>
-    (provider ??= await openProvider(manifest)).credentialsFor(url)
+    (provider ??=
+      (await openGitProvider(manifest)) ?? undefined)?.credentialsFor(url) ??
+    null
   const cwd = opts.cwd ?? process.cwd()
   if (opts.ssh === true && opts.https === true) {
     process.stderr.write('--ssh and --https cannot be combined\n')
