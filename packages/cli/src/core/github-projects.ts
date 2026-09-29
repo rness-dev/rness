@@ -531,3 +531,65 @@ export async function views(
   )
   return (d.organization?.projectV2?.views.nodes ?? []).map((n) => n.name)
 }
+
+/**
+ * The first view of a new project (GitHub's "View 1"): its id and name, or
+ * null when it has none.
+ */
+export async function firstView(
+  projectId: string,
+  o: ApiOptions
+): Promise<{ id: string; name: string } | null> {
+  const d = await graphql<{
+    node: { views: { nodes: { id: string; name: string }[] } } | null
+  }>(
+    `
+      query ($projectId: ID!) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            views(first: 10) {
+              nodes {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    `,
+    { projectId },
+    o
+  )
+  return d.node?.views.nodes[0] ?? null
+}
+
+/**
+ * `updateProjectV2View` (GraphQL schema, read 2026-09-29): a new name and the
+ * fields the view shows, by node id, in column order.
+ */
+export async function renameView(
+  viewId: string,
+  name: string,
+  visibleFieldIds: string[],
+  o: ApiOptions
+): Promise<void> {
+  await graphql(
+    `
+      mutation ($viewId: ID!, $name: String!, $visibleFieldIds: [ID!]) {
+        updateProjectV2View(
+          input: {
+            viewId: $viewId
+            name: $name
+            configuration: { visibleFieldIds: $visibleFieldIds }
+          }
+        ) {
+          projectV2View {
+            id
+          }
+        }
+      }
+    `,
+    { viewId, name, visibleFieldIds },
+    o
+  )
+}

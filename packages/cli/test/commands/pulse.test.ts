@@ -358,7 +358,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
   // What ensureLayout added: Status is GitHub's own field, its options rness's.
   assert.match(lines[2]!, /^created\s+fields Collection, Agent, Session, Path$/)
   assert.match(lines[3]!, /^created\s+options In progress, Accepted$/)
-  assert.match(lines[4]!, /^created\s+views ADR, Specs, Plans, Working$/)
+  assert.match(lines[4]!, /^created\s+views All, ADR, Specs, Plans, Working$/)
   assert.match(lines[5]!, /^synced\s+2 items: 2 created$/)
   assert.match(
     lines[6]!,
@@ -428,7 +428,7 @@ test('create: a view GitHub refuses once the project exists — declared all the
       'synced 2 items: 2 created',
     ]
   )
-  assert.deepEqual(g.views, ['ADR', 'Specs', 'Plans', 'Working'])
+  assert.deepEqual(g.views, ['All', 'ADR', 'Specs', 'Plans', 'Working'])
   assert.equal(
     g.mutations.filter((m) => m.op === 'createProject').length,
     1,

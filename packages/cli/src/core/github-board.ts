@@ -20,6 +20,8 @@ const WORKING_VIEW = 'Working'
  * organization using issue types has a built-in `Type` field (spec 0017 §3).
  */
 export const STATUS_FIELD = 'Status'
+/** What rness calls the first view GitHub gives a new project. */
+const ALL_VIEW = 'All'
 export const COLLECTION_FIELD = 'Collection'
 
 /** GitHub's built-in title field, which `fields()` returns like the others. */
@@ -208,7 +210,8 @@ export class GitHubBoards implements Pick<
 
     // A new project's Status carries GitHub's default options: replaced, not
     // extended, once. After that, options are only ever added.
-    const fresh = cache.fresh === true && layout.statuses.length > 0
+    const laidOut = cache.fresh === true
+    const fresh = laidOut && layout.statuses.length > 0
     cache.fresh = false
     if (fresh) added.push(...layout.statuses.map((n) => `option ${n}`))
     const status = fresh
@@ -222,6 +225,21 @@ export class GitHubBoards implements Pick<
     const agent = await single('Agent', [WORKING])
     const session = await text('Session')
     const path = await text('Path')
+
+    // GitHub's first view of a new project becomes `All`; a board that
+    // already existed keeps its views, which are the team's.
+    if (laidOut) {
+      const first = await gh.firstView(cache.projectId, this.#o)
+      if (first !== null) {
+        added.push(`view ${ALL_VIEW}`)
+        await gh.renameView(
+          first.id,
+          ALL_VIEW,
+          [titleField(fields), collection, status, session].map((f) => f.id),
+          this.#o
+        )
+      }
+    }
 
     const existing = new Set(await gh.views(board.org, board.number, this.#o))
     for (const view of layout.views)

@@ -33,6 +33,8 @@ export async function board(
   seed: {
     fields?: FField[]
     views?: string[]
+    /** The view GitHub gives a new project; null: none. */
+    defaultView?: { id: string; name: string } | null
     items?: FItem[]
     /** Answers what is not the project's (`GET /user`, …); undefined falls through. */
     other?: (r: Recorded) => Reply | undefined
@@ -49,9 +51,17 @@ export async function board(
     { id: 'F_title', databaseId: 2, name: 'Title', options: null },
   ]
   const views: string[] = seed.views ?? []
+  const defaultView =
+    seed.defaultView === undefined
+      ? { id: 'V_1', name: 'View 1' }
+      : seed.defaultView
   const items: FItem[] = seed.items ?? []
   const restViews: unknown[] = []
-  const mutations: { op: string; variables: Record<string, unknown> }[] = []
+  const mutations: {
+    op: string
+    variables: Record<string, unknown>
+    query?: string
+  }[] = []
 
   const optionsOf = (list: { name: string; id?: string; color?: string }[]) =>
     list.map((o) => ({
@@ -193,6 +203,26 @@ export async function board(
               },
             },
           }),
+      ],
+      [
+        'views(first: 10)',
+        () =>
+          data({
+            node: {
+              views: { nodes: defaultView === null ? [] : [defaultView] },
+            },
+          }),
+      ],
+      [
+        'updateProjectV2View(',
+        (v, q) => {
+          mutations.push({ op: 'updateView', variables: v, query: q })
+          if (defaultView !== null) defaultView.name = String(v['name'])
+          views.push(String(v['name']))
+          return data({
+            updateProjectV2View: { projectV2View: { id: v['viewId'] } },
+          })
+        },
       ],
       [
         'views(first',

@@ -43,6 +43,7 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
     'field Agent',
     'field Session',
     'field Path',
+    'view All',
     'view ADR',
     'view Marketing',
     'view Working',
@@ -539,4 +540,39 @@ test('ensureLayout recolours gray options keeping ids, and leaves the colour of 
     [],
     'coloured once'
   )
+})
+
+test("a new board's first view becomes All: Title, Collection, Status, Session; a sync leaves views alone", async (t) => {
+  const g = await board(t)
+  const created = await g.provider.createBoard('acme')
+  const lines = await g.provider.ensureLayout(created, layout)
+  assert.ok(lines.includes('view All'), lines.join(', '))
+  const updates = g.mutations.filter((m) => m.op === 'updateView')
+  assert.equal(updates.length, 1)
+  assert.deepEqual(updates[0]!.variables, {
+    viewId: 'V_1',
+    name: 'All',
+    visibleFieldIds: ['F_title', 'F_Collection', 'F_status', 'F_Session'],
+  })
+  assert.match(updates[0]!.query!, /updateProjectV2View\(/)
+  assert.match(updates[0]!.query!, /configuration: \{ visibleFieldIds:/)
+  assert.deepEqual(g.views.slice(0, 1), ['All'])
+
+  await g.provider.ensureLayout(created, layout)
+  assert.equal(g.mutations.filter((m) => m.op === 'updateView').length, 1)
+})
+
+test('a new board without a first view: nothing is renamed', async (t) => {
+  const g = await board(t, { defaultView: null })
+  const created = await g.provider.createBoard('acme')
+  const lines = await g.provider.ensureLayout(created, layout)
+  assert.ok(!lines.includes('view All'))
+  assert.equal(g.mutations.filter((m) => m.op === 'updateView').length, 0)
+})
+
+test('an existing board keeps its views: ensureLayout never renames one', async (t) => {
+  const g = await board(t)
+  await g.provider.board('acme', 7)
+  await g.provider.ensureLayout(BOARD, layout)
+  assert.equal(g.mutations.filter((m) => m.op === 'updateView').length, 0)
 })
