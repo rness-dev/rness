@@ -166,6 +166,64 @@ test("a collection's own status field is compared when the collection has one", 
   )
 })
 
+/** An issue of .rness on the board without Path: open and labelled unless said otherwise. */
+const stray = (id: string, over: Partial<ItemIssue>): BoardItem =>
+  have(id, null, { issue: open(Number(id.replace(/\D/g, '')), over) })
+
+test("an issue a sync left without Path — labelled, its body's first line a wanted document's — is adopted: an update writes its Path", () => {
+  const w = want('a.md')
+  assert.deepEqual(
+    planSync([w], [{ ...stray('i4', { body: 'a.md' }), title: 'T a.md' }]),
+    [{ kind: 'update', id: 'i4', want: w, reopen: false }],
+    'its fields match: its Path alone is missing'
+  )
+  assert.deepEqual(
+    planSync([w], [stray('i4', { body: 'a.md\r\n\r\nText.', open: false })]),
+    [{ kind: 'update', id: 'i4', want: w, reopen: true }]
+  )
+})
+
+test("an issue without Path stays the team's: unlabelled, another first line, a document not wanted, or a document that has its item", () => {
+  const w = want('a.md')
+  for (const item of [
+    stray('i4', { body: 'a.md', labelled: false }),
+    stray('i4', { body: 'See a.md' }),
+    stray('i4', { body: 'a.mdx\n\nText.' }),
+    stray('i4', { body: 'b.md' }),
+  ])
+    assert.deepEqual(planSync([w], [item]), [{ kind: 'create', want: w }])
+  assert.deepEqual(planSync([], [stray('i4', { body: 'a.md' })]), [])
+  assert.deepEqual(
+    planSync([w], [have('i1', 'a.md'), stray('i4', { body: 'a.md' })]),
+    [{ kind: 'unchanged', id: 'i1' }],
+    'adopted instead of a second issue only'
+  )
+})
+
+test('several such issues for one document: the best adopted (open, then the lowest number), the others left alone', () => {
+  const w = want('a.md')
+  assert.deepEqual(
+    planSync(
+      [w],
+      [
+        stray('i3', { body: 'a.md', open: false }),
+        stray('i7', { body: 'a.md' }),
+        stray('i5', { body: 'a.md' }),
+      ]
+    ),
+    [{ kind: 'update', id: 'i5', want: w, reopen: false }]
+  )
+})
+
+test("after pass 1, an adopted issue is its document's", () => {
+  const listed = [stray('i4', { body: 'a.md' })]
+  const steps = planSync([want('a.md')], listed)
+  assert.deepEqual(
+    [...issuedAfter(steps, listed, new Map())],
+    [['a.md', { id: 'i4', number: 4, body: 'a.md' }]]
+  )
+})
+
 test("after pass 1, each document's issue: as listed, or as pass 1 placed it", () => {
   const listed = [
     have('i1', 'a.md', { issue: open(1, { body: 'A' }) }),

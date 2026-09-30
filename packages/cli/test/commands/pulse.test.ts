@@ -19,12 +19,13 @@ import {
   pulseSyncCommand,
 } from '../../src/commands/pulse.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
-import { digestOf, headerOf } from '../../src/pulse/body.ts'
+import { digestOf, headerOf, issueBody } from '../../src/pulse/body.ts'
 import { oneSyncAtATime, takeFailure } from '../../src/pulse/detached.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
 import {
   type FField,
+  type FIssue,
   type FItem,
   anIssue,
   board,
@@ -922,23 +923,35 @@ test('Issues off on .rness: create refused before the project is made', async (t
   )
 })
 
+/**
+ * A fake that answers the requests carrying `needle` with a rate limit,
+ * `times` of them (Infinity: always), once `after` of them went through.
+ */
+const limitedOn =
+  (needle: string, retryAfter: string, times: number, after = 0) =>
+  () => {
+    let seen = 0
+    return (r: {
+      method: string
+      path: string
+      body?: unknown
+    }): Reply | undefined => {
+      const mine = asUser('repo, project')(r)
+      if (mine !== undefined) return mine
+      if (!JSON.stringify(r.body ?? '').includes(needle)) return undefined
+      seen++
+      return seen > after && seen <= after + times
+        ? {
+            status: 403,
+            json: { message: 'You have exceeded a secondary rate limit.' },
+            headers: { 'retry-after': retryAfter },
+          }
+        : undefined
+    }
+  }
 /** A fake that answers createIssue with a rate limit, `times` times (Infinity: always). */
-const limitedCreate = (retryAfter: string, times: number) => () => {
-  let hits = 0
-  return (r: {
-    method: string
-    path: string
-    body?: unknown
-  }): Reply | undefined =>
-    asUser('repo, project')(r) ??
-    (JSON.stringify(r.body ?? '').includes('createIssue(') && hits++ < times
-      ? {
-          status: 403,
-          json: { message: 'You have exceeded a secondary rate limit.' },
-          headers: { 'retry-after': retryAfter },
-        }
-      : undefined)
-}
+const limitedCreate = (retryAfter: string, times: number) =>
+  limitedOn('createIssue(', retryAfter, times)
 
 test('a secondary rate limit is waited on as GitHub says, and said', async (t) => {
   await machine(t)
@@ -1016,6 +1029,149 @@ test('a rate limit past the 10 minutes stops the sync with what is left; the nex
     'synced 2 items: 2 created',
   ])
   assert.equal(g.issues.length, 2)
+})
+
+/** A declared pulse on a laid-out board, FILES written; `sync` records its waits in `slept`. */
+async function declared(
+  t: TestContext,
+  seed: NonNullable<Parameters<typeof board>[1]>
+) {
+  await machine(t)
+  const g = await board(t, { fields: seededFields(), views: VIEWS, ...seed })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const slept: number[] = []
+  const sync = () =>
+    run(() =>
+      pulseSyncCommand(
+        {
+          cwd,
+          githubApi: g.base,
+          sleep: async (ms) => {
+            slept.push(ms)
+          },
+        },
+        { terminal: NO_TTY }
+      )
+    )
+  return { g, sync, slept }
+}
+
+test('a rate limit after the first issue: the stop says 1 of 2; the next sync makes the other and writes both bodies', async (t) => {
+  const { g, sync, slept } = await declared(t, {
+    other: limitedOn('createIssue(', '601', 1, 1)(),
+  })
+  const stopped = await sync()
+  assert.equal(stopped.code, 1)
+  assert.equal(
+    stopped.err.trim(),
+    "GitHub's rate limit outlasted the 10 minutes rness waits: 1 of 2 changes not made — the next rness pulse sync makes them"
+  )
+  assert.equal(g.issues.length, 1)
+  g.mutations.length = 0
+  const next = await sync()
+  assert.equal(next.code, 0, next.err)
+  assert.deepEqual(lines(next.out), [
+    'created 1 issue',
+    'synced 2 items: 1 created, 1 updated',
+  ])
+  assert.deepEqual(
+    g.mutations
+      .filter((m) => m.op === 'updateIssue' && 'body' in m.variables)
+      .map((m) => m.variables['id'])
+      .sort(),
+    g.issues.map((i) => i.id).sort(),
+    'both bodies written in pass 2'
+  )
+  assert.ok(g.issues.every((i) => digestOf(i.body) !== null))
+  assert.deepEqual(slept, [])
+})
+
+test('a sync stopped after an issue joined the board, before its Path: the next adopts it — its Path, fields and body; one issue, one card', async (t) => {
+  const { g, sync } = await declared(t, {
+    other: limitedOn('updateProjectV2ItemFieldValue(', '601', 1)(),
+  })
+  const stopped = await sync()
+  assert.equal(stopped.code, 1)
+  assert.match(
+    stopped.err,
+    /^GitHub's rate limit outlasted the 10 minutes rness waits: /
+  )
+  const [stray] = g.items
+  assert.equal(g.items.length, 1)
+  assert.deepEqual(stray!.values, {}, 'on the board, without Path')
+  assert.equal(stray!.issue?.body, headerOf('adr/0001-a.md', 'acme'))
+
+  const next = await sync()
+  assert.equal(next.code, 0, next.err)
+  assert.deepEqual(lines(next.out), [
+    'created 1 issue',
+    'synced 2 items: 1 created, 1 updated',
+  ])
+  assert.equal(g.issues.length, 2, 'no second issue for adr/0001-a.md')
+  const cards = g.items.filter((i) => !i.archived)
+  assert.deepEqual(
+    cards.map((i) => i.values['Path']).sort(),
+    ['adr/0001-a.md', 'plans/0002-b.md'],
+    'one card per document'
+  )
+  assert.deepEqual(stray!.values, {
+    Path: 'adr/0001-a.md',
+    Collection: 'ADR',
+    Status: 'Accepted',
+    'ADR status': 'Accepted',
+  })
+  assert.equal(
+    stray!.issue?.body,
+    issueBody({
+      path: 'adr/0001-a.md',
+      text: FILES['adr/0001-a.md'],
+      org: 'acme',
+      numbers: new Map(),
+      files: new Set(),
+    })
+  )
+  g.mutations.length = 0
+  assert.deepEqual(lines((await sync()).out), ['synced 2 items: 2 unchanged'])
+  assert.deepEqual(g.mutations, [])
+})
+
+test("an issue of .rness without Path stays the team's unless labelled rness and its body starts with a wanted document's first line", async (t) => {
+  const team = (id: string, number: number, over: Partial<FIssue>): FItem => ({
+    id,
+    draftId: null,
+    issue: anIssue(number, over),
+    title: '',
+    archived: false,
+    values: {},
+  })
+  const header = (path: string) => headerOf(path, 'acme')
+  const { g, sync } = await declared(t, {
+    other: asUser('repo, project'),
+    items: [
+      team('t1', 41, { body: 'Notes on the ADR process.' }),
+      team('t2', 42, { body: `${header('adr/0009-gone.md')}\n\nOld.` }),
+      team('t3', 43, { body: header('adr/0001-a.md'), labels: [] }),
+      team('t4', 44, { body: `See ${header('adr/0001-a.md')}` }),
+    ],
+  })
+  const r = await sync()
+  assert.equal(r.err, '')
+  assert.deepEqual(lines(r.out), [
+    'created 2 issues',
+    'synced 2 items: 2 created',
+  ])
+  assert.doesNotMatch(JSON.stringify(g.mutations), /"t[1-4]"|"ISSUE_4[1-4]"/)
+})
+
+test('a label renamed Rness on GitHub is still rness: nothing to do', async (t) => {
+  const { g, sync } = await settled(t)
+  for (const i of g.issues) i.labels = ['Rness']
+  assert.deepEqual(lines((await sync()).out), ['synced 2 items: 2 unchanged'])
+  assert.deepEqual(g.mutations, [])
 })
 
 test('sync says what it added to the layout first', async (t) => {

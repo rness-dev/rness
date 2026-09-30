@@ -22,6 +22,9 @@ const MEMORY = '.rness'
 export const LABEL = 'rness'
 const LABEL_COLOR = '5319e7'
 const LABEL_DESCRIPTION = 'A document of .rness, on Agent Pulse'
+/** GitHub's label names ignore case: `Rness` is the label `rness`. */
+const labelled = (labels: readonly string[]): boolean =>
+  labels.some((l) => l.toLowerCase() === LABEL.toLowerCase())
 
 /**
  * SPIKE-DEPENDENT CHOICES (not yet verified live): the names of the two
@@ -385,7 +388,7 @@ export class GitHubBoards implements Pick<
               : {
                   number: issue.number,
                   open: issue.open,
-                  labelled: issue.labels.includes(LABEL),
+                  labelled: labelled(issue.labels),
                   body: issue.body,
                 },
           title: r.title,
@@ -506,7 +509,7 @@ export class GitHubBoards implements Pick<
     labelId: string
   ): Promise<void> {
     const issue = this.#issueOf(known)
-    if (!issue.labels.includes(LABEL)) {
+    if (!labelled(issue.labels)) {
       await gi.addLabels(issue.id, [labelId], this.#o)
       issue.labels.push(LABEL)
     }

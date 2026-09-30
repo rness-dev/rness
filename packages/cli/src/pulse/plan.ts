@@ -5,7 +5,7 @@ import type { Desired } from './layout.ts'
 export interface ItemIssue {
   number: number
   open: boolean
-  /** It carries the label `rness`. */
+  /** It carries the label `rness`, in any case. */
   labelled: boolean
   body: string
 }
@@ -15,7 +15,8 @@ export interface BoardItem {
   id: string
   /**
    * Null: not rness's — no `Path`, or content that is neither a draft nor an
-   * issue of the organization's `.rness` (spec 0018 §2).
+   * issue of the organization's `.rness` (spec 0018 §2); `planSync` adopts
+   * one such issue a stopped sync left, by its body's first line.
    */
   path: string | null
   /** Its issue in `.rness`; null: a draft of 0.12.0, which becomes one. */
@@ -67,11 +68,34 @@ const gone = (item: BoardItem): Step =>
     ? { kind: 'archive', id: item.id }
     : { kind: 'close', id: item.id }
 
+/** A body's first line; a CR ends a line as GitHub's editor writes it. */
+const firstLine = (body: string): string => body.split(/\r\n?|\n/, 1)[0] ?? ''
+
+/**
+ * Issues of `.rness` on the board without `Path` that a sync made and left
+ * there: it stopped before writing their `Path` (spec 0018 §2). Labelled
+ * `rness`, their body's first line is a document's (§3.1), which
+ * `Desired.body` is. By that line, the one to keep first.
+ */
+function strays(have: readonly BoardItem[]): Map<string, BoardItem[]> {
+  const byLine = new Map<string, BoardItem[]>()
+  for (const item of have) {
+    if (item.path !== null || item.issue === null || !item.issue.labelled)
+      continue
+    const line = firstLine(item.issue.body)
+    byLine.set(line, [...(byLine.get(line) ?? []), item])
+  }
+  for (const items of byLine.values()) items.sort(keptFirst)
+  return byLine
+}
+
 /**
  * Pass 1, one way (spec 0018 §2, §4): items are found by `path`. A document
- * without one gets an issue; a draft of 0.12.0 becomes one; a closed issue
- * is reopened; whatever differs is written back. Items that are not rness's
- * are left alone.
+ * without one adopts the issue a stopped sync left without `Path`, or gets
+ * a new one; a draft of 0.12.0 becomes one; a closed issue is reopened;
+ * whatever differs is written back. Items that are not rness's are left
+ * alone — and so is a stray whose document has an item: adopting it only
+ * ever replaces a second issue.
  */
 export function planSync(
   want: readonly Desired[],
@@ -88,15 +112,21 @@ export function planSync(
     if (keep !== undefined) kept.set(path, keep)
     surplus.push(...rest.map(gone))
   }
+  const left = strays(have)
   const steps: Step[] = []
   const wanted = new Set<string>()
   for (const w of want) {
     wanted.add(w.path)
-    const item = kept.get(w.path)
+    const item = kept.get(w.path) ?? left.get(w.body)?.[0]
     if (item === undefined) steps.push({ kind: 'create', want: w })
     else if (item.issue === null)
       steps.push({ kind: 'convert', id: item.id, want: w })
-    else if (!item.issue.open || !item.issue.labelled || differs(item, w))
+    else if (
+      item.path === null ||
+      !item.issue.open ||
+      !item.issue.labelled ||
+      differs(item, w)
+    )
       steps.push({
         kind: 'update',
         id: item.id,
@@ -130,9 +160,10 @@ export function issuedAfter(
       if (p !== undefined) issued.set(step.want.path, { ...p, body: null })
     } else if (step.kind === 'update' || step.kind === 'unchanged') {
       const item = byId.get(step.id)
-      if (item === undefined || item.path === null || item.issue === null)
-        continue
-      issued.set(item.path, {
+      // An adopted issue is listed without `Path`: its step names its document.
+      const path = step.kind === 'update' ? step.want.path : item?.path
+      if (item === undefined || path == null || item.issue === null) continue
+      issued.set(path, {
         id: item.id,
         number: item.issue.number,
         body: item.issue.body,

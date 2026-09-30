@@ -520,6 +520,31 @@ test('apply body on an item created in the same run: one request, no listing', a
   assert.equal(g.issues.at(-1)?.body, 'B')
 })
 
+test('a label is its name in any case: an issue labelled RNESS is labelled, and apply adds no label', async (t) => {
+  const g = await laidOut(t, [
+    {
+      id: 'I_1',
+      draftId: null,
+      issue: anIssue(4, { title: '0001 — A', labels: ['RNESS'] }),
+      title: '',
+      archived: false,
+      values: { Path: 'adr/a.md', Collection: 'ADR', Status: 'accepted' },
+    },
+  ])
+  const [item] = await g.provider.items(BOARD)
+  assert.equal(item?.issue?.labelled, true)
+  await g.provider.apply(BOARD, {
+    kind: 'update',
+    id: 'I_1',
+    want,
+    reopen: false,
+  })
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['set']
+  )
+})
+
 test('mark works on issue items as on drafts: Agent and Session by item id', async (t) => {
   const g = await laidOut(t, [
     {
