@@ -14,5 +14,6 @@ When they name a tab, show only that tab's section. If the output says the
 module cannot be found, say instead that ../../.rness is not installed next to
 this repository.
 
-End with this line: _For the view with tabs and scrolling: Ctrl+Z, then
-`npx @rness/cli status` (q to close), then `fg`._
+End with this line: _For the view with tabs and scrolling: here, Ctrl+Z,
+then `npx @rness/cli status` (q to close), then `fg`; or in another
+terminal, from the workspace's `.rness/`: `pnpm rness status`._
