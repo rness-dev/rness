@@ -47,7 +47,7 @@ const LAST_LINE = /\n\n<!-- rness ([0-9a-f]{12}) -->\s*$/
  * (spec 0018 §4). CRLF, as GitHub's editor stores it, reads as LF.
  */
 export function digestOf(body: string): string | null {
-  const text = body.replaceAll('\r\n', '\n')
+  const text = body.replace(/\r\n?/g, '\n')
   const m = LAST_LINE.exec(text)
   const d = m?.[1]
   if (m === null || d === undefined) return null
@@ -151,9 +151,9 @@ const PROTECTED = new RegExp(
   ].join('|'),
   'gm'
 )
-const MENTION = /(^|[^\w`\\])@([A-Za-z0-9][A-Za-z0-9-]*)/g
-const REFERENCE = /(^|[^\w&#/\\])#(\d+)(?!\w)/g
-const ZWSP = '​'
+const MENTION = /(^|[^A-Za-z0-9`\\])@([A-Za-z0-9][A-Za-z0-9-]*)/g
+const REFERENCE = /(^|[^A-Za-z0-9&#/\\])#(\d+)(?![A-Za-z0-9])/g
+const ZWSP = '\u200B'
 
 /** Prose made harmless (spec 0018 §3.4): it mentions no one and names no issue. */
 const neutral = (text: string): string =>
@@ -215,7 +215,7 @@ function cut(text: string, rest: string): string {
 
 export function issueBody(s: BodySource): string {
   const lines = withoutTitle(
-    stripFrontMatter(s.text.replaceAll('\r\n', '\n')).split('\n')
+    stripFrontMatter(s.text.replace(/\r\n?/g, '\n')).split('\n')
   )
   const content = rewrite(lines, s)
     .join('\n')

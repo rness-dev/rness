@@ -231,3 +231,28 @@ test('the digest: same document, same body; a change, another digest; a hand edi
   assert.equal(digestOf(b.replaceAll('\n', '\r\n')), d, 'GitHub may store CRLF')
   assert.equal(digestOf(''), null)
 })
+
+test('the digest settles whatever the line endings and the text', () => {
+  assert.notEqual(digestOf(body('# B\r\n\r\nA\r\r\nB\r\n')), null)
+  assert.ok(
+    !body('# B\r\n\r\nA\r\r\nB\r\n').includes('\r'),
+    'no CR in the body'
+  )
+  for (const text of [
+    '# B\n\nA\rB\n',
+    '# B\n\nA\r\r\nB\n',
+    '# B\n\nA \n',
+    '# B\n\nno trailing newline',
+    '# B\n\nemoji 🎉 and é\n',
+  ])
+    assert.notEqual(digestOf(body(text)), null, JSON.stringify(text))
+})
+
+test('a mention or a reference wrapped in emphasis is neutralized; an email and C#8 are not', () => {
+  assert.equal(
+    content(
+      body('# B\n\n_@octocat_ __@octocat__ __#12__ *@a* **#13** a@b.c C#8\n')
+    ),
+    `_\\@octocat_ __\\@octocat__ __#${ZWSP}12__ *\\@a* **#${ZWSP}13** a@b.c C#8`
+  )
+})
