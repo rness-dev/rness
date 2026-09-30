@@ -29,7 +29,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness logout
     rness context [--scope <name>] [--json]
     rness status [<tab>]
-    rness pulse create [-y]
+    rness pulse create [<collection>] [-y]
     rness pulse sync
     rness validate
     rness mcp
@@ -171,8 +171,9 @@ status, it received the problem. The `sh` line is not verified on Windows.
 
 ### Pulse
 
-    rness pulse create      # once per organization: the board, then a first sync
-    rness pulse sync        # as often as wanted
+    rness pulse create            # once per organization: the board, then a first sync
+    rness pulse create marketing  # a collection's own project (0.17.0)
+    rness pulse sync              # every declared project, as often as wanted
 
 A projection of rness's state on the organization's GitHub Projects: a
 project named **Agent Pulse**, where the team sees — and reads — every
@@ -268,7 +269,7 @@ Session → Working session`). A board per directory, named as
   repositories.
 - **`pulse create`** needs an `org` in `rness.json` (a blank workspace is
   refused) and no pulse yet. It creates the project and at once writes
-  `"pulse": { "project": <number> }` (and the `provider`) into `rness.json`,
+  `"projects": { "pulse": <number> }` (and the `provider`) into `rness.json`,
   then adds the fields, options and views, and runs a first sync; its
   `created` lines say what it added. If a step after the project fails, it
   exits 1 with the pulse declared, and `rness pulse sync` completes the
@@ -297,6 +298,33 @@ unchanged`.
   as the team's item. A workflow someone turns on (`Item closed`, `Item
 added to project`) may change a field of rness's items; the next sync
   writes it back.
+- **A collection's own project** (0.17.0): `rness pulse create <collection>`
+  gives a directory of `.rness/` whose documents carry a status — a tab of
+  `rness status` — a project of its own, named after it, declared as
+  `"projects": { "pulse": 4, "marketing": 5 }`. Agent Pulse keeps every
+  other collection and the `Working` table; the collection's items leave
+  it (`deleteProjectV2Item`, their issues untouched) once its project
+  holds them. `pulse sync` syncs the collections' projects, then Agent
+  Pulse. The project is written from the collection's files, one way:
+  - `<collection>/README.md` is its README; its front matter may give
+    `description:` (the short description), `statuses:` (the columns, in
+    order, each there even when empty), `fields:` (each a name, a `type` —
+    `text`, `date`, `select`, `number` — and `from`, the front-matter key
+    of the documents that fills it, or a list of keys, the first present
+    one winning; a `select` may give `options:`) and `labels:` (`directory`,
+    the subdirectory a document sits in, or a front-matter key). A date
+    field adds a `Calendar` roadmap; which date it draws is set once in the
+    view's settings: GitHub's API does not set it.
+  - `<collection>/updates/<date>.md` are its status updates: `health`
+    (`on-track`, `at-risk`, `off-track`, `complete` or `inactive`),
+    optionally `start_date` and `target_date`, the text below. Each is posted once, in
+    the order of the names, and updated when its file changes; a deleted
+    file leaves its update.
+
+  rness adds no field or label of its own to a collection's project, and
+  none of this reaches Agent Pulse: a workspace that declares no collection
+  keeps its board as 0.16 made it.
+
 - **Hooks**, with `claude` in `agents` and a pulse declared: session start
   marks the `In progress` plans of the session's scope `Agent: working`, with
   the session; an edit of a document of `.rness/` marks it — one the agent has just written, with no item yet, gets its issue first
@@ -355,7 +383,9 @@ repository, the board).
   GitLab host reads as `gitlab`, any other host — or no repository — as
   `github`. Nothing to change: `pulse create` writes it, and refuses a
   detected provider this version cannot talk to. The order of keys is
-  `contract`, `provider`, `org`, `agents`, `pulse`, `repos`, `scopes`.
+  `contract`, `provider`, `org`, `agents`, `projects`, `repos`, `scopes`.
+  The former `"pulse": { "project": <number> }` still reads, as
+  `"projects": { "pulse": <number> }`; both at once are refused.
 - A provider _written_ in `rness.json` that this version cannot talk to
   (`gitlab`) is refused by `validate`, `create`, `login` and `pulse`:
   `provider "gitlab" is not supported by @rness/cli 0.16.0 (supported:
@@ -534,6 +564,21 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.17.0 — a collection on its own GitHub Project
+
+- `rness pulse create <collection>` gives a collection of `.rness/` a
+  project of its own; `rness pulse sync` syncs every declared project. The
+  collection's `README.md` gives the project its README, short
+  description, columns, fields and labels, and `updates/` its status
+  updates. See "Pulse".
+- `rness.json` names the projects in `"projects": { "pulse": 4 }`; the
+  former `"pulse": { "project": 4 }` still reads, and is written in the new
+  form whenever rness writes the file. A CLI older than 0.17.0 refuses
+  `projects`: move the pin first (`rness upgrade`).
+- For the package's API: `Manifest.pulse` is now `Manifest.projects`.
+- A workspace that declares no collection's project sees no change on
+  Agent Pulse. Blocks are unchanged.
 
 ## 0.16.0 — Working session and Session history; the agent in the history
 
