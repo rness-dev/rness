@@ -20,6 +20,7 @@ const want = (path: string, over: Partial<Desired> = {}): Desired => ({
   status: 'draft',
   type: 'Specs',
   statusField: null,
+  sessions: null,
   ...over,
 })
 const open = (number: number, over: Partial<ItemIssue> = {}): ItemIssue => ({
@@ -44,6 +45,7 @@ const have = (
   type: 'Specs',
   agent: null,
   session: null,
+  sessions: null,
   ...over,
 })
 
@@ -243,6 +245,17 @@ test('a draft a 0.12.0 CLI made on a migrated board: archived, the issue kept', 
       { kind: 'unchanged', id: 'i4' },
       { kind: 'archive', id: 'd1' },
     ]
+  )
+})
+
+test('Sessions is compared: a document that records a new session updates its item', () => {
+  const w = want('a.md', { sessions: 's1, s2' })
+  assert.deepEqual(planSync([w], [have('i1', 'a.md', { sessions: 's1' })]), [
+    { kind: 'update', id: 'i1', want: w, reopen: false },
+  ])
+  assert.deepEqual(
+    planSync([w], [have('i1', 'a.md', { sessions: 's1, s2' })]),
+    [{ kind: 'unchanged', id: 'i1' }]
   )
 })
 

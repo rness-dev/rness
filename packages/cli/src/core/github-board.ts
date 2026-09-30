@@ -278,6 +278,7 @@ export class GitHubBoards implements Pick<
     const agent = await single('Agent', 'Agent', [WORKING])
     const session = await text('Session')
     const path = await text('Path')
+    const sessions = await text('Sessions')
 
     const current = await gh.views(cache.projectId, this.#o)
     // GitHub's first view (`View 1`) becomes `All`; any other first view is
@@ -360,7 +361,15 @@ export class GitHubBoards implements Pick<
       await gh.linkRepository(cache.projectId, memory.id, this.#o)
       added.push(`link ${repository}`)
     }
-    cache.fields = [status, collection, ...own.values(), agent, session, path]
+    cache.fields = [
+      status,
+      collection,
+      ...own.values(),
+      agent,
+      session,
+      path,
+      sessions,
+    ]
     return added
   }
 
@@ -401,6 +410,7 @@ export class GitHubBoards implements Pick<
           type: r.values[COLLECTION_FIELD] ?? null,
           agent: r.values['Agent'] ?? null,
           session: r.values['Session'] ?? null,
+          sessions: r.values['Sessions'] ?? null,
         }
       })
   }
@@ -532,6 +542,7 @@ export class GitHubBoards implements Pick<
       ...(want.statusField === null
         ? []
         : ([[want.statusField, want.status]] as [string, string | null][])),
+      ['Sessions', want.sessions],
     ]
     for (const [name, value] of wanted)
       if ((values[name] ?? null) !== value)

@@ -29,6 +29,8 @@ export interface BoardItem {
   type: string | null
   agent: string | null
   session: string | null
+  /** `Sessions`, which a session's end never clears (spec 0020 §3.2). */
+  sessions: string | null
 }
 
 /** What `apply` gave a document that had no issue: its item and its number. */
@@ -56,7 +58,8 @@ const differs = (item: BoardItem, w: Desired): boolean =>
   item.title !== w.title ||
   item.status !== w.status ||
   (w.statusField !== null && item.collectionStatus !== w.status) ||
-  item.type !== w.type
+  item.type !== w.type ||
+  item.sessions !== w.sessions
 
 /** Of several items on one path, the one kept: an open issue, then a closed one, the lowest number first; a draft last. */
 const rank = (i: BoardItem): number =>

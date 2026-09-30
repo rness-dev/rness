@@ -30,6 +30,27 @@ test('ADR, Specs and Plans always, in that order, even empty', async (t) => {
   )
 })
 
+test('rows: sessions from the front matter, only when a document records some (spec 0020 §3.1)', async (t) => {
+  const fm = (sessions: string) =>
+    `---\nstatus: Draft\nsessions: ${sessions}\n---\n\n# 0001 — A\n`
+  const dir = await rness(t, {
+    'specs/0001-list.md': fm('[s1, s2, s1, "", 3]'),
+    'specs/0002-string.md': fm('s1'),
+    'specs/0003-none.md': doc('Draft', '0003 — C'),
+    'specs/0004-empty.md': fm('[]'),
+  })
+  const [, specs] = await statusTabs(dir)
+  assert.deepEqual(
+    specs?.rows.map((r) => [r.path, r.sessions]),
+    [
+      ['specs/0004-empty.md', undefined],
+      ['specs/0003-none.md', undefined],
+      ['specs/0002-string.md', undefined],
+      ['specs/0001-list.md', ['s1', 's2']],
+    ]
+  )
+})
+
 test('rows: id, title without its number, status; newest first; the template left out', async (t) => {
   const dir = await rness(t, {
     'plans/0005-old.md': doc('Draft', '0005 — Maintenance'),

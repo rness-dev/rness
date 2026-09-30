@@ -135,6 +135,7 @@ const seededFields = (): FField[] => [
   },
   { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
   { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
+  { id: 'F_Sessions', databaseId: 6, name: 'Sessions', options: null },
 ]
 const VIEWS = ['ADR', 'Specs', 'Plans', 'Working']
 /** rness's item: an issue of acme/.rness numbered after its id (`i2` → #2), with no body yet. */
@@ -459,7 +460,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
   // What ensureLayout added: Status is GitHub's own field, its options rness's.
   assert.match(
     lines[2]!,
-    /^created\s+fields Collection, ADR status, Specs status, Plans status, Agent, Session, Path$/
+    /^created\s+fields Collection, ADR status, Specs status, Plans status, Agent, Session, Path, Sessions$/
   )
   assert.match(
     lines[3]!,
@@ -1646,6 +1647,65 @@ test('mark: an edit that changes a status syncs, and the card moves within the s
       .some((q) => /\bbody\b/.test(q)),
     'a sync ran: its listing reads the bodies'
   )
+})
+
+test('a board made by 0.14.0 gains Sessions at its first 0.15.0 sync, which writes it in the same run', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields().filter((f) => f.name !== 'Sessions'),
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: {
+      ...FILES,
+      'plans/0002-b.md':
+        '---\nstatus: In progress\nsessions: [s1]\n---\n\n# 0002 — B\n',
+    },
+  })
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^added\s+field Sessions$/m)
+  assert.equal(
+    g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')?.values[
+      'Sessions'
+    ],
+    's1'
+  )
+})
+
+test('Sessions: a sync writes the sessions a document records, and a session end leaves them', async (t) => {
+  const { g, cwd, sync } = await settled(t)
+  await writeDoc(
+    cwd,
+    'plans/0002-b.md',
+    '---\nstatus: In progress\nsessions:\n  - s1\n  - s2\n---\n\n# 0002 — B\n'
+  )
+  const r = await sync()
+  assert.equal(r.code, 0, r.err)
+  const plan = () => g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')
+  assert.equal(plan()?.values['Sessions'], 's1, s2')
+  assert.equal((await sync()).code, 0)
+  assert.equal(
+    g.mutations.filter((m) => JSON.stringify(m).includes('F_Sessions')).length,
+    1,
+    'written once, then unchanged'
+  )
+  const ended = await run(() =>
+    pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session: 'claude · s1',
+      paths: [],
+      end: true,
+    })
+  )
+  assert.equal(ended.code, 0)
+  assert.equal(plan()?.values['Sessions'], 's1, s2')
 })
 
 test('mark: a file of .rness that is no document of rness status costs no sync and marks nothing', async (t) => {

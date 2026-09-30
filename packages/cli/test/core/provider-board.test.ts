@@ -44,6 +44,7 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
     'field Agent',
     'field Session',
     'field Path',
+    'field Sessions',
     'view All',
     'view ADR',
     'view Marketing',
@@ -58,6 +59,7 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
       ['Agent', ['working']],
       ['Session', 'text'],
       ['Path', 'text'],
+      ['Sessions', 'text'],
     ]
   )
   const idOf = (name: string) =>
@@ -145,6 +147,7 @@ test('ensureLayout adds only what is missing, and removes nothing', async (t) =>
       },
       { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
       { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
+      { id: 'F_Sessions', databaseId: 6, name: 'Sessions', options: null },
     ],
     views: ['ADR', 'Working'],
   })
@@ -262,6 +265,7 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
     collectionStatus: null,
     agent: null,
     session: null,
+    sessions: null,
   })
 })
 
@@ -355,6 +359,7 @@ const want = {
   status: 'draft',
   type: 'ADR',
   statusField: null,
+  sessions: null,
 }
 
 test('apply create: an issue of .rness, labelled, the first line as body, added to the board, Path first, then the fields; its number returned', async (t) => {
@@ -658,6 +663,7 @@ const boardFields = (statuses: { id: string; name: string }[]) => [
   },
   { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
   { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
+  { id: 'F_Sessions', databaseId: 6, name: 'Sessions', options: null },
 ]
 
 test("ensureLayout reorders an out-of-order Status, keeping ids and options it does not know after rness's", async (t) => {
@@ -765,6 +771,7 @@ test('ensureLayout recolours gray options keeping ids, and leaves the colour of 
       },
       { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
       { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
+      { id: 'F_Sessions', databaseId: 6, name: 'Sessions', options: null },
     ],
     views: ['ADR', 'Marketing', 'Working'],
   })

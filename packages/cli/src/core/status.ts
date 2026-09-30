@@ -14,6 +14,11 @@ export interface StatusRow {
   status: string | null
   /** Relative to `.rness/`. */
   path: string
+  /**
+   * The Claude Code sessions that wrote or changed it, oldest first, each
+   * once (spec 0020 §3.1); absent when it records none.
+   */
+  sessions?: string[]
 }
 
 export interface StatusTab {
@@ -43,16 +48,28 @@ function statusOf(item: MarkdownItem): string | null {
   return typeof status === 'string' && status !== '' ? status : null
 }
 
+/** `sessions:` as a list of ids: anything else in it is not one, and is left out. */
+function sessionsOf(item: MarkdownItem): string[] {
+  const listed = item.fields?.['sessions']
+  if (!Array.isArray(listed)) return []
+  const ids = listed.filter(
+    (s): s is string => typeof s === 'string' && s !== ''
+  )
+  return [...new Set(ids)]
+}
+
 function rowOf(dir: string, item: MarkdownItem): StatusRow {
   const base = posix.basename(item.rel, '.md')
   // A dated file name (`2026-10-02-slug`) starts with four digits too.
   const date = /^(\d{4}-\d{2}-\d{2})-/.exec(base)?.[1] ?? null
   const number = date === null ? documentNumber(item.rel) : null
+  const sessions = sessionsOf(item)
   return {
     id: date ?? number ?? base,
     title: documentTitle(item.title ?? base, number),
     status: statusOf(item),
     path: `${dir}/${item.rel}`,
+    ...(sessions.length > 0 ? { sessions } : {}),
   }
 }
 

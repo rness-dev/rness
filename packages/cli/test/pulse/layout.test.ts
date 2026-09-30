@@ -67,10 +67,33 @@ test('desiredOf: title, the first line of its body, status, type', () => {
     status: 'accepted',
     statusField: 'ADR status',
     type: 'ADR',
+    sessions: null,
   })
   assert.equal(second?.status, null, '? is no status')
   assert.equal(third?.status, null)
   assert.equal(third?.type, 'Marketing')
+})
+
+test('desiredOf: Sessions is the sessions a document records, joined; null when none', () => {
+  const [one] = desiredOf(
+    [
+      {
+        name: 'plans',
+        label: 'Plans',
+        rows: [
+          {
+            id: '0029',
+            title: 'P',
+            status: 'Completed',
+            path: 'plans/0029-p.md',
+            sessions: ['s1', 's2'],
+          },
+        ],
+      },
+    ],
+    'acme'
+  )
+  assert.equal(one?.sessions, 's1, s2')
 })
 
 test('layoutOf: the contract statuses in lifecycle order, then the others in the order found', () => {

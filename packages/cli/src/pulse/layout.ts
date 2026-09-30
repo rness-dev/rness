@@ -27,6 +27,8 @@ export interface Desired {
   type: string
   /** The collection's own status field, which carries `status` too; null: it has none. */
   statusField: string | null
+  /** `Sessions`: the document's `sessions:`, joined by `, `; null: none (spec 0020 §3.2). */
+  sessions: string | null
 }
 
 /** `?` is how `rness status` shows a document without a status. */
@@ -160,6 +162,7 @@ export function desiredOf(tabs: readonly StatusTab[], org: string): Desired[] {
       status: statusOf(row.status),
       type: tab.label,
       statusField: fields.get(tab.label)?.name ?? null,
+      sessions: row.sessions?.join(', ') ?? null,
     }))
   )
 }
