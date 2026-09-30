@@ -522,6 +522,17 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## 0.15.1 — upgrade names every file to commit
+
+- `rness upgrade`'s next steps name every file the new version's sync
+  wrote in a repository. They used to be listed from the running copy,
+  which does not know the files a newer release adds: 0.13.0 named two of
+  the plugin's six files after syncing with 0.14.0. The running copy now
+  asks the copy it installed. This applies to upgrades run by 0.15.1 or
+  later; from an older copy, commit `.claude/skills/rness/` whole, as the
+  changelog of each release says.
+- Blocks are unchanged.
+
 ## 0.15.0 — Agent Pulse follows a status change; the sessions are kept
 
 - An edit that changes a document's status syncs Agent Pulse at once: its
