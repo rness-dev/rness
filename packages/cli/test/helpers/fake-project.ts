@@ -344,8 +344,22 @@ export async function board(
       [
         'updateProjectV2Field',
         (v, q) => {
-          mutations.push({ op: 'setOptions', variables: v })
           const f = fields.find((x) => x.id === v['fieldId'])!
+          if (typeof v['name'] === 'string') {
+            // A rename (spec 0022 §2): the id stays, items keep their values.
+            mutations.push({ op: 'renameField', variables: v })
+            const was = f.name
+            f.name = v['name']
+            for (const i of items)
+              if (was in i.values) {
+                i.values[f.name] = i.values[was]!
+                delete i.values[was]
+              }
+            return data({
+              updateProjectV2Field: { projectV2Field: asked(q, { ...f }) },
+            })
+          }
+          mutations.push({ op: 'setOptions', variables: v })
           f.options = optionsOf(
             v['options'] as { id?: string; name: string; color?: string }[]
           )

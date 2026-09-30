@@ -130,7 +130,9 @@ const plural = (n: number): string => `${n} item${n === 1 ? '' : 's'}`
 /** What the layout gained, as `sync` says it: `added view Plans`, a line each. */
 type SayLayout = (ui: Ui, added: readonly string[]) => void
 const eachAdded: SayLayout = (ui, added) => {
-  for (const a of added) ui.line('added', a)
+  for (const a of added)
+    if (a.startsWith('renamed ')) ui.line('renamed', a.slice('renamed '.length))
+    else ui.line('added', a)
 }
 /** As `create` says it: a line per kind, `created fields Collection, Agent`. */
 const createdByKind: SayLayout = (ui, added) => {

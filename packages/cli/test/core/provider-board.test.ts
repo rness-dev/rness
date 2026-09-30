@@ -42,9 +42,9 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
     'option accepted',
     'field Collection',
     'field Agent',
-    'field Session',
+    'field Working session',
     'field Path',
-    'field Sessions',
+    'field Session history',
     'view All',
     'view ADR',
     'view Marketing',
@@ -57,9 +57,9 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
       ['Title', 'text'],
       ['Collection', ['ADR', 'Marketing']],
       ['Agent', ['working']],
-      ['Session', 'text'],
+      ['Working session', 'text'],
       ['Path', 'text'],
-      ['Sessions', 'text'],
+      ['Session history', 'text'],
     ]
   )
   const idOf = (name: string) =>
@@ -68,7 +68,7 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
   const [titleId, collectionId, sessionId] = [
     idOf('Title'),
     idOf('Collection'),
-    idOf('Session'),
+    idOf('Working session'),
   ]
   assert.deepEqual(g.restViews, [
     {
@@ -145,9 +145,19 @@ test('ensureLayout adds only what is missing, and removes nothing', async (t) =>
         name: 'Agent',
         options: [{ id: 'a1', name: 'working' }],
       },
-      { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
+      {
+        id: 'F_Session',
+        databaseId: 4,
+        name: 'Working session',
+        options: null,
+      },
       { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
-      { id: 'F_Sessions', databaseId: 6, name: 'Sessions', options: null },
+      {
+        id: 'F_Sessions',
+        databaseId: 6,
+        name: 'Session history',
+        options: null,
+      },
     ],
     views: ['ADR', 'Working'],
   })
@@ -595,7 +605,7 @@ test('mark works on issue items as on drafts: Agent and Session by item id', asy
   assert.deepEqual(g.items[0]!.values, {
     Path: 'adr/a.md',
     Agent: 'working',
-    Session: 'claude · 1a2b3c4d',
+    'Working session': 'claude · 1a2b3c4d',
   })
 })
 
@@ -610,9 +620,9 @@ test('mark sets Agent and Session, or clears both', async (t) => {
     ]),
     [
       ['set', 'I_1', 'F_Agent'],
-      ['set', 'I_1', 'F_Session'],
+      ['set', 'I_1', 'F_Working session'],
       ['set', 'I_2', 'F_Agent'],
-      ['set', 'I_2', 'F_Session'],
+      ['set', 'I_2', 'F_Working session'],
     ]
   )
   assert.deepEqual(g.mutations[1]!.variables['value'], {
@@ -624,7 +634,7 @@ test('mark sets Agent and Session, or clears both', async (t) => {
     g.mutations.map((m) => [m.op, m.variables['fieldId']]),
     [
       ['clear', 'F_Agent'],
-      ['clear', 'F_Session'],
+      ['clear', 'F_Working session'],
     ]
   )
 })
@@ -661,9 +671,9 @@ const boardFields = (statuses: { id: string; name: string }[]) => [
     name: 'Agent',
     options: [{ id: 'a1', name: 'working' }],
   },
-  { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
+  { id: 'F_Session', databaseId: 4, name: 'Working session', options: null },
   { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
-  { id: 'F_Sessions', databaseId: 6, name: 'Sessions', options: null },
+  { id: 'F_Sessions', databaseId: 6, name: 'Session history', options: null },
 ]
 
 test("ensureLayout reorders an out-of-order Status, keeping ids and options it does not know after rness's", async (t) => {
@@ -769,9 +779,19 @@ test('ensureLayout recolours gray options keeping ids, and leaves the colour of 
         name: 'Agent',
         options: [gray('a1', 'working')],
       },
-      { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
+      {
+        id: 'F_Session',
+        databaseId: 4,
+        name: 'Working session',
+        options: null,
+      },
       { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
-      { id: 'F_Sessions', databaseId: 6, name: 'Sessions', options: null },
+      {
+        id: 'F_Sessions',
+        databaseId: 6,
+        name: 'Session history',
+        options: null,
+      },
     ],
     views: ['ADR', 'Marketing', 'Working'],
   })
@@ -812,7 +832,7 @@ test("a new board's first view becomes All: Title, Collection, Status, Session; 
   assert.deepEqual(updates[0]!.variables, {
     viewId: 'V_1',
     name: 'All',
-    visibleFieldIds: ['F_title', 'F_Collection', 'F_status', 'F_Session'],
+    visibleFieldIds: ['F_title', 'F_Collection', 'F_status', 'F_Working session'],
   })
   assert.match(updates[0]!.query!, /updateProjectV2View\(/)
   assert.match(updates[0]!.query!, /configuration: \{ visibleFieldIds:/)

@@ -25,6 +25,18 @@ const WORKING_VIEW = 'Working'
 const MEMORY = '.rness'
 /** The label every one of them carries: `-label:rness` leaves them out of the Issues tab. */
 export const LABEL = 'rness'
+/** The session working on a document now; cleared when it ends (spec 0017 §5). */
+const WORKING_SESSION = 'Working session'
+/** Every session that wrote or changed a document; never cleared (spec 0020 §3). */
+const SESSION_HISTORY = 'Session history'
+/** What 0.15 named them: renamed at the next sync, read and written under either name until then (spec 0022 §2). */
+const FORMERLY: Readonly<Record<string, string>> = {
+  [WORKING_SESSION]: 'Session',
+  [SESSION_HISTORY]: 'Sessions',
+}
+/** A value of an item, under the field's name or, on a board not renamed yet, its former one. */
+const valueOf = (values: Record<string, string>, name: string): string | null =>
+  values[name] ?? values[FORMERLY[name] ?? ''] ?? null
 const LABEL_COLOR = '5319e7'
 const LABEL_DESCRIPTION = 'A document of .rness, on Agent Pulse'
 /** GitHub's label names ignore case: `Rness` is the label `rness`. */
@@ -257,6 +269,13 @@ export class GitHubBoards implements Pick<
     const text = async (name: string): Promise<gh.Field> => {
       const field = fields.find((f) => f.name === name)
       if (field !== undefined) return field
+      // A field 0.15 named otherwise is renamed, not made again: its values
+      // and the views showing it stay.
+      const was = fields.find((f) => f.name === FORMERLY[name])
+      if (was !== undefined) {
+        added.push(`renamed field ${was.name} → ${name}`)
+        return gh.renameField(was.id, name, this.#o)
+      }
       added.push(`field ${name}`)
       return gh.createField(cache.projectId, name, 'TEXT', this.#o)
     }
@@ -283,9 +302,9 @@ export class GitHubBoards implements Pick<
     for (const f of layout.fields)
       own.set(f.name, await single(f.name, 'Status', f.statuses, true))
     const agent = await single('Agent', 'Agent', [WORKING])
-    const session = await text('Session')
+    const session = await text(WORKING_SESSION)
     const path = await text('Path')
-    const sessions = await text('Sessions')
+    const sessions = await text(SESSION_HISTORY)
 
     const current = await gh.views(cache.projectId, this.#o)
     // GitHub's first view (`View 1`) becomes `All`; any other first view is
@@ -416,8 +435,8 @@ export class GitHubBoards implements Pick<
             r.values[statusFieldName(r.values[COLLECTION_FIELD] ?? '')] ?? null,
           type: r.values[COLLECTION_FIELD] ?? null,
           agent: r.values['Agent'] ?? null,
-          session: r.values['Session'] ?? null,
-          sessions: r.values['Sessions'] ?? null,
+          session: valueOf(r.values, WORKING_SESSION),
+          sessions: valueOf(r.values, SESSION_HISTORY),
         }
       })
   }
@@ -429,7 +448,10 @@ export class GitHubBoards implements Pick<
     value: string | null
   ): Promise<void> {
     const cache = await this.#cacheOf(board)
-    const field = (await this.#fields(board)).find((f) => f.name === name)
+    const fields = await this.#fields(board)
+    const field =
+      fields.find((f) => f.name === name) ??
+      fields.find((f) => f.name === FORMERLY[name])
     if (field === undefined) throw new Error(`the board has no field ${name}`)
     let sent: { text: string } | { optionId: string } | null = null
     if (value !== null && field.options === null) sent = { text: value }
@@ -442,8 +464,8 @@ export class GitHubBoards implements Pick<
     await gh.setValue(cache.projectId, itemId, field.id, sent, this.#o)
     const known = cache.known.get(itemId)
     if (known === undefined) return
-    if (value === null) delete known.values[name]
-    else known.values[name] = value
+    if (value === null) delete known.values[field.name]
+    else known.values[field.name] = value
   }
 
   async apply(board: Board, step: Step): Promise<Placed | null> {
@@ -593,10 +615,10 @@ export class GitHubBoards implements Pick<
       ...(want.statusField === null
         ? []
         : ([[want.statusField, want.status]] as [string, string | null][])),
-      ['Sessions', want.sessions],
+      [SESSION_HISTORY, want.sessions],
     ]
     for (const [name, value] of wanted)
-      if ((values[name] ?? null) !== value)
+      if (valueOf(values, name) !== value)
         await this.#set(board, id, name, value)
   }
 
@@ -630,7 +652,7 @@ export class GitHubBoards implements Pick<
   ): Promise<void> {
     for (const id of itemIds) {
       await this.#set(board, id, 'Agent', session === null ? null : WORKING)
-      await this.#set(board, id, 'Session', session)
+      await this.#set(board, id, WORKING_SESSION, session)
     }
   }
 }

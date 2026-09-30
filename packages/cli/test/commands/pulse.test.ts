@@ -133,9 +133,9 @@ const seededFields = (): FField[] => [
     name: 'Agent',
     options: [{ id: 'a1', name: 'working' }],
   },
-  { id: 'F_Session', databaseId: 4, name: 'Session', options: null },
+  { id: 'F_Session', databaseId: 4, name: 'Working session', options: null },
   { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
-  { id: 'F_Sessions', databaseId: 6, name: 'Sessions', options: null },
+  { id: 'F_Sessions', databaseId: 6, name: 'Session history', options: null },
 ]
 const VIEWS = ['ADR', 'Specs', 'Plans', 'Working']
 /** rness's item: an issue of acme/.rness numbered after its id (`i2` → #2), with no body yet. */
@@ -460,7 +460,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
   // What ensureLayout added: Status is GitHub's own field, its options rness's.
   assert.match(
     lines[2]!,
-    /^created\s+fields Collection, ADR status, Specs status, Plans status, Agent, Session, Path, Sessions$/
+    /^created\s+fields Collection, ADR status, Specs status, Plans status, Agent, Working session, Path, Session history$/
   )
   assert.match(
     lines[3]!,
@@ -1344,14 +1344,14 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
           Status: 'In progress',
           'Plans status': 'In progress',
           Agent: 'working',
-          Session: 'claude · s1',
+          'Working session': 'claude · s1',
         },
         '0002 — B'
       ),
       item('i3', {
         Path: 'plans/0004-d.md',
         Agent: 'working',
-        Session: 'claude · s2',
+        'Working session': 'claude · s2',
       }),
     ],
     other: asUser('repo, project'),
@@ -1527,7 +1527,7 @@ test('--end clears the session and its subagents (same id, any agent type), not 
   const marked = (session: string) => ({
     Path: 'plans/0002-b.md',
     Agent: 'working',
-    Session: session,
+    'Working session': session,
   })
   const g = await board(t, {
     fields: seededFields(),
@@ -1599,7 +1599,7 @@ test('mark: a document just written has no item yet — it gets its issue, then 
   const made = g.items.find((i) => i.values['Path'] === 'specs/0003-c.md')
   assert.equal(made?.issue?.title, '0003 — C')
   assert.equal(made?.values['Agent'], 'working')
-  assert.equal(made?.values['Session'], 'claude · s1')
+  assert.equal(made?.values['Working session'], 'claude · s1')
   assert.equal(g.mutations.filter((m) => m.op === 'createIssue').length, 1)
 })
 
@@ -1640,7 +1640,7 @@ test('mark: an edit that changes a status syncs, and the card moves within the s
   assert.equal(await takeFailure(), null)
   const item = g.items.find((i) => i.values['Path'] === 'adr/0001-a.md')
   assert.equal(item?.values['Status'], 'Superseded')
-  assert.equal(item?.values['Session'], 'claude · s1')
+  assert.equal(item?.values['Working session'], 'claude · s1')
   assert.ok(
     listingQueries(g)
       .slice(before)
@@ -1652,7 +1652,7 @@ test('mark: an edit that changes a status syncs, and the card moves within the s
 test('a board made by 0.14.0 gains Sessions at its first 0.15.0 sync, which writes it in the same run', async (t) => {
   await machine(t)
   const g = await board(t, {
-    fields: seededFields().filter((f) => f.name !== 'Sessions'),
+    fields: seededFields().filter((f) => f.name !== 'Session history'),
     views: VIEWS,
     other: asUser('repo, project'),
   })
@@ -1669,10 +1669,10 @@ test('a board made by 0.14.0 gains Sessions at its first 0.15.0 sync, which writ
     pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 0, r.err)
-  assert.match(r.out, /^added\s+field Sessions$/m)
+  assert.match(r.out, /^added\s+field Session history$/m)
   assert.equal(
     g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')?.values[
-      'Sessions'
+      'Session history'
     ],
     's1'
   )
@@ -1688,7 +1688,7 @@ test('Sessions: a sync writes the sessions a document records, and a session end
   const r = await sync()
   assert.equal(r.code, 0, r.err)
   const plan = () => g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')
-  assert.equal(plan()?.values['Sessions'], 's1, s2')
+  assert.equal(plan()?.values['Session history'], 's1, s2')
   assert.equal((await sync()).code, 0)
   assert.equal(
     g.mutations.filter((m) => JSON.stringify(m).includes('F_Sessions')).length,
@@ -1705,7 +1705,7 @@ test('Sessions: a sync writes the sessions a document records, and a session end
     })
   )
   assert.equal(ended.code, 0)
-  assert.equal(plan()?.values['Sessions'], 's1, s2')
+  assert.equal(plan()?.values['Session history'], 's1, s2')
 })
 
 test('mark: a file of .rness that is no document of rness status costs no sync and marks nothing', async (t) => {
@@ -1866,4 +1866,95 @@ test('a closed issue, or one without the rness label, is never adopted', async (
   assert.doesNotMatch(r.out, /adopted/)
   assert.equal(onPath.length, 1)
   assert.ok((onPath[0]?.issue?.number ?? 0) > 9, 'a new issue')
+})
+
+/** A board as 0.15 laid it out: the session fields under their former names. */
+const fields015 = (): FField[] =>
+  seededFields().map((f) =>
+    f.name === 'Working session'
+      ? { ...f, name: 'Session' }
+      : f.name === 'Session history'
+        ? { ...f, name: 'Sessions' }
+        : f
+  )
+
+test('a 0.15 board: sync renames Session and Sessions in place, values and ids kept (spec 0022 §2)', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: fields015(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+    items: [
+      item('i1', {
+        Path: 'adr/0001-a.md',
+        Status: 'Accepted',
+        Session: 'claude · s9',
+        Sessions: 'old-id',
+      }),
+    ],
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^renamed\s+field Session → Working session$/m)
+  assert.match(r.out, /^renamed\s+field Sessions → Session history$/m)
+  assert.deepEqual(
+    g.fields
+      .filter((f) => /[Ss]ession/.test(f.name))
+      .map((f) => [f.id, f.name]),
+    [
+      ['F_Session', 'Working session'],
+      ['F_Sessions', 'Session history'],
+    ]
+  )
+  const a = g.items.find((i) => i.id === 'i1')
+  assert.equal(a?.values['Working session'], 'claude · s9', 'a mark survives')
+  assert.equal(
+    g.mutations.filter((m) => m.op === 'renameField').length,
+    2,
+    'once each'
+  )
+  const again = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.doesNotMatch(again.out, /renamed/)
+})
+
+test('a 0.15 board before its first 0.16 sync: a mark sets, and a session end clears, the former Session', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: fields015(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+    items: [item('i1', { Path: 'adr/0001-a.md', Status: 'Accepted' })],
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const mark = (end: boolean) =>
+    run(() =>
+      pulseMarkCommand({
+        cwd,
+        githubApi: g.base,
+        session: 'claude · s1',
+        paths: end ? [] : ['adr/0001-a.md'],
+        ...(end ? { end: true } : {}),
+      })
+    )
+  assert.equal((await mark(false)).code, 0)
+  assert.equal(await takeFailure(), null)
+  const a = () => g.items.find((i) => i.id === 'i1')
+  assert.equal(a()?.values['Session'], 'claude · s1')
+  assert.equal((await mark(true)).code, 0)
+  assert.equal(await takeFailure(), null)
+  assert.equal(a()?.values['Working session'], undefined)
+  assert.equal(a()?.values['Session'], undefined)
 })

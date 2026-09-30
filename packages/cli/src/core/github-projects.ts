@@ -258,6 +258,26 @@ export async function setOptions(
   return toField(d.updateProjectV2Field.projectV2Field)
 }
 
+/** Renames a field in place: its id, its values and the views showing it stay (spec 0022 §2). */
+export async function renameField(
+  fieldId: string,
+  name: string,
+  o: ApiOptions
+): Promise<Field> {
+  const d = await graphql<{
+    updateProjectV2Field: { projectV2Field: RawField }
+  }>(
+    `mutation($fieldId: ID!, $name: String!) {
+      updateProjectV2Field(input: { fieldId: $fieldId, name: $name }) {
+        projectV2Field { ${FIELD_SELECTION} }
+      }
+    }`,
+    { fieldId, name },
+    o
+  )
+  return toField(d.updateProjectV2Field.projectV2Field)
+}
+
 /** The issue an item is (spec 0018 §2). */
 export interface RawIssue {
   id: string
