@@ -1498,9 +1498,10 @@ test('create offline: GitHub cannot be reached, and no login is offered', async 
 test("rness's own errors keep their words: only GitHub's are named GitHub's", async (t) => {
   await machine(t)
   // A declared board whose layout a failed create left half-built: no Agent.
+  // The item's status is the document's, so the mark needs no sync.
   const g = await board(t, {
     fields: seededFields().filter((f) => f.name !== 'Agent'),
-    items: [item('i1', { Path: 'adr/0001-a.md' })],
+    items: [item('i1', { Path: 'adr/0001-a.md', Status: 'Accepted' })],
     other: asUser('repo, project'),
   })
   const cwd = await makeWorkspace(t, {
@@ -1620,6 +1621,31 @@ test('mark: a document already on the board costs no sync, and its listing reads
   )
   assert.equal(listings(g) - before, 1, 'one listing, no sync')
   assert.doesNotMatch(listingQueries(g).at(-1)!, /\bbody\b/)
+})
+
+test('mark: an edit that changes a status syncs, and the card moves within the session', async (t) => {
+  const { g, cwd } = await settled(t)
+  await writeDoc(cwd, 'adr/0001-a.md', doc('Superseded', '0001 — A'))
+  const before = listings(g)
+  const r = await run(() =>
+    pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session: 'claude · s1',
+      paths: ['adr/0001-a.md'],
+    })
+  )
+  assert.equal(r.code, 0)
+  assert.equal(await takeFailure(), null)
+  const item = g.items.find((i) => i.values['Path'] === 'adr/0001-a.md')
+  assert.equal(item?.values['Status'], 'Superseded')
+  assert.equal(item?.values['Session'], 'claude · s1')
+  assert.ok(
+    listingQueries(g)
+      .slice(before)
+      .some((q) => /\bbody\b/.test(q)),
+    'a sync ran: its listing reads the bodies'
+  )
 })
 
 test('mark: a file of .rness that is no document of rness status costs no sync and marks nothing', async (t) => {

@@ -451,15 +451,22 @@ async function mark(opts: MarkOptions): Promise<number> {
   }
   const wanted = new Set(opts.paths)
   // A document the agent has just written has no item until a sync gives it
-  // one (plan 0027 Task 6, a fix to spec 0017 §5). Only a document of
-  // `rness status` can get one: another file of `.rness/` costs no sync.
-  const documents = new Set(
-    (await statusTabs(c.rnessDir)).flatMap((t) => t.rows.map((r) => r.path))
+  // one (plan 0027 Task 6, a fix to spec 0017 §5); one whose status the edit
+  // changed shows the old one until a sync writes it (spec 0020 §2). Only a
+  // document of `rness status` can need one: another file of `.rness/`, or
+  // an edit that leaves the status alone, costs no sync.
+  const documents = new Map(
+    (await statusTabs(c.rnessDir)).flatMap((t) =>
+      t.rows.map((r) => [r.path, r.status] as const)
+    )
   )
-  const onBoard = new Set(
-    items.flatMap((i) => (i.path === null ? [] : [i.path]))
+  const onBoard = new Map(
+    items.flatMap((i) => (i.path === null ? [] : [[i.path, i.status] as const]))
   )
-  if ([...wanted].some((p) => documents.has(p) && !onBoard.has(p))) {
+  const stale = (path: string): boolean =>
+    documents.has(path) &&
+    (!onBoard.has(path) || onBoard.get(path) !== documents.get(path))
+  if ([...wanted].some(stale)) {
     // Another hook's sync running gives it its item; the next edit marks it.
     const synced = await oneSyncAtATime(
       key,
