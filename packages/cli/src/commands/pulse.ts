@@ -248,14 +248,14 @@ async function scopeOf(
 const plural = (n: number): string => `${n} item${n === 1 ? '' : 's'}`
 
 /** What the layout gained, as `sync` says it: `added view Plans`, a line each. */
-type SayLayout = (ui: Ui, added: readonly string[]) => void
+type SayLayout = (ui: Ui, added: readonly string[], project: string) => void
 const eachAdded: SayLayout = (ui, added) => {
   for (const a of added)
     if (a.startsWith('renamed ')) ui.line('renamed', a.slice('renamed '.length))
     else ui.line('added', a)
 }
 /** As `create` says it: a line per kind, `created fields Collection, Agent`. */
-const createdByKind: SayLayout = (ui, added) => {
+const createdByKind: SayLayout = (ui, added, project) => {
   for (const kind of ['field', 'option', 'view']) {
     const names = added
       .filter((a) => a.startsWith(`${kind} `))
@@ -265,8 +265,19 @@ const createdByKind: SayLayout = (ui, added) => {
   for (const a of added) {
     if (a.startsWith('label ')) ui.line('created', a)
     else if (a.startsWith('link '))
-      ui.line('linked', `Agent Pulse to ${a.slice('link '.length)}`)
+      ui.line('linked', `${project} to ${a.slice('link '.length)}`)
   }
+}
+
+/** `work` under a transient line when there is any work to show; nothing when there is none. */
+async function working(
+  ui: Ui,
+  doing: string,
+  count: number,
+  work: () => Promise<void>
+): Promise<void> {
+  if (count === 0) return work()
+  await ui.step({ doing, quiet: true }, work, () => null)
 }
 
 /** Every file of `.rness/` by its path there, with `/`; not `.git` nor `node_modules` (spec 0018 §3.3). */
@@ -368,7 +379,11 @@ async function syncBoard(
 ): Promise<void> {
   await fromGithub(c.provider.checkIssues(c.org))
   const { want } = scope
-  sayLayout(ui, await fromGithub(c.provider.ensureLayout(board, scope.layout)))
+  sayLayout(
+    ui,
+    await fromGithub(c.provider.ensureLayout(board, scope.layout)),
+    scope.label
+  )
   const have = await fromGithub(c.provider.items(board))
   // Gone is gone for this clone's git (spec 0018 §2): a path it never saw is
   // closed only on an issue this clone opened, as its record says. Git is
@@ -394,18 +409,30 @@ async function syncBoard(
     const created = new Map<string, Placed>()
     const closed = new Set<string>()
     try {
-      for (const step of steps) {
-        const p = await fromGithub(c.provider.apply(board, step))
-        if (p !== null && (step.kind === 'create' || step.kind === 'convert'))
-          placed.set(step.want.path, p)
-        // An adopted issue was opened by whichever sync made it, not this one.
-        if (p?.adopted === true) adopted++
-        else if (p !== null && step.kind === 'create')
-          created.set(step.want.path, p)
-        if (step.kind === 'close' || step.kind === 'archive')
-          closed.add(step.id)
-        if (step.kind !== 'unchanged') made++
-      }
+      // Each change is a few requests, one at a time: a long pass shows it
+      // is at work, and its line goes when it ends (spec 0007 §5).
+      await working(
+        ui,
+        `writing  ${plural(changes)} on ${scope.label}`,
+        changes,
+        async () => {
+          for (const step of steps) {
+            const p = await fromGithub(c.provider.apply(board, step))
+            if (
+              p !== null &&
+              (step.kind === 'create' || step.kind === 'convert')
+            )
+              placed.set(step.want.path, p)
+            // An adopted issue was opened by whichever sync made it, not this one.
+            if (p?.adopted === true) adopted++
+            else if (p !== null && step.kind === 'create')
+              created.set(step.want.path, p)
+            if (step.kind === 'close' || step.kind === 'archive')
+              closed.add(step.id)
+            if (step.kind !== 'unchanged') made++
+          }
+        }
+      )
     } finally {
       // What pass 1 did, recorded before anything else can stop the sync.
       await writeOpened(
@@ -432,10 +459,17 @@ async function syncBoard(
         })
       )
     writes = planBodies(bodies, issued)
-    for (const step of writes) {
-      await fromGithub(c.provider.apply(board, step))
-      made++
-    }
+    await working(
+      ui,
+      `writing  ${plural(writes.length)} bodies on ${scope.label}`,
+      writes.length,
+      async () => {
+        for (const step of writes) {
+          await fromGithub(c.provider.apply(board, step))
+          made++
+        }
+      }
+    )
   } catch (e) {
     if (!(e instanceof RateLimitError)) throw e
     const total = changes + writes.length

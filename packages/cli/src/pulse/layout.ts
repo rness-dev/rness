@@ -215,7 +215,9 @@ export function layoutOf(
             ])
           : [],
     })),
-    labels: once(want.flatMap((w) => [...w.labels, ...w.unlabels])),
+    // Made only when a document carries it: a directory with no card is no
+    // label, though one carrying it once is taken off (`unlabels`).
+    labels: once(want.flatMap((w) => w.labels)),
   }
 }
 
