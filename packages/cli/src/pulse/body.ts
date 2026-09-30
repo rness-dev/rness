@@ -54,10 +54,10 @@ export function digestOf(body: string): string | null {
   return digest(text.slice(0, m.index)) === d ? d : null
 }
 
-const OPENER = /^ *(`{3,}|~{3,})(.*)$/
-const CLOSER = /^ *(`{3,}|~{3,})[ \t]*$/
+const OPENER = /^[ \t]*(`{3,}|~{3,})(.*)$/
+const CLOSER = /^[ \t]*(`{3,}|~{3,})[ \t]*$/
 
-/** Per line: whether it is code — a fence, or inside one. Fences may be indented (a list item's). */
+/** Per line: whether it is code — a fence, or inside one. Fences may be indented (a list item's), with spaces or tabs. */
 function fenced(lines: readonly string[]): boolean[] {
   const code: boolean[] = []
   let run: string | null = null

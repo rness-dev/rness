@@ -149,6 +149,22 @@ test('code is left alone: fences (``` and ~~~, indented, a longer one around a s
   assert.equal(content(body(`# B\n\n${code}\n`)), code)
 })
 
+test('a fence indented with a tab, as in a list item, is a fence: nothing inside is escaped, a blank line included, and it closes', () => {
+  const fence = [
+    '-\titem',
+    '',
+    '\t```sh',
+    '\techo @user',
+    '',
+    '\techo #4',
+    '\t```',
+  ].join('\n')
+  assert.equal(
+    content(body(`# B\n\n${fence}\n\nAsk @octocat.\n`)),
+    `${fence}\n\nAsk \\@octocat.`
+  )
+})
+
 test('outside code, @name is escaped and a bare #digits broken by a zero-width space; emails, URLs, anchors and entities are not', () => {
   const b = body(
     [
