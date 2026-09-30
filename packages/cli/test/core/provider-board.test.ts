@@ -198,6 +198,7 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
         issue: anIssue(3, {
           state: 'CLOSED',
           labels: [],
+          author: null,
           repository: 'ACME/.Rness',
         }),
         title: '',
@@ -240,22 +241,36 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
   assert.deepEqual(
     items.map((i) => [i.id, i.path, i.issue]),
     [
-      ['I_1', 'adr/a.md', { number: 2, open: true, labelled: true, body: 'b' }],
+      [
+        'I_1',
+        'adr/a.md',
+        { number: 2, open: true, labelled: true, body: 'b', author: 'octo' },
+      ],
       [
         'I_2',
         'adr/b.md',
-        { number: 3, open: false, labelled: false, body: '' },
+        { number: 3, open: false, labelled: false, body: '', author: null },
       ],
       ['I_3', 'adr/c.md', null],
       ['I_4', null, null],
-      ['I_5', null, { number: 5, open: true, labelled: true, body: '' }],
+      [
+        'I_5',
+        null,
+        { number: 5, open: true, labelled: true, body: '', author: 'octo' },
+      ],
       ['I_6', null, null],
     ]
   )
   assert.deepEqual(items[0], {
     id: 'I_1',
     path: 'adr/a.md',
-    issue: { number: 2, open: true, labelled: true, body: 'b' },
+    issue: {
+      number: 2,
+      open: true,
+      labelled: true,
+      body: 'b',
+      author: 'octo',
+    },
     title: '0001 — A',
     status: 'draft',
     type: null,
@@ -284,6 +299,7 @@ test('items without bodies: the query selects none, and each issue says it was n
     open: true,
     labelled: true,
     body: null,
+    author: 'octo',
   })
   const full = await g.provider.items(BOARD)
   assert.equal(full[0]?.issue?.body, 'b')

@@ -9,6 +9,8 @@ export interface ItemIssue {
   labelled: boolean
   /** Null: listed without bodies (`items(board, { bodies: false })`). */
   body: string | null
+  /** The login that opened it; null: a deleted account. */
+  author: string | null
 }
 
 /** An item of the board, as the provider reads it. */
@@ -97,7 +99,7 @@ function strays(have: readonly BoardItem[]): Map<string, BoardItem[]> {
 
 /**
  * The paths `planSync` judges: on the board, no document wanted there — once
- * each. Whether this clone's git has seen them decides (spec 0018 §2).
+ * each. This clone's git, or who opened their issue, decides (`isGone`).
  */
 export function unwantedPaths(
   want: readonly Desired[],
@@ -111,20 +113,42 @@ export function unwantedPaths(
 }
 
 /**
+ * Whether an item no document wants is gone (spec 0018 §2): its path is in
+ * `seen` — this clone's git holds it, its tree no longer does — or its issue
+ * was opened by `login`: a document this developer's agent wrote, then
+ * renamed or deleted before any commit. Any other is a teammate's document
+ * not pulled yet. A draft has no author: git's word alone; and so when the
+ * login is unknown (null).
+ */
+function isGone(
+  path: string,
+  item: BoardItem,
+  seen: ReadonlySet<string>,
+  login: string | null
+): boolean {
+  if (seen.has(path)) return true
+  const author = item.issue?.author ?? null
+  return (
+    login !== null &&
+    author !== null &&
+    author.toLowerCase() === login.toLowerCase()
+  )
+}
+
+/**
  * Pass 1, one way (spec 0018 §2, §4): items are found by `path`. A document
  * without one adopts the issue a stopped sync left without `Path`, or gets
  * a new one; a draft of 0.12.0 becomes one; a closed issue is reopened;
  * whatever differs is written back. Items that are not rness's are left
  * alone — and so is a stray whose document has an item: adopting it only
- * ever replaces a second issue. An item with no document is gone only on a
- * path of `seen` — this clone's git holds it, its tree no longer does; any
- * other is a document not pulled yet, unchanged. Told nothing, it closes
- * nothing.
+ * ever replaces a second issue. An item with no document is closed only
+ * when it `isGone`; any other is unchanged. Told nothing, it closes nothing.
  */
 export function planSync(
   want: readonly Desired[],
   have: readonly BoardItem[],
-  seen: ReadonlySet<string> = new Set()
+  seen: ReadonlySet<string> = new Set(),
+  login: string | null = null
 ): Step[] {
   const byPath = new Map<string, BoardItem[]>()
   for (const item of have)
@@ -163,7 +187,9 @@ export function planSync(
   for (const [path, item] of kept)
     if (!wanted.has(path))
       steps.push(
-        seen.has(path) ? gone(item) : { kind: 'unchanged', id: item.id }
+        isGone(path, item, seen, login)
+          ? gone(item)
+          : { kind: 'unchanged', id: item.id }
       )
   return [...steps, ...surplus]
 }

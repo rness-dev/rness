@@ -268,6 +268,8 @@ export interface RawIssue {
   /** Null: listed without bodies. */
   body: string | null
   labels: string[]
+  /** Who opened it; null: a deleted account, or not known. */
+  author: string | null
 }
 
 export interface RawItem {
@@ -293,6 +295,7 @@ interface ItemNode {
     number?: number
     state?: string
     body?: string
+    author?: { login?: string } | null
     repository?: { nameWithOwner?: string }
     labels?: { nodes: { name?: string }[] }
   } | null
@@ -341,6 +344,9 @@ export async function listItems(
                       title
                       state
                       ${bodies ? 'body' : ''}
+                      author {
+                        login
+                      }
                       repository {
                         nameWithOwner
                       }
@@ -400,6 +406,7 @@ export async function listItems(
               open: c.state === 'OPEN',
               repository: c.repository?.nameWithOwner ?? '',
               body: bodies ? (c.body ?? '') : null,
+              author: c.author?.login ?? null,
               labels: (c.labels?.nodes ?? [])
                 .map((l) => l.name ?? '')
                 .filter((l) => l !== ''),

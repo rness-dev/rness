@@ -230,9 +230,16 @@ async function syncBoard(
     await fromGithub(c.provider.ensureLayout(board, layoutOf(tabs)))
   )
   const have = await fromGithub(c.provider.items(board))
-  // Gone is gone for this clone's git: a document it never saw is not closed.
-  const seen = await seenPaths(c.rnessDir, unwantedPaths(want, have))
-  const steps = planSync(want, have, seen)
+  // Gone is gone for this clone's git (spec 0018 §2): a path it never saw is
+  // closed only on an issue this login opened. The login is asked for only
+  // then: a stored login knows it; an environment token asks GitHub once.
+  // Unknown (the ask failed), git's word alone decides.
+  const unwanted = unwantedPaths(want, have)
+  const seen = await seenPaths(c.rnessDir, unwanted)
+  const login = unwanted.every((p) => seen.has(p))
+    ? null
+    : ((await c.provider.identity())?.login ?? null)
+  const steps = planSync(want, have, seen, login)
   const changes = steps.filter((s) => s.kind !== 'unchanged').length
   let writes: BodyStep[] = []
   let made = 0

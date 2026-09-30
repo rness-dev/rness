@@ -160,8 +160,10 @@ status, …`) and its body the document (see **Body**). It carries the
   `.rness`'s Issues tab. An issue is open while its document exists. When
   the document is gone, the issue is closed as not planned and its item
   archived. Gone means gone for this clone's git: the path is in its
-  history and no longer in its working tree; a path it has never seen — a
-  teammate's document not pulled yet — is left alone. An issue closed
+  history and no longer in its working tree. A path it has never seen is
+  judged only on an issue your login opened — a document your agent wrote,
+  then renamed or deleted before any commit; any other — a teammate's
+  document not pulled yet — is left alone. An issue closed
   while its document exists — by hand, or by a `fixes #12` in a `.rness`
   commit — is reopened at the next sync. The document's status is its
   field, not the issue's state. rness's items are those with a `Path`
@@ -511,7 +513,7 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   - `apply` returns the item and issue number of a create or a convert:
     `Placed | null`;
   - `BoardItem` gains a required `issue`: the item's issue of `.rness`
-    (number, state, label, body), or null;
+    (number, state, label, body, author), or null;
   - `Step` gains the kinds `convert`, `close` and `body`, and `update`
     gains `reopen`;
   - `items(board, { bodies: false })` lists the items without their

@@ -26,6 +26,7 @@ const open = (number: number, over: Partial<ItemIssue> = {}): ItemIssue => ({
   open: true,
   labelled: true,
   body: '',
+  author: 'octo',
   ...over,
 })
 /** rness's item: an open, labelled issue numbered after its id (`i5` → #5); `issue: null` is a 0.12.0 draft. */
@@ -130,6 +131,34 @@ test("a path this clone's git has never seen is not judged: its item unchanged, 
       { kind: 'unchanged', id: 'i3' },
     ],
     'told nothing, it closes nothing'
+  )
+})
+
+test("a path git never saw is gone on an issue the logged-in developer opened, in any case; not on another's, a deleted account's or a draft — and one git saw is gone whoever opened it", () => {
+  const items = [
+    have('i1', 'renamed.md', { issue: open(1, { author: 'Octo' }) }),
+    have('i2', 'theirs.md', { issue: open(2, { author: 'teammate' }) }),
+    have('i3', 'ghost.md', { issue: open(3, { author: null }) }),
+    have('d4', 'draft.md', { issue: null }),
+    have('i5', 'gone.md', { issue: open(5, { author: 'teammate' }) }),
+  ]
+  assert.deepEqual(planSync([], items, new Set(['gone.md']), 'octo'), [
+    { kind: 'close', id: 'i1' },
+    { kind: 'unchanged', id: 'i2' },
+    { kind: 'unchanged', id: 'i3' },
+    { kind: 'unchanged', id: 'd4' },
+    { kind: 'close', id: 'i5' },
+  ])
+  assert.deepEqual(
+    planSync([], items, new Set(['gone.md']), null),
+    [
+      { kind: 'unchanged', id: 'i1' },
+      { kind: 'unchanged', id: 'i2' },
+      { kind: 'unchanged', id: 'i3' },
+      { kind: 'unchanged', id: 'd4' },
+      { kind: 'close', id: 'i5' },
+    ],
+    "the login unknown: git's word alone"
   )
 })
 

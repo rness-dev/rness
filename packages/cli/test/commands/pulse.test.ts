@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -685,26 +686,27 @@ test('hand changes on GitHub are written back: a body edited under its digest, a
   )
 })
 
-test("a gone document — committed, then deleted: its issue closed as not planned, its item archived; a path this clone's git never saw is left alone", async (t) => {
+test("a gone document — committed, then deleted: its issue closed as not planned, its item archived, whoever opened it; a teammate's path this clone's git never saw is left alone", async (t) => {
   const { g, cwd, sync } = await settled(t)
   const memory = join(cwd, '.rness')
   await commitDir(memory, 'docs')
   await rm(join(memory, 'plans', '0002-b.md'))
   await commitDir(memory, 'plans: 0002 gone')
   const b = g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')!
+  b.issue!.author = 'teammate'
   // A teammate's new document: on the board, not pulled into this clone.
-  g.items.push(
-    item(
-      'i9',
-      {
-        Path: 'specs/0009-theirs.md',
-        Collection: 'Specs',
-        Status: 'Draft',
-        'Specs status': 'Draft',
-      },
-      '0009 — Theirs'
-    )
+  const theirs = item(
+    'i9',
+    {
+      Path: 'specs/0009-theirs.md',
+      Collection: 'Specs',
+      Status: 'Draft',
+      'Specs status': 'Draft',
+    },
+    '0009 — Theirs'
   )
+  theirs.issue!.author = 'teammate'
+  g.items.push(theirs)
   const r = await sync()
   assert.equal(r.err, '')
   assert.deepEqual(lines(r.out), ['synced 1 item: 1 unchanged, 1 archived'])
@@ -716,9 +718,48 @@ test("a gone document — committed, then deleted: its issue closed as not plann
     ]
   )
   assert.match(g.mutations[0]!.query!, /stateReason: NOT_PLANNED/)
-  const theirs = g.items.find((i) => i.id === 'i9')!
   assert.equal(theirs.archived, false)
   assert.equal(theirs.issue?.state, 'OPEN')
+})
+
+/** A document written and synced — its issue opened by `author` — then renamed before any commit, and synced again. */
+async function renamedBeforeCommit(t: TestContext, author: string) {
+  const { g, cwd, sync } = await settled(t)
+  const specs = join(cwd, '.rness', 'specs')
+  await commitDir(join(cwd, '.rness'), 'docs')
+  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 — C'))
+  assert.equal((await sync()).code, 0)
+  const c = g.items.find((i) => i.values['Path'] === 'specs/0003-c.md')!
+  c.issue!.author = author
+  await rename(join(specs, '0003-c.md'), join(specs, '0003-renamed.md'))
+  g.mutations.length = 0
+  return { g, c, r: await sync() }
+}
+
+test('a document renamed before any commit: its issue, opened by this login, is closed and archived; the new path gets its own', async (t) => {
+  const { g, c, r } = await renamedBeforeCommit(t, 'Octo')
+  assert.equal(r.err, '')
+  assert.deepEqual(lines(r.out), [
+    'created 1 issue',
+    'synced 3 items: 1 created, 2 unchanged, 1 archived',
+  ])
+  assert.deepEqual(
+    g.mutations
+      .filter((m) => m.op === 'closeIssue' || m.op === 'archive')
+      .map((m) => m.variables['id'] ?? m.variables['itemId']),
+    [c.issue!.id, c.id]
+  )
+})
+
+test("the same path, its issue opened by another login: left alone — it may be a teammate's document not pulled here", async (t) => {
+  const { c, r } = await renamedBeforeCommit(t, 'teammate')
+  assert.equal(r.err, '')
+  assert.deepEqual(lines(r.out), [
+    'created 1 issue',
+    'synced 3 items: 1 created, 2 unchanged',
+  ])
+  assert.equal(c.archived, false)
+  assert.equal(c.issue?.state, 'OPEN')
 })
 
 test("the first sync with 0.13.0: 0.12.0's drafts converted in place, labelled, their bodies written, the board linked; the next writes nothing", async (t) => {

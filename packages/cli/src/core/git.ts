@@ -157,7 +157,7 @@ export async function changedPaths(
  * not merged is not this clone's. `--full-history`: a path added and removed
  * on a branch merged back counts. A path is literal, never an option or a
  * glob. One git cannot answer for — no repository, no commit yet, outside
- * the repository — is not seen: what git cannot vouch for is never closed.
+ * the repository — is not seen: git does not vouch for it.
  */
 export async function seenPaths(
   dir: string,
