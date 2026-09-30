@@ -235,3 +235,67 @@ export async function addLabels(
     o
   )
 }
+
+/** Every label of `owner/name`, by name: the ids a collection's labels are added by (spec 0025 §4). */
+export async function labelIds(
+  owner: string,
+  name: string,
+  o: ApiOptions
+): Promise<Map<string, string>> {
+  const ids = new Map<string, string>()
+  let after: string | null = null
+  for (;;) {
+    const d: {
+      repository: {
+        labelList: {
+          nodes: { id: string; name: string }[]
+          pageInfo: { hasNextPage: boolean; endCursor: string | null }
+        }
+      } | null
+    } = await graphql(
+      `
+        query ($owner: String!, $name: String!, $after: String) {
+          repository(owner: $owner, name: $name) {
+            labelList: labels(first: 100, after: $after) {
+              nodes {
+                id
+                name
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      `,
+      { owner, name, after },
+      o
+    )
+    const list = d.repository?.labelList
+    for (const l of list?.nodes ?? []) ids.set(l.name, l.id)
+    if (list?.pageInfo.hasNextPage !== true || list.pageInfo.endCursor === null)
+      return ids
+    after = list.pageInfo.endCursor
+  }
+}
+
+export async function removeLabels(
+  id: string,
+  labelIds: string[],
+  o: ApiOptions
+): Promise<void> {
+  await graphql(
+    `
+      mutation ($id: ID!, $labelIds: [ID!]!) {
+        removeLabelsFromLabelable(
+          input: { labelableId: $id, labelIds: $labelIds }
+        ) {
+          clientMutationId
+        }
+      }
+    `,
+    { id, labelIds },
+    o
+  )
+}

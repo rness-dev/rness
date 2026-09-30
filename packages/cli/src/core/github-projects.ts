@@ -136,6 +136,8 @@ export interface Field {
   /** The numeric id REST project views refer to fields by. */
   databaseId: number
   name: string
+  /** GitHub's `ProjectV2FieldType`: `TEXT`, `SINGLE_SELECT`, `DATE`, `NUMBER`, … */
+  dataType: string
   options: { id: string; name: string; color?: string }[] | null
 }
 
@@ -143,6 +145,7 @@ interface RawField {
   id?: string
   databaseId?: number
   name?: string
+  dataType?: string
   options?: { id: string; name: string; color?: string }[]
 }
 
@@ -157,6 +160,8 @@ function toField(raw: RawField): Field {
     id: raw.id ?? '',
     databaseId,
     name: raw.name ?? '',
+    dataType:
+      raw.dataType ?? (raw.options === undefined ? 'TEXT' : 'SINGLE_SELECT'),
     options: raw.options ?? null,
   }
 }
@@ -201,16 +206,16 @@ const optionInput = (o: OptionInput, id?: string) => ({
   description: '',
 })
 
-const FIELD_SELECTION = `... on ProjectV2FieldCommon { id databaseId name }
+const FIELD_SELECTION = `... on ProjectV2FieldCommon { id databaseId name dataType }
   ... on ProjectV2SingleSelectField { options { id name color } }`
 
 export async function createField(
   projectId: string,
   name: string,
-  kind: 'TEXT' | { options: OptionInput[] },
+  kind: 'TEXT' | 'DATE' | 'NUMBER' | { options: OptionInput[] },
   o: ApiOptions
 ): Promise<Field> {
-  const single = kind !== 'TEXT'
+  const single = typeof kind !== 'string'
   const d = await graphql<{
     createProjectV2Field: { projectV2Field: RawField }
   }>(
@@ -226,7 +231,7 @@ export async function createField(
     {
       projectId,
       name,
-      dataType: single ? 'SINGLE_SELECT' : 'TEXT',
+      dataType: single ? 'SINGLE_SELECT' : kind,
       ...(single ? { options: kind.options.map((n) => optionInput(n)) } : {}),
     },
     o
@@ -317,7 +322,13 @@ interface ItemNode {
     labels?: { nodes: { name?: string }[] }
   } | null
   fieldValues?: {
-    nodes: { text?: string; name?: string; field?: { name?: string } }[]
+    nodes: {
+      text?: string
+      name?: string
+      date?: string
+      number?: number
+      field?: { name?: string }
+    }[]
   }
 }
 
@@ -389,6 +400,22 @@ export async function listItems(
                           }
                         }
                       }
+                      ... on ProjectV2ItemFieldDateValue {
+                        date
+                        field {
+                          ... on ProjectV2FieldCommon {
+                            name
+                          }
+                        }
+                      }
+                      ... on ProjectV2ItemFieldNumberValue {
+                        number
+                        field {
+                          ... on ProjectV2FieldCommon {
+                            name
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -408,7 +435,11 @@ export async function listItems(
       const values: Record<string, string> = {}
       for (const v of n.fieldValues?.nodes ?? []) {
         const field = v.field?.name
-        const value = v.text ?? v.name
+        const value =
+          v.text ??
+          v.name ??
+          v.date ??
+          (v.number === undefined ? undefined : String(v.number))
         if (field !== undefined && value !== undefined) values[field] = value
       }
       const c = n.content
@@ -444,7 +475,12 @@ export async function setValue(
   projectId: string,
   itemId: string,
   fieldId: string,
-  value: { text: string } | { optionId: string } | null,
+  value:
+    | { text: string }
+    | { optionId: string }
+    | { date: string }
+    | { number: number }
+    | null,
   o: ApiOptions
 ): Promise<void> {
   if (value === null) {
@@ -492,9 +528,7 @@ export async function setValue(
       itemId,
       fieldId,
       value:
-        'text' in value
-          ? { text: value.text }
-          : { singleSelectOptionId: value.optionId },
+        'optionId' in value ? { singleSelectOptionId: value.optionId } : value,
     },
     o
   )
@@ -645,7 +679,7 @@ export async function createView(
   number: number,
   view: {
     name: string
-    layout: 'board' | 'table'
+    layout: 'board' | 'table' | 'roadmap'
     filter: string
     groupBy?: number
     /** Fields' `databaseId`s, in column order; sent as `visible_fields`. */
@@ -776,6 +810,197 @@ export async function renameView(
       }
     `,
     { viewId, name, visibleFieldIds },
+    o
+  )
+}
+
+/** Takes an item off the project (`deleteProjectV2Item`); its issue stays as it is (spec 0025 §3). */
+export async function deleteItem(
+  projectId: string,
+  itemId: string,
+  o: ApiOptions
+): Promise<void> {
+  await graphql(
+    `
+      mutation ($projectId: ID!, $itemId: ID!) {
+        deleteProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) {
+          deletedItemId
+        }
+      }
+    `,
+    { projectId, itemId },
+    o
+  )
+}
+
+/** A project's README and short description, as GitHub holds them ('' when unset). */
+export async function projectText(
+  projectId: string,
+  o: ApiOptions
+): Promise<{ readme: string; shortDescription: string }> {
+  const d = await graphql<{
+    node: {
+      projectReadme: string | null
+      projectDescription: string | null
+    } | null
+  }>(
+    `
+      query ($projectId: ID!) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            projectReadme: readme
+            projectDescription: shortDescription
+          }
+        }
+      }
+    `,
+    { projectId },
+    o
+  )
+  return {
+    readme: d.node?.projectReadme ?? '',
+    shortDescription: d.node?.projectDescription ?? '',
+  }
+}
+
+/** Writes a project's README, its short description, or both (`updateProjectV2`). */
+export async function updateProjectText(
+  projectId: string,
+  text: { readme?: string; shortDescription?: string },
+  o: ApiOptions
+): Promise<void> {
+  await graphql(
+    `
+      mutation ($projectId: ID!, $readme: String, $shortDescription: String) {
+        updateProjectV2(
+          input: {
+            projectId: $projectId
+            readme: $readme
+            shortDescription: $shortDescription
+          }
+        ) {
+          projectV2 {
+            id
+          }
+        }
+      }
+    `,
+    { projectId, ...text },
+    o
+  )
+}
+
+/** A status update of a project; `status` is GitHub's `ON_TRACK`, `AT_RISK`, … */
+export interface StatusUpdateNode {
+  id: string
+  body: string
+  status: string | null
+  startDate: string | null
+  targetDate: string | null
+}
+
+/** A project's status updates, 100 at most: a collection posts one a week (spec 0025 §4). */
+export async function statusUpdates(
+  projectId: string,
+  o: ApiOptions
+): Promise<StatusUpdateNode[]> {
+  const d = await graphql<{
+    node: { statusUpdates: { nodes: StatusUpdateNode[] } } | null
+  }>(
+    `
+      query ($projectId: ID!) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            statusUpdates(first: 100) {
+              nodes {
+                id
+                body
+                status
+                startDate
+                targetDate
+              }
+            }
+          }
+        }
+      }
+    `,
+    { projectId },
+    o
+  )
+  return d.node?.statusUpdates.nodes ?? []
+}
+
+export interface StatusUpdateInput {
+  body: string
+  status: string
+  startDate: string | null
+  targetDate: string | null
+}
+
+export async function createStatusUpdate(
+  projectId: string,
+  update: StatusUpdateInput,
+  o: ApiOptions
+): Promise<void> {
+  await graphql(
+    `
+      mutation (
+        $projectId: ID!
+        $body: String!
+        $status: ProjectV2StatusUpdateStatus!
+        $startDate: Date
+        $targetDate: Date
+      ) {
+        createProjectV2StatusUpdate(
+          input: {
+            projectId: $projectId
+            body: $body
+            status: $status
+            startDate: $startDate
+            targetDate: $targetDate
+          }
+        ) {
+          statusUpdate {
+            id
+          }
+        }
+      }
+    `,
+    { projectId, ...update },
+    o
+  )
+}
+
+export async function updateStatusUpdate(
+  statusUpdateId: string,
+  update: StatusUpdateInput,
+  o: ApiOptions
+): Promise<void> {
+  await graphql(
+    `
+      mutation (
+        $statusUpdateId: ID!
+        $body: String!
+        $status: ProjectV2StatusUpdateStatus!
+        $startDate: Date
+        $targetDate: Date
+      ) {
+        updateProjectV2StatusUpdate(
+          input: {
+            statusUpdateId: $statusUpdateId
+            body: $body
+            status: $status
+            startDate: $startDate
+            targetDate: $targetDate
+          }
+        ) {
+          statusUpdate {
+            id
+          }
+        }
+      }
+    `,
+    { statusUpdateId, ...update },
     o
   )
 }

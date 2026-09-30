@@ -31,6 +31,7 @@ const open = (number: number, over: Partial<ItemIssue> = {}): ItemIssue => ({
   open: true,
   labelled: true,
   body: '',
+  labels: ['rness'],
   ...over,
 })
 /** rness's item: an open, labelled issue numbered after its id (`i5` → #5); `issue: null` is a 0.12.0 draft. */
@@ -49,6 +50,7 @@ const have = (
   agent: null,
   session: null,
   sessions: null,
+  values: {},
   ...over,
 })
 
@@ -400,5 +402,84 @@ test("pass 2: a body is written when the issue's does not carry its digest", () 
     planBodies(new Map([['x.md', now]]), issued(null)),
     [],
     'a document without an issue'
+  )
+})
+
+// --- a collection's own project (spec 0025 §3, §4) --------------------------------
+
+test("a declared field's value is compared: another, or none, updates the item", () => {
+  const w = want('m/a.md', {
+    values: { 'Publish date': '2026-10-13', Kind: 'post' },
+  })
+  assert.deepEqual(
+    planSync(
+      [w],
+      [
+        have('i1', 'm/a.md', {
+          values: { 'Publish date': '2026-10-13', Kind: 'post' },
+        }),
+      ]
+    ),
+    [{ kind: 'unchanged', id: 'i1' }]
+  )
+  for (const values of [
+    { 'Publish date': '2026-10-14', Kind: 'post' },
+    { Kind: 'post' },
+  ])
+    assert.equal(
+      planSync([w], [have('i1', 'm/a.md', { values })])[0]?.kind,
+      'update'
+    )
+  // A value gone from the document clears the item's.
+  const cleared = want('m/a.md', { values: { Kind: null } })
+  assert.equal(
+    planSync([cleared], [have('i1', 'm/a.md', { values: { Kind: 'post' } })])[0]
+      ?.kind,
+    'update'
+  )
+  assert.equal(
+    planSync([cleared], [have('i1', 'm/a.md')])[0]?.kind,
+    'unchanged'
+  )
+})
+
+test("labels are compared: one missing, or one the collection took off, updates; any other label is the team's", () => {
+  const w = want('m/linkedin/a.md', { labels: ['linkedin'], unlabels: ['hn'] })
+  const withLabels = (labels: string[]) =>
+    have('i1', 'm/linkedin/a.md', { issue: open(1, { labels }) })
+  assert.equal(
+    planSync([w], [withLabels(['rness', 'linkedin'])])[0]?.kind,
+    'unchanged'
+  )
+  assert.equal(
+    planSync([w], [withLabels(['rness', 'LinkedIn', 'urgent'])])[0]?.kind,
+    'unchanged',
+    'case aside, and a label by hand'
+  )
+  assert.equal(planSync([w], [withLabels(['rness'])])[0]?.kind, 'update')
+  assert.equal(
+    planSync([w], [withLabels(['rness', 'linkedin', 'hn'])])[0]?.kind,
+    'update'
+  )
+})
+
+test('an item of a collection with its own project is taken off Agent Pulse: remove, its issue left as it is', () => {
+  const elsewhere = (path: string) => path.startsWith('marketing/')
+  assert.deepEqual(
+    planSync(
+      [want('specs/a.md')],
+      [
+        have('i1', 'specs/a.md'),
+        have('i2', 'marketing/x.md'),
+        have('i3', null),
+      ],
+      new Set(['marketing/x.md']),
+      new Map(),
+      elsewhere
+    ),
+    [
+      { kind: 'unchanged', id: 'i1' },
+      { kind: 'remove', id: 'i2' },
+    ]
   )
 })

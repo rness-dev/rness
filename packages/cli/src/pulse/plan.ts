@@ -9,6 +9,8 @@ export interface ItemIssue {
   labelled: boolean
   /** Null: listed without bodies (`items(board, { bodies: false })`). */
   body: string | null
+  /** Every label it carries, as GitHub names them. */
+  labels: string[]
 }
 
 /** An item of the board, as the provider reads it. */
@@ -31,6 +33,8 @@ export interface BoardItem {
   session: string | null
   /** `Sessions`, which a session's end never clears (spec 0020 §3.2). */
   sessions: string | null
+  /** Every field's value by field name, text, option, date or number as text. */
+  values: Record<string, string>
 }
 
 /** What `apply` gave a document that had no issue: its item and its number. */
@@ -55,16 +59,38 @@ export type Step =
   | { kind: 'unchanged'; id: string }
   /** The document is gone: its issue closed as not planned, its item archived. */
   | { kind: 'close'; id: string }
+  /**
+   * The document's collection has a project of its own (spec 0025 §3): the
+   * item leaves this board, its issue left as it is.
+   */
+  | { kind: 'remove'; id: string }
   /** A draft left over: archived. */
   | { kind: 'archive'; id: string }
   | BodyStep
+
+const lower = (labels: readonly string[]): Set<string> =>
+  new Set(labels.map((l) => l.toLowerCase()))
+
+/** A label wanted and missing, or one the collection makes on an issue that must not carry it. */
+function labelsDiffer(item: BoardItem, w: Desired): boolean {
+  if (w.labels.length === 0 && w.unlabels.length === 0) return false
+  const carried = lower(item.issue?.labels ?? [])
+  return (
+    w.labels.some((l) => !carried.has(l.toLowerCase())) ||
+    w.unlabels.some((l) => carried.has(l.toLowerCase()))
+  )
+}
 
 const differs = (item: BoardItem, w: Desired): boolean =>
   item.title !== w.title ||
   item.status !== w.status ||
   (w.statusField !== null && item.collectionStatus !== w.status) ||
   item.type !== w.type ||
-  item.sessions !== w.sessions
+  item.sessions !== w.sessions ||
+  Object.entries(w.values).some(
+    ([name, value]) => (item.values[name] ?? null) !== value
+  ) ||
+  labelsDiffer(item, w)
 
 /** Of several items on one path, the one kept: an open issue, then a closed one, the lowest number first; a draft last. */
 const rank = (i: BoardItem): number =>
@@ -156,7 +182,8 @@ export function planSync(
   want: readonly Desired[],
   have: readonly BoardItem[],
   seen: ReadonlySet<string> = new Set(),
-  opened: Opened = new Map()
+  opened: Opened = new Map(),
+  elsewhere: (path: string) => boolean = () => false
 ): Step[] {
   const byPath = new Map<string, BoardItem[]>()
   for (const item of have)
@@ -195,9 +222,12 @@ export function planSync(
   for (const [path, item] of kept)
     if (!wanted.has(path))
       steps.push(
-        isGone(path, item, seen, opened)
-          ? gone(item)
-          : { kind: 'unchanged', id: item.id }
+        // Its own project holds it now: off this board, not closed.
+        elsewhere(path)
+          ? { kind: 'remove', id: item.id }
+          : isGone(path, item, seen, opened)
+            ? gone(item)
+            : { kind: 'unchanged', id: item.id }
       )
   return [...steps, ...surplus]
 }

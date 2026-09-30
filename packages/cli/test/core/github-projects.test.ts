@@ -126,11 +126,18 @@ test('fields lists names and single-select options', async (t) => {
   const listed = await fields('P_1', o)
   assert.match(gql(requests[0]!).query, /\bdatabaseId\b/)
   assert.deepEqual(listed, [
-    { id: 'PVTF_1', databaseId: 11, name: 'Title', options: null },
+    {
+      id: 'PVTF_1',
+      databaseId: 11,
+      name: 'Title',
+      dataType: 'TEXT',
+      options: null,
+    },
     {
       id: 'PVTSSF_2',
       databaseId: 22,
       name: 'Status',
+      dataType: 'SINGLE_SELECT',
       options: [{ id: 'A', name: 'Todo' }],
     },
   ])
@@ -155,6 +162,7 @@ test('createField TEXT sends the dataType', async (t) => {
     id: 'PVTF_9',
     databaseId: 99,
     name: 'Ref',
+    dataType: 'TEXT',
     options: null,
   })
   assert.match(gql(requests[0]!).query, /mutation[\s\S]*createProjectV2Field\(/)
@@ -226,6 +234,7 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
     id: 'F2',
     databaseId: 22,
     name: 'Status',
+    dataType: 'SINGLE_SELECT',
     options: [
       { id: 'A', name: 'Todo' },
       { id: 'B', name: 'Old' },

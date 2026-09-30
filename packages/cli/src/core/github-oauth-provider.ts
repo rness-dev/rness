@@ -1,3 +1,4 @@
+import type { StatusUpdate } from '../pulse/collection.ts'
 import type { Layout } from '../pulse/layout.ts'
 import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
 import { type ResolvedToken, resolveToken } from './auth.ts'
@@ -124,8 +125,8 @@ export class GitHubOAuthProvider implements Provider {
     return this.#boards().checkIssues(org)
   }
 
-  async createBoard(org: string): Promise<Board> {
-    return this.#boards().createBoard(org)
+  async createBoard(org: string, title?: string): Promise<Board> {
+    return this.#boards().createBoard(org, title)
   }
 
   async board(org: string, number: number): Promise<Board | null> {
@@ -153,6 +154,20 @@ export class GitHubOAuthProvider implements Provider {
     session: string | null
   ): Promise<void> {
     return this.#boards().mark(board, itemIds, session)
+  }
+
+  async describe(
+    board: Board,
+    text: { readme: string | null; description: string | null }
+  ): Promise<string[]> {
+    return this.#boards().describe(board, text)
+  }
+
+  async postUpdates(
+    board: Board,
+    updates: readonly StatusUpdate[]
+  ): Promise<string[]> {
+    return this.#boards().postUpdates(board, updates)
   }
 
   credentialsFor(url: string): GitCredentials | null {

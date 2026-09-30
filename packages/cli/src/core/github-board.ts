@@ -1,3 +1,4 @@
+import type { StatusUpdate } from '../pulse/collection.ts'
 import type { Desired } from '../pulse/layout.ts'
 import {
   type Layout,
@@ -39,6 +40,21 @@ const valueOf = (values: Record<string, string>, name: string): string | null =>
   values[name] ?? values[FORMERLY[name] ?? ''] ?? null
 const LABEL_COLOR = '5319e7'
 const LABEL_DESCRIPTION = 'A document of .rness, on Agent Pulse'
+/** A label a collection's README declares for its documents (spec 0025 §4). */
+const OWN_LABEL_COLOR = 'ededed'
+const OWN_LABEL_DESCRIPTION =
+  'A label a collection of .rness gives its documents'
+/** The roadmap a collection's project gets when it declares a date field. */
+const CALENDAR_VIEW = 'Calendar'
+/** How a status update names the file it came from; GitHub does not show it. */
+const markerOf = (path: string): string => `<!-- rness: ${path} -->`
+/** A declared field's type as GitHub names it. */
+const DATA_TYPE = {
+  text: 'TEXT',
+  date: 'DATE',
+  number: 'NUMBER',
+  select: 'SINGLE_SELECT',
+} as const
 /** GitHub's label names ignore case: `Rness` is the label `rness`. */
 const labelled = (labels: readonly string[]): boolean =>
   labels.some((l) => l.toLowerCase() === LABEL.toLowerCase())
@@ -134,6 +150,8 @@ export class GitHubBoards implements Pick<
   readonly #cache = new Map<string, Cache>()
   /** Each organization's `.rness`, as first read: its id, its Issues, its label. */
   readonly #memories = new Map<string, gi.Repository>()
+  /** Each organization's `.rness` labels by name, read when a collection needs one. */
+  readonly #labels = new Map<string, Map<string, string>>()
 
   constructor(options: ApiOptions) {
     this.#o = options
@@ -182,10 +200,10 @@ export class GitHubBoards implements Pick<
   }
 
   /** The project only: the caller declares it before `ensureLayout` builds it. */
-  async createBoard(org: string): Promise<Board> {
+  async createBoard(org: string, title = PROJECT_TITLE): Promise<Board> {
     const project = await gh.createProject(
       await gh.orgId(org, this.#o),
-      PROJECT_TITLE,
+      title,
       this.#o
     )
     const board = { org, number: project.number, url: project.url }
@@ -305,6 +323,63 @@ export class GitHubBoards implements Pick<
     const session = await text(WORKING_SESSION)
     const path = await text('Path')
     const sessions = await text(SESSION_HISTORY)
+    // A collection's own fields (spec 0025 §4); none on Agent Pulse.
+    const declared: gh.Field[] = []
+    for (const d of layout.declared) {
+      const type = DATA_TYPE[d.type]
+      const field = fields.find((f) => f.name === d.name)
+      if (field !== undefined && field.dataType !== type)
+        throw new Error(
+          `the project's field ${d.name} is not a ${d.type} field: rename it on the project, or in the collection's README`
+        )
+      if (d.type !== 'select') {
+        if (field !== undefined) declared.push(field)
+        else {
+          added.push(`field ${d.name}`)
+          declared.push(
+            await gh.createField(
+              cache.projectId,
+              d.name,
+              DATA_TYPE[d.type],
+              this.#o
+            )
+          )
+        }
+        continue
+      }
+      // GitHub takes no single-select field without options: none yet, none made.
+      if (field === undefined && d.options.length === 0) continue
+      const options = (names: readonly string[]): gh.OptionInput[] =>
+        names.map((name) => ({
+          name,
+          color: field?.options?.find((o) => o.name === name)?.color ?? 'GRAY',
+        }))
+      if (field === undefined) {
+        added.push(`field ${d.name}`)
+        declared.push(
+          await gh.createField(
+            cache.projectId,
+            d.name,
+            { options: options(d.options) },
+            this.#o
+          )
+        )
+        continue
+      }
+      const now = namesOf(field)
+      const next = orderedFirst(d.options, [
+        ...now,
+        ...d.options.filter((n) => !now.includes(n)),
+      ])
+      if (next.every((n, i) => n === now[i]) && next.length === now.length)
+        declared.push(field)
+      else {
+        added.push(
+          ...d.options.filter((n) => !now.includes(n)).map((n) => `option ${n}`)
+        )
+        declared.push(await gh.setOptions(field, options(next), this.#o))
+      }
+    }
 
     const current = await gh.views(cache.projectId, this.#o)
     // GitHub's first view (`View 1`) becomes `All`; any other first view is
@@ -349,6 +424,22 @@ export class GitHubBoards implements Pick<
         this.#o
       )
     }
+    if (
+      layout.declared.some((d) => d.type === 'date') &&
+      !current.some((v) => v.name === CALENDAR_VIEW)
+    ) {
+      added.push(`view ${CALENDAR_VIEW}`)
+      await gh.createView(
+        board.org,
+        board.number,
+        {
+          name: CALENDAR_VIEW,
+          layout: 'roadmap',
+          filter: viewFilter(layout.types[0] ?? ''),
+        },
+        this.#o
+      )
+    }
     if (!current.some((v) => v.name === WORKING_VIEW)) {
       added.push(`view ${WORKING_VIEW}`)
       await gh.createView(
@@ -381,6 +472,9 @@ export class GitHubBoards implements Pick<
       )
       added.push(`label ${LABEL}`)
     }
+    for (const name of layout.labels)
+      if ((await this.#ownLabel(board.org, name)).made)
+        added.push(`label ${name}`)
     const repository = `${board.org}/${MEMORY}`
     const linked = await gh.linkedRepositories(cache.projectId, this.#o)
     if (!linked.some((r) => r.toLowerCase() === repository.toLowerCase())) {
@@ -395,8 +489,36 @@ export class GitHubBoards implements Pick<
       session,
       path,
       sessions,
+      ...declared,
     ]
     return added
+  }
+
+  /** A collection's label on `.rness`, made when missing; its id, and whether this made it. */
+  async #ownLabel(
+    org: string,
+    name: string
+  ): Promise<{ id: string; made: boolean }> {
+    let ids = this.#labels.get(org)
+    if (ids === undefined) {
+      ids = await gi.labelIds(org, MEMORY, this.#o)
+      this.#labels.set(org, ids)
+    }
+    // GitHub's label names ignore case.
+    const known = [...ids].find(([n]) => n.toLowerCase() === name.toLowerCase())
+    if (known !== undefined) return { id: known[1], made: false }
+    const id = await gi.createLabel(
+      org,
+      MEMORY,
+      {
+        name,
+        color: OWN_LABEL_COLOR,
+        description: OWN_LABEL_DESCRIPTION,
+      },
+      this.#o
+    )
+    ids.set(name, id)
+    return { id, made: true }
   }
 
   async items(
@@ -428,6 +550,7 @@ export class GitHubBoards implements Pick<
                   open: issue.open,
                   labelled: labelled(issue.labels),
                   body: issue.body,
+                  labels: [...issue.labels],
                 },
           title: r.title,
           status: r.values[STATUS_FIELD] ?? null,
@@ -437,6 +560,7 @@ export class GitHubBoards implements Pick<
           agent: r.values['Agent'] ?? null,
           session: valueOf(r.values, WORKING_SESSION),
           sessions: valueOf(r.values, SESSION_HISTORY),
+          values: { ...r.values },
         }
       })
   }
@@ -453,8 +577,16 @@ export class GitHubBoards implements Pick<
       fields.find((f) => f.name === name) ??
       fields.find((f) => f.name === FORMERLY[name])
     if (field === undefined) throw new Error(`the board has no field ${name}`)
-    let sent: { text: string } | { optionId: string } | null = null
-    if (value !== null && field.options === null) sent = { text: value }
+    let sent:
+      | { text: string }
+      | { optionId: string }
+      | { date: string }
+      | { number: number }
+      | null = null
+    if (value !== null && field.dataType === 'DATE') sent = { date: value }
+    else if (value !== null && field.dataType === 'NUMBER')
+      sent = { number: Number(value) }
+    else if (value !== null && field.options === null) sent = { text: value }
     else if (value !== null) {
       const option = field.options?.find((opt) => opt.name === value)
       if (option === undefined)
@@ -472,6 +604,12 @@ export class GitHubBoards implements Pick<
     if (step.kind === 'unchanged') return null
     const cache = await this.#cacheOf(board)
     if (step.kind === 'create') return this.#create(board, cache, step.want)
+    if (step.kind === 'remove') {
+      // Its collection's own project holds it (spec 0025 §3): off this board only.
+      await gh.deleteItem(cache.projectId, step.id, this.#o)
+      cache.known.delete(step.id)
+      return null
+    }
     const known = await this.#known(board, step.id)
     if (step.kind === 'archive' || step.kind === 'close') {
       // A document gone: its issue closed as not planned (spec 0018 §2).
@@ -503,6 +641,7 @@ export class GitHubBoards implements Pick<
         labels: [],
       }
       await this.#issue(known, step.want, labelId)
+      await this.#ownLabels(board.org, known, step.want)
       await this.#values(board, step.id, step.want)
       return { id: step.id, number: made.number }
     }
@@ -512,6 +651,7 @@ export class GitHubBoards implements Pick<
       issue.open = true
     }
     await this.#issue(known, step.want, labelId)
+    await this.#ownLabels(board.org, known, step.want)
     await this.#values(board, step.id, step.want)
     return null
   }
@@ -561,6 +701,7 @@ export class GitHubBoards implements Pick<
       }
       cache.known.set(id, known)
       await this.#issue(known, want, labelId)
+      await this.#ownLabels(board.org, known, want)
       await this.#values(board, id, want)
       return { id, number: found.number, adopted: true }
     }
@@ -584,6 +725,7 @@ export class GitHubBoards implements Pick<
       archived: false,
       values: {},
     })
+    await this.#ownLabels(board.org, cache.known.get(id)!, want)
     await this.#values(board, id, want)
     return { id, number: made.number }
   }
@@ -605,9 +747,38 @@ export class GitHubBoards implements Pick<
     }
   }
 
+  /** The labels a collection gives the issue, and those it takes off (spec 0025 §4). */
+  async #ownLabels(
+    org: string,
+    known: gh.RawItem,
+    want: Desired
+  ): Promise<void> {
+    if (want.labels.length === 0 && want.unlabels.length === 0) return
+    const issue = this.#issueOf(known)
+    const carried = (name: string): string | undefined =>
+      issue.labels.find((l) => l.toLowerCase() === name.toLowerCase())
+    const add = want.labels.filter((l) => carried(l) === undefined)
+    const off = want.unlabels.filter((l) => carried(l) !== undefined)
+    if (add.length > 0) {
+      const ids: string[] = []
+      for (const name of add) ids.push((await this.#ownLabel(org, name)).id)
+      await gi.addLabels(issue.id, ids, this.#o)
+      issue.labels.push(...add)
+    }
+    if (off.length > 0) {
+      const ids: string[] = []
+      for (const name of off) ids.push((await this.#ownLabel(org, name)).id)
+      await gi.removeLabels(issue.id, ids, this.#o)
+      issue.labels = issue.labels.filter(
+        (l) => !off.some((o) => o.toLowerCase() === l.toLowerCase())
+      )
+    }
+  }
+
   /** Path first — an issue on the board without it is the team's — then the fields, each only when it differs. */
   async #values(board: Board, id: string, want: Desired): Promise<void> {
     const values = (await this.#known(board, id)).values
+    const fields = await this.#fields(board)
     const wanted: [string, string | null][] = [
       ['Path', want.path],
       [COLLECTION_FIELD, want.type],
@@ -616,6 +787,10 @@ export class GitHubBoards implements Pick<
         ? []
         : ([[want.statusField, want.status]] as [string, string | null][])),
       [SESSION_HISTORY, want.sessions],
+      // A select with no option yet has no field yet: nothing to write.
+      ...Object.entries(want.values).filter(([name]) =>
+        fields.some((f) => f.name === name)
+      ),
     ]
     for (const [name, value] of wanted)
       if (valueOf(values, name) !== value)
@@ -654,5 +829,59 @@ export class GitHubBoards implements Pick<
       await this.#set(board, id, 'Agent', session === null ? null : WORKING)
       await this.#set(board, id, WORKING_SESSION, session)
     }
+  }
+
+  async describe(
+    board: Board,
+    text: { readme: string | null; description: string | null }
+  ): Promise<string[]> {
+    const cache = await this.#cacheOf(board)
+    const now = await gh.projectText(cache.projectId, this.#o)
+    const next: { readme?: string; shortDescription?: string } = {}
+    // GitHub keeps a README's text as sent, up to its trailing blanks.
+    if (text.readme !== null && now.readme.trimEnd() !== text.readme.trimEnd())
+      next.readme = text.readme.trimEnd()
+    if (text.description !== null && now.shortDescription !== text.description)
+      next.shortDescription = text.description
+    if (next.readme === undefined && next.shortDescription === undefined)
+      return []
+    await gh.updateProjectText(cache.projectId, next, this.#o)
+    return [
+      ...(next.readme === undefined ? [] : ['readme']),
+      ...(next.shortDescription === undefined ? [] : ['short description']),
+    ]
+  }
+
+  async postUpdates(
+    board: Board,
+    updates: readonly StatusUpdate[]
+  ): Promise<string[]> {
+    if (updates.length === 0) return []
+    const cache = await this.#cacheOf(board)
+    const there = await gh.statusUpdates(cache.projectId, this.#o)
+    const written: string[] = []
+    for (const u of updates) {
+      const marker = markerOf(u.path)
+      const input = {
+        body: `${u.body.trimEnd()}\n\n${marker}`,
+        status: u.health.toUpperCase().replace('-', '_'),
+        startDate: u.startDate,
+        targetDate: u.targetDate,
+      }
+      const posted = there.find((p) => p.body.includes(marker))
+      if (posted === undefined) {
+        await gh.createStatusUpdate(cache.projectId, input, this.#o)
+        written.push(`posted ${u.path}`)
+      } else if (
+        posted.body.trimEnd() !== input.body ||
+        posted.status !== input.status ||
+        (posted.startDate ?? null) !== input.startDate ||
+        (posted.targetDate ?? null) !== input.targetDate
+      ) {
+        await gh.updateStatusUpdate(posted.id, input, this.#o)
+        written.push(`updated ${u.path}`)
+      }
+    }
+    return written
   }
 }

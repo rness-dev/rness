@@ -17,11 +17,13 @@ export interface FField {
   databaseId: number
   name: string
   options: { id: string; name: string; color?: string }[] | null
+  /** GitHub's type; absent: SINGLE_SELECT with options, else TEXT. */
+  dataType?: string
 }
 export interface FView {
   id?: string
   name: string
-  layout?: 'BOARD_LAYOUT' | 'TABLE_LAYOUT'
+  layout?: 'BOARD_LAYOUT' | 'TABLE_LAYOUT' | 'ROADMAP_LAYOUT'
   /** The field a board's columns follow, by name. */
   column?: string | null
 }
@@ -55,6 +57,58 @@ export interface FMemory {
   label: boolean
   linked: boolean
 }
+
+/** A status update of a project (spec 0025 §4). */
+export interface FStatusUpdate {
+  id: string
+  body: string
+  status: string | null
+  startDate: string | null
+  targetDate: string | null
+}
+
+/** One project of acme: the seed's is P_1, number 7; others follow. */
+export interface FProject {
+  id: string
+  number: number
+  title: string
+  fields: FField[]
+  viewList: Required<FView>[]
+  items: FItem[]
+  linked: boolean
+  readme: string
+  shortDescription: string
+  statusUpdates: FStatusUpdate[]
+  restViews: unknown[]
+}
+
+/** A project to seed next to the first: numbered 8, 9, … unless said. */
+export interface FProjectSeed {
+  number?: number
+  title?: string
+  fields?: FField[]
+  views?: (string | FView)[]
+  items?: FItem[]
+  linked?: boolean
+  readme?: string
+  shortDescription?: string
+  statusUpdates?: FStatusUpdate[]
+}
+
+const defaultFields = (at: number): FField[] => [
+  {
+    id: `F_status_${at}`,
+    databaseId: at * 1000 + 1,
+    name: 'Status',
+    options: [{ id: `o_todo_${at}`, name: 'Todo' }],
+  },
+  {
+    id: `F_title_${at}`,
+    databaseId: at * 1000 + 2,
+    name: 'Title',
+    options: null,
+  },
+]
 
 /** An issue of acme/.rness: open, labelled, no body yet. */
 export const anIssue = (
@@ -95,6 +149,14 @@ export async function board(
     memory?: Partial<FMemory>
     /** Answers what is not the project's (`GET /user`, …); undefined falls through. */
     other?: (r: Recorded) => Reply | undefined
+    /** The first project's README, short description and status updates. */
+    readme?: string
+    shortDescription?: string
+    statusUpdates?: FStatusUpdate[]
+    /** More projects of acme, already there (spec 0025). */
+    projects?: FProjectSeed[]
+    /** Labels of acme/.rness besides `rness`, by name. */
+    labels?: string[]
   } = {}
 ) {
   let next = 100
@@ -110,10 +172,14 @@ export async function board(
   const isView = (v: string | FView): FView =>
     typeof v === 'string' ? { name: v } : v
   const viewList: Required<FView>[] = []
-  const addView = (v: FView) => {
+  const addView = (
+    v: FView,
+    list: Required<FView>[] = viewList,
+    of: FField[] = fields
+  ) => {
     const table = v.layout === 'TABLE_LAYOUT' || v.name === 'Working'
-    const own = fields.find((f) => f.name === `${v.name} status`)
-    viewList.push({
+    const own = of.find((f) => f.name === `${v.name} status`)
+    list.push({
       id: v.id ?? `V_${next++}`,
       name: v.name,
       layout: v.layout ?? (table ? 'TABLE_LAYOUT' : 'BOARD_LAYOUT'),
@@ -125,7 +191,8 @@ export async function board(
           : v.column,
     })
   }
-  if (seed.views !== undefined) seed.views.map(isView).forEach(addView)
+  if (seed.views !== undefined)
+    seed.views.map(isView).forEach((v) => addView(v))
   else if (seed.defaultView !== null)
     viewList.push({
       id: seed.defaultView?.id ?? 'V_1',
@@ -146,9 +213,82 @@ export async function board(
     ...(seed.issues ?? []),
   ]
   const lagging = new Set(seed.lagging ?? [])
+  const restViews: unknown[] = []
+  // The first project is the seed's; `memory.linked` is its link to .rness.
+  const primary: FProject = {
+    id: 'P_1',
+    number: 7,
+    title: 'Agent Pulse',
+    fields,
+    viewList,
+    items,
+    get linked() {
+      return memory.linked
+    },
+    set linked(v: boolean) {
+      memory.linked = v
+    },
+    readme: seed.readme ?? '',
+    shortDescription: seed.shortDescription ?? '',
+    statusUpdates: seed.statusUpdates ?? [],
+    restViews,
+  }
+  const projects: FProject[] = [primary]
+  const addProject = (p: FProjectSeed & { id?: string }): FProject => {
+    const at = projects.length + 1
+    const list: Required<FView>[] = []
+    const of = p.fields ?? defaultFields(at)
+    if (p.views !== undefined)
+      p.views.map(isView).forEach((v) => addView(v, list, of))
+    else
+      list.push({
+        id: `V_default_${at}`,
+        name: 'View 1',
+        layout: 'TABLE_LAYOUT',
+        column: null,
+      })
+    const project: FProject = {
+      id: p.id ?? `P_${at}`,
+      number: p.number ?? 6 + at,
+      title: p.title ?? `Project ${at}`,
+      fields: of,
+      viewList: list,
+      items: p.items ?? [],
+      linked: p.linked ?? false,
+      readme: p.readme ?? '',
+      shortDescription: p.shortDescription ?? '',
+      statusUpdates: p.statusUpdates ?? [],
+      restViews: [],
+    }
+    projects.push(project)
+    for (const i of project.items) if (i.issue != null) issues.push(i.issue)
+    return project
+  }
+  for (const p of seed.projects ?? []) addProject(p)
+  /** The project a request names by `projectId`; the first when it names none. */
+  const projectOf = (v: Record<string, unknown>): FProject =>
+    projects.find((p) => p.id === v['projectId']) ?? primary
+  const fieldAnywhere = (id: unknown): FField | undefined =>
+    projects.flatMap((p) => p.fields).find((f) => f.id === id)
+  const viewAnywhere = (id: unknown) => {
+    for (const p of projects) {
+      const at = p.viewList.findIndex((x) => x.id === id)
+      if (at >= 0) return { list: p.viewList, at }
+    }
+    return undefined
+  }
+  let claimed = false
+  let nextStatus = 1
+  // acme/.rness's labels besides `rness`, whose id follows `memory.label`.
+  const labels = new Map<string, string>(
+    (seed.labels ?? []).map((name) => [name, `L_${name}`])
+  )
+  const labelName = (id: string): string | undefined =>
+    id === 'L_1'
+      ? 'rness'
+      : [...labels].find(([, labelId]) => labelId === id)?.[0]
   let nextNumber = 1 + Math.max(0, ...issues.map((i) => i.number))
   const issueOf = (id: unknown) => issues.find((i) => i.id === id)
-  const restViews: unknown[] = []
   const restLabels: unknown[] = []
   const mutations: {
     op: string
@@ -164,8 +304,8 @@ export async function board(
     }))
   const itemField = (v: Record<string, unknown>) =>
     [
-      items.find((i) => i.id === v['itemId']),
-      fields.find((f) => f.id === v['fieldId']),
+      projectOf(v).items.find((i) => i.id === v['itemId']),
+      projectOf(v).fields.find((f) => f.id === v['fieldId']),
     ] as const
   const answers: [string, (v: Record<string, unknown>, q: string) => Reply][] =
     [
@@ -215,14 +355,15 @@ export async function board(
         'addProjectV2ItemById(',
         (v) => {
           mutations.push({ op: 'addItem', variables: v })
+          const project = projectOf(v)
           // GitHub adds an issue already on the board as the item it is.
-          const there = items.find(
+          const there = project.items.find(
             (i) => !i.archived && i.issue?.id === v['contentId']
           )
           if (there !== undefined)
             return data({ addProjectV2ItemById: { item: { id: there.id } } })
           const id = `I_${next++}`
-          items.push({
+          project.items.push({
             id,
             draftId: null,
             issue: issueOf(v['contentId']) ?? null,
@@ -237,7 +378,9 @@ export async function board(
         'convertProjectV2DraftIssueItemToIssue(',
         (v) => {
           mutations.push({ op: 'convert', variables: v })
-          const item = items.find((i) => i.id === v['itemId'])!
+          const item = projects
+            .flatMap((p) => p.items)
+            .find((i) => i.id === v['itemId'])!
           const made = anIssue(nextNumber++, {
             id: `ISSUE_${next++}`,
             title: item.title,
@@ -296,16 +439,51 @@ export async function board(
         (v) => {
           mutations.push({ op: 'addLabels', variables: v })
           const issue = issueOf(v['id'])
-          if (issue !== undefined && !issue.labels.includes('rness'))
-            issue.labels.push('rness')
+          for (const id of v['labelIds'] as string[]) {
+            const name = labelName(id)
+            if (
+              issue !== undefined &&
+              name !== undefined &&
+              !issue.labels.includes(name)
+            )
+              issue.labels.push(name)
+          }
           return data({ addLabelsToLabelable: { clientMutationId: null } })
         },
+      ],
+      [
+        'removeLabelsFromLabelable(',
+        (v) => {
+          mutations.push({ op: 'removeLabels', variables: v })
+          const issue = issueOf(v['id'])
+          const off = (v['labelIds'] as string[]).map(labelName)
+          if (issue !== undefined)
+            issue.labels = issue.labels.filter((l) => !off.includes(l))
+          return data({
+            removeLabelsFromLabelable: { clientMutationId: null },
+          })
+        },
+      ],
+      [
+        'labelList:',
+        () =>
+          data({
+            repository: {
+              labelList: {
+                nodes: [
+                  ...(memory.label ? [{ id: 'L_1', name: 'rness' }] : []),
+                  ...[...labels].map(([name, id]) => ({ id, name })),
+                ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          }),
       ],
       [
         'linkProjectV2ToRepository(',
         (v) => {
           mutations.push({ op: 'link', variables: v })
-          memory.linked = true
+          projectOf(v).linked = true
           return data({
             linkProjectV2ToRepository: { repository: { id: 'R_1' } },
           })
@@ -313,11 +491,13 @@ export async function board(
       ],
       [
         'repositories(first',
-        () =>
+        (v) =>
           data({
             node: {
               repositories: {
-                nodes: memory.linked ? [{ nameWithOwner: 'acme/.rness' }] : [],
+                nodes: projectOf(v).linked
+                  ? [{ nameWithOwner: 'acme/.rness' }]
+                  : [],
               },
             },
           }),
@@ -334,8 +514,9 @@ export async function board(
             options: single
               ? optionsOf(v['options'] as { name: string; color?: string }[])
               : null,
+            dataType: String(v['dataType']),
           }
-          fields.push(f)
+          projectOf(v).fields.push(f)
           return data({
             createProjectV2Field: { projectV2Field: asked(q, { ...f }) },
           })
@@ -344,13 +525,14 @@ export async function board(
       [
         'updateProjectV2Field',
         (v, q) => {
-          const f = fields.find((x) => x.id === v['fieldId'])!
+          const f = fieldAnywhere(v['fieldId'])!
           if (typeof v['name'] === 'string') {
             // A rename (spec 0022 §2): the id stays, items keep their values.
             mutations.push({ op: 'renameField', variables: v })
             const was = f.name
             f.name = v['name']
-            for (const i of items)
+            const owner = projects.find((p) => p.fields.includes(f))!
+            for (const i of owner.items)
               if (was in i.values) {
                 i.values[f.name] = i.values[was]!
                 delete i.values[was]
@@ -372,12 +554,16 @@ export async function board(
         'createProjectV2(',
         (v) => {
           mutations.push({ op: 'createProject', variables: v })
+          // The seed's project is the first one made; the next are new.
+          const made = claimed ? addProject({}) : primary
+          claimed = true
+          made.title = String(v['title'])
           return data({
             createProjectV2: {
               projectV2: {
-                id: 'P_1',
-                number: 7,
-                url: 'https://github.com/orgs/acme/projects/7',
+                id: made.id,
+                number: made.number,
+                url: `https://github.com/orgs/acme/projects/${made.number}`,
               },
             },
           })
@@ -402,9 +588,13 @@ export async function board(
           const value = v['value'] as {
             text?: string
             singleSelectOptionId?: string
+            date?: string
+            number?: number
           }
           const name =
             value.text ??
+            value.date ??
+            (value.number === undefined ? undefined : String(value.number)) ??
             f?.options?.find((o) => o.id === value.singleSelectOptionId)?.name
           if (i !== undefined && f !== undefined && name !== undefined)
             i.values[f.name] = name
@@ -417,9 +607,84 @@ export async function board(
         'archiveProjectV2Item',
         (v) => {
           mutations.push({ op: 'archive', variables: v })
-          const archived = items.find((i) => i.id === v['itemId'])
+          const archived = projectOf(v).items.find((i) => i.id === v['itemId'])
           if (archived !== undefined) archived.archived = true
           return data({ archiveProjectV2Item: { item: { id: 'x' } } })
+        },
+      ],
+      [
+        'deleteProjectV2Item(',
+        (v) => {
+          mutations.push({ op: 'deleteItem', variables: v })
+          const list = projectOf(v).items
+          const at = list.findIndex((i) => i.id === v['itemId'])
+          if (at >= 0) list.splice(at, 1)
+          return data({ deleteProjectV2Item: { deletedItemId: v['itemId'] } })
+        },
+      ],
+      [
+        'updateProjectV2(',
+        (v) => {
+          mutations.push({ op: 'updateProject', variables: v })
+          const project = projectOf(v)
+          if (typeof v['readme'] === 'string') project.readme = v['readme']
+          if (typeof v['shortDescription'] === 'string')
+            project.shortDescription = v['shortDescription']
+          return data({ updateProjectV2: { projectV2: { id: project.id } } })
+        },
+      ],
+      [
+        'projectReadme:',
+        (v) =>
+          data({
+            node: {
+              projectReadme: projectOf(v).readme,
+              projectDescription: projectOf(v).shortDescription,
+            },
+          }),
+      ],
+      [
+        'statusUpdates(first',
+        (v) =>
+          data({
+            node: {
+              statusUpdates: { nodes: projectOf(v).statusUpdates },
+            },
+          }),
+      ],
+      [
+        'createProjectV2StatusUpdate(',
+        (v) => {
+          mutations.push({ op: 'createStatusUpdate', variables: v })
+          projectOf(v).statusUpdates.push({
+            id: `SU_${nextStatus++}`,
+            body: String(v['body']),
+            status: (v['status'] as string | undefined) ?? null,
+            startDate: (v['startDate'] as string | null | undefined) ?? null,
+            targetDate: (v['targetDate'] as string | null | undefined) ?? null,
+          })
+          return data({
+            createProjectV2StatusUpdate: { statusUpdate: { id: 'x' } },
+          })
+        },
+      ],
+      [
+        'updateProjectV2StatusUpdate(',
+        (v) => {
+          mutations.push({ op: 'updateStatusUpdate', variables: v })
+          const u = projects
+            .flatMap((p) => p.statusUpdates)
+            .find((x) => x.id === v['statusUpdateId'])
+          if (u !== undefined) {
+            u.body = String(v['body'])
+            u.status = (v['status'] as string | undefined) ?? null
+            u.startDate = (v['startDate'] as string | null | undefined) ?? null
+            u.targetDate =
+              (v['targetDate'] as string | null | undefined) ?? null
+          }
+          return data({
+            updateProjectV2StatusUpdate: { statusUpdate: { id: 'x' } },
+          })
         },
       ],
       [
@@ -428,21 +693,25 @@ export async function board(
       ],
       [
         'projectV2(number: $number) { id url }',
-        () =>
-          data({
+        (v) => {
+          const project =
+            projects.find((p) => p.number === v['number']) ?? primary
+          return data({
             organization: {
               projectV2: {
-                id: 'P_1',
-                url: 'https://github.com/orgs/acme/projects/7',
+                id: project.id,
+                url: `https://github.com/orgs/acme/projects/${project.number}`,
               },
             },
-          }),
+          })
+        },
       ],
       [
         'updateProjectV2View(',
         (v, q) => {
           mutations.push({ op: 'updateView', variables: v, query: q })
-          const renamed = viewList.find((x) => x.id === v['viewId'])
+          const found = viewAnywhere(v['viewId'])
+          const renamed = found?.list[found.at]
           if (renamed !== undefined) renamed.name = String(v['name'])
           return data({
             updateProjectV2View: { projectV2View: { id: v['viewId'] } },
@@ -453,18 +722,18 @@ export async function board(
         'deleteProjectV2View(',
         (v, q) => {
           mutations.push({ op: 'deleteView', variables: v, query: q })
-          const at = viewList.findIndex((x) => x.id === v['viewId'])
-          if (at >= 0) viewList.splice(at, 1)
+          const found = viewAnywhere(v['viewId'])
+          if (found !== undefined) found.list.splice(found.at, 1)
           return data({ deleteProjectV2View: { clientMutationId: null } })
         },
       ],
       [
         'views(first',
-        () =>
+        (v) =>
           data({
             node: {
               views: {
-                nodes: viewList.map((x) => ({
+                nodes: projectOf(v).viewList.map((x) => ({
                   id: x.id,
                   name: x.name,
                   layout: x.layout,
@@ -478,11 +747,11 @@ export async function board(
       ],
       [
         'fields(first',
-        (_v, q) =>
+        (v, q) =>
           data({
             node: {
               fields: {
-                nodes: fields.map((f) => asked(q, { ...f })),
+                nodes: projectOf(v).fields.map((f) => asked(q, { ...f })),
               },
             },
           }),
@@ -513,12 +782,12 @@ export async function board(
       ],
       [
         'items(first',
-        (_v, q) =>
+        (v, q) =>
           data({
             node: {
               items: {
-                nodes: items
-                  .filter((i) => !lagging.has(i.id))
+                nodes: projectOf(v)
+                  .items.filter((i) => !lagging.has(i.id))
                   .map((i) => ({
                     id: i.id,
                     isArchived: i.archived,
@@ -543,12 +812,21 @@ export async function board(
                           ? {}
                           : { id: i.draftId, title: i.title },
                     fieldValues: {
-                      nodes: Object.entries(i.values).map(([name, value]) => ({
-                        ...(fields.find((f) => f.name === name)?.options
-                          ? { name: value }
-                          : { text: value }),
-                        field: { name },
-                      })),
+                      nodes: Object.entries(i.values).map(([name, value]) => {
+                        const f = projectOf(v).fields.find(
+                          (x) => x.name === name
+                        )
+                        return {
+                          ...(f?.options
+                            ? { name: value }
+                            : f?.dataType === 'DATE'
+                              ? { date: value }
+                              : f?.dataType === 'NUMBER'
+                                ? { number: Number(value) }
+                                : { text: value }),
+                          field: { name },
+                        }
+                      }),
                     },
                   })),
                 pageInfo: { hasNextPage: false, endCursor: null },
@@ -564,26 +842,42 @@ export async function board(
       assert.equal(r.method, 'POST')
       if (r.path === '/repos/acme/.rness/labels') {
         restLabels.push(r.body)
-        memory.label = true
+        const name = (r.body as { name: string }).name
+        if (name === 'rness') memory.label = true
+        else labels.set(name, `L_${name}`)
         return {
           status: 201,
-          json: { node_id: 'L_1', name: (r.body as { name: string }).name },
+          json: { node_id: name === 'rness' ? 'L_1' : `L_${name}`, name },
         }
       }
-      assert.equal(r.path, '/orgs/acme/projectsV2/7/views')
-      restViews.push(r.body)
+      const number = Number(
+        /^\/orgs\/acme\/projectsV2\/(\d+)\/views$/.exec(r.path)?.[1]
+      )
+      const project = projects.find((p) => p.number === number)
+      assert.ok(project !== undefined, `no project for ${r.path}`)
+      project.restViews.push(r.body)
       const body = r.body as {
         name: string
         layout: string
         vertical_group_by?: number[]
       }
-      addView({
-        name: body.name,
-        layout: body.layout === 'table' ? 'TABLE_LAYOUT' : 'BOARD_LAYOUT',
-        column:
-          fields.find((f) => f.databaseId === body.vertical_group_by?.[0])
-            ?.name ?? null,
-      })
+      addView(
+        {
+          name: body.name,
+          layout:
+            body.layout === 'table'
+              ? 'TABLE_LAYOUT'
+              : body.layout === 'roadmap'
+                ? 'ROADMAP_LAYOUT'
+                : 'BOARD_LAYOUT',
+          column:
+            project.fields.find(
+              (f) => f.databaseId === body.vertical_group_by?.[0]
+            )?.name ?? null,
+        },
+        project.viewList,
+        project.fields
+      )
       return { json: {} }
     }
     const { query, variables } = gql(r)
@@ -604,6 +898,13 @@ export async function board(
     items,
     issues,
     memory,
+    projects,
+    /** A project by its number. */
+    project: (number: number): FProject => {
+      const found = projects.find((p) => p.number === number)
+      assert.ok(found !== undefined, `no project ${number}`)
+      return found
+    },
     restViews,
     restLabels,
     mutations,

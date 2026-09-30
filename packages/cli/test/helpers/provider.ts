@@ -62,6 +62,8 @@ export function fakeProvider(spec: {
       items: refused,
       apply: refused,
       mark: refused,
+      describe: refused,
+      postUpdates: refused,
       credentialsFor: (url) => {
         asked.push(url)
         return login === null

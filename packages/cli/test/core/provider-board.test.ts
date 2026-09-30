@@ -255,22 +255,36 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
   assert.deepEqual(
     items.map((i) => [i.id, i.path, i.issue]),
     [
-      ['I_1', 'adr/a.md', { number: 2, open: true, labelled: true, body: 'b' }],
+      [
+        'I_1',
+        'adr/a.md',
+        { number: 2, open: true, labelled: true, body: 'b', labels: ['rness'] },
+      ],
       [
         'I_2',
         'adr/b.md',
-        { number: 3, open: false, labelled: false, body: '' },
+        { number: 3, open: false, labelled: false, body: '', labels: [] },
       ],
       ['I_3', 'adr/c.md', null],
       ['I_4', null, null],
-      ['I_5', null, { number: 5, open: true, labelled: true, body: '' }],
+      [
+        'I_5',
+        null,
+        { number: 5, open: true, labelled: true, body: '', labels: ['rness'] },
+      ],
       ['I_6', null, null],
     ]
   )
   assert.deepEqual(items[0], {
     id: 'I_1',
     path: 'adr/a.md',
-    issue: { number: 2, open: true, labelled: true, body: 'b' },
+    issue: {
+      number: 2,
+      open: true,
+      labelled: true,
+      body: 'b',
+      labels: ['rness'],
+    },
     title: '0001 — A',
     status: 'draft',
     type: null,
@@ -278,6 +292,7 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
     agent: null,
     session: null,
     sessions: null,
+    values: { Status: 'draft', Path: 'adr/a.md' },
   })
 })
 
@@ -300,6 +315,7 @@ test('items without bodies: the query selects none, and each issue says it was n
     open: true,
     labelled: true,
     body: null,
+    labels: ['rness'],
   })
   const full = await g.provider.items(BOARD)
   assert.equal(full[0]?.issue?.body, 'b')
@@ -1020,4 +1036,306 @@ test('apply writes the collection field on create, and on update only when it di
       .map((m) => m.variables['fieldId']),
     ['F_ADR status']
   )
+})
+
+// --- a collection's own project (spec 0025 §4) ------------------------------------
+
+const MARKETING = {
+  org: 'acme',
+  number: 8,
+  url: 'https://github.com/orgs/acme/projects/8',
+}
+
+const ownLayout: Layout = {
+  statuses: ['Idea', 'Draft', 'Published'],
+  fields: [],
+  types: ['Marketing'],
+  views: [{ name: 'Marketing', type: 'Marketing', field: null }],
+  declared: [
+    { name: 'Publish date', type: 'date', options: [] },
+    { name: 'Reach', type: 'number', options: [] },
+    { name: 'Kind', type: 'select', options: ['post', 'action'] },
+    { name: 'Tone', type: 'select', options: [] },
+  ],
+  labels: ['linkedin', 'hn'],
+}
+
+/** Agent Pulse made, then the collection's project, laid out; mutations cleared. */
+async function ownProject(
+  t: TestContext,
+  seed: Parameters<typeof board>[1] = {}
+) {
+  const g = await board(t, seed)
+  await g.provider.createBoard('acme')
+  const made = await g.provider.createBoard('acme', 'Marketing')
+  assert.deepEqual(made, MARKETING)
+  const lines = await g.provider.ensureLayout(made, ownLayout)
+  g.mutations.length = 0
+  return { g, lines }
+}
+
+test("a collection's project: titled after it; its declared fields made by type, a select with its options, none without; Calendar and the labels", async (t) => {
+  const { g, lines } = await ownProject(t)
+  const p = g.project(8)
+  assert.equal(p.title, 'Marketing')
+  const made = (name: string) => p.fields.find((f) => f.name === name)
+  assert.equal(made('Publish date')?.dataType, 'DATE')
+  assert.equal(made('Reach')?.dataType, 'NUMBER')
+  assert.deepEqual(
+    made('Kind')?.options?.map((o) => o.name),
+    ['post', 'action']
+  )
+  assert.equal(
+    made('Tone'),
+    undefined,
+    'a select with no option yet is not made'
+  )
+  assert.deepEqual(
+    p.viewList.map((v) => [v.name, v.layout]),
+    [
+      ['All', 'TABLE_LAYOUT'],
+      ['Marketing', 'BOARD_LAYOUT'],
+      ['Calendar', 'ROADMAP_LAYOUT'],
+      ['Working', 'TABLE_LAYOUT'],
+    ]
+  )
+  assert.deepEqual(
+    g.restLabels.map((l) => (l as { name: string }).name),
+    ['linkedin', 'hn']
+  )
+  for (const line of [
+    'field Publish date',
+    'field Kind',
+    'view Calendar',
+    'label linkedin',
+    'label hn',
+  ])
+    assert.ok(lines.includes(line), `${line} in ${lines.join(', ')}`)
+  // Agent Pulse got none of it.
+  assert.equal(
+    g.project(7).fields.some((f) => f.name === 'Publish date'),
+    false
+  )
+})
+
+test("a collection's project laid out again: nothing made twice; a select gets the options it lacks, in the declared order", async (t) => {
+  const { g } = await ownProject(t, { labels: ['linkedin'] })
+  const again = await g.provider.ensureLayout(MARKETING, {
+    ...ownLayout,
+    declared: [
+      { name: 'Publish date', type: 'date', options: [] },
+      { name: 'Reach', type: 'number', options: [] },
+      { name: 'Kind', type: 'select', options: ['post', 'launch', 'action'] },
+    ],
+  })
+  assert.deepEqual(again, ['option launch'])
+  assert.deepEqual(
+    g
+      .project(8)
+      .fields.find((f) => f.name === 'Kind')
+      ?.options?.map((o) => o.name),
+    ['post', 'launch', 'action']
+  )
+  assert.deepEqual(g.restLabels.length, 1, 'hn only: linkedin was there')
+})
+
+test('a declared field of the name of one of another type: stops, naming it', async (t) => {
+  const g = await board(t)
+  await g.provider.createBoard('acme')
+  const made = await g.provider.createBoard('acme', 'Marketing')
+  g.project(8).fields.push({
+    id: 'F_kind',
+    databaseId: 555,
+    name: 'Kind',
+    options: null,
+    dataType: 'TEXT',
+  })
+  await assert.rejects(
+    () => g.provider.ensureLayout(made, ownLayout),
+    new Error(
+      "the project's field Kind is not a select field: rename it on the project, or in the collection's README"
+    )
+  )
+})
+
+test('Agent Pulse laid out: no label read, none made, no field of a collection', async (t) => {
+  const g = await board(t)
+  await g.provider.ensureLayout(await g.provider.createBoard('acme'), layout)
+  const queries = g.requests.map(
+    (r) => (r.body as { query?: string } | undefined)?.query ?? ''
+  )
+  assert.equal(
+    queries.some((q) => q.includes('labelList:')),
+    false
+  )
+  assert.deepEqual(g.restLabels, [])
+})
+
+const card = {
+  path: 'marketing/linkedin/a.md',
+  title: '2026-09-30 — First post',
+  body: 'header',
+  status: 'Draft',
+  type: 'Marketing',
+  statusField: null,
+  sessions: null,
+  values: {
+    'Publish date': '2026-10-01',
+    Reach: '120',
+    Kind: 'post',
+    Tone: null,
+  },
+  labels: ['linkedin'],
+  unlabels: ['hn'],
+}
+
+test("apply create on a collection's project: the declared values, a date and a number as such, and its labels", async (t) => {
+  const { g } = await ownProject(t)
+  const placed = await g.provider.apply(MARKETING, {
+    kind: 'create',
+    want: card,
+  })
+  const item = g.project(8).items.find((i) => i.id === placed?.id)!
+  assert.deepEqual(item.values, {
+    Path: 'marketing/linkedin/a.md',
+    Collection: 'Marketing',
+    Status: 'Draft',
+    'Publish date': '2026-10-01',
+    Reach: '120',
+    Kind: 'post',
+  })
+  const sets = g.mutations
+    .filter((m) => m.op === 'set')
+    .map((m) => m.variables['value'])
+  assert.ok(sets.some((v) => JSON.stringify(v) === '{"date":"2026-10-01"}'))
+  assert.ok(sets.some((v) => JSON.stringify(v) === '{"number":120}'))
+  assert.deepEqual(item.issue?.labels, ['rness', 'linkedin'])
+})
+
+test("apply update on a collection's project: a label taken off, one added, a value cleared", async (t) => {
+  const { g } = await ownProject(t, { labels: ['linkedin', 'hn'] })
+  const placed = await g.provider.apply(MARKETING, {
+    kind: 'create',
+    want: { ...card, labels: ['hn'], unlabels: ['linkedin'] },
+  })
+  g.mutations.length = 0
+  await g.provider.apply(MARKETING, {
+    kind: 'update',
+    id: placed!.id,
+    want: { ...card, values: { ...card.values, Reach: null } },
+    reopen: false,
+  })
+  const item = g.project(8).items.find((i) => i.id === placed?.id)!
+  assert.deepEqual(item.issue?.labels, ['rness', 'linkedin'])
+  assert.equal(item.values['Reach'], undefined)
+  assert.deepEqual(
+    g.mutations.map((m) => m.op).filter((op) => op !== 'set'),
+    ['addLabels', 'removeLabels', 'clear']
+  )
+})
+
+test('apply remove: the item leaves the board, its issue left open and labelled', async (t) => {
+  const g = await laidOut(t, [
+    {
+      id: 'I_1',
+      draftId: null,
+      issue: anIssue(2),
+      title: '',
+      archived: false,
+      values: { Path: 'marketing/a.md' },
+    },
+  ])
+  await g.provider.items(BOARD)
+  await g.provider.apply(BOARD, { kind: 'remove', id: 'I_1' })
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['deleteItem']
+  )
+  assert.equal(g.items.length, 0)
+  assert.equal(g.issues.find((i) => i.number === 2)?.state, 'OPEN')
+})
+
+test('describe: the README and the short description written when they differ, each alone; nothing when they match or are not given', async (t) => {
+  const { g } = await ownProject(t, {
+    projects: [],
+  })
+  assert.deepEqual(
+    await g.provider.describe(MARKETING, {
+      readme: '# Launch\n\nStrategy.\n',
+      description: 'The launch.',
+    }),
+    ['readme', 'short description']
+  )
+  assert.equal(g.project(8).readme, '# Launch\n\nStrategy.')
+  assert.equal(g.project(8).shortDescription, 'The launch.')
+  g.mutations.length = 0
+  assert.deepEqual(
+    await g.provider.describe(MARKETING, {
+      readme: '# Launch\n\nStrategy.\n\n',
+      description: 'The launch.',
+    }),
+    []
+  )
+  assert.deepEqual(
+    await g.provider.describe(MARKETING, {
+      readme: null,
+      description: 'Now.',
+    }),
+    ['short description']
+  )
+  assert.deepEqual(
+    g.mutations.map((m) => m.variables),
+    [{ projectId: 'P_2', shortDescription: 'Now.' }]
+  )
+  assert.equal(g.project(8).readme, '# Launch\n\nStrategy.')
+})
+
+test('postUpdates: each posted once, in order, marked with its path; a changed one updated; one left by hand untouched', async (t) => {
+  const { g } = await ownProject(t)
+  g.project(8).statusUpdates.push({
+    id: 'SU_hand',
+    body: 'By hand.',
+    status: 'ON_TRACK',
+    startDate: null,
+    targetDate: null,
+  })
+  const updates = [
+    {
+      path: 'marketing/updates/2026-10-05.md',
+      health: 'on-track' as const,
+      startDate: '2026-10-01',
+      targetDate: '2026-11-12',
+      body: 'First week.\n',
+    },
+    {
+      path: 'marketing/updates/2026-10-12.md',
+      health: 'at-risk' as const,
+      startDate: null,
+      targetDate: null,
+      body: 'Show HN moved.\n',
+    },
+  ]
+  assert.deepEqual(await g.provider.postUpdates(MARKETING, updates), [
+    'posted marketing/updates/2026-10-05.md',
+    'posted marketing/updates/2026-10-12.md',
+  ])
+  const [hand, first, second] = g.project(8).statusUpdates
+  assert.equal(hand?.body, 'By hand.')
+  assert.deepEqual(first, {
+    id: first?.id,
+    body: 'First week.\n\n<!-- rness: marketing/updates/2026-10-05.md -->',
+    status: 'ON_TRACK',
+    startDate: '2026-10-01',
+    targetDate: '2026-11-12',
+  })
+  assert.equal(second?.status, 'AT_RISK')
+  assert.deepEqual(await g.provider.postUpdates(MARKETING, updates), [])
+  assert.deepEqual(
+    await g.provider.postUpdates(MARKETING, [
+      { ...updates[1]!, health: 'off-track', body: 'Show HN cancelled.\n' },
+    ]),
+    ['updated marketing/updates/2026-10-12.md']
+  )
+  assert.equal(g.project(8).statusUpdates.length, 3)
+  assert.equal(g.project(8).statusUpdates[2]?.status, 'OFF_TRACK')
 })

@@ -1,3 +1,4 @@
+import type { StatusUpdate } from '../pulse/collection.ts'
 import type { Layout } from '../pulse/layout.ts'
 import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
 import type { CreateRepositoryResult, RepositoryListing } from './github.ts'
@@ -62,7 +63,7 @@ export interface Provider {
    * new, empty one for `org`, so that the caller can declare it before
    * `ensureLayout` builds it. Anonymous: refused.
    */
-  createBoard(org: string): Promise<Board>
+  createBoard(org: string, title?: string): Promise<Board>
   /** The board `number` of `org`, or null when the provider has none. */
   board(org: string, number: number): Promise<Board | null>
   /**
@@ -92,6 +93,19 @@ export interface Provider {
     itemIds: readonly string[],
     session: string | null
   ): Promise<void>
+  /**
+   * A collection's project: its README and short description, each written
+   * when given and different (spec 0025 §4). Returns what it wrote.
+   */
+  describe(
+    board: Board,
+    text: { readme: string | null; description: string | null }
+  ): Promise<string[]>
+  /**
+   * A collection's project: each update posted once, and updated when its
+   * file changed, found by its path (spec 0025 §4). Returns what it wrote.
+   */
+  postUpdates(board: Board, updates: readonly StatusUpdate[]): Promise<string[]>
 }
 
 /** @deprecated the pre-0.12 name, kept for the package's API. */
