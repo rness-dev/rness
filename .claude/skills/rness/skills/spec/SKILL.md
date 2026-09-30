@@ -32,8 +32,10 @@ Writing:
 - What was checked in this session (a document read, a command run) is
   written as verified, with the date; everything else as a proposal or an
   open question.
-- Add `${CLAUDE_SESSION_ID}` at the end of `sessions:` in the front matter,
-  unless it is already there.
+- Add `{ id: ${CLAUDE_SESSION_ID}, agent: <model> }` at the end of
+  `sessions:` in the front matter, unless that id is already there.
+  `<model>` is the model you run as, as Claude Code names it, after
+  `Claude`: for example `Claude Opus 5.5`.
 - The rness hook checks every edit under `../../.rness/`: fix what it reports.
 
 After writing: give the path and the summary. It stays `Draft` until the
