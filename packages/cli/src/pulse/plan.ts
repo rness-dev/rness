@@ -7,7 +7,8 @@ export interface ItemIssue {
   open: boolean
   /** It carries the label `rness`, in any case. */
   labelled: boolean
-  body: string
+  /** Null: listed without bodies (`items(board, { bodies: false })`). */
+  body: string | null
 }
 
 /** An item of the board, as the provider reads it. */
@@ -80,7 +81,12 @@ const firstLine = (body: string): string => body.split(/\r\n?|\n/, 1)[0] ?? ''
 function strays(have: readonly BoardItem[]): Map<string, BoardItem[]> {
   const byLine = new Map<string, BoardItem[]>()
   for (const item of have) {
-    if (item.path !== null || item.issue === null || !item.issue.labelled)
+    if (
+      item.path !== null ||
+      item.issue === null ||
+      item.issue.body === null ||
+      !item.issue.labelled
+    )
       continue
     const line = firstLine(item.issue.body)
     byLine.set(line, [...(byLine.get(line) ?? []), item])

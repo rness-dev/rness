@@ -78,8 +78,11 @@ export interface Provider {
    * `createBoard` just made.
    */
   ensureLayout(board: Board, layout: Layout): Promise<string[]>
-  /** The items of the board, not the archived ones. */
-  items(board: Board): Promise<BoardItem[]>
+  /**
+   * The items of the board, not the archived ones. `bodies: false` lists
+   * them without their issues' bodies (`body: null`): enough to mark them.
+   */
+  items(board: Board, options?: { bodies?: boolean }): Promise<BoardItem[]>
   /** The item and issue number a create or a convert gave; null for any other step. */
   apply(board: Board, step: Step): Promise<Placed | null>
   /** Marks items as being worked on by `session`; null clears the mark. */

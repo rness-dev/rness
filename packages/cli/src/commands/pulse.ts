@@ -404,7 +404,10 @@ async function mark(opts: MarkOptions): Promise<number> {
   const board = await declaredBoard(c)
   const key = `${c.org}-${board.number}`
   const lock = opts.sleep === undefined ? {} : { sleep: opts.sleep }
-  let items = await fromGithub(c.provider.items(board))
+  // Marks need ids, `Path` and `Session`: every body, on every edit, is not
+  // theirs to download. A sync lists what it needs itself.
+  const listed = () => fromGithub(c.provider.items(board, { bodies: false }))
+  let items = await listed()
   if (opts.end === true) {
     // A subagent's marks read `claude · <type> · <id>`: the session's end
     // clears every mark ending in its id, whatever agent type precedes it.
@@ -439,7 +442,7 @@ async function mark(opts: MarkOptions): Promise<number> {
       () => syncBoard(c, board, plainUi, eachAdded),
       lock
     )
-    if (synced) items = await fromGithub(c.provider.items(board))
+    if (synced) items = await listed()
   }
   const ids = items
     .filter((i) => i.path !== null && wanted.has(i.path))

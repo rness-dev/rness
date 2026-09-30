@@ -1457,12 +1457,24 @@ test('--end clears the session and its subagents (same id, any agent type), not 
     .filter((m) => m.op === 'clear')
     .map((m) => m.variables['itemId'])
   assert.deepEqual([...new Set(cleared)].sort(), ['i1', 'i2'])
+  assert.deepEqual(
+    listingQueries(g).map((q) => /\bbody\b/.test(q)),
+    [false, true],
+    "the marks' listing reads no body; the sync's does"
+  )
 })
 
 /** Listings of the board so far: a sync lists once more. */
 const listings = (g: Awaited<ReturnType<typeof board>>): number =>
   g.requests.filter((r) => JSON.stringify(r.body ?? '').includes('items(first'))
     .length
+/** The GraphQL queries of the board's listings so far, in order. */
+const listingQueries = (g: Awaited<ReturnType<typeof board>>): string[] =>
+  g.requests
+    .map((r) => (r.body as { query?: unknown } | undefined)?.query)
+    .filter(
+      (q): q is string => typeof q === 'string' && q.includes('items(first')
+    )
 
 async function writeDoc(cwd: string, path: string, text: string) {
   const file = join(cwd, '.rness', ...path.split('/'))
@@ -1490,9 +1502,10 @@ test('mark: a document just written has no item yet — it gets its issue, then 
   assert.equal(g.mutations.filter((m) => m.op === 'createIssue').length, 1)
 })
 
-test('mark: a document already on the board costs no sync', async (t) => {
+test('mark: a document already on the board costs no sync, and its listing reads no body', async (t) => {
   const { g, cwd } = await settled(t)
   const before = listings(g)
+  assert.match(listingQueries(g)[0]!, /\bbody\b/, "sync's listing reads them")
   const r = await run(() =>
     pulseMarkCommand({
       cwd,
@@ -1507,6 +1520,7 @@ test('mark: a document already on the board costs no sync', async (t) => {
     ['set', 'set']
   )
   assert.equal(listings(g) - before, 1, 'one listing, no sync')
+  assert.doesNotMatch(listingQueries(g).at(-1)!, /\bbody\b/)
 })
 
 test('mark: a file of .rness that is no document of rness status costs no sync and marks nothing', async (t) => {

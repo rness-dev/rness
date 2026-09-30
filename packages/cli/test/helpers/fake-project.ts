@@ -459,7 +459,7 @@ export async function board(
       ],
       [
         'items(first',
-        () =>
+        (_v, q) =>
           data({
             node: {
               items: {
@@ -474,7 +474,8 @@ export async function board(
                           number: i.issue.number,
                           title: i.issue.title,
                           state: i.issue.state,
-                          body: i.issue.body,
+                          // As GitHub answers: only when the query selects it.
+                          ...(/\bbody\b/.test(q) ? { body: i.issue.body } : {}),
                           repository: { nameWithOwner: i.issue.repository },
                           labels: {
                             nodes: i.issue.labels.map((name) => ({ name })),

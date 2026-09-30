@@ -136,8 +136,11 @@ export class GitHubOAuthProvider implements Provider {
     return this.#boards().ensureLayout(board, layout)
   }
 
-  async items(board: Board): Promise<BoardItem[]> {
-    return this.#boards().items(board)
+  async items(
+    board: Board,
+    options?: { bodies?: boolean }
+  ): Promise<BoardItem[]> {
+    return this.#boards().items(board, options)
   }
 
   async apply(board: Board, step: Step): Promise<Placed | null> {

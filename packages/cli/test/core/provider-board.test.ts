@@ -265,6 +265,36 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
   })
 })
 
+test('items without bodies: the query selects none, and each issue says it was not read (null)', async (t) => {
+  const g = await board(t, {
+    items: [
+      {
+        id: 'I_1',
+        draftId: null,
+        issue: anIssue(2, { body: 'b' }),
+        title: '',
+        archived: false,
+        values: { Path: 'adr/a.md' },
+      },
+    ],
+  })
+  const light = await g.provider.items(BOARD, { bodies: false })
+  assert.deepEqual(light[0]?.issue, {
+    number: 2,
+    open: true,
+    labelled: true,
+    body: null,
+  })
+  const full = await g.provider.items(BOARD)
+  assert.equal(full[0]?.issue?.body, 'b')
+  const queries = g.requests
+    .map((r) => (r.body as { query?: string } | undefined)?.query ?? '')
+    .filter((q) => q.includes('items(first'))
+  assert.equal(queries.length, 2)
+  assert.doesNotMatch(queries[0]!, /\bbody\b/)
+  assert.match(queries[1]!, /\bbody\b/)
+})
+
 test('checkIssues: Issues on .rness pass; off, the refusal, and nothing is written', async (t) => {
   const on = await board(t)
   await on.provider.checkIssues('acme')

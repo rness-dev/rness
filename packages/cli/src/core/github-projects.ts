@@ -265,7 +265,8 @@ export interface RawIssue {
   open: boolean
   /** `owner/name`. */
   repository: string
-  body: string
+  /** Null: listed without bodies. */
+  body: string | null
   labels: string[]
 }
 
@@ -300,9 +301,15 @@ interface ItemNode {
   }
 }
 
+/**
+ * The project's items, archived ones included. `bodies: false` leaves the
+ * issues' bodies out of the query — the heaviest part of a listing — and
+ * each issue's `body` null.
+ */
 export async function listItems(
   projectId: string,
-  o: ApiOptions
+  o: ApiOptions,
+  { bodies = true }: { bodies?: boolean } = {}
 ): Promise<RawItem[]> {
   const items: RawItem[] = []
   let cursor: string | null = null
@@ -333,7 +340,7 @@ export async function listItems(
                       number
                       title
                       state
-                      body
+                      ${bodies ? 'body' : ''}
                       repository {
                         nameWithOwner
                       }
@@ -392,7 +399,7 @@ export async function listItems(
               number: c.number,
               open: c.state === 'OPEN',
               repository: c.repository?.nameWithOwner ?? '',
-              body: c.body ?? '',
+              body: bodies ? (c.body ?? '') : null,
               labels: (c.labels?.nodes ?? [])
                 .map((l) => l.name ?? '')
                 .filter((l) => l !== ''),

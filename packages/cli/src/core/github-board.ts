@@ -364,9 +364,12 @@ export class GitHubBoards implements Pick<
     return added
   }
 
-  async items(board: Board): Promise<BoardItem[]> {
+  async items(
+    board: Board,
+    options: { bodies?: boolean } = {}
+  ): Promise<BoardItem[]> {
     const cache = await this.#cacheOf(board)
-    const raw = await gh.listItems(cache.projectId, this.#o)
+    const raw = await gh.listItems(cache.projectId, this.#o, options)
     cache.known = new Map(raw.map((r) => [r.id, r]))
     const memory = `${board.org}/${MEMORY}`.toLowerCase()
     return raw
