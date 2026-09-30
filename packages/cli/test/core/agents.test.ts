@@ -109,6 +109,8 @@ Writing:
   \`org/\` it affects.
 - An ADR it replaces is named in Context. That one becomes \`Superseded\`,
   with \`superseded_by:\`, only once the new ADR is \`Accepted\`.
+- Add \`\${CLAUDE_SESSION_ID}\` at the end of \`sessions:\` in the front matter,
+  unless it is already there.
 - The rness hook checks every edit under \`${rness}/\`: fix what it reports.
 
 After writing: give the path and the Decision section, and say the ADR
@@ -149,6 +151,8 @@ Writing:
 - What was checked in this session (a document read, a command run) is
   written as verified, with the date; everything else as a proposal or an
   open question.
+- Add \`\${CLAUDE_SESSION_ID}\` at the end of \`sessions:\` in the front matter,
+  unless it is already there.
 - The rness hook checks every edit under \`${rness}/\`: fix what it reports.
 
 After writing: give the path and the summary. It stays \`Draft\` until the
@@ -192,6 +196,8 @@ Writing:
   repository has one.
 - Where the plan decides something the specification leaves open, a
   section says so.
+- Add \`\${CLAUDE_SESSION_ID}\` at the end of \`sessions:\` in the front matter,
+  unless it is already there.
 - The rness hook checks every edit under \`${rness}/\`: fix what it reports.
 
 After writing: give the path and the list of tasks. It becomes \`Ready\` when
@@ -224,6 +230,8 @@ Arguments: \`$ARGUMENTS\`.
      ran, what it showed, what could not run and why;
    - the specification: \`Implemented\` once every plan of it is
      \`Completed\`; \`updated\` today;
+   - the plan and the specification: add \`\${CLAUDE_SESSION_ID}\` at the end
+     of \`sessions:\` in their front matter, unless it is already there;
    - the smallest set of documents the work makes inaccurate: \`${rness}/docs/\`,
      the READMEs of the repositories it changed.
 6. A task not proven: the plan stays \`In progress\` — or \`Blocked\`, the
@@ -333,6 +341,9 @@ test('each ! line is the command its allowed-tools names; the lifecycle skills m
     const name = /^name: (\w+)$/m.exec(f.content)?.[1] ?? ''
     if (name === 'status') continue
     assert.doesNotMatch(f.content, /disable-model-invocation/, f.file)
+    // Spec 0020 §3.1: the session that writes a document is recorded in it.
+    assert.ok(f.content.includes('`${CLAUDE_SESSION_ID}`'), f.file)
+    assert.ok(f.content.includes('`sessions:`'), f.file)
     assert.ok(
       allowed.endsWith(` status ${tabs[name]} --cwd "\${CLAUDE_PROJECT_DIR}"`),
       f.file
