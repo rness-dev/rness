@@ -1960,3 +1960,216 @@ test('a 0.15 board before its first 0.16 sync: a mark sets, and a session end cl
   assert.equal(a()?.values['Working session'], undefined)
   assert.equal(a()?.values['Session'], undefined)
 })
+
+// --- a collection's own project (spec 0025) ---------------------------------------
+
+const README = `---
+description: The launch, from 1 October.
+statuses: [Idea, Draft, Published]
+fields:
+  Publish date: { type: date, from: [published_at, scheduled_at] }
+  Kind: { type: select, from: kind }
+labels: directory
+---
+
+# The launch
+
+Strategy.
+`
+const card = (status: string, extra: string, title: string) =>
+  `---\nstatus: ${status}\n${extra}---\n\n# ${title}\n`
+const POST = 'marketing/linkedin/2026-09-30-post.md'
+const HN = 'marketing/hn/2026-09-30-hn.md'
+const MARKETING_FILES = {
+  ...FILES,
+  'marketing/README.md': README,
+  [POST]: card(
+    'Draft',
+    'kind: post\nscheduled_at: 2026-10-01T08:30+02:00\n',
+    'First post'
+  ),
+  [HN]: card('Idea', 'kind: launch\n', 'Show HN'),
+  'marketing/updates/2026-10-05.md':
+    '---\nhealth: on-track\n---\nFirst week.\n',
+}
+
+/** Agent Pulse declared (7) with the post's card on it; the marketing collection not declared yet. */
+async function beforeMarketing(t: TestContext) {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+    existing: true,
+    items: [
+      {
+        id: 'I_2',
+        draftId: null,
+        issue: anIssue(2, {
+          title: '2026-09-30 — First post',
+          body: headerOf(POST, 'acme'),
+        }),
+        title: '2026-09-30 — First post',
+        archived: false,
+        values: { Path: POST, Collection: 'Marketing', Status: 'Draft' },
+      },
+    ],
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { pulse: 7 },
+    files: MARKETING_FILES,
+  })
+  return { g, cwd }
+}
+
+test('create marketing: its project made, declared and synced; its documents there with their declared fields and labels; the card leaves Agent Pulse, its issue kept', async (t) => {
+  const { g, cwd } = await beforeMarketing(t)
+  const r = await run(() =>
+    pulseCreateCommand(
+      { cwd, githubApi: g.base, collection: 'marketing' },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(
+    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'))
+      .projects,
+    { pulse: 7, marketing: 8 }
+  )
+  const p = g.project(8)
+  assert.equal(p.title, 'Marketing')
+  assert.deepEqual(
+    p.fields.find((f) => f.name === 'Status')?.options?.map((o) => o.name),
+    ['Idea', 'Draft', 'Published']
+  )
+  const post = p.items.find((i) => i.values['Path'] === POST)
+  assert.equal(post?.issue?.number, 2, 'the issue it had, adopted')
+  assert.equal(post?.values['Publish date'], '2026-10-01')
+  assert.equal(post?.values['Kind'], 'post')
+  assert.deepEqual(post?.issue?.labels, ['rness', 'linkedin'])
+  const hn = p.items.find((i) => i.values['Path'] === HN)
+  assert.deepEqual(hn?.issue?.labels, ['rness', 'hn'])
+  assert.equal(hn?.values['Publish date'], undefined)
+  assert.equal(p.readme, '# The launch\n\nStrategy.')
+  assert.equal(p.shortDescription, 'The launch, from 1 October.')
+  assert.deepEqual(
+    p.statusUpdates.map((u) => u.status),
+    ['ON_TRACK']
+  )
+  // Agent Pulse keeps the others; the card is off it, its issue open.
+  const pulse = g.project(7)
+  assert.deepEqual(pulse.items.map((i) => i.values['Path']).sort(), [
+    'adr/0001-a.md',
+    'plans/0002-b.md',
+  ])
+  assert.equal(g.issues.find((i) => i.number === 2)?.state, 'OPEN')
+  const out = lines(r.out)
+  for (const line of [
+    'created Marketing — https://github.com/orgs/acme/projects/8',
+    "moved 1 item to their collection's project",
+    `declared marketing in .rness/rness.json — commit it: git -C .rness commit -am "chore: rness pulse marketing"`,
+  ])
+    assert.ok(out.includes(line), `${line}\n${r.out}`)
+})
+
+test('sync after create marketing: nothing to write on either project', async (t) => {
+  const { g, cwd } = await beforeMarketing(t)
+  const first = await run(() =>
+    pulseCreateCommand(
+      { cwd, githubApi: g.base, collection: 'marketing' },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(first.code, 0, first.err)
+  g.mutations.length = 0
+  const again = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(again.code, 0, again.err)
+  assert.deepEqual(g.mutations, [])
+  assert.deepEqual(lines(again.out), [
+    'synced 2 items on Marketing: 2 unchanged',
+    'synced 2 items: 2 unchanged',
+  ])
+})
+
+test('create <collection>: pulse, a declared one, or a directory with no documents, refused before GitHub is written', async (t) => {
+  const { g, cwd } = await beforeMarketing(t)
+  for (const [collection, message] of [
+    ['pulse', '"pulse" names Agent Pulse: rness pulse create'],
+    [
+      'standards',
+      'standards is no collection of .rness: none of its documents carries a status',
+    ],
+    [
+      'nowhere',
+      'nowhere is no collection of .rness: none of its documents carries a status',
+    ],
+  ] as const) {
+    const r = await run(() =>
+      pulseCreateCommand(
+        { cwd, githubApi: g.base, collection },
+        { terminal: NO_TTY }
+      )
+    )
+    assert.equal(r.code, 1)
+    assert.equal(r.err.trim(), message)
+  }
+  const declared = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { pulse: 7, marketing: 8 },
+    files: MARKETING_FILES,
+  })
+  const r = await run(() =>
+    pulseCreateCommand(
+      { cwd: declared, githubApi: g.base, collection: 'marketing' },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 1)
+  assert.equal(
+    r.err.trim(),
+    'already declared: https://github.com/orgs/acme/projects/8 — rness pulse sync'
+  )
+  assert.deepEqual(g.mutations, [])
+})
+
+test('marks: a document marked in the project holding it; the session end clears its marks everywhere', async (t) => {
+  const { g, cwd } = await beforeMarketing(t)
+  const made = await run(() =>
+    pulseCreateCommand(
+      { cwd, githubApi: g.base, collection: 'marketing' },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(made.code, 0, made.err)
+  const session = 'claude · 284bf03e'
+  assert.equal(
+    await pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session,
+      paths: [POST, 'adr/0001-a.md'],
+    }),
+    0
+  )
+  assert.equal(await takeFailure(), null)
+  const on = (number: number, path: string) =>
+    g.project(number).items.find((i) => i.values['Path'] === path)?.values
+  assert.equal(on(8, POST)?.['Agent'], 'working')
+  assert.equal(on(8, POST)?.['Working session'], session)
+  assert.equal(on(7, 'adr/0001-a.md')?.['Agent'], 'working')
+  assert.equal(
+    await pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session,
+      paths: [],
+      end: true,
+    }),
+    0
+  )
+  assert.equal(on(8, POST)?.['Agent'], undefined)
+  assert.equal(on(7, 'adr/0001-a.md')?.['Agent'], undefined)
+})

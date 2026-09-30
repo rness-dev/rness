@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { collectMarkdown } from '../core/collect.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { seenPaths } from '../core/git.ts'
 import {
@@ -18,16 +19,28 @@ import {
 } from '../core/manifest.ts'
 import type { Board, Provider } from '../core/provider.ts'
 import { PROVIDERS, openProvider } from '../core/providers.ts'
-import { statusTabs } from '../core/status.ts'
+import { type StatusTab, statusTabs } from '../core/status.ts'
 import { defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { issueBody } from '../pulse/body.ts'
+import {
+  type CollectionShape,
+  type StatusUpdate,
+  readShape,
+  readUpdates,
+} from '../pulse/collection.ts'
 import { oneSyncAtATime, recordFailure } from '../pulse/detached.ts'
-import { desiredOf, layoutOf } from '../pulse/layout.ts'
+import {
+  type Desired,
+  type Layout,
+  desiredOf,
+  layoutOf,
+} from '../pulse/layout.ts'
 import { openedFile, readOpened, writeOpened } from '../pulse/opened.ts'
 import {
+  type BoardItem,
   type BodyStep,
   type Placed,
   type Step,
@@ -42,6 +55,8 @@ import { loginCommand } from './login.ts'
 
 export interface PulseOptions {
   yes?: boolean
+  /** `pulse create <collection>`: the collection's own project (spec 0025 §3). */
+  collection?: string
   /** Internal (tests): directory to resolve from; default `process.cwd()`. */
   cwd?: string
   /** Internal (tests): GitHub API base. */
@@ -117,17 +132,117 @@ async function missingAccess(provider: Provider): Promise<string | null> {
   return scopes?.includes(PROJECT_SCOPE) === true ? null : NEEDS_SCOPE
 }
 
-/** The declared board, opened; `sync` and `mark` need one. */
-async function declaredBoard(c: Context): Promise<Board> {
-  const number = c.manifest.projects?.[PULSE]
-  if (number === undefined)
+/** A declared project, opened: `pulse` for Agent Pulse, else its collection's name. */
+interface Declared {
+  name: string
+  board: Board
+}
+
+/**
+ * Every declared project, opened: the collections' own first, in the order of
+ * `projects`, Agent Pulse last — a document moving leaves it only once its
+ * own project holds it (spec 0025 §3). `sync` and `mark` need one.
+ */
+async function declaredBoards(c: Context): Promise<Declared[]> {
+  const projects = c.manifest.projects
+  if (projects === null)
     throw new Error('no pulse declared — rness pulse create')
   const missing = await missingAccess(c.provider)
   if (missing !== null) throw new Error(missing)
-  const board = await fromGithub(c.provider.board(c.org, number))
-  if (board === null)
-    throw new Error(`GitHub has no project ${number} in ${c.org}`)
-  return board
+  const names = Object.keys(projects).sort(
+    (a, b) => Number(a === PULSE) - Number(b === PULSE)
+  )
+  const declared: Declared[] = []
+  for (const name of names) {
+    const number = projects[name]!
+    const board = await fromGithub(c.provider.board(c.org, number))
+    if (board === null)
+      throw new Error(`GitHub has no project ${number} in ${c.org}`)
+    declared.push({ name, board })
+  }
+  return declared
+}
+
+/** What one project holds and how it looks, from the files of `.rness/`. */
+interface Scope {
+  /** How a sync names the project: `Agent Pulse`, `Marketing`. */
+  label: string
+  want: Desired[]
+  layout: Layout
+  /** On Agent Pulse, a path whose collection has a project of its own. */
+  elsewhere: (path: string) => boolean
+  /** The paths whose opened issues this project's syncs record (spec 0018 §2). */
+  mine: (path: string) => boolean
+  /** A collection's own project: its README's declarations and its updates. */
+  own: { shape: CollectionShape; updates: StatusUpdate[] } | null
+}
+
+/** A tab's label, as `rness status` makes it for a discovered directory. */
+const labelOf = (name: string): string =>
+  `${name.charAt(0).toUpperCase()}${name.slice(1)}`
+
+/** The subdirectories of a collection, but `updates/`: the labels `labels: directory` makes. */
+async function directoriesOf(dir: string): Promise<string[]> {
+  try {
+    return (await readdir(dir, { withFileTypes: true }))
+      .filter(
+        (e) =>
+          e.isDirectory() && !e.name.startsWith('.') && e.name !== 'updates'
+      )
+      .map((e) => e.name)
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+async function scopeOf(
+  c: Context,
+  name: string,
+  tabs: readonly StatusTab[],
+  owners: readonly string[]
+): Promise<Scope> {
+  const within = (collection: string) => (path: string) =>
+    path.startsWith(`${collection}/`)
+  if (name === PULSE) {
+    const shown = tabs.filter((t) => !owners.includes(t.name))
+    const elsewhere = (path: string) => owners.some((o) => within(o)(path))
+    return {
+      label: 'Agent Pulse',
+      want: desiredOf(shown, c.org),
+      layout: layoutOf(shown),
+      elsewhere,
+      mine: (path) => !elsewhere(path),
+      own: null,
+    }
+  }
+  // A collection with no document yet still has its project, empty.
+  const tab = tabs.find((t) => t.name === name) ?? {
+    name,
+    label: labelOf(name),
+    rows: [],
+  }
+  const dir = join(c.rnessDir, name)
+  const shape = await readShape(c.rnessDir, name)
+  const fronts = new Map(
+    (await collectMarkdown(dir)).map((item) => [
+      `${name}/${item.rel}`,
+      item.fields ?? {},
+    ])
+  )
+  const want = desiredOf([tab], c.org, {
+    shape,
+    fronts,
+    directories: await directoriesOf(dir),
+  })
+  return {
+    label: tab.label,
+    want,
+    layout: layoutOf([tab], { shape, want }),
+    elsewhere: () => false,
+    mine: within(name),
+    own: { shape, updates: await readUpdates(c.rnessDir, name) },
+  }
 }
 
 const plural = (n: number): string => `${n} item${n === 1 ? '' : 's'}`
@@ -185,7 +300,8 @@ function sayDone(
   documents: number,
   steps: readonly Step[],
   writes: readonly BodyStep[],
-  adopted: number
+  adopted: number,
+  on?: string
 ): void {
   // An adopted issue was planned as a create: it is counted apart.
   const n = (kind: Step['kind']): number =>
@@ -204,6 +320,8 @@ function sayDone(
       `${count(n('convert'), 'draft')} into issues of ${org}/.rness`
     )
   if (reopened > 0) ui.line('reopened', count(reopened, 'issue'))
+  if (n('remove') > 0)
+    ui.line('moved', `${plural(n('remove'))} to their collection's project`)
   const written = new Set(writes.map((w) => w.id))
   const bodyOnly = steps.filter(
     (s) => s.kind === 'unchanged' && written.has(s.id)
@@ -230,7 +348,9 @@ function sayDone(
     .map(([word, k]) => `${k} ${word}`)
   ui.line(
     'synced',
-    `${plural(documents)}${parts.length > 0 ? `: ${parts.join(', ')}` : ''}`
+    `${plural(documents)}${on === undefined ? '' : ` on ${on}`}${
+      parts.length > 0 ? `: ${parts.join(', ')}` : ''
+    }`
   )
 }
 
@@ -243,26 +363,26 @@ async function syncBoard(
   c: Context,
   board: Board,
   ui: Ui,
-  sayLayout: SayLayout
+  sayLayout: SayLayout,
+  scope: Scope
 ): Promise<void> {
   await fromGithub(c.provider.checkIssues(c.org))
-  const tabs = await statusTabs(c.rnessDir)
-  const want = desiredOf(tabs, c.org)
-  sayLayout(
-    ui,
-    await fromGithub(c.provider.ensureLayout(board, layoutOf(tabs)))
-  )
+  const { want } = scope
+  sayLayout(ui, await fromGithub(c.provider.ensureLayout(board, scope.layout)))
   const have = await fromGithub(c.provider.items(board))
   // Gone is gone for this clone's git (spec 0018 §2): a path it never saw is
   // closed only on an issue this clone opened, as its record says. Git is
-  // asked about every recorded path too: one it has seen is forgotten.
+  // asked about every recorded path too: one it has seen is forgotten. The
+  // record is the clone's: this project reads and rewrites its own paths only.
   const record = await openedFile(c.rnessDir)
-  const opened = await readOpened(record)
+  const all = await readOpened(record)
+  const opened = new Map([...all].filter(([, path]) => scope.mine(path)))
+  const others = [...all].filter(([, path]) => !scope.mine(path))
   const seen = await seenPaths(c.rnessDir, [
     ...unwantedPaths(want, have),
     ...opened.values(),
   ])
-  const steps = planSync(want, have, seen, opened)
+  const steps = planSync(want, have, seen, opened, scope.elsewhere)
   const changes = steps.filter((s) => s.kind !== 'unchanged').length
   let writes: BodyStep[] = []
   let made = 0
@@ -290,7 +410,10 @@ async function syncBoard(
       // What pass 1 did, recorded before anything else can stop the sync.
       await writeOpened(
         record,
-        stillOpened(opened, have, seen, closed, created)
+        new Map([
+          ...others,
+          ...stillOpened(opened, have, seen, closed, created),
+        ])
       )
     }
     const issued = issuedAfter(steps, have, placed)
@@ -321,7 +444,53 @@ async function syncBoard(
       { cause: e }
     )
   }
-  sayDone(ui, c.org, want.length, steps, writes, adopted)
+  sayDone(
+    ui,
+    c.org,
+    want.length,
+    steps,
+    writes,
+    adopted,
+    scope.own === null ? undefined : scope.label
+  )
+  if (scope.own !== null) {
+    const { shape, updates } = scope.own
+    for (const what of await fromGithub(
+      c.provider.describe(board, {
+        readme: shape.readme,
+        description: shape.description,
+      })
+    ))
+      ui.line('wrote', `${what} of ${scope.label}`)
+    for (const line of await fromGithub(
+      c.provider.postUpdates(board, updates)
+    )) {
+      const [verb, ...rest] = line.split(' ')
+      ui.line(verb ?? 'posted', rest.join(' '))
+    }
+  }
+}
+
+/**
+ * Every declared project, in turn (spec 0025 §3); `sayLayout` says what a
+ * project's layout gained, by the project's name in `projects`.
+ */
+async function syncAll(
+  c: Context,
+  declared: readonly Declared[],
+  ui: Ui,
+  sayLayout: (name: string) => SayLayout
+): Promise<void> {
+  const tabs = await statusTabs(c.rnessDir)
+  const owners = declared.map((d) => d.name).filter((n) => n !== PULSE)
+  for (const { name, board } of declared)
+    await syncBoard(
+      c,
+      board,
+      ui,
+      sayLayout(name),
+      await scopeOf(c, name, tabs, owners)
+    )
 }
 
 /** `rness pulse create`: the project, declared at once; then its layout and a first sync. */
@@ -334,10 +503,25 @@ export async function pulseCreateCommand(
     const ui = deps.ui ?? (await makeUi(terminal))
     const wait = waitSaid(opts, ui)
     let c = await context(opts, wait)
-    const declared = c.manifest.projects?.[PULSE]
+    const name = opts.collection ?? PULSE
+    const declared = c.manifest.projects?.[name]
+    if (opts.collection === PULSE)
+      throw new Error('"pulse" names Agent Pulse: rness pulse create')
     if (declared !== undefined)
       throw new Error(
         `already declared: ${boardUrl(c.org, declared)} — rness pulse sync`
+      )
+    // A collection is a tab of `rness status`: a directory of `.rness/` whose
+    // documents carry a status (spec 0025 §3).
+    const tab =
+      opts.collection === undefined
+        ? null
+        : ((await statusTabs(c.rnessDir)).find(
+            (t) => t.name === opts.collection
+          ) ?? null)
+    if (opts.collection !== undefined && tab === null)
+      throw new Error(
+        `${opts.collection} is no collection of .rness: none of its documents carries a status`
       )
     // A written provider was already refused by `context`; a detected one is
     // what create writes, so it is refused here, before GitHub is asked
@@ -385,22 +569,28 @@ export async function pulseCreateCommand(
       `${detected}, logged in as ${login}, scope ${PROJECT_SCOPE}`
     )
 
-    const board = await fromGithub(c.provider.createBoard(c.org))
+    const board = await fromGithub(c.provider.createBoard(c.org, tab?.label))
     // Declared as soon as the project exists, before its layout: whatever
     // fails after this leaves a declared project that `rness pulse sync`
     // completes, not one nobody knows about (spec 0017 §3).
-    await writeManifest(c.rnessDir, {
+    const manifest = {
       ...c.manifest,
       provider: detected,
-      projects: { ...c.manifest.projects, [PULSE]: board.number },
-    })
-    ui.line('created', `Agent Pulse — ${board.url}`)
+      projects: { ...c.manifest.projects, [name]: board.number },
+    }
+    await writeManifest(c.rnessDir, manifest)
+    c = { ...c, manifest }
+    ui.line('created', `${tab?.label ?? 'Agent Pulse'} — ${board.url}`)
     try {
-      await syncBoard(c, board, ui, createdByKind)
+      await syncAll(c, await declaredBoards(c), ui, (n) =>
+        n === name ? createdByKind : eachAdded
+      )
     } finally {
       ui.line(
         'declared',
-        'pulse in .rness/rness.json — commit it: git -C .rness commit -am "chore: rness pulse"'
+        `${name} in .rness/rness.json — commit it: git -C .rness commit -am "chore: rness pulse${
+          opts.collection === undefined ? '' : ` ${opts.collection}`
+        }"`
       )
     }
     return 0
@@ -417,7 +607,7 @@ export async function pulseSyncCommand(
   try {
     const ui = deps.ui ?? (await makeUi(deps.terminal ?? defaultTerminal))
     const c = await context(opts, waitSaid(opts, ui))
-    await syncBoard(c, await declaredBoard(c), ui, eachAdded)
+    await syncAll(c, await declaredBoards(c), ui, () => eachAdded)
     return 0
   } catch (e) {
     return reportError(e)
@@ -451,28 +641,29 @@ export async function pulseMarkCommand(opts: MarkOptions): Promise<number> {
 
 async function mark(opts: MarkOptions): Promise<number> {
   const c = await context(opts)
-  const board = await declaredBoard(c)
-  const key = `${c.org}-${board.number}`
+  const declared = await declaredBoards(c)
+  const key = `${c.org}-${declared.map((d) => d.board.number).join('-')}`
   const lock = opts.sleep === undefined ? {} : { sleep: opts.sleep }
+  const syncEvery = () => syncAll(c, declared, plainUi, () => eachAdded)
   // Marks need ids, `Path` and `Session`: every body, on every edit, is not
   // theirs to download. A sync lists what it needs itself.
-  const listed = () => fromGithub(c.provider.items(board, { bodies: false }))
-  let items = await listed()
+  const listed = (board: Board) =>
+    fromGithub(c.provider.items(board, { bodies: false }))
   if (opts.end === true) {
     // A subagent's marks read `claude · <type> · <id>`: the session's end
-    // clears every mark ending in its id, whatever agent type precedes it.
+    // clears every mark ending in its id, whatever agent type precedes it,
+    // in every project (spec 0025 §3).
     const id = opts.session.split(' · ').pop() ?? opts.session
-    const ids = items
-      .filter(
-        (i) => i.session === opts.session || i.session?.endsWith(` · ${id}`)
-      )
-      .map((i) => i.id)
-    await fromGithub(c.provider.mark(board, ids, null))
+    for (const { board } of declared) {
+      const ids = (await listed(board))
+        .filter(
+          (i) => i.session === opts.session || i.session?.endsWith(` · ${id}`)
+        )
+        .map((i) => i.id)
+      await fromGithub(c.provider.mark(board, ids, null))
+    }
     // The session's last sync waits its turn behind an edit's.
-    await oneSyncAtATime(key, () => syncBoard(c, board, plainUi, eachAdded), {
-      ...lock,
-      wait: true,
-    })
+    await oneSyncAtATime(key, syncEvery, { ...lock, wait: true })
     return 0
   }
   const wanted = new Set(opts.paths)
@@ -486,24 +677,30 @@ async function mark(opts: MarkOptions): Promise<number> {
       t.rows.map((r) => [r.path, r.status] as const)
     )
   )
+  let items = new Map<string, BoardItem[]>()
+  const listAll = async () => {
+    items = new Map()
+    for (const { name, board } of declared) items.set(name, await listed(board))
+  }
+  await listAll()
   const onBoard = new Map(
-    items.flatMap((i) => (i.path === null ? [] : [[i.path, i.status] as const]))
+    [...items.values()]
+      .flat()
+      .flatMap((i) => (i.path === null ? [] : [[i.path, i.status] as const]))
   )
   const stale = (path: string): boolean =>
     documents.has(path) &&
     (!onBoard.has(path) || onBoard.get(path) !== documents.get(path))
   if ([...wanted].some(stale)) {
     // Another hook's sync running gives it its item; the next edit marks it.
-    const synced = await oneSyncAtATime(
-      key,
-      () => syncBoard(c, board, plainUi, eachAdded),
-      lock
-    )
-    if (synced) items = await listed()
+    if (await oneSyncAtATime(key, syncEvery, lock)) await listAll()
   }
-  const ids = items
-    .filter((i) => i.path !== null && wanted.has(i.path))
-    .map((i) => i.id)
-  await fromGithub(c.provider.mark(board, ids, opts.session))
+  for (const { name, board } of declared) {
+    const ids = (items.get(name) ?? [])
+      .filter((i) => i.path !== null && wanted.has(i.path))
+      .map((i) => i.id)
+    if (ids.length > 0)
+      await fromGithub(c.provider.mark(board, ids, opts.session))
+  }
   return 0
 }

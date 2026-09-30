@@ -157,6 +157,8 @@ export async function board(
     projects?: FProjectSeed[]
     /** Labels of acme/.rness besides `rness`, by name. */
     labels?: string[]
+    /** The seed's project exists already: the first project made is a new one. */
+    existing?: boolean
   } = {}
 ) {
   let next = 100
@@ -277,7 +279,7 @@ export async function board(
     }
     return undefined
   }
-  let claimed = false
+  let claimed = seed.existing === true
   let nextStatus = 1
   // acme/.rness's labels besides `rness`, whose id follows `memory.label`.
   const labels = new Map<string, string>(

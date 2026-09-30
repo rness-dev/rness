@@ -121,16 +121,26 @@ function buildProgram(state: RunState): Command {
     .description("Show the agent's work on the organization's board")
   pulse
     .command('create')
-    .description("Create the organization's Agent Pulse board and sync it")
+    .description(
+      "Create the organization's Agent Pulse board, or a collection's own project, and sync"
+    )
+    .argument(
+      '[collection]',
+      'a directory of .rness/ whose documents get a project of their own'
+    )
     .option('-y, --yes', 'do not ask for confirmation')
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(async (opts: PulseOptions) => {
-      state.code = await pulseCreateCommand(opts)
+    .action(async (collection: string | undefined, opts: PulseOptions) => {
+      state.code = await pulseCreateCommand(
+        collection === undefined ? opts : { ...opts, collection }
+      )
     })
   pulse
     .command('sync')
-    .description('Bring the board up to date with the documents of .rness/')
+    .description(
+      'Bring every declared project up to date with the documents of .rness/'
+    )
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: PulseOptions) => {

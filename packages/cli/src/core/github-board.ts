@@ -215,7 +215,9 @@ export class GitHubBoards implements Pick<
     const project = await gh.findProject(org, number, this.#o)
     if (project === null) return null
     const board = { org, number, url: project.url }
-    this.#remember(board, project.id)
+    // A project this process just made keeps what it knows: its default
+    // statuses are still to replace.
+    if (!this.#cache.has(this.#key(board))) this.#remember(board, project.id)
     return board
   }
 
