@@ -6,6 +6,7 @@ import {
   frozenArgs,
   installErrorLine,
   isPackageManager,
+  localRunner,
   packageManagerVersion,
   rnessCommand,
   rnessRunner,
@@ -35,6 +36,13 @@ test('rnessRunner: the rness CLI without a global install, per manager', () => {
   // Yarn 1 has no dlx, and an unknown yarn may be one: npx comes with Node.
   assert.equal(rnessRunner('yarn', '1.22.22'), 'npx @rness/cli')
   assert.equal(rnessRunner('yarn', null), 'npx @rness/cli')
+})
+
+test('localRunner: how each manager runs a bin its install put in node_modules/.bin', () => {
+  assert.equal(localRunner('pnpm'), 'pnpm')
+  assert.equal(localRunner('npm'), 'npx')
+  assert.equal(localRunner('yarn'), 'yarn')
+  assert.equal(localRunner('bun'), 'bunx')
 })
 
 test('rnessCommand: how the user launched rness, to type it again', () => {

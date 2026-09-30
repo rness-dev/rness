@@ -23,6 +23,12 @@ export interface PinnedCli {
 const DEFAULT_BIN = 'dist/bin/rness.js'
 
 /**
+ * The pinned copy's launcher, relative to `.rness`: what the Claude target's
+ * hooks and skills run.
+ */
+export const PINNED_BIN = `node_modules/@rness/cli/${DEFAULT_BIN}`
+
+/**
  * The `@rness/cli` installed under `<rnessDir>/node_modules`, or null when
  * nothing is installed there. Reading the package's own `package.json` is what
  * makes the launcher and `create` agree on which copy owns a workspace.

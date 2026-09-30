@@ -61,6 +61,18 @@ export function rnessRunner(
 }
 
 /**
+ * How `pm` runs a binary its own install put in `node_modules/.bin`,
+ * without the network: what a developer types inside `.rness` (spec 0019
+ * §5). Unlike `rnessRunner`, nothing is fetched.
+ */
+export function localRunner(pm: PackageManager): string {
+  if (pm === 'pnpm') return 'pnpm'
+  if (pm === 'yarn') return 'yarn'
+  if (pm === 'bun') return 'bunx'
+  return 'npx'
+}
+
+/**
  * The rness command as the user can type it again, for every hint and next
  * step: launched through a package manager — npx, pnpm dlx, yarn dlx, bunx,
  * `pnpm create`, a package script, which all set `npm_config_user_agent` —

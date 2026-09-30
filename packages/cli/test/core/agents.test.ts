@@ -46,14 +46,15 @@ const hooks = (start: string, edit: string, end: string) => [
   },
 ]
 
-// The plugin rness owns whole (spec 0016 §3). Nothing version-specific: an
-// upgrade must rewrite neither file.
+// The plugin rness owns whole (spec 0016 §3, 0019 §2). Nothing
+// version-specific: an upgrade rewrites a file only when its text changes.
+// The status skill's last line names the workspace's manager (spec 0019 §5).
 const PLUGIN_JSON = `{
   "name": "rness",
   "description": "The rness workspace in Claude Code: /rness:status."
 }
 `
-const skill = (rness: string) => `---
+const skill = (rness: string, run = 'npx') => `---
 name: status
 description: The status of every decision, specification, plan and other tracked document of the rness workspace, one table per directory. Read-only.
 argument-hint: '[tab]'
@@ -69,8 +70,9 @@ When they name a tab, show only that tab's section. If the output says the
 module cannot be found, say instead that ${rness} is not installed next to
 this repository.
 
-End with this line: _For the view with tabs and scrolling: Ctrl+Z, then
-\`npx @rness/cli status\` (q to close), then \`fg\`._
+End with this line: _For the view with tabs and scrolling: here, Ctrl+Z,
+then \`npx @rness/cli status\` (q to close), then \`fg\`; or in another
+terminal, from the workspace's \`.rness/\`: \`${run} rness status\`._
 `
 const plugin = (rness: string, at: 'clones' | 'root') => [
   {
@@ -87,46 +89,65 @@ const plugin = (rness: string, at: 'clones' | 'root') => [
 
 test('Claude Code is the one target: read access to .rness, the rness MCP server, the hooks, the plugin', () => {
   assert.deepEqual(SUPPORTED_AGENTS, ['claude'])
-  assert.deepEqual(TARGETS['claude'], {
-    name: 'claude',
-    label: 'Claude Code',
-    files: [
-      {
-        file: '.claude/settings.json',
-        at: 'clones',
-        guarantees: [
-          {
-            path: ['permissions', 'additionalDirectories'],
-            contains: '../../.rness',
+  const claude = TARGETS['claude']
+  assert.equal(claude?.name, 'claude')
+  assert.equal(claude.label, 'Claude Code')
+  assert.deepEqual(claude.files({ packageManager: 'npm' }), [
+    {
+      file: '.claude/settings.json',
+      at: 'clones',
+      guarantees: [
+        {
+          path: ['permissions', 'additionalDirectories'],
+          contains: '../../.rness',
+        },
+        ...hooks(CLONE_START, CLONE_EDIT, CLONE_END),
+      ],
+    },
+    {
+      file: '.mcp.json',
+      at: 'clones',
+      guarantees: [
+        {
+          path: ['mcpServers', 'rness'],
+          value: {
+            command: 'node',
+            args: [
+              '../../.rness/node_modules/@rness/cli/dist/bin/rness.js',
+              'mcp',
+            ],
           },
-          ...hooks(CLONE_START, CLONE_EDIT, CLONE_END),
-        ],
-      },
-      {
-        file: '.mcp.json',
-        at: 'clones',
-        guarantees: [
-          {
-            path: ['mcpServers', 'rness'],
-            value: {
-              command: 'node',
-              args: [
-                '../../.rness/node_modules/@rness/cli/dist/bin/rness.js',
-                'mcp',
-              ],
-            },
-          },
-        ],
-      },
-      ...plugin('../../.rness', 'clones'),
-      {
-        file: '.claude/settings.json',
-        at: 'root',
-        guarantees: hooks(ROOT_START, ROOT_EDIT, ROOT_END),
-      },
-      ...plugin('.rness', 'root'),
-    ],
-  })
+        },
+      ],
+    },
+    ...plugin('../../.rness', 'clones'),
+    {
+      file: '.claude/settings.json',
+      at: 'root',
+      guarantees: hooks(ROOT_START, ROOT_EDIT, ROOT_END),
+    },
+    ...plugin('.rness', 'root'),
+  ])
+})
+
+test('the closing line of /rness:status follows the manager: pnpm, npm, yarn, bun', () => {
+  const STATUS = '.claude/skills/rness/skills/status/SKILL.md'
+  for (const [packageManager, run] of [
+    ['pnpm', 'pnpm'],
+    ['npm', 'npx'],
+    ['yarn', 'yarn'],
+    ['bun', 'bunx'],
+  ] as const) {
+    const files = TARGETS['claude']?.files({ packageManager }) ?? []
+    for (const [rness, at] of [
+      ['../../.rness', 'clones'],
+      ['.rness', 'root'],
+    ] as const) {
+      const status = files.find((f) => f.at === at && f.file === STATUS)
+      assert.ok(status !== undefined && 'content' in status)
+      assert.equal(status.content, skill(rness, run))
+    }
+  }
 })
 
 test('the session-start line is valid sh, and its fallback is one JSON object', async () => {

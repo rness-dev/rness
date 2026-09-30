@@ -178,6 +178,24 @@ test("the team's own hooks stay; rness's are appended after them", async (t) => 
   assert.deepEqual(hooks.SessionEnd, hooksFor('../../.rness').SessionEnd)
 })
 
+test('the status skill names the workspace’s manager; a changed manager leaves it stale, and sync rewrites it', async (t) => {
+  const { root, manifest } = await workspace(t, ['claude'])
+  const pkg = join(root, '.rness', 'package.json')
+  await writeFile(pkg, '{ "packageManager": "pnpm@12.5.1" }\n')
+  await agentTargets(root, manifest, { check: false })
+  const file = join(root, 'org', 'api', ...SKILL.split('/'))
+  assert.match(await readFile(file, 'utf8'), /`pnpm rness status`\._\n$/)
+  await writeFile(pkg, '{ "packageManager": "npm@11.6.0" }\n')
+  assert.deepEqual(
+    (await agentTargets(root, manifest, { check: true }))
+      .filter((o) => o.status !== 'unchanged')
+      .map((o) => o.label),
+    [SKILL, `org/api/${SKILL}`]
+  )
+  await agentTargets(root, manifest, { check: false })
+  assert.match(await readFile(file, 'utf8'), /`npx rness status`\._\n$/)
+})
+
 test('the workspace root file is in no repository: never among the written files of a clone', async (t) => {
   const { manifest } = await workspace(t, ['claude'])
   assert.deepEqual(writtenFiles(manifest), [

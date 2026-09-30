@@ -1,13 +1,19 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { type AgentTarget, type Guarantee, TARGETS } from './agents.ts'
+import {
+  type AgentTarget,
+  type Guarantee,
+  TARGETS,
+  type TargetContext,
+} from './agents.ts'
 import { exists, readOrNull, writeFileAtomic } from './fs.ts'
 import {
   describeGuarantee,
   ensureGuarantees,
   missingGuarantees,
 } from './json-guarantees.ts'
+import { workspacePackageManager } from './pinned.ts'
 import type { Manifest } from './types.ts'
 
 /** What one target file turned out to be, as `sync` and `validate` say it. */
@@ -30,6 +36,19 @@ function wholeDiff(existing: string | null, content: string): string | null {
 }
 
 /**
+ * What the targets' files depend on in this workspace (spec 0019 §5), `.rness`
+ * where the targets themselves reach it.
+ */
+async function contextOf(root: string): Promise<TargetContext> {
+  return {
+    packageManager: await workspacePackageManager(join(root, '.rness')),
+  }
+}
+
+/** Paths never depend on the context: enough to list them. */
+const PATHS_ONLY: TargetContext = { packageManager: 'npm' }
+
+/**
  * Every file the given targets own a part of: the workspace root's first
  * (spec 0015 §2.1), then one per target and per repository of the catalogue
  * that is cloned under `org/`. The root of a clone only — a nested scope's
@@ -44,8 +63,9 @@ async function filesOf(
 ): Promise<OwnedFile[]> {
   const files: OwnedFile[] = []
   if (!(await exists(join(root, 'org')))) return files
+  const ctx = await contextOf(root)
   for (const target of targets)
-    for (const owned of target.files)
+    for (const owned of target.files(ctx))
       if (owned.at === 'root')
         files.push({
           ...owned,
@@ -55,7 +75,7 @@ async function filesOf(
   for (const repo of Object.keys(manifest.repos)) {
     if (!(await exists(join(root, 'org', repo)))) continue
     for (const target of targets)
-      for (const owned of target.files)
+      for (const owned of target.files(ctx))
         if (owned.at === 'clones')
           files.push({
             ...owned,
@@ -84,7 +104,10 @@ export function writtenFiles(manifest: Manifest): string[] {
   return [
     ...BLOCK_FILES,
     ...declared(manifest).flatMap((t) =>
-      t.files.filter((f) => f.at === 'clones').map((f) => f.file)
+      t
+        .files(PATHS_ONLY)
+        .filter((f) => f.at === 'clones')
+        .map((f) => f.file)
     ),
   ]
 }
