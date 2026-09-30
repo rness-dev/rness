@@ -284,7 +284,10 @@ added to project`) may change a field of rness's items; the next sync
   reads every item's body. On one of GitHub's rate limits rness waits as
   long as GitHub says (`waiting  60 s — GitHub's rate limit`), 10 minutes
   at most in all. Past that it stops, saying how many changes it did not
-  make, and the next sync makes them.
+  make, and the next sync makes them. Measured on `rness-dev` (54
+  documents, 2026-09-30): the migration from 0.12.0 took 169 s with no
+  wait; a sync with nothing to change, 4 s; the listing, one page of
+  852 KB in about 1 s.
 - **Not yet**: GitLab and Atlassian. `create` lists them, disabled; a
   workspace whose `rness.json` names one is refused by `pulse`. `Waiting`
   and `Review` statuses, several agents on one board and hooks for agents
@@ -310,7 +313,7 @@ repository, the board).
   `contract`, `provider`, `org`, `agents`, `pulse`, `repos`, `scopes`.
 - A provider _written_ in `rness.json` that this version cannot talk to
   (`gitlab`) is refused by `validate`, `create`, `login` and `pulse`:
-  `provider "gitlab" is not supported by @rness/cli 0.12.0 (supported:
+  `provider "gitlab" is not supported by @rness/cli 0.13.0 (supported:
 github)`. `add`, `sync` and the local commands never refuse. `null` is not a
   value: an absent key means none.
 
@@ -499,8 +502,8 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   the end of a Claude Code session — does the migration. It converts every
   draft that carries a `Path` into an issue of `.rness`: its id and fields
   stay, so the boards do not change. It labels each issue, writes its
-  body, and links the project to `.rness`. People who watch `.rness` get a
-  notification per new issue, once. Nothing is asked. Until every
+  body, and links the project to `.rness`. GitHub notifies the people who
+  watch `.rness` of each new issue, once. Nothing is asked. Until every
   developer's `.rness` is on 0.13.0, a session that ends on 0.12.0 syncs
   as 0.12.0 did: it sees the issues as the team's and adds a draft per
   document. The next 0.13.0 sync archives those drafts.
