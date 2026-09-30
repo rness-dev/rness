@@ -183,6 +183,13 @@ test('outside code, @name is escaped and a bare #digits broken by a zero-width s
   )
 })
 
+test('an escaped \\#4 still links issue 4 on GitHub: it is broken too; &#35;4 and C#8 are left alone', () => {
+  assert.equal(
+    content(body('# B\n\nSee \\#4, &#35;4 and C#8.\n')),
+    `See \\#${ZWSP}4, &#35;4 and C#8.`
+  )
+})
+
 test('a body past the limit is cut at the last blank line that fits and ends with The rest', () => {
   const paras = Array.from(
     { length: 80 },

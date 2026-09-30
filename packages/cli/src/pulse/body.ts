@@ -151,8 +151,9 @@ const PROTECTED = new RegExp(
   ].join('|'),
   'gm'
 )
+// `\@name` mentions no one; `\#4` still links issue 4 (spec 0018 §1).
 const MENTION = /(^|[^A-Za-z0-9`\\])@([A-Za-z0-9][A-Za-z0-9-]*)/g
-const REFERENCE = /(^|[^A-Za-z0-9&#/\\])#(\d+)(?![A-Za-z0-9])/g
+const REFERENCE = /(^|[^A-Za-z0-9&#/])#(\d+)(?![A-Za-z0-9])/g
 const ZWSP = '\u200B'
 
 /** Prose made harmless (spec 0018 §3.4): it mentions no one and names no issue. */
