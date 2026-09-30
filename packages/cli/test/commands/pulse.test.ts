@@ -2173,3 +2173,24 @@ test('marks: a document marked in the project holding it; the session end clears
   assert.equal(on(8, POST)?.['Agent'], undefined)
   assert.equal(on(7, 'adr/0001-a.md')?.['Agent'], undefined)
 })
+
+test('marks with only a collection declared: a document of another collection has no board, and its edit costs no sync', async (t) => {
+  await machine(t)
+  const g = await board(t, { other: asUser('repo, project') })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { marketing: 7 },
+    files: MARKETING_FILES,
+  })
+  assert.equal(
+    await pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session: 'claude · 284bf03e',
+      paths: ['adr/0001-a.md'],
+    }),
+    0
+  )
+  assert.equal(await takeFailure(), null)
+  assert.deepEqual(g.mutations, [])
+})

@@ -666,7 +666,12 @@ async function mark(opts: MarkOptions): Promise<number> {
     await oneSyncAtATime(key, syncEvery, { ...lock, wait: true })
     return 0
   }
-  const wanted = new Set(opts.paths)
+  // Only a path some declared project holds: Agent Pulse holds every other
+  // collection's; without it, a document of an undeclared collection has no
+  // board, and its edit costs no sync.
+  const held = (path: string): boolean =>
+    declared.some((d) => d.name === PULSE || path.startsWith(`${d.name}/`))
+  const wanted = new Set(opts.paths.filter(held))
   // A document the agent has just written has no item until a sync gives it
   // one (plan 0027 Task 6, a fix to spec 0017 §5); one whose status the edit
   // changed shows the old one until a sync writes it (spec 0020 §2). Only a
