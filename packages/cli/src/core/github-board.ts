@@ -11,7 +11,7 @@ import * as gh from './github-projects.ts'
 import type { ApiOptions } from './github.ts'
 import type { Board, Provider } from './provider.ts'
 
-/** The pulse's board on a GitHub project (spec 0017 §3–§4). */
+/** The pulse's board on a GitHub project: its layout (spec 0017 §3, kept by spec 0018 §6), its items issues of `.rness` (spec 0018 §2–§5). */
 
 export const PROJECT_TITLE = 'Agent Pulse'
 const WORKING = 'working'

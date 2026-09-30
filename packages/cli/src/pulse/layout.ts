@@ -2,7 +2,7 @@ import { STATUSES } from '../core/contract.ts'
 import { type StatusTab, statusTone } from '../core/status.ts'
 import { headerOf } from './body.ts'
 
-/** The board's shape, from the documents of `rness status` (spec 0017 §3). */
+/** The board's shape, from the documents of `rness status` (spec 0017 §3, kept by spec 0018 §6). */
 export interface Layout {
   /** The options of `Status`, the All table's: every collection's, together. */
   statuses: string[]

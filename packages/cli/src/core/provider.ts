@@ -58,8 +58,9 @@ export interface Provider {
    */
   credentialsFor(url: string): GitCredentials | null
   /**
-   * The board (spec 0017 §3): a new, empty one for `org`, so that the caller
-   * can declare it before `ensureLayout` builds it. Anonymous: refused.
+   * The board (spec 0017 §3; Issues on `.rness` first, spec 0018 §2): a
+   * new, empty one for `org`, so that the caller can declare it before
+   * `ensureLayout` builds it. Anonymous: refused.
    */
   createBoard(org: string): Promise<Board>
   /** The board `number` of `org`, or null when the provider has none. */
