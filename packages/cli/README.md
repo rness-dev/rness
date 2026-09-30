@@ -119,9 +119,10 @@ the files a given agent needs, for the agents the team declares in
   A new document takes the collection's first status (`Proposed` for an
   ADR, `Draft` otherwise) and the next number of the local checkout; two
   branches can pick the same one. Each skill records its session: it adds
-  the Claude Code session id to `sessions:` in the front matter of what it
-  writes or closes — an edit made without a skill leaves none. No skill
-  commits.
+  `{ id: <session id>, agent: <model> }` to `sessions:` in the front matter
+  of what it writes or closes. The agent is the model it runs as, as Claude
+  Code names it (`Claude Opus 5.5`): no variable gives it to a skill. An
+  edit made without a skill leaves none. No skill commits.
 - rness owns values, not files: what is missing is added, nothing else is
   touched, and a file it cannot parse is reported, never rewritten.
   `sync --check` and `validate` report a missing value. Removing an agent
@@ -234,17 +235,22 @@ in its Settings`.
   collection fields' options: every contract status plus the ones found in
   `.rness/`, in lifecycle order, at most 50), `Collection` (one option per tab of
   `rness status`; not `Type`, which is GitHub's own issue-type field and
-  filter), `Agent` (`working`), `Session` (`claude · 1a2b3c4d`, plus the
-  agent type for a subagent), `Path` and `Sessions` — the document's
-  `sessions:` (see "Agent targets"), joined by `, `, written by sync and
-  never cleared: which sessions wrote a specification or implemented a plan,
-  after they ended (`claude --resume <id>` reopens one on the machine it ran
-  on). A board made before 0.15.0 gains `Sessions` at its next sync. A board per directory, named as
+  filter), `Agent` (`working`), `Working session` (`claude · 1a2b3c4d`,
+  plus the agent type for a subagent: the session working on the document
+  now, cleared when it ends), `Path`, and `Session history` — the
+  document's `sessions:` (see "Agent targets"), each `Claude Opus 5.5 ·
+<id>` (the id alone for an entry without its agent), joined by `, `,
+  written by sync and never cleared: which sessions wrote a specification
+  or implemented a plan, after they ended (`claude --resume <id>` reopens
+  one on the machine it ran on). A board made before 0.15.0 gains
+  `Session history` at its next sync; one from 0.15 has its `Session` and
+  `Sessions` renamed in place, values and views kept (`renamed field
+Session → Working session`). A board per directory, named as
   `rness status` names its tab, filtered on its `Collection`, its columns
   that collection's own steps: each collection has its own status field
   (`ADR status`, `Specs status`, …; a directory without statuses is columned
   by `Status`, which holds them all for the `All` table). `pulse sync`
-  remakes a board built by an earlier version (its URL changes once); a `Working` table, filtered on `Agent: working`. A first view named `View 1` (GitHub's default) becomes `All` when no `All` exists, on create and on sync, showing Title, Collection, Status and Session. Options are coloured (statuses by lifecycle: blue proposed, purple approved, yellow in progress, red blocked or rejected, yellow superseded, green done, gray abandoned; collections and `working` too); a sync recolours rness's options and leaves other options' colours alone. rness does
+  remakes a board built by an earlier version (its URL changes once); a `Working` table, filtered on `Agent: working`. A first view named `View 1` (GitHub's default) becomes `All` when no `All` exists, on create and on sync, showing Title, Collection, Status and Working session. Options are coloured (statuses by lifecycle: blue proposed, purple approved, yellow in progress, red blocked or rejected, yellow superseded, green done, gray abandoned; collections and `working` too); a sync recolours rness's options and leaves other options' colours alone. rness does
   not set the project's visibility: the project gets GitHub's default for a
   new organization project, which is private (`public: false`). Verified
   with Claude Code 2.1.284 on 2026-09-29.
@@ -528,6 +534,21 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.16.0 — Working session and Session history; the agent in the history
+
+- Agent Pulse's session fields are renamed so that the names say what
+  they hold: `Session` becomes `Working session` (the session working on
+  a document now) and `Sessions` becomes `Session history` (every session
+  that changed it). The first `pulse sync` with 0.16.0 renames them in
+  place: values, ids and views stay. Until then, marks use whichever name
+  the board has. See "Pulse".
+- `Session history` names each session's agent: `Claude Opus 5.5 ·
+1e9cb41b-…`. The lifecycle skills now record `{ id, agent }` in
+  `sessions:`; a bare id, as 0.15 wrote it, still reads, and shows alone.
+  `rness upgrade` rewrites the four skills: commit `.claude/skills/rness/`
+  in each repository. See "Agent targets".
+- Blocks are unchanged.
 
 ## 0.15.1 — upgrade names every file to commit
 
