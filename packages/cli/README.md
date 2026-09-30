@@ -310,6 +310,13 @@ added to project`) may change a field of rness's items; the next sync
   `the pulse needs the project scope: run rness login` or
   `cannot reach GitHub: …`. Two sessions marking one plan both write; the
   last wins.
+- **One issue per document**: before making an issue, `pulse sync` reads
+  the open issues of `.rness` labelled `rness` (one request per 100, and
+  only when it has one to make). One whose body starts with the document's
+  first line was made by an earlier sync, whose item the board's listing
+  did not show yet. It is added to the board instead of made again, and
+  the output says `adopted 1 issue already made for its document`. Seen on
+  2026-09-30: two syncs 18 s apart made two issues for one document.
 - **Rate**: rness sends one request at a time. A new document costs an
   issue, its addition to the board, up to five fields, then its body. An
   unchanged document costs nothing but its share of the listing, which
@@ -531,6 +538,11 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   asks the copy it installed. This applies to upgrades run by 0.15.1 or
   later; from an older copy, commit `.claude/skills/rness/` whole, as the
   changelog of each release says.
+- Agent Pulse no longer gives a document a second issue when two syncs
+  follow each other within seconds. The second one's listing of the board
+  may not show the item the first one added yet. Before making an issue,
+  `pulse sync` now looks for an open issue of `.rness` already made for the
+  document, and adds that one (`adopted 1 issue`). See "Pulse".
 - Blocks are unchanged.
 
 ## 0.15.0 — Agent Pulse follows a status change; the sessions are kept

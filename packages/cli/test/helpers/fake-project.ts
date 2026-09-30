@@ -84,6 +84,13 @@ export async function board(
     /** The view GitHub gives a new project; null: none. */
     defaultView?: { id: string; name: string } | null
     items?: FItem[]
+    /** Issues of acme/.rness on no board. */
+    issues?: FIssue[]
+    /**
+     * Items the board's listing leaves out, as GitHub's Projects API may for
+     * a few seconds after one is added (spec 0020 §7).
+     */
+    lagging?: string[]
     /** acme/.rness; by default there, Issues on, labelled, linked. */
     memory?: Partial<FMemory>
     /** Answers what is not the project's (`GET /user`, …); undefined falls through. */
@@ -134,9 +141,11 @@ export async function board(
     linked: true,
     ...seed.memory,
   }
-  const issues: FIssue[] = items.flatMap((i) =>
-    i.issue == null ? [] : [i.issue]
-  )
+  const issues: FIssue[] = [
+    ...items.flatMap((i) => (i.issue == null ? [] : [i.issue])),
+    ...(seed.issues ?? []),
+  ]
+  const lagging = new Set(seed.lagging ?? [])
   let nextNumber = 1 + Math.max(0, ...issues.map((i) => i.number))
   const issueOf = (id: unknown) => issues.find((i) => i.id === id)
   const restViews: unknown[] = []
@@ -161,7 +170,8 @@ export async function board(
   const answers: [string, (v: Record<string, unknown>, q: string) => Reply][] =
     [
       [
-        'repository(owner: $owner',
+        // The repository itself: its Issues switch and label, not its issues.
+        'hasIssuesEnabled',
         () =>
           memory.exists
             ? data({
@@ -205,6 +215,12 @@ export async function board(
         'addProjectV2ItemById(',
         (v) => {
           mutations.push({ op: 'addItem', variables: v })
+          // GitHub adds an issue already on the board as the item it is.
+          const there = items.find(
+            (i) => !i.archived && i.issue?.id === v['contentId']
+          )
+          if (there !== undefined)
+            return data({ addProjectV2ItemById: { item: { id: there.id } } })
           const id = `I_${next++}`
           items.push({
             id,
@@ -458,41 +474,69 @@ export async function board(
           }),
       ],
       [
+        'issues(first',
+        (v) =>
+          data({
+            repository: {
+              issues: {
+                nodes: issues
+                  .filter(
+                    (i) =>
+                      i.repository === 'acme/.rness' &&
+                      i.state === 'OPEN' &&
+                      i.labels.includes(String(v['label']))
+                  )
+                  .map(({ id, number, title, body }) => ({
+                    id,
+                    number,
+                    title,
+                    body,
+                  })),
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          }),
+      ],
+      [
         'items(first',
         (_v, q) =>
           data({
             node: {
               items: {
-                nodes: items.map((i) => ({
-                  id: i.id,
-                  isArchived: i.archived,
-                  // The query selects DraftIssue and Issue: other content is {}.
-                  content:
-                    i.issue != null
-                      ? {
-                          id: i.issue.id,
-                          number: i.issue.number,
-                          title: i.issue.title,
-                          state: i.issue.state,
-                          // As GitHub answers: only when the query selects it.
-                          ...(/\bbody\b/.test(q) ? { body: i.issue.body } : {}),
-                          repository: { nameWithOwner: i.issue.repository },
-                          labels: {
-                            nodes: i.issue.labels.map((name) => ({ name })),
-                          },
-                        }
-                      : i.draftId === null
-                        ? {}
-                        : { id: i.draftId, title: i.title },
-                  fieldValues: {
-                    nodes: Object.entries(i.values).map(([name, value]) => ({
-                      ...(fields.find((f) => f.name === name)?.options
-                        ? { name: value }
-                        : { text: value }),
-                      field: { name },
-                    })),
-                  },
-                })),
+                nodes: items
+                  .filter((i) => !lagging.has(i.id))
+                  .map((i) => ({
+                    id: i.id,
+                    isArchived: i.archived,
+                    // The query selects DraftIssue and Issue: other content is {}.
+                    content:
+                      i.issue != null
+                        ? {
+                            id: i.issue.id,
+                            number: i.issue.number,
+                            title: i.issue.title,
+                            state: i.issue.state,
+                            // As GitHub answers: only when the query selects it.
+                            ...(/\bbody\b/.test(q)
+                              ? { body: i.issue.body }
+                              : {}),
+                            repository: { nameWithOwner: i.issue.repository },
+                            labels: {
+                              nodes: i.issue.labels.map((name) => ({ name })),
+                            },
+                          }
+                        : i.draftId === null
+                          ? {}
+                          : { id: i.draftId, title: i.title },
+                    fieldValues: {
+                      nodes: Object.entries(i.values).map(([name, value]) => ({
+                        ...(fields.find((f) => f.name === name)?.options
+                          ? { name: value }
+                          : { text: value }),
+                        field: { name },
+                      })),
+                    },
+                  })),
                 pageInfo: { hasNextPage: false, endCursor: null },
               },
             },

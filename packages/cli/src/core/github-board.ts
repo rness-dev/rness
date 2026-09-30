@@ -5,7 +5,12 @@ import {
   optionColor,
   statusFieldName,
 } from '../pulse/layout.ts'
-import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
+import {
+  type BoardItem,
+  type Placed,
+  type Step,
+  firstLine,
+} from '../pulse/plan.ts'
 import * as gi from './github-issues.ts'
 import * as gh from './github-projects.ts'
 import type { ApiOptions } from './github.ts'
@@ -83,6 +88,8 @@ interface Cache {
    * GitHub's default options, which the first `ensureLayout` replaces.
    */
   fresh?: boolean
+  /** `.rness`'s open issues labelled `rness`, read at the first create. */
+  open?: gi.OpenIssue[]
 }
 
 /** The single-select fields rness colours. */
@@ -487,10 +494,54 @@ export class GitHubBoards implements Pick<
     return null
   }
 
-  /** A new document's issue: labelled, the first line as body, added to the board, Path first. */
+  /**
+   * An open issue of `.rness`, labelled `rness`, whose body starts with the
+   * document's first line — made by an earlier sync whose item the board's
+   * listing did not show yet, 18 s later (spec 0020 §7) — or null. Read once
+   * per process, at the first create; an issue taken is taken off the list.
+   */
+  async #adoptable(
+    board: Board,
+    cache: Cache,
+    want: Desired
+  ): Promise<gi.OpenIssue | null> {
+    cache.open ??= await gi.openIssues(board.org, MEMORY, LABEL, this.#o)
+    const at = cache.open.findIndex((i) => firstLine(i.body) === want.body)
+    if (at === -1) return null
+    return cache.open.splice(at, 1)[0] ?? null
+  }
+
+  /**
+   * A new document's issue: labelled, the first line as body, added to the
+   * board, Path first. One already made for it is added instead: GitHub adds
+   * an issue already on the board as the item it is, so no second one.
+   */
   async #create(board: Board, cache: Cache, want: Desired): Promise<Placed> {
     const memory = await this.#memory(board.org)
     const labelId = await this.#labelId(board)
+    const found = await this.#adoptable(board, cache, want)
+    if (found !== null) {
+      const id = await gh.addItem(cache.projectId, found.id, this.#o)
+      const known: gh.RawItem = cache.known.get(id) ?? {
+        id,
+        draftId: null,
+        issue: {
+          id: found.id,
+          number: found.number,
+          open: true,
+          repository: `${board.org}/${MEMORY}`,
+          body: found.body,
+          labels: [LABEL],
+        },
+        title: found.title,
+        archived: false,
+        values: {},
+      }
+      cache.known.set(id, known)
+      await this.#issue(known, want, labelId)
+      await this.#values(board, id, want)
+      return { id, number: found.number, adopted: true }
+    }
     const made = await gi.createIssue(
       memory.id,
       { title: want.title, body: want.body, labelIds: [labelId] },

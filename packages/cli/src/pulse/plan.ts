@@ -37,6 +37,11 @@ export interface BoardItem {
 export interface Placed {
   id: string
   number: number
+  /**
+   * The issue was there already — open, labelled, the document's first line
+   * as its body — and was added to the board instead of made again.
+   */
+  adopted?: true
 }
 
 /** Pass 2: an issue's body, once every document has its number. */
@@ -73,7 +78,8 @@ const gone = (item: BoardItem): Step =>
     : { kind: 'close', id: item.id }
 
 /** A body's first line; a CR ends a line as GitHub's editor writes it. */
-const firstLine = (body: string): string => body.split(/\r\n?|\n/, 1)[0] ?? ''
+export const firstLine = (body: string): string =>
+  body.split(/\r\n?|\n/, 1)[0] ?? ''
 
 /**
  * Issues of `.rness` on the board without `Path` that a sync made and left

@@ -1782,3 +1782,88 @@ test("--end waits for a hook's running sync, then syncs", async (t) => {
   assert.deepEqual(slept, [1_000])
   assert.match(out, /^synced\s+2 items: 2 unchanged$/m)
 })
+
+/** A board laid out, FILES plus `specs/0003-c.md`, and what `seed` adds. */
+async function withThirdDocument(
+  t: TestContext,
+  seed: NonNullable<Parameters<typeof board>[1]>
+) {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+    ...seed,
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: { ...FILES, 'specs/0003-c.md': doc('Draft', '0003 — C') },
+  })
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  const onPath = g.items.filter((i) => i.values['Path'] === 'specs/0003-c.md')
+  return { g, r, onPath }
+}
+
+const THIRD = headerOf('specs/0003-c.md', 'acme')
+
+test('an open issue already made for a document, on no board, is adopted — not made again', async (t) => {
+  const { g, r, onPath } = await withThirdDocument(t, {
+    issues: [anIssue(9, { title: 'stale', body: `${THIRD}\n\nold text` })],
+  })
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^adopted\s+1 issue already made for its document$/m)
+  assert.match(r.out, /^created\s+2 issues$/m, 'the two other documents')
+  assert.equal(onPath.length, 1)
+  assert.equal(onPath[0]?.issue?.number, 9)
+  assert.equal(onPath[0]?.issue?.title, '0003 — C', 'its title set again')
+  assert.equal(
+    g.mutations.filter(
+      (m) => m.op === 'createIssue' && m.variables['title'] === '0003 — C'
+    ).length,
+    0
+  )
+})
+
+test("an item the board's listing leaves out yet: its issue is added again as the item it is — no second issue", async (t) => {
+  const made = anIssue(9, { title: '0003 — C', body: `${THIRD}\n\nbody` })
+  const { g, r, onPath } = await withThirdDocument(t, {
+    items: [
+      {
+        id: 'i9',
+        draftId: null,
+        issue: made,
+        title: '0003 — C',
+        archived: false,
+        values: { Path: 'specs/0003-c.md' },
+      },
+    ],
+    lagging: ['i9'],
+  })
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^adopted\s+1 issue already made for its document$/m)
+  assert.deepEqual(
+    onPath.map((i) => i.id),
+    ['i9']
+  )
+  assert.equal(
+    g.mutations.filter((m) => m.op === 'createIssue').length,
+    2,
+    'only the two other documents'
+  )
+})
+
+test('a closed issue, or one without the rness label, is never adopted', async (t) => {
+  const { r, onPath } = await withThirdDocument(t, {
+    issues: [
+      anIssue(8, { body: THIRD, state: 'CLOSED' }),
+      anIssue(9, { body: THIRD, labels: [] }),
+    ],
+  })
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.out, /adopted/)
+  assert.equal(onPath.length, 1)
+  assert.ok((onPath[0]?.issue?.number ?? 0) > 9, 'a new issue')
+})

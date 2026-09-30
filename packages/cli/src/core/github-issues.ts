@@ -41,6 +41,71 @@ export async function repository(
     : { id: r.id, issues: r.hasIssuesEnabled, labelId: r.label?.id ?? null }
 }
 
+/** An open issue of a repository, with what adopting it needs. */
+export interface OpenIssue {
+  id: string
+  number: number
+  title: string
+  body: string
+}
+
+/**
+ * The open issues of `owner/name` that carry `label`, 100 a page. The
+ * repository's issues, unlike a project's items, show an issue as soon as it
+ * is created: the pulse looks here before creating one (spec 0020 §7).
+ */
+export async function openIssues(
+  owner: string,
+  name: string,
+  label: string,
+  o: ApiOptions
+): Promise<OpenIssue[]> {
+  const found: OpenIssue[] = []
+  let after: string | null = null
+  for (;;) {
+    const d: {
+      repository: {
+        issues: {
+          nodes: OpenIssue[]
+          pageInfo: { hasNextPage: boolean; endCursor: string | null }
+        }
+      } | null
+    } = await graphql(
+      `
+        query (
+          $owner: String!
+          $name: String!
+          $label: String!
+          $after: String
+        ) {
+          repository(owner: $owner, name: $name) {
+            issues(first: 100, after: $after, states: OPEN, labels: [$label]) {
+              nodes {
+                id
+                number
+                title
+                body
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      `,
+      { owner, name, label, after },
+      o
+    )
+    const page = d.repository?.issues
+    if (page === undefined) return found
+    found.push(...page.nodes)
+    if (!page.pageInfo.hasNextPage || page.pageInfo.endCursor === null)
+      return found
+    after = page.pageInfo.endCursor
+  }
+}
+
 /** Creates a label (REST `POST /repos/{owner}/{repo}/labels`, docs read 2026-09-30); returns its node id. */
 export async function createLabel(
   owner: string,

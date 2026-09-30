@@ -177,12 +177,20 @@ function sayDone(
   org: string,
   documents: number,
   steps: readonly Step[],
-  writes: readonly BodyStep[]
+  writes: readonly BodyStep[],
+  adopted: number
 ): void {
+  // An adopted issue was planned as a create: it is counted apart.
   const n = (kind: Step['kind']): number =>
-    steps.filter((s) => s.kind === kind).length
+    steps.filter((s) => s.kind === kind).length -
+    (kind === 'create' ? adopted : 0)
   const reopened = steps.filter((s) => s.kind === 'update' && s.reopen).length
   if (n('create') > 0) ui.line('created', count(n('create'), 'issue'))
+  if (adopted > 0)
+    ui.line(
+      'adopted',
+      `${count(adopted, 'issue')} already made for its document`
+    )
   if (n('convert') > 0)
     ui.line(
       'converted',
@@ -196,11 +204,17 @@ function sayDone(
   const parts = (
     [
       ['created', n('create')],
+      ['adopted', adopted],
       ['converted', n('convert')],
       ['updated', n('update') + bodyOnly],
       [
         'unchanged',
-        documents - n('create') - n('convert') - n('update') - bodyOnly,
+        documents -
+          n('create') -
+          adopted -
+          n('convert') -
+          n('update') -
+          bodyOnly,
       ],
       ['archived', n('close') + n('archive')],
     ] as const
@@ -245,6 +259,7 @@ async function syncBoard(
   const changes = steps.filter((s) => s.kind !== 'unchanged').length
   let writes: BodyStep[] = []
   let made = 0
+  let adopted = 0
   try {
     const placed = new Map<string, Placed>()
     // Recorded: the issues this sync opened — not a draft converted, synced
@@ -256,7 +271,10 @@ async function syncBoard(
         const p = await fromGithub(c.provider.apply(board, step))
         if (p !== null && (step.kind === 'create' || step.kind === 'convert'))
           placed.set(step.want.path, p)
-        if (p !== null && step.kind === 'create') created.set(step.want.path, p)
+        // An adopted issue was opened by whichever sync made it, not this one.
+        if (p?.adopted === true) adopted++
+        else if (p !== null && step.kind === 'create')
+          created.set(step.want.path, p)
         if (step.kind === 'close' || step.kind === 'archive')
           closed.add(step.id)
         if (step.kind !== 'unchanged') made++
@@ -296,7 +314,7 @@ async function syncBoard(
       { cause: e }
     )
   }
-  sayDone(ui, c.org, want.length, steps, writes)
+  sayDone(ui, c.org, want.length, steps, writes, adopted)
 }
 
 /** `rness pulse create`: the project, declared at once; then its layout and a first sync. */
