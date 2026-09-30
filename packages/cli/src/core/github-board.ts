@@ -393,7 +393,6 @@ export class GitHubBoards implements Pick<
                   open: issue.open,
                   labelled: labelled(issue.labels),
                   body: issue.body,
-                  author: issue.author,
                 },
           title: r.title,
           status: r.values[STATUS_FIELD] ?? null,
@@ -463,7 +462,6 @@ export class GitHubBoards implements Pick<
         repository: `${board.org}/${MEMORY}`,
         body: '',
         labels: [],
-        author: null,
       }
       await this.#issue(known, step.want, labelId)
       await this.#values(board, step.id, step.want)
@@ -498,7 +496,6 @@ export class GitHubBoards implements Pick<
         repository: `${board.org}/${MEMORY}`,
         body: want.body,
         labels: [LABEL],
-        author: null,
       },
       title: want.title,
       archived: false,

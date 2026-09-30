@@ -9,8 +9,6 @@ export interface ItemIssue {
   labelled: boolean
   /** Null: listed without bodies (`items(board, { bodies: false })`). */
   body: string | null
-  /** The login that opened it; null: a deleted account. */
-  author: string | null
 }
 
 /** An item of the board, as the provider reads it. */
@@ -99,7 +97,8 @@ function strays(have: readonly BoardItem[]): Map<string, BoardItem[]> {
 
 /**
  * The paths `planSync` judges: on the board, no document wanted there — once
- * each. This clone's git, or who opened their issue, decides (`isGone`).
+ * each. This clone's git, or its record of the issues it opened, decides
+ * (`isGone`).
  */
 export function unwantedPaths(
   want: readonly Desired[],
@@ -112,26 +111,26 @@ export function unwantedPaths(
   return [...paths]
 }
 
+/** The issues this clone's syncs opened, by number: the path each was opened for (spec 0018 §2). */
+export type Opened = ReadonlyMap<number, string>
+
 /**
  * Whether an item no document wants is gone (spec 0018 §2): its path is in
- * `seen` — this clone's git holds it, its tree no longer does — or its issue
- * was opened by `login`: a document this developer's agent wrote, then
- * renamed or deleted before any commit. Any other is a teammate's document
- * not pulled yet. A draft has no author: git's word alone; and so when the
- * login is unknown (null).
+ * `seen` — this clone's git holds it, its tree no longer does — or this
+ * clone opened its issue for that path (`opened`): a document its agent
+ * wrote, then renamed or deleted before any commit. Any other is a
+ * teammate's document, or the same developer's from another clone, not
+ * pulled yet. A draft has no issue: git's word alone.
  */
 function isGone(
   path: string,
   item: BoardItem,
   seen: ReadonlySet<string>,
-  login: string | null
+  opened: Opened
 ): boolean {
-  if (seen.has(path)) return true
-  const author = item.issue?.author ?? null
   return (
-    login !== null &&
-    author !== null &&
-    author.toLowerCase() === login.toLowerCase()
+    seen.has(path) ||
+    (item.issue !== null && opened.get(item.issue.number) === path)
   )
 }
 
@@ -148,7 +147,7 @@ export function planSync(
   want: readonly Desired[],
   have: readonly BoardItem[],
   seen: ReadonlySet<string> = new Set(),
-  login: string | null = null
+  opened: Opened = new Map()
 ): Step[] {
   const byPath = new Map<string, BoardItem[]>()
   for (const item of have)
@@ -187,11 +186,37 @@ export function planSync(
   for (const [path, item] of kept)
     if (!wanted.has(path))
       steps.push(
-        isGone(path, item, seen, login)
+        isGone(path, item, seen, opened)
           ? gone(item)
           : { kind: 'unchanged', id: item.id }
       )
   return [...steps, ...surplus]
+}
+
+/**
+ * The record after a sync (spec 0018 §2): each issue it created added, for
+ * its path; forgotten, one whose path git has seen (`seen` covers every
+ * recorded path), one this sync closed or archived (`closed`, by item), one
+ * no longer on the board.
+ */
+export function stillOpened(
+  opened: Opened,
+  have: readonly BoardItem[],
+  seen: ReadonlySet<string>,
+  closed: ReadonlySet<string>,
+  created: ReadonlyMap<string, Placed>
+): Map<number, string> {
+  const items = new Map<number, string>()
+  for (const item of have)
+    if (item.issue !== null) items.set(item.issue.number, item.id)
+  const next = new Map<number, string>()
+  for (const [number, path] of opened) {
+    const id = items.get(number)
+    if (id !== undefined && !closed.has(id) && !seen.has(path))
+      next.set(number, path)
+  }
+  for (const [path, placed] of created) next.set(placed.number, path)
+  return next
 }
 
 /** A document's issue after pass 1: its item, its number, its body as read (null: none worth reading). */

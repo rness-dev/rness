@@ -21,6 +21,7 @@ import { findWorkspace } from '../core/workspace.ts'
 import { issueBody } from '../pulse/body.ts'
 import { oneSyncAtATime, recordFailure } from '../pulse/detached.ts'
 import { desiredOf, layoutOf } from '../pulse/layout.ts'
+import { openedFile, readOpened, writeOpened } from '../pulse/opened.ts'
 import {
   type BodyStep,
   type Placed,
@@ -28,6 +29,7 @@ import {
   issuedAfter,
   planBodies,
   planSync,
+  stillOpened,
   unwantedPaths,
 } from '../pulse/plan.ts'
 import { reportError } from '../report.ts'
@@ -231,25 +233,40 @@ async function syncBoard(
   )
   const have = await fromGithub(c.provider.items(board))
   // Gone is gone for this clone's git (spec 0018 §2): a path it never saw is
-  // closed only on an issue this login opened. The login is asked for only
-  // then: a stored login knows it; an environment token asks GitHub once.
-  // Unknown (the ask failed), git's word alone decides.
-  const unwanted = unwantedPaths(want, have)
-  const seen = await seenPaths(c.rnessDir, unwanted)
-  const login = unwanted.every((p) => seen.has(p))
-    ? null
-    : ((await c.provider.identity())?.login ?? null)
-  const steps = planSync(want, have, seen, login)
+  // closed only on an issue this clone opened, as its record says. Git is
+  // asked about every recorded path too: one it has seen is forgotten.
+  const record = await openedFile(c.rnessDir)
+  const opened = await readOpened(record)
+  const seen = await seenPaths(c.rnessDir, [
+    ...unwantedPaths(want, have),
+    ...opened.values(),
+  ])
+  const steps = planSync(want, have, seen, opened)
   const changes = steps.filter((s) => s.kind !== 'unchanged').length
   let writes: BodyStep[] = []
   let made = 0
   try {
     const placed = new Map<string, Placed>()
-    for (const step of steps) {
-      const p = await fromGithub(c.provider.apply(board, step))
-      if (p !== null && (step.kind === 'create' || step.kind === 'convert'))
-        placed.set(step.want.path, p)
-      if (step.kind !== 'unchanged') made++
+    // Recorded: the issues this sync opened — not a draft converted, synced
+    // from a committed document — and forgotten: the ones it closed.
+    const created = new Map<string, Placed>()
+    const closed = new Set<string>()
+    try {
+      for (const step of steps) {
+        const p = await fromGithub(c.provider.apply(board, step))
+        if (p !== null && (step.kind === 'create' || step.kind === 'convert'))
+          placed.set(step.want.path, p)
+        if (p !== null && step.kind === 'create') created.set(step.want.path, p)
+        if (step.kind === 'close' || step.kind === 'archive')
+          closed.add(step.id)
+        if (step.kind !== 'unchanged') made++
+      }
+    } finally {
+      // What pass 1 did, recorded before anything else can stop the sync.
+      await writeOpened(
+        record,
+        stillOpened(opened, have, seen, closed, created)
+      )
     }
     const issued = issuedAfter(steps, have, placed)
     const numbers = new Map([...issued].map(([path, i]) => [path, i.number]))

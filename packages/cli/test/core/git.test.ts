@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import {
   clone,
   commitAll,
+  gitPath,
   init,
   isClean,
   originUrl,
@@ -138,4 +139,25 @@ test("seenPaths: what HEAD's history holds — kept, deleted, on a branch merged
   await mkdir(plain)
   assert.deepEqual([...(await seenPaths(plain, ['kept.md']))], [])
   assert.deepEqual([...(await seenPaths(dir, []))], [])
+})
+
+test('gitPath: a file of the git directory, absolute — its own for a linked worktree; null without a repository', async (t) => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-gitpath-')))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  const main = join(base, 'memory')
+  await mkdir(main)
+  await writeFile(join(main, 'a.md'), 'a\n')
+  await commitDir(main, 'first')
+  await git(['worktree', 'add', '-q', '-b', 'wt', join(base, 'wt')], main)
+  assert.equal(
+    await gitPath(main, 'rness/opened'),
+    join(main, '.git', 'rness', 'opened')
+  )
+  assert.equal(
+    await gitPath(join(base, 'wt'), 'rness/opened'),
+    join(main, '.git', 'worktrees', 'wt', 'rness', 'opened')
+  )
+  const plain = join(base, 'plain')
+  await mkdir(plain)
+  assert.equal(await gitPath(plain, 'rness/opened'), null)
 })

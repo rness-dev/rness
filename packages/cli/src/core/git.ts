@@ -186,6 +186,23 @@ export async function seenPaths(
   return seen
 }
 
+/**
+ * `name` in the git directory of `dir`, absolute — its worktree's own for a
+ * linked worktree (`git rev-parse --git-path`). Never pushed. Null when
+ * `dir` is no repository.
+ */
+export async function gitPath(
+  dir: string,
+  name: string
+): Promise<string | null> {
+  try {
+    const path = (await git(['rev-parse', '--git-path', name], dir)).trim()
+    return path === '' ? null : resolve(dir, path)
+  } catch {
+    return null
+  }
+}
+
 export async function pullFastForward(
   dir: string,
   credentials?: GitCredentials | null

@@ -9,6 +9,7 @@ import {
   issuedAfter,
   planBodies,
   planSync,
+  stillOpened,
   unwantedPaths,
 } from '../../src/pulse/plan.ts'
 
@@ -26,7 +27,6 @@ const open = (number: number, over: Partial<ItemIssue> = {}): ItemIssue => ({
   open: true,
   labelled: true,
   body: '',
-  author: 'octo',
   ...over,
 })
 /** rness's item: an open, labelled issue numbered after its id (`i5` → #5); `issue: null` is a 0.12.0 draft. */
@@ -134,31 +134,53 @@ test("a path this clone's git has never seen is not judged: its item unchanged, 
   )
 })
 
-test("a path git never saw is gone on an issue the logged-in developer opened, in any case; not on another's, a deleted account's or a draft — and one git saw is gone whoever opened it", () => {
+test("a path git never saw is gone only on an issue this clone recorded opening, with that path; another clone's, another path's, or a draft is left — one git saw is gone whatever the record", () => {
   const items = [
-    have('i1', 'renamed.md', { issue: open(1, { author: 'Octo' }) }),
-    have('i2', 'theirs.md', { issue: open(2, { author: 'teammate' }) }),
-    have('i3', 'ghost.md', { issue: open(3, { author: null }) }),
+    have('i1', 'renamed.md'),
+    have('i2', 'theirs.md'),
+    have('i3', 'moved.md'),
     have('d4', 'draft.md', { issue: null }),
-    have('i5', 'gone.md', { issue: open(5, { author: 'teammate' }) }),
+    have('i5', 'gone.md'),
   ]
-  assert.deepEqual(planSync([], items, new Set(['gone.md']), 'octo'), [
+  const opened = new Map([
+    [1, 'renamed.md'],
+    [3, 'elsewhere.md'],
+  ])
+  assert.deepEqual(planSync([], items, new Set(['gone.md']), opened), [
     { kind: 'close', id: 'i1' },
     { kind: 'unchanged', id: 'i2' },
     { kind: 'unchanged', id: 'i3' },
     { kind: 'unchanged', id: 'd4' },
     { kind: 'close', id: 'i5' },
   ])
+})
+
+test('the record after a sync: each issue created added; forgotten, one whose path git has seen, one this sync closed, one no longer on the board', () => {
+  const listed = [
+    have('i1', 'kept.md'),
+    have('i2', 'committed.md'),
+    have('i3', 'closed.md'),
+  ]
+  const opened = new Map([
+    [1, 'kept.md'],
+    [2, 'committed.md'],
+    [3, 'closed.md'],
+    [4, 'archived-by-hand.md'],
+  ])
   assert.deepEqual(
-    planSync([], items, new Set(['gone.md']), null),
     [
-      { kind: 'unchanged', id: 'i1' },
-      { kind: 'unchanged', id: 'i2' },
-      { kind: 'unchanged', id: 'i3' },
-      { kind: 'unchanged', id: 'd4' },
-      { kind: 'close', id: 'i5' },
+      ...stillOpened(
+        opened,
+        listed,
+        new Set(['committed.md']),
+        new Set(['i3']),
+        new Map([['new.md', { id: 'i7', number: 7 }]])
+      ),
     ],
-    "the login unknown: git's word alone"
+    [
+      [1, 'kept.md'],
+      [7, 'new.md'],
+    ]
   )
 })
 

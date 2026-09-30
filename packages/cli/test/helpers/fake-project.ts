@@ -36,8 +36,6 @@ export interface FIssue {
   labels: string[]
   /** `owner/name`. */
   repository: string
-  /** Who opened it; null: a deleted account. */
-  author: string | null
 }
 export interface FItem {
   id: string
@@ -58,7 +56,7 @@ export interface FMemory {
   linked: boolean
 }
 
-/** An issue of acme/.rness: open, labelled, no body yet, opened by octo — the tests' login. */
+/** An issue of acme/.rness: open, labelled, no body yet. */
 export const anIssue = (
   number: number,
   over: Partial<FIssue> = {}
@@ -70,7 +68,6 @@ export const anIssue = (
   state: 'OPEN',
   labels: ['rness'],
   repository: 'acme/.rness',
-  author: 'octo',
   ...over,
 })
 
@@ -479,14 +476,6 @@ export async function board(
                           state: i.issue.state,
                           // As GitHub answers: only when the query selects it.
                           ...(/\bbody\b/.test(q) ? { body: i.issue.body } : {}),
-                          ...(/\bauthor\b/.test(q)
-                            ? {
-                                author:
-                                  i.issue.author === null
-                                    ? null
-                                    : { login: i.issue.author },
-                              }
-                            : {}),
                           repository: { nameWithOwner: i.issue.repository },
                           labels: {
                             nodes: i.issue.labels.map((name) => ({ name })),

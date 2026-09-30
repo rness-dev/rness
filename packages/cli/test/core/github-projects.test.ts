@@ -252,7 +252,7 @@ test('setOptions resends the ids of the options it keeps', async (t) => {
   })
 })
 
-test('listItems follows endCursor over two pages, and reads an issue: its repository, number, state, body, labels and author', async (t) => {
+test('listItems follows endCursor over two pages, and reads an issue: its repository, number, state, body and labels', async (t) => {
   const item = (id: string, archived = false) => ({
     id,
     isArchived: archived,
@@ -274,7 +274,6 @@ test('listItems follows endCursor over two pages, and reads an issue: its reposi
       title: 'An issue',
       state: 'CLOSED',
       body: 'text',
-      author: { login: 'Octo' },
       repository: { nameWithOwner: 'acme/.rness' },
       labels: { nodes: [{ name: 'rness' }, { name: 'bug' }] },
     },
@@ -314,7 +313,6 @@ test('listItems follows endCursor over two pages, and reads an issue: its reposi
   assert.equal(gql(requests[1]!).variables['cursor'], 'c1')
   assert.match(gql(requests[0]!).query, /fieldValues\(first: 50\)/)
   assert.match(gql(requests[0]!).query, /\.\.\. on Issue \{/)
-  assert.match(gql(requests[0]!).query, /author \{\s+login\s+\}/)
   assert.deepEqual(items[0], {
     id: '1',
     draftId: 'D_1',
@@ -342,7 +340,6 @@ test('listItems follows endCursor over two pages, and reads an issue: its reposi
       repository: 'acme/.rness',
       body: 'text',
       labels: ['rness', 'bug'],
-      author: 'Octo',
     },
     title: 'An issue',
     archived: false,

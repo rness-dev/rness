@@ -161,12 +161,15 @@ status, …`) and its body the document (see **Body**). It carries the
   the document is gone, the issue is closed as not planned and its item
   archived. Gone means gone for this clone's git: the path is in its
   history and no longer in its working tree. A path it has never seen is
-  judged only on an issue your login opened — a document your agent wrote,
-  then renamed or deleted before any commit; any other — a teammate's
-  document not pulled yet — is left alone. An issue closed
-  while its document exists — by hand, or by a `fixes #12` in a `.rness`
-  commit — is reopened at the next sync. The document's status is its
-  field, not the issue's state. rness's items are those with a `Path`
+  judged only on an issue this clone's sync opened — a document its agent
+  wrote, then renamed or deleted before any commit. The clone records the
+  issues it opens in its own git directory (`rness/opened`, per worktree,
+  never pushed), and forgets one as soon as its git has seen the path. Any
+  other — a teammate's new document, or yours from another clone, not
+  pulled yet — is left alone. An issue closed while its document exists —
+  by hand, or by a `fixes #12` in a `.rness` commit — is reopened at the
+  next sync. The document's status is its field, not the issue's state.
+  rness's items are those with a `Path`
   whose content is an issue of `.rness`. A draft with a `Path` is rness's
   from 0.12.0, and is converted into an issue of `.rness`. An issue of
   `.rness` on the board, labelled `rness`, without `Path`, whose body's
@@ -174,9 +177,13 @@ status, …`) and its body the document (see **Body**). It carries the
   gets its `Path` and is brought up to date, and no second issue is made.
   Anything else — an item without `Path`, an issue of another repository,
   any other issue of `.rness` without `Path` — is the team's: never
-  edited, closed or archived. A clone behind the others writes what its
-  working tree holds — an older title, status or body — until it pulls;
-  the next up-to-date sync writes them back. The project is linked to
+  edited, closed or archived. Two known limits. A clone behind the others
+  writes what its working tree holds — an older title, status or body —
+  until it pulls; the next up-to-date sync writes them back. A document
+  that lives only on a branch of `.rness` has its issue closed by a sync
+  from a branch without it, if git has seen the path or this clone opened
+  the issue; back on its branch, it gets a new issue (`.rness` is worked
+  on `main`, and branches of it are rare). The project is linked to
   `.rness`, so Agent Pulse shows in its Projects tab. Comments are the
   team's: a spec's discussion lives on its issue, and rness never writes
   or deletes one. `pulse create` and `pulse sync` need Issues on
@@ -505,15 +512,17 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - An edit of a document that has no item yet — a spec or a plan the agent
   has just written — now gives it its issue, then marks it `working`.
   Before, it was marked only once a sync had added it.
-- A clone that has not pulled a teammate's new document leaves its item
-  alone. 0.12.0 archived it, and the next up-to-date sync made a second
-  one.
+- A clone that has not pulled a teammate's new document — or the same
+  developer's, from another clone — leaves its item alone. 0.12.0 archived
+  it, and the next up-to-date sync made a second one. A document renamed
+  or deleted before any commit has its issue closed by the clone that
+  opened it, which records it in its git directory (`rness/opened`).
 - The package's `Provider` interface changes:
   - `checkIssues(org)` is new;
   - `apply` returns the item and issue number of a create or a convert:
     `Placed | null`;
   - `BoardItem` gains a required `issue`: the item's issue of `.rness`
-    (number, state, label, body, author), or null;
+    (number, state, label, body), or null;
   - `Step` gains the kinds `convert`, `close` and `body`, and `update`
     gains `reopen`;
   - `items(board, { bodies: false })` lists the items without their
