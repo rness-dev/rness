@@ -25,6 +25,8 @@ Arguments: `$ARGUMENTS`.
      ran, what it showed, what could not run and why;
    - the specification: `Implemented` once every plan of it is
      `Completed`; `updated` today;
+   - the plan and the specification: add `${CLAUDE_SESSION_ID}` at the end
+     of `sessions:` in their front matter, unless it is already there;
    - the smallest set of documents the work makes inaccurate: `../../.rness/docs/`,
      the READMEs of the repositories it changed.
 6. A task not proven: the plan stays `In progress` — or `Blocked`, the

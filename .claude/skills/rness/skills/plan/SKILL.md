@@ -35,6 +35,8 @@ Writing:
   repository has one.
 - Where the plan decides something the specification leaves open, a
   section says so.
+- Add `${CLAUDE_SESSION_ID}` at the end of `sessions:` in the front matter,
+  unless it is already there.
 - The rness hook checks every edit under `../../.rness/`: fix what it reports.
 
 After writing: give the path and the list of tasks. It becomes `Ready` when
