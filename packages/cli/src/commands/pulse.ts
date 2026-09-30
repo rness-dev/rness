@@ -18,7 +18,7 @@ import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { issueBody } from '../pulse/body.ts'
-import { recordFailure } from '../pulse/detached.ts'
+import { oneSyncAtATime, recordFailure } from '../pulse/detached.ts'
 import { desiredOf, layoutOf } from '../pulse/layout.ts'
 import {
   type BodyStep,
@@ -371,6 +371,8 @@ interface MarkOptions {
   session: string
   paths: string[]
   end?: boolean
+  /** Internal (tests): how the lock's poll sleeps. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 /**
@@ -391,7 +393,9 @@ export async function pulseMarkCommand(opts: MarkOptions): Promise<number> {
 async function mark(opts: MarkOptions): Promise<number> {
   const c = await context(opts)
   const board = await declaredBoard(c)
-  const items = await fromGithub(c.provider.items(board))
+  const key = `${c.org}-${board.number}`
+  const lock = opts.sleep === undefined ? {} : { sleep: opts.sleep }
+  let items = await fromGithub(c.provider.items(board))
   if (opts.end === true) {
     // A subagent's marks read `claude · <type> · <id>`: the session's end
     // clears every mark ending in its id, whatever agent type precedes it.
@@ -402,10 +406,32 @@ async function mark(opts: MarkOptions): Promise<number> {
       )
       .map((i) => i.id)
     await fromGithub(c.provider.mark(board, ids, null))
-    await syncBoard(c, board, plainUi, eachAdded)
+    // The session's last sync waits its turn behind an edit's.
+    await oneSyncAtATime(key, () => syncBoard(c, board, plainUi, eachAdded), {
+      ...lock,
+      wait: true,
+    })
     return 0
   }
   const wanted = new Set(opts.paths)
+  // A document the agent has just written has no item until a sync gives it
+  // one (plan 0027 Task 6, a fix to spec 0017 §5). Only a document of
+  // `rness status` can get one: another file of `.rness/` costs no sync.
+  const documents = new Set(
+    (await statusTabs(c.rnessDir)).flatMap((t) => t.rows.map((r) => r.path))
+  )
+  const onBoard = new Set(
+    items.flatMap((i) => (i.path === null ? [] : [i.path]))
+  )
+  if ([...wanted].some((p) => documents.has(p) && !onBoard.has(p))) {
+    // Another hook's sync running gives it its item; the next edit marks it.
+    const synced = await oneSyncAtATime(
+      key,
+      () => syncBoard(c, board, plainUi, eachAdded),
+      lock
+    )
+    if (synced) items = await fromGithub(c.provider.items(board))
+  }
   const ids = items
     .filter((i) => i.path !== null && wanted.has(i.path))
     .map((i) => i.id)

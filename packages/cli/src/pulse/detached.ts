@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { configDir } from '../core/auth.ts'
 
@@ -55,5 +56,45 @@ export async function takeFailure(): Promise<string | null> {
     return typeof reason === 'string' && reason !== '' ? reason : null
   } catch {
     return null
+  }
+}
+
+/** A lock older than this is a crashed process's: a sync waits 10 minutes at most on GitHub. */
+const PULSE_LOCK_STALE_MS = 15 * 60_000
+
+/**
+ * The hooks' syncs of one board, one at a time: two at once would each give
+ * a new document an issue (plan 0027 Task 6). Runs `work` holding the lock
+ * and says true. Held by another process, it says false at once — or, with
+ * `wait`, polls each second until the lock is free or stale.
+ */
+export async function oneSyncAtATime(
+  key: string,
+  work: () => Promise<void>,
+  options: { wait?: boolean; sleep?: (ms: number) => Promise<void> } = {}
+): Promise<boolean> {
+  await mkdir(configDir(), { recursive: true, mode: 0o700 })
+  const file = join(configDir(), `pulse-${key}.lock`)
+  for (;;) {
+    try {
+      const handle = await open(file, 'wx')
+      await handle.close()
+      break
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+      const age = await stat(file).then(
+        (s) => Date.now() - s.mtimeMs,
+        () => 0
+      )
+      if (age > PULSE_LOCK_STALE_MS) await rm(file, { force: true })
+      else if (options.wait !== true) return false
+      else await (options.sleep ?? ((ms: number) => delay(ms)))(1_000)
+    }
+  }
+  try {
+    await work()
+    return true
+  } finally {
+    await rm(file, { force: true })
   }
 }

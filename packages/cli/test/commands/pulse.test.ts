@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -13,7 +20,7 @@ import {
 } from '../../src/commands/pulse.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import { digestOf, headerOf } from '../../src/pulse/body.ts'
-import { takeFailure } from '../../src/pulse/detached.ts'
+import { oneSyncAtATime, takeFailure } from '../../src/pulse/detached.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
 import {
@@ -1269,4 +1276,129 @@ test('--end clears the session and its subagents (same id, any agent type), not 
     .filter((m) => m.op === 'clear')
     .map((m) => m.variables['itemId'])
   assert.deepEqual([...new Set(cleared)].sort(), ['i1', 'i2'])
+})
+
+/** Listings of the board so far: a sync lists once more. */
+const listings = (g: Awaited<ReturnType<typeof board>>): number =>
+  g.requests.filter((r) => JSON.stringify(r.body ?? '').includes('items(first'))
+    .length
+
+async function writeDoc(cwd: string, path: string, text: string) {
+  const file = join(cwd, '.rness', ...path.split('/'))
+  await mkdir(join(file, '..'), { recursive: true })
+  await writeFile(file, text)
+}
+
+test('mark: a document just written has no item yet — it gets its issue, then its mark, in one run', async (t) => {
+  const { g, cwd } = await settled(t)
+  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 — C'))
+  const r = await run(() =>
+    pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session: 'claude · s1',
+      paths: ['specs/0003-c.md'],
+    })
+  )
+  assert.equal(r.code, 0)
+  assert.equal(await takeFailure(), null)
+  const made = g.items.find((i) => i.values['Path'] === 'specs/0003-c.md')
+  assert.equal(made?.issue?.title, '0003 — C')
+  assert.equal(made?.values['Agent'], 'working')
+  assert.equal(made?.values['Session'], 'claude · s1')
+  assert.equal(g.mutations.filter((m) => m.op === 'createIssue').length, 1)
+})
+
+test('mark: a document already on the board costs no sync', async (t) => {
+  const { g, cwd } = await settled(t)
+  const before = listings(g)
+  const r = await run(() =>
+    pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session: 'claude · s1',
+      paths: ['adr/0001-a.md'],
+    })
+  )
+  assert.equal(r.code, 0)
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['set', 'set']
+  )
+  assert.equal(listings(g) - before, 1, 'one listing, no sync')
+})
+
+test('mark: a file of .rness that is no document of rness status costs no sync and marks nothing', async (t) => {
+  const { g, cwd } = await settled(t)
+  await writeDoc(cwd, 'README.md', '# Memory\n')
+  const before = listings(g)
+  const r = await run(() =>
+    pulseMarkCommand({
+      cwd,
+      githubApi: g.base,
+      session: 'claude · s1',
+      paths: ['README.md', 'specs/9999-nowhere.md'],
+    })
+  )
+  assert.equal(r.code, 0)
+  assert.deepEqual(g.mutations, [])
+  assert.equal(listings(g) - before, 1, 'at most one sync: here none')
+})
+
+test("mark: while a hook's sync runs, an edit of a new document makes no second issue", async (t) => {
+  const { g, cwd } = await settled(t)
+  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 — C'))
+  let code: number | undefined
+  const ran = await oneSyncAtATime('acme-7', async () => {
+    code = (
+      await run(() =>
+        pulseMarkCommand({
+          cwd,
+          githubApi: g.base,
+          session: 'claude · s1',
+          paths: ['specs/0003-c.md'],
+        })
+      )
+    ).code
+  })
+  assert.equal(ran, true)
+  assert.equal(code, 0)
+  assert.deepEqual(
+    g.mutations,
+    [],
+    'the running sync gives it its issue; the next edit marks it'
+  )
+})
+
+test("--end waits for a hook's running sync, then syncs", async (t) => {
+  const { g, cwd } = await settled(t)
+  const slept: number[] = []
+  let out = ''
+  await oneSyncAtATime('acme-7', async () => {
+    out = (
+      await run(() =>
+        pulseMarkCommand({
+          cwd,
+          githubApi: g.base,
+          session: 'claude · s1',
+          paths: [],
+          end: true,
+          sleep: async (ms) => {
+            slept.push(ms)
+            // The other sync ends: its lock goes.
+            await rm(
+              join(
+                process.env['XDG_CONFIG_HOME']!,
+                'rness',
+                'pulse-acme-7.lock'
+              ),
+              { force: true }
+            )
+          },
+        })
+      )
+    ).out
+  })
+  assert.deepEqual(slept, [1_000])
+  assert.match(out, /^synced\s+2 items: 2 unchanged$/m)
 })
