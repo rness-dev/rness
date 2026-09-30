@@ -9,9 +9,9 @@ polyrepo. rness never runs an LLM loop and is not an agent.
 
 | Path                    | npm                                                                                                                                             | Status  |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `packages/cli`          | `@rness/cli` — the CLI, command `rness`: `create`, `add`, `sync`, `context`, `status`, `pulse`, `validate`, `upgrade`, `login`, `logout`, `mcp` | 0.15.1  |
-| `packages/create`       | `@rness/create` — `npm create @rness`                                                                                                           | 0.15.1  |
-| `packages/create-rness` | `create-rness` — `npm create rness`                                                                                                             | 0.15.1  |
+| `packages/cli`          | `@rness/cli` — the CLI, command `rness`: `create`, `add`, `sync`, `context`, `status`, `pulse`, `validate`, `upgrade`, `login`, `logout`, `mcp` | 0.16.0  |
+| `packages/create`       | `@rness/create` — `npm create @rness`                                                                                                           | 0.16.0  |
+| `packages/create-rness` | `create-rness` — `npm create rness`                                                                                                             | 0.16.0  |
 | `plugins/claude-code`   | Claude Code plugin; this repository is its marketplace                                                                                          | planned |
 | `templates/`, `action/` | demo apps, GitHub projection Action                                                                                                             | planned |
 
@@ -20,7 +20,7 @@ polyrepo. rness never runs an LLM loop and is not an agent.
     pnpm install
     pnpm lint && pnpm format:check                # eslint, prettier (CI runs both)
     pnpm typecheck && pnpm test && pnpm build     # every package
-    pnpm check:versions [--tag v0.15.1]            # lockstep versions; with the tag before a release
+    pnpm check:versions [--tag v0.16.0]            # lockstep versions; with the tag before a release
     pnpm lint:fix && pnpm format                  # apply the fixes
     RNESS_NO_DELEGATE=1 node packages/cli/src/bin/rness.ts --help     # run the CLI from source
 

@@ -358,7 +358,7 @@ repository, the board).
   `contract`, `provider`, `org`, `agents`, `pulse`, `repos`, `scopes`.
 - A provider _written_ in `rness.json` that this version cannot talk to
   (`gitlab`) is refused by `validate`, `create`, `login` and `pulse`:
-  `provider "gitlab" is not supported by @rness/cli 0.15.1 (supported:
+  `provider "gitlab" is not supported by @rness/cli 0.16.0 (supported:
 github)`. `add`, `sync` and the local commands never refuse. `null` is not a
   value: an absent key means none.
 
