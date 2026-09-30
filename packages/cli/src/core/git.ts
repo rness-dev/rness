@@ -150,6 +150,42 @@ export async function changedPaths(
   return changed
 }
 
+/**
+ * Which of `paths` the history of `HEAD` in `dir` holds — a document gone
+ * from the working tree was there (spec 0018 §2). One `git log` a path,
+ * nothing fetched. `HEAD`, not every ref: a teammate's document fetched but
+ * not merged is not this clone's. `--full-history`: a path added and removed
+ * on a branch merged back counts. A path is literal, never an option or a
+ * glob. One git cannot answer for — no repository, no commit yet, outside
+ * the repository — is not seen: what git cannot vouch for is never closed.
+ */
+export async function seenPaths(
+  dir: string,
+  paths: readonly string[]
+): Promise<Set<string>> {
+  const seen = new Set<string>()
+  for (const path of new Set(paths)) {
+    try {
+      const commit = await git(
+        [
+          'log',
+          '-1',
+          '--full-history',
+          '--format=%H',
+          'HEAD',
+          '--',
+          `:(literal)${path}`,
+        ],
+        dir
+      )
+      if (commit.trim() !== '') seen.add(path)
+    } catch {
+      // Not seen: see above.
+    }
+  }
+  return seen
+}
+
 export async function pullFastForward(
   dir: string,
   credentials?: GitCredentials | null

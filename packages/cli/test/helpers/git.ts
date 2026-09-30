@@ -16,12 +16,20 @@ const IDENTITY = [
   'commit.gpgsign=false',
 ]
 
-async function git(args: string[], cwd: string): Promise<string> {
+/** `git <args>` in `cwd`, as a test identity that signs nothing. */
+export async function git(args: string[], cwd: string): Promise<string> {
   const { stdout } = await execFileP('git', [...IDENTITY, ...args], {
     cwd,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
   })
   return stdout
+}
+
+/** `dir` made a repository on `main` when it is none, and all it holds committed. */
+export async function commitDir(dir: string, message = 'docs'): Promise<void> {
+  await git(['init', '-q', '-b', 'main'], dir)
+  await git(['add', '-A'], dir)
+  await git(['commit', '-q', '-m', message], dir)
 }
 
 /** A bare repository with one commit (`README.md`), as a file:// URL. */

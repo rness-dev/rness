@@ -90,16 +90,35 @@ function strays(have: readonly BoardItem[]): Map<string, BoardItem[]> {
 }
 
 /**
+ * The paths `planSync` judges: on the board, no document wanted there — once
+ * each. Whether this clone's git has seen them decides (spec 0018 §2).
+ */
+export function unwantedPaths(
+  want: readonly Desired[],
+  have: readonly BoardItem[]
+): string[] {
+  const wanted = new Set(want.map((w) => w.path))
+  const paths = new Set<string>()
+  for (const item of have)
+    if (item.path !== null && !wanted.has(item.path)) paths.add(item.path)
+  return [...paths]
+}
+
+/**
  * Pass 1, one way (spec 0018 §2, §4): items are found by `path`. A document
  * without one adopts the issue a stopped sync left without `Path`, or gets
  * a new one; a draft of 0.12.0 becomes one; a closed issue is reopened;
  * whatever differs is written back. Items that are not rness's are left
  * alone — and so is a stray whose document has an item: adopting it only
- * ever replaces a second issue.
+ * ever replaces a second issue. An item with no document is gone only on a
+ * path of `seen` — this clone's git holds it, its tree no longer does; any
+ * other is a document not pulled yet, unchanged. Told nothing, it closes
+ * nothing.
  */
 export function planSync(
   want: readonly Desired[],
-  have: readonly BoardItem[]
+  have: readonly BoardItem[],
+  seen: ReadonlySet<string> = new Set()
 ): Step[] {
   const byPath = new Map<string, BoardItem[]>()
   for (const item of have)
@@ -135,7 +154,11 @@ export function planSync(
       })
     else steps.push({ kind: 'unchanged', id: item.id })
   }
-  for (const [path, item] of kept) if (!wanted.has(path)) steps.push(gone(item))
+  for (const [path, item] of kept)
+    if (!wanted.has(path))
+      steps.push(
+        seen.has(path) ? gone(item) : { kind: 'unchanged', id: item.id }
+      )
   return [...steps, ...surplus]
 }
 

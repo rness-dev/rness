@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import type { CommandDeps } from '../core/deps.ts'
+import { seenPaths } from '../core/git.ts'
 import {
   GitHubMessageError,
   RateLimitError,
@@ -27,6 +28,7 @@ import {
   issuedAfter,
   planBodies,
   planSync,
+  unwantedPaths,
 } from '../pulse/plan.ts'
 import { reportError } from '../report.ts'
 import { loginCommand } from './login.ts'
@@ -165,6 +167,8 @@ const count = (n: number, word: string): string =>
 /**
  * What a sync did (spec 0018 §4): to `.rness`'s Issues first, then to every
  * item, as 0.12.0 said it; an item whose body alone was written is updated.
+ * Each document has one step of create, convert, update or unchanged; an
+ * item left alone for want of a document here is no document, not counted.
  */
 function sayDone(
   ui: Ui,
@@ -192,7 +196,10 @@ function sayDone(
       ['created', n('create')],
       ['converted', n('convert')],
       ['updated', n('update') + bodyOnly],
-      ['unchanged', n('unchanged') - bodyOnly],
+      [
+        'unchanged',
+        documents - n('create') - n('convert') - n('update') - bodyOnly,
+      ],
       ['archived', n('close') + n('archive')],
     ] as const
   )
@@ -223,7 +230,9 @@ async function syncBoard(
     await fromGithub(c.provider.ensureLayout(board, layoutOf(tabs)))
   )
   const have = await fromGithub(c.provider.items(board))
-  const steps = planSync(want, have)
+  // Gone is gone for this clone's git: a document it never saw is not closed.
+  const seen = await seenPaths(c.rnessDir, unwantedPaths(want, have))
+  const steps = planSync(want, have, seen)
   const changes = steps.filter((s) => s.kind !== 'unchanged').length
   let writes: BodyStep[] = []
   let made = 0

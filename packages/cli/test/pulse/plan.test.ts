@@ -9,6 +9,7 @@ import {
   issuedAfter,
   planBodies,
   planSync,
+  unwantedPaths,
 } from '../../src/pulse/plan.ts'
 
 const want = (path: string, over: Partial<Desired> = {}): Desired => ({
@@ -96,16 +97,55 @@ test('a draft of 0.12.0 with its path is converted, whatever its fields', () => 
   ])
 })
 
-test('a document gone: its issue closed, a draft of it archived', () => {
+test("a document gone — in this clone's git, no longer in its tree: its issue closed, a draft of it archived", () => {
   assert.deepEqual(
     planSync(
       [],
-      [have('i1', 'gone.md'), have('d2', 'old.md', { issue: null })]
+      [have('i1', 'gone.md'), have('d2', 'old.md', { issue: null })],
+      new Set(['gone.md', 'old.md'])
     ),
     [
       { kind: 'close', id: 'i1' },
       { kind: 'archive', id: 'd2' },
     ]
+  )
+})
+
+test("a path this clone's git has never seen is not judged: its item unchanged, issue or draft", () => {
+  const items = [
+    have('i1', 'theirs.md'),
+    have('d2', 'draft.md', { issue: null }),
+    have('i3', 'gone.md'),
+  ]
+  assert.deepEqual(planSync([], items, new Set(['gone.md'])), [
+    { kind: 'unchanged', id: 'i1' },
+    { kind: 'unchanged', id: 'd2' },
+    { kind: 'close', id: 'i3' },
+  ])
+  assert.deepEqual(
+    planSync([], items),
+    [
+      { kind: 'unchanged', id: 'i1' },
+      { kind: 'unchanged', id: 'd2' },
+      { kind: 'unchanged', id: 'i3' },
+    ],
+    'told nothing, it closes nothing'
+  )
+})
+
+test('the paths git is asked about: on the board, not wanted — once each; not a wanted one, nor an item without a path', () => {
+  assert.deepEqual(
+    unwantedPaths(
+      [want('a.md')],
+      [
+        have('i1', 'a.md'),
+        have('i2', 'b.md'),
+        have('i3', 'b.md'),
+        have('d4', 'c.md', { issue: null }),
+        have('i5', null),
+      ]
+    ),
+    ['b.md', 'c.md']
   )
 })
 
@@ -119,7 +159,7 @@ test("an item without a path is the team's: left alone, and its document gets it
 
 test('a renamed document: a new issue, the old one closed', () => {
   const w = want('new.md')
-  assert.deepEqual(planSync([w], [have('i1', 'old.md')]), [
+  assert.deepEqual(planSync([w], [have('i1', 'old.md')], new Set(['old.md'])), [
     { kind: 'create', want: w },
     { kind: 'close', id: 'i1' },
   ])
@@ -230,7 +270,11 @@ test("after pass 1, each document's issue: as listed, or as pass 1 placed it", (
     have('d2', 'b.md', { issue: null }),
     have('i9', 'gone.md'),
   ]
-  const steps = planSync([want('a.md'), want('b.md'), want('c.md')], listed)
+  const steps = planSync(
+    [want('a.md'), want('b.md'), want('c.md')],
+    listed,
+    new Set(['gone.md'])
+  )
   const issued = issuedAfter(
     steps,
     listed,

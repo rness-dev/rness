@@ -30,6 +30,7 @@ import {
   anIssue,
   board,
 } from '../helpers/fake-project.ts'
+import { commitDir } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const doc = (status: string, title: string) =>
@@ -684,16 +685,40 @@ test('hand changes on GitHub are written back: a body edited under its digest, a
   )
 })
 
-test('a gone document: its issue closed as not planned, its item archived', async (t) => {
+test("a gone document — committed, then deleted: its issue closed as not planned, its item archived; a path this clone's git never saw is left alone", async (t) => {
   const { g, cwd, sync } = await settled(t)
-  await rm(join(cwd, '.rness', 'plans', '0002-b.md'))
+  const memory = join(cwd, '.rness')
+  await commitDir(memory, 'docs')
+  await rm(join(memory, 'plans', '0002-b.md'))
+  await commitDir(memory, 'plans: 0002 gone')
+  const b = g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')!
+  // A teammate's new document: on the board, not pulled into this clone.
+  g.items.push(
+    item(
+      'i9',
+      {
+        Path: 'specs/0009-theirs.md',
+        Collection: 'Specs',
+        Status: 'Draft',
+        'Specs status': 'Draft',
+      },
+      '0009 — Theirs'
+    )
+  )
   const r = await sync()
+  assert.equal(r.err, '')
   assert.deepEqual(lines(r.out), ['synced 1 item: 1 unchanged, 1 archived'])
   assert.deepEqual(
-    g.mutations.map((m) => m.op),
-    ['closeIssue', 'archive']
+    g.mutations.map((m) => [m.op, m.variables['id'] ?? m.variables['itemId']]),
+    [
+      ['closeIssue', b.issue!.id],
+      ['archive', b.id],
+    ]
   )
   assert.match(g.mutations[0]!.query!, /stateReason: NOT_PLANNED/)
+  const theirs = g.items.find((i) => i.id === 'i9')!
+  assert.equal(theirs.archived, false)
+  assert.equal(theirs.issue?.state, 'OPEN')
 })
 
 test("the first sync with 0.13.0: 0.12.0's drafts converted in place, labelled, their bodies written, the board linked; the next writes nothing", async (t) => {

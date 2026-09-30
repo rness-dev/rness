@@ -13,8 +13,9 @@ import {
   isClean,
   originUrl,
   pullFastForward,
+  seenPaths,
 } from '../../src/core/git.ts'
-import { commitTo, makeBareRepo } from '../helpers/git.ts'
+import { commitDir, commitTo, git, makeBareRepo } from '../helpers/git.ts'
 
 process.env['GIT_AUTHOR_NAME'] = 'rness-test'
 process.env['GIT_AUTHOR_EMAIL'] = 'test@rness.invalid'
@@ -92,4 +93,49 @@ test('init and commitAll create a repository on main with one commit', async (t)
     { cwd: base }
   )
   assert.equal(stdout.trim().split('\n').length, 1)
+})
+
+test("seenPaths: what HEAD's history holds — kept, deleted, on a branch merged back — not what it never held, nor what git cannot answer for", async (t) => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-seen-')))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  const dir = join(base, 'memory')
+  await mkdir(dir)
+  await writeFile(join(dir, 'kept.md'), 'k\n')
+  await writeFile(join(dir, 'deleted.md'), 'd\n')
+  await commitDir(dir, 'first')
+  await rm(join(dir, 'deleted.md'))
+  await commitDir(dir, 'deleted.md gone')
+  // Added then removed on a branch merged with no change to main: history
+  // simplification alone would skip the branch.
+  await git(['checkout', '-q', '-b', 'side'], dir)
+  await writeFile(join(dir, 'side.md'), 's\n')
+  await commitDir(dir, 'side.md')
+  await rm(join(dir, 'side.md'))
+  await commitDir(dir, 'side.md gone')
+  await git(['checkout', '-q', 'main'], dir)
+  await git(['merge', '-q', '--no-ff', '-m', 'merge side', 'side'], dir)
+  // A teammate's document fetched, not merged: on a ref, not in HEAD's history.
+  await git(['checkout', '-q', '-b', 'fetched'], dir)
+  await writeFile(join(dir, 'fetched.md'), 'f\n')
+  await commitDir(dir, 'fetched.md')
+  await git(['checkout', '-q', 'main'], dir)
+  await writeFile(join(dir, 'untracked.md'), 'u\n')
+
+  const seen = await seenPaths(dir, [
+    'kept.md',
+    'deleted.md',
+    'side.md',
+    'fetched.md',
+    'untracked.md',
+    'never.md',
+    '*.md',
+    '../outside.md',
+    '--output=x',
+  ])
+  assert.deepEqual([...seen].sort(), ['deleted.md', 'kept.md', 'side.md'])
+
+  const plain = join(base, 'plain')
+  await mkdir(plain)
+  assert.deepEqual([...(await seenPaths(plain, ['kept.md']))], [])
+  assert.deepEqual([...(await seenPaths(dir, []))], [])
 })
