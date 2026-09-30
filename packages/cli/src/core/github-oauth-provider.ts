@@ -1,5 +1,5 @@
 import type { Layout } from '../pulse/layout.ts'
-import type { BoardItem, Step } from '../pulse/plan.ts'
+import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
 import { type ResolvedToken, resolveToken } from './auth.ts'
 import { GitHubBoards } from './github-board.ts'
 import {
@@ -120,6 +120,10 @@ export class GitHubOAuthProvider implements Provider {
   }
 
   // The board methods are async so that a missing login rejects, never throws.
+  async checkIssues(org: string): Promise<void> {
+    return this.#boards().checkIssues(org)
+  }
+
   async createBoard(org: string): Promise<Board> {
     return this.#boards().createBoard(org)
   }
@@ -136,7 +140,7 @@ export class GitHubOAuthProvider implements Provider {
     return this.#boards().items(board)
   }
 
-  async apply(board: Board, step: Step): Promise<void> {
+  async apply(board: Board, step: Step): Promise<Placed | null> {
     return this.#boards().apply(board, step)
   }
 

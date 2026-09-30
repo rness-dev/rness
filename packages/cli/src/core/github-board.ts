@@ -1,10 +1,12 @@
+import type { Desired } from '../pulse/layout.ts'
 import {
   type Layout,
   type OptionColor,
   optionColor,
   statusFieldName,
 } from '../pulse/layout.ts'
-import type { BoardItem, Step } from '../pulse/plan.ts'
+import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
+import * as gi from './github-issues.ts'
 import * as gh from './github-projects.ts'
 import type { ApiOptions } from './github.ts'
 import type { Board, Provider } from './provider.ts'
@@ -14,6 +16,12 @@ import type { Board, Provider } from './provider.ts'
 export const PROJECT_TITLE = 'Agent Pulse'
 const WORKING = 'working'
 const WORKING_VIEW = 'Working'
+/** The repository whose issues are the board's items (spec 0018 §2). */
+const MEMORY = '.rness'
+/** The label every one of them carries: `-label:rness` leaves them out of the Issues tab. */
+export const LABEL = 'rness'
+const LABEL_COLOR = '5319e7'
+const LABEL_DESCRIPTION = 'A document of .rness, on Agent Pulse'
 
 /**
  * SPIKE-DEPENDENT CHOICES (not yet verified live): the names of the two
@@ -92,10 +100,18 @@ const orderedFirst = (
 /** The adapter's board methods, for one process: project ids and fields are cached per board. */
 export class GitHubBoards implements Pick<
   Provider,
-  'createBoard' | 'board' | 'ensureLayout' | 'items' | 'apply' | 'mark'
+  | 'checkIssues'
+  | 'createBoard'
+  | 'board'
+  | 'ensureLayout'
+  | 'items'
+  | 'apply'
+  | 'mark'
 > {
   readonly #o: ApiOptions
   readonly #cache = new Map<string, Cache>()
+  /** Each organization's `.rness`, as first read: its id, its Issues, its label. */
+  readonly #memories = new Map<string, gi.Repository>()
 
   constructor(options: ApiOptions) {
     this.#o = options
@@ -122,6 +138,25 @@ export class GitHubBoards implements Pick<
     const cache = await this.#cacheOf(board)
     cache.fields ??= await gh.fields(cache.projectId, this.#o)
     return cache.fields
+  }
+
+  async #memory(org: string): Promise<gi.Repository> {
+    const known = this.#memories.get(org)
+    if (known !== undefined) return known
+    const found = await gi.repository(org, MEMORY, LABEL, this.#o)
+    if (found === null)
+      throw new Error(
+        `the pulse needs ${org}/${MEMORY} on GitHub: it is not there, or this login cannot see it`
+      )
+    this.#memories.set(org, found)
+    return found
+  }
+
+  async checkIssues(org: string): Promise<void> {
+    if (!(await this.#memory(org)).issues)
+      throw new Error(
+        `the pulse needs Issues on ${org}/${MEMORY}: turn them on in its Settings`
+      )
   }
 
   /** The project only: the caller declares it before `ensureLayout` builds it. */
@@ -304,6 +339,24 @@ export class GitHubBoards implements Pick<
         this.#o
       )
     }
+    // The items' repository (spec 0018 §2): its label, and the board linked
+    // to it — read first, so an unchanged board costs no write.
+    const memory = await this.#memory(board.org)
+    if (memory.labelId === null) {
+      memory.labelId = await gi.createLabel(
+        board.org,
+        MEMORY,
+        { name: LABEL, color: LABEL_COLOR, description: LABEL_DESCRIPTION },
+        this.#o
+      )
+      added.push(`label ${LABEL}`)
+    }
+    const repository = `${board.org}/${MEMORY}`
+    const linked = await gh.linkedRepositories(cache.projectId, this.#o)
+    if (!linked.some((r) => r.toLowerCase() === repository.toLowerCase())) {
+      await gh.linkRepository(cache.projectId, memory.id, this.#o)
+      added.push(`link ${repository}`)
+    }
     cache.fields = [status, collection, ...own.values(), agent, session, path]
     return added
   }
@@ -312,21 +365,38 @@ export class GitHubBoards implements Pick<
     const cache = await this.#cacheOf(board)
     const raw = await gh.listItems(cache.projectId, this.#o)
     cache.known = new Map(raw.map((r) => [r.id, r]))
+    const memory = `${board.org}/${MEMORY}`.toLowerCase()
     return raw
       .filter((r) => !r.archived)
-      .map((r) => ({
-        id: r.id,
-        // No longer a draft issue (converted by hand): the team's, like an
-        // item without Path — the plan leaves it alone (spec 0017 §4).
-        path: r.draftId === null ? null : (r.values['Path'] ?? null),
-        title: r.title,
-        status: r.values[STATUS_FIELD] ?? null,
-        collectionStatus:
-          r.values[statusFieldName(r.values[COLLECTION_FIELD] ?? '')] ?? null,
-        type: r.values[COLLECTION_FIELD] ?? null,
-        agent: r.values['Agent'] ?? null,
-        session: r.values['Session'] ?? null,
-      }))
+      .map((r) => {
+        const issue =
+          r.issue !== null && r.issue.repository.toLowerCase() === memory
+            ? r.issue
+            : null
+        // rness's: a draft of 0.12.0 or an issue of .rness, with Path. Any
+        // other item is the team's (spec 0018 §2).
+        const ours = r.draftId !== null || issue !== null
+        return {
+          id: r.id,
+          path: ours ? (r.values['Path'] ?? null) : null,
+          issue:
+            issue === null
+              ? null
+              : {
+                  number: issue.number,
+                  open: issue.open,
+                  labelled: issue.labels.includes(LABEL),
+                  body: issue.body,
+                },
+          title: r.title,
+          status: r.values[STATUS_FIELD] ?? null,
+          collectionStatus:
+            r.values[statusFieldName(r.values[COLLECTION_FIELD] ?? '')] ?? null,
+          type: r.values[COLLECTION_FIELD] ?? null,
+          agent: r.values['Agent'] ?? null,
+          session: r.values['Session'] ?? null,
+        }
+      })
   }
 
   async #set(
@@ -338,42 +408,118 @@ export class GitHubBoards implements Pick<
     const cache = await this.#cacheOf(board)
     const field = (await this.#fields(board)).find((f) => f.name === name)
     if (field === undefined) throw new Error(`the board has no field ${name}`)
-    if (value === null) {
-      await gh.setValue(cache.projectId, itemId, field.id, null, this.#o)
-      return
+    let sent: { text: string } | { optionId: string } | null = null
+    if (value !== null && field.options === null) sent = { text: value }
+    else if (value !== null) {
+      const option = field.options?.find((opt) => opt.name === value)
+      if (option === undefined)
+        throw new Error(`the field ${name} has no option ${value}`)
+      sent = { optionId: option.id }
     }
-    if (field.options === null) {
-      await gh.setValue(
-        cache.projectId,
-        itemId,
-        field.id,
-        { text: value },
-        this.#o
-      )
-      return
-    }
-    const option = field.options.find((opt) => opt.name === value)
-    if (option === undefined)
-      throw new Error(`the field ${name} has no option ${value}`)
-    await gh.setValue(
-      cache.projectId,
-      itemId,
-      field.id,
-      { optionId: option.id },
-      this.#o
-    )
+    await gh.setValue(cache.projectId, itemId, field.id, sent, this.#o)
+    const known = cache.known.get(itemId)
+    if (known === undefined) return
+    if (value === null) delete known.values[name]
+    else known.values[name] = value
   }
 
-  async apply(board: Board, step: Step): Promise<void> {
-    if (step.kind === 'unchanged') return
+  async apply(board: Board, step: Step): Promise<Placed | null> {
+    if (step.kind === 'unchanged') return null
     const cache = await this.#cacheOf(board)
-    if (step.kind === 'archive') {
+    if (step.kind === 'create') return this.#create(board, cache, step.want)
+    const known = await this.#known(board, step.id)
+    if (step.kind === 'archive' || step.kind === 'close') {
+      // A document gone: its issue closed as not planned (spec 0018 §2).
+      if (step.kind === 'close' && known.issue?.open === true)
+        await gi.closeIssue(known.issue.id, this.#o)
       await gh.archive(cache.projectId, step.id, this.#o)
       cache.known.delete(step.id)
-      return
+      return null
     }
-    const { want } = step
-    const values: [string, string | null][] = [
+    if (step.kind === 'body') {
+      const issue = this.#issueOf(known)
+      await gi.updateIssue(issue.id, { body: step.body }, this.#o)
+      issue.body = step.body
+      return null
+    }
+    const labelId = await this.#labelId(board)
+    if (step.kind === 'convert') {
+      const made = await gh.convertDraft(
+        step.id,
+        (await this.#memory(board.org)).id,
+        this.#o
+      )
+      known.draftId = null
+      known.issue = {
+        ...made,
+        open: true,
+        repository: `${board.org}/${MEMORY}`,
+        body: '',
+        labels: [],
+      }
+      await this.#issue(known, step.want, labelId)
+      await this.#values(board, step.id, step.want)
+      return { id: step.id, number: made.number }
+    }
+    const issue = this.#issueOf(known)
+    if (step.reopen) {
+      await gi.reopenIssue(issue.id, this.#o)
+      issue.open = true
+    }
+    await this.#issue(known, step.want, labelId)
+    await this.#values(board, step.id, step.want)
+    return null
+  }
+
+  /** A new document's issue: labelled, the first line as body, added to the board, Path first. */
+  async #create(board: Board, cache: Cache, want: Desired): Promise<Placed> {
+    const memory = await this.#memory(board.org)
+    const labelId = await this.#labelId(board)
+    const made = await gi.createIssue(
+      memory.id,
+      { title: want.title, body: want.body, labelIds: [labelId] },
+      this.#o
+    )
+    const id = await gh.addItem(cache.projectId, made.id, this.#o)
+    cache.known.set(id, {
+      id,
+      draftId: null,
+      issue: {
+        ...made,
+        open: true,
+        repository: `${board.org}/${MEMORY}`,
+        body: want.body,
+        labels: [LABEL],
+      },
+      title: want.title,
+      archived: false,
+      values: {},
+    })
+    await this.#values(board, id, want)
+    return { id, number: made.number }
+  }
+
+  /** The label and the title an issue of the board carries. */
+  async #issue(
+    known: gh.RawItem,
+    want: Desired,
+    labelId: string
+  ): Promise<void> {
+    const issue = this.#issueOf(known)
+    if (!issue.labels.includes(LABEL)) {
+      await gi.addLabels(issue.id, [labelId], this.#o)
+      issue.labels.push(LABEL)
+    }
+    if (known.title !== want.title) {
+      await gi.updateIssue(issue.id, { title: want.title }, this.#o)
+      known.title = want.title
+    }
+  }
+
+  /** Path first — an issue on the board without it is the team's — then the fields, each only when it differs. */
+  async #values(board: Board, id: string, want: Desired): Promise<void> {
+    const values = (await this.#known(board, id)).values
+    const wanted: [string, string | null][] = [
       ['Path', want.path],
       [COLLECTION_FIELD, want.type],
       [STATUS_FIELD, want.status],
@@ -381,25 +527,32 @@ export class GitHubBoards implements Pick<
         ? []
         : ([[want.statusField, want.status]] as [string, string | null][])),
     ]
-    if (step.kind === 'create') {
-      const id = await gh.addDraft(
-        cache.projectId,
-        want.title,
-        want.body,
-        this.#o
+    for (const [name, value] of wanted)
+      if ((values[name] ?? null) !== value)
+        await this.#set(board, id, name, value)
+  }
+
+  async #known(board: Board, id: string): Promise<gh.RawItem> {
+    const cache = await this.#cacheOf(board)
+    if (!cache.known.has(id)) await this.items(board)
+    const known = cache.known.get(id)
+    if (known === undefined) throw new Error(`the board has no item ${id}`)
+    return known
+  }
+
+  #issueOf(known: gh.RawItem): gh.RawIssue {
+    if (known.issue === null)
+      throw new Error(`the board's item ${known.id} is no issue`)
+    return known.issue
+  }
+
+  async #labelId(board: Board): Promise<string> {
+    const id = (await this.#memory(board.org)).labelId
+    if (id === null)
+      throw new Error(
+        `${board.org}/${MEMORY} has no label ${LABEL}: run rness pulse sync`
       )
-      for (const [name, value] of values)
-        if (value !== null) await this.#set(board, id, name, value)
-      return
-    }
-    if (!cache.known.has(step.id)) await this.items(board)
-    const known = cache.known.get(step.id)
-    if (known?.draftId == null)
-      throw new Error(`the board has no draft item ${step.id}`)
-    await gh.editDraft(known.draftId, want.title, want.body, this.#o)
-    for (const [name, value] of values)
-      if ((known.values[name] ?? null) !== value)
-        await this.#set(board, step.id, name, value)
+    return id
   }
 
   async mark(

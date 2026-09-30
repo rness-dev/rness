@@ -3,7 +3,7 @@ import { type TestContext, test } from 'node:test'
 
 import { GitHubOAuthProvider } from '../../src/core/github-oauth-provider.ts'
 import type { Layout } from '../../src/pulse/layout.ts'
-import { type FItem, board } from '../helpers/fake-project.ts'
+import { type FItem, anIssue, board } from '../helpers/fake-project.ts'
 
 const layout: Layout = {
   statuses: ['draft', 'accepted'],
@@ -173,81 +173,142 @@ test('ensureLayout adds only what is missing, and removes nothing', async (t) =>
   assert.deepEqual(again, [])
 })
 
-test('items: values by field name, missing ones null, archived ones not listed, converted ones without a path', async (t) => {
+test("items: rness's are drafts and issues of acme/.rness with a Path; anything else is the team's", async (t) => {
   const g = await board(t, {
-    fields: [
-      {
-        id: 'F_status',
-        databaseId: 1,
-        name: 'Status',
-        options: [{ id: 's1', name: 'draft' }],
-      },
-      { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
-    ],
     items: [
       {
         id: 'I_gone',
-        draftId: 'D_0',
-        title: '0001 — A',
+        draftId: null,
+        issue: anIssue(1),
+        title: '',
         archived: true,
-        values: { Status: 'draft', Path: 'adr/a.md' },
+        values: { Path: 'adr/a.md' },
       },
       {
         id: 'I_1',
-        draftId: 'D_1',
-        title: '0001 — A',
+        draftId: null,
+        issue: anIssue(2, { title: '0001 — A', body: 'b' }),
+        title: '',
         archived: false,
         values: { Status: 'draft', Path: 'adr/a.md' },
       },
       {
         id: 'I_2',
-        draftId: 'D_2',
-        title: 'by hand',
+        draftId: null,
+        issue: anIssue(3, {
+          state: 'CLOSED',
+          labels: [],
+          repository: 'ACME/.Rness',
+        }),
+        title: '',
+        archived: false,
+        values: { Path: 'adr/b.md' },
+      },
+      {
+        id: 'I_3',
+        draftId: 'D_3',
+        title: '0003 — C',
+        archived: false,
+        values: { Path: 'adr/c.md' },
+      },
+      {
+        id: 'I_4',
+        draftId: null,
+        issue: anIssue(4, { repository: 'acme/web' }),
+        title: '',
+        archived: false,
+        values: { Path: 'adr/d.md' },
+      },
+      {
+        id: 'I_5',
+        draftId: null,
+        issue: anIssue(5),
+        title: '',
         archived: false,
         values: {},
       },
       {
-        id: 'I_3',
+        id: 'I_6',
         draftId: null,
         title: '',
         archived: false,
-        values: { Status: 'draft', Path: 'adr/b.md' },
+        values: { Path: 'adr/e.md' },
       },
     ],
   })
-  assert.deepEqual(await g.provider.items(BOARD), [
+  const items = await g.provider.items(BOARD)
+  assert.deepEqual(
+    items.map((i) => [i.id, i.path, i.issue]),
+    [
+      ['I_1', 'adr/a.md', { number: 2, open: true, labelled: true, body: 'b' }],
+      [
+        'I_2',
+        'adr/b.md',
+        { number: 3, open: false, labelled: false, body: '' },
+      ],
+      ['I_3', 'adr/c.md', null],
+      ['I_4', null, null],
+      ['I_5', null, { number: 5, open: true, labelled: true, body: '' }],
+      ['I_6', null, null],
+    ]
+  )
+  assert.deepEqual(items[0], {
+    id: 'I_1',
+    path: 'adr/a.md',
+    issue: { number: 2, open: true, labelled: true, body: 'b' },
+    title: '0001 — A',
+    status: 'draft',
+    type: null,
+    collectionStatus: null,
+    agent: null,
+    session: null,
+  })
+})
+
+test('checkIssues: Issues on .rness pass; off, the refusal, and nothing is written', async (t) => {
+  const on = await board(t)
+  await on.provider.checkIssues('acme')
+  const off = await board(t, { memory: { issues: false } })
+  await assert.rejects(off.provider.checkIssues('acme'), {
+    message:
+      'the pulse needs Issues on acme/.rness: turn them on in its Settings',
+  })
+  assert.deepEqual(off.mutations, [])
+  assert.ok(
+    off.requests.every(
+      (r) => !JSON.stringify(r.body ?? '').includes('mutation')
+    )
+  )
+})
+
+test('checkIssues: no .rness GitHub shows this login is said so', async (t) => {
+  const g = await board(t, { memory: { exists: false } })
+  await assert.rejects(g.provider.checkIssues('acme'), {
+    message:
+      'the pulse needs acme/.rness on GitHub: it is not there, or this login cannot see it',
+  })
+})
+
+test('ensureLayout makes the label rness and links the board to acme/.rness, once', async (t) => {
+  const g = await board(t, { memory: { label: false, linked: false } })
+  const created = await g.provider.createBoard('acme')
+  const added = await g.provider.ensureLayout(created, layout)
+  assert.deepEqual(added.slice(-2), ['label rness', 'link acme/.rness'])
+  assert.deepEqual(g.restLabels, [
     {
-      id: 'I_1',
-      path: 'adr/a.md',
-      title: '0001 — A',
-      status: 'draft',
-      type: null,
-      collectionStatus: null,
-      agent: null,
-      session: null,
-    },
-    {
-      id: 'I_2',
-      path: null,
-      title: 'by hand',
-      status: null,
-      type: null,
-      collectionStatus: null,
-      agent: null,
-      session: null,
-    },
-    // Converted to an issue by hand: the team's now, like an item without Path.
-    {
-      id: 'I_3',
-      path: null,
-      title: '',
-      status: 'draft',
-      type: null,
-      collectionStatus: null,
-      agent: null,
-      session: null,
+      name: 'rness',
+      color: '5319e7',
+      description: 'A document of .rness, on Agent Pulse',
     },
   ])
+  assert.deepEqual(
+    g.mutations.filter((m) => m.op === 'link').map((m) => m.variables),
+    [{ projectId: 'P_1', repositoryId: 'R_1' }]
+  )
+  g.mutations.length = 0
+  assert.deepEqual(await g.provider.ensureLayout(created, layout), [])
+  assert.deepEqual(g.mutations, [], 'an unchanged board costs no write')
+  assert.equal(g.restLabels.length, 1)
 })
 
 async function laidOut(t: TestContext, items: FItem[] = []) {
@@ -260,34 +321,36 @@ async function laidOut(t: TestContext, items: FItem[] = []) {
 const want = {
   path: 'adr/a.md',
   title: '0001 — A',
-  body: 'adr/a.md\n\nlink',
+  body: 'header',
   status: 'draft',
   type: 'ADR',
   statusField: null,
 }
 
-test('apply create: a draft, then Path, Collection and Status', async (t) => {
+test('apply create: an issue of .rness, labelled, the first line as body, added to the board, Path first, then the fields; its number returned', async (t) => {
   const g = await laidOut(t)
-  await g.provider.apply(BOARD, { kind: 'create', want })
-  const ops = g.mutations.map((m) => m.op)
-  assert.deepEqual(ops, ['addDraft', 'set', 'set', 'set'])
+  const placed = await g.provider.apply(BOARD, { kind: 'create', want })
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['createIssue', 'addItem', 'set', 'set', 'set']
+  )
   assert.deepEqual(g.mutations[0]!.variables, {
-    projectId: 'P_1',
+    repositoryId: 'R_1',
     title: '0001 — A',
-    body: 'adr/a.md\n\nlink',
+    body: 'header',
+    labelIds: ['L_1'],
   })
-  const sent = g.mutations
-    .slice(1)
-    .map((m) => [m.variables['fieldId'], m.variables['value']])
-  const optionId = (field: string, name: string) =>
-    g.fields
-      .find((f) => f.name === field)!
-      .options!.find((o) => o.name === name)!.id
-  assert.deepEqual(sent, [
-    ['F_Path', { text: 'adr/a.md' }],
-    ['F_Collection', { singleSelectOptionId: optionId('Collection', 'ADR') }],
-    ['F_status', { singleSelectOptionId: optionId('Status', 'draft') }],
-  ])
+  const made = g.issues.at(-1)!
+  assert.deepEqual(g.mutations[1]!.variables, {
+    projectId: 'P_1',
+    contentId: made.id,
+  })
+  assert.equal(
+    g.mutations[2]!.variables['fieldId'],
+    'F_Path',
+    "Path first: without it the item would be the team's"
+  )
+  assert.deepEqual(placed, { id: g.items.at(-1)!.id, number: made.number })
 })
 
 test('apply create without a status sets no Status', async (t) => {
@@ -298,11 +361,11 @@ test('apply create without a status sets no Status', async (t) => {
   })
   assert.deepEqual(
     g.mutations.map((m) => m.op),
-    ['addDraft', 'set', 'set']
+    ['createIssue', 'addItem', 'set', 'set']
   )
 })
 
-test('apply update: the draft is edited, only the values that differ are sent, a lost status is cleared', async (t) => {
+test('apply convert: the draft becomes an issue of .rness in place, labelled; its title and only the fields that differ written', async (t) => {
   const g = await laidOut(t, [
     {
       id: 'I_1',
@@ -313,32 +376,132 @@ test('apply update: the draft is edited, only the values that differ are sent, a
     },
   ])
   await g.provider.items(BOARD)
-  await g.provider.apply(BOARD, { kind: 'update', id: 'I_1', want })
+  const placed = await g.provider.apply(BOARD, {
+    kind: 'convert',
+    id: 'I_1',
+    want,
+  })
+  const issue = g.items[0]!.issue!
   assert.deepEqual(
     g.mutations.map((m) => m.op),
-    ['editDraft', 'set']
+    ['convert', 'addLabels', 'updateIssue', 'set']
   )
   assert.deepEqual(g.mutations[0]!.variables, {
-    draftIssueId: 'D_1',
-    title: '0001 — A',
-    body: 'adr/a.md\n\nlink',
+    itemId: 'I_1',
+    repositoryId: 'R_1',
   })
-  assert.equal(g.mutations[1]!.variables['fieldId'], 'F_status')
+  assert.deepEqual(g.mutations[1]!.variables, {
+    id: issue.id,
+    labelIds: ['L_1'],
+  })
+  assert.deepEqual(g.mutations[2]!.variables, {
+    id: issue.id,
+    title: '0001 — A',
+  })
+  assert.equal(g.mutations[3]!.variables['fieldId'], 'F_status')
+  assert.deepEqual(placed, { id: 'I_1', number: issue.number })
+})
 
+test('apply update: a closed issue reopened, a lost label added, the title and the fields that differ written; then only what is left', async (t) => {
+  const g = await laidOut(t, [
+    {
+      id: 'I_1',
+      draftId: null,
+      issue: anIssue(4, { title: 'old', state: 'CLOSED', labels: [] }),
+      title: '',
+      archived: false,
+      values: { Path: 'adr/a.md', Collection: 'ADR', Status: 'accepted' },
+    },
+  ])
+  await g.provider.items(BOARD)
+  assert.equal(
+    await g.provider.apply(BOARD, {
+      kind: 'update',
+      id: 'I_1',
+      want,
+      reopen: true,
+    }),
+    null
+  )
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['reopenIssue', 'addLabels', 'updateIssue', 'set']
+  )
+  assert.deepEqual(g.mutations[0]!.variables, { id: 'ISSUE_4' })
+  assert.deepEqual(g.mutations[2]!.variables, {
+    id: 'ISSUE_4',
+    title: '0001 — A',
+  })
+  assert.equal(g.mutations[3]!.variables['fieldId'], 'F_status')
   g.mutations.length = 0
   await g.provider.apply(BOARD, {
     kind: 'update',
     id: 'I_1',
     want: { ...want, status: null },
+    reopen: false,
   })
   assert.deepEqual(
     g.mutations.map((m) => m.op),
-    ['editDraft', 'clear']
+    ['clear'],
+    'what the first apply wrote is known'
   )
 })
 
-test('apply archive and unchanged', async (t) => {
-  const g = await laidOut(t)
+test('apply close: an open issue closed as not planned, then its item archived; a closed one only archived', async (t) => {
+  const g = await laidOut(t, [
+    {
+      id: 'I_1',
+      draftId: null,
+      issue: anIssue(4),
+      title: '',
+      archived: false,
+      values: { Path: 'adr/a.md' },
+    },
+    {
+      id: 'I_2',
+      draftId: null,
+      issue: anIssue(5, { state: 'CLOSED' }),
+      title: '',
+      archived: false,
+      values: { Path: 'adr/b.md' },
+    },
+  ])
+  await g.provider.items(BOARD)
+  await g.provider.apply(BOARD, { kind: 'close', id: 'I_1' })
+  await g.provider.apply(BOARD, { kind: 'close', id: 'I_2' })
+  assert.deepEqual(
+    g.mutations.map((m) => [m.op, m.variables]),
+    [
+      ['closeIssue', { id: 'ISSUE_4' }],
+      ['archive', { projectId: 'P_1', itemId: 'I_1' }],
+      ['archive', { projectId: 'P_1', itemId: 'I_2' }],
+    ]
+  )
+  assert.match(g.mutations[0]!.query!, /stateReason: NOT_PLANNED/)
+  assert.equal(g.issues.find((i) => i.number === 4)?.stateReason, 'NOT_PLANNED')
+})
+
+test('apply body writes the issue body only; archive and unchanged as before', async (t) => {
+  const g = await laidOut(t, [
+    {
+      id: 'I_1',
+      draftId: null,
+      issue: anIssue(4),
+      title: '',
+      archived: false,
+      values: { Path: 'adr/a.md' },
+    },
+  ])
+  await g.provider.items(BOARD)
+  assert.equal(
+    await g.provider.apply(BOARD, { kind: 'body', id: 'I_1', body: 'B' }),
+    null
+  )
+  assert.deepEqual(
+    g.mutations.map((m) => [m.op, m.variables]),
+    [['updateIssue', { id: 'ISSUE_4', body: 'B' }]]
+  )
+  g.mutations.length = 0
   await g.provider.apply(BOARD, { kind: 'unchanged', id: 'I_1' })
   assert.equal(g.mutations.length, 0)
   await g.provider.apply(BOARD, { kind: 'archive', id: 'I_1' })
@@ -346,6 +509,34 @@ test('apply archive and unchanged', async (t) => {
     g.mutations.map((m) => [m.op, m.variables]),
     [['archive', { projectId: 'P_1', itemId: 'I_1' }]]
   )
+})
+
+test('apply body on an item created in the same run: one request, no listing', async (t) => {
+  const g = await laidOut(t)
+  const placed = await g.provider.apply(BOARD, { kind: 'create', want })
+  const before = g.requests.length
+  await g.provider.apply(BOARD, { kind: 'body', id: placed!.id, body: 'B' })
+  assert.equal(g.requests.length, before + 1)
+  assert.equal(g.issues.at(-1)?.body, 'B')
+})
+
+test('mark works on issue items as on drafts: Agent and Session by item id', async (t) => {
+  const g = await laidOut(t, [
+    {
+      id: 'I_1',
+      draftId: null,
+      issue: anIssue(4),
+      title: '',
+      archived: false,
+      values: { Path: 'adr/a.md' },
+    },
+  ])
+  await g.provider.mark(BOARD, ['I_1'], 'claude · 1a2b3c4d')
+  assert.deepEqual(g.items[0]!.values, {
+    Path: 'adr/a.md',
+    Agent: 'working',
+    Session: 'claude · 1a2b3c4d',
+  })
 })
 
 test('mark sets Agent and Session, or clears both', async (t) => {
@@ -381,6 +572,7 @@ test('mark sets Agent and Session, or clears both', async (t) => {
 test('anonymous: every board method needs a login', async () => {
   const provider = new GitHubOAuthProvider({ token: null })
   const refused = { message: 'the pulse needs a GitHub login: run rness login' }
+  await assert.rejects(provider.checkIssues('acme'), refused)
   await assert.rejects(provider.createBoard('acme'), refused)
   await assert.rejects(provider.board('acme', 7), refused)
   await assert.rejects(provider.ensureLayout(BOARD, layout), refused)
@@ -708,8 +900,9 @@ test('apply writes the collection field on create, and on update only when it di
   g.mutations.length = 0
   g.items.push({
     id: 'I_9',
-    draftId: 'D_9',
-    title: w.title,
+    draftId: null,
+    issue: anIssue(9, { title: w.title }),
+    title: '',
     archived: false,
     values: {
       Path: w.path,
@@ -719,7 +912,12 @@ test('apply writes the collection field on create, and on update only when it di
     },
   })
   await g.provider.items(BOARD)
-  await g.provider.apply(BOARD, { kind: 'update', id: 'I_9', want: w })
+  await g.provider.apply(BOARD, {
+    kind: 'update',
+    id: 'I_9',
+    want: w,
+    reopen: false,
+  })
   assert.deepEqual(
     g.mutations
       .filter((m) => m.op === 'set')

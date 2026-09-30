@@ -55,6 +55,7 @@ export function fakeProvider(spec: {
           }
         )
       },
+      checkIssues: refused,
       createBoard: refused,
       board: refused,
       ensureLayout: refused,

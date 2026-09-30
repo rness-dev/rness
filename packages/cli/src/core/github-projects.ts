@@ -413,55 +413,6 @@ export async function listItems(
   }
 }
 
-export async function addDraft(
-  projectId: string,
-  title: string,
-  body: string,
-  o: ApiOptions
-): Promise<string> {
-  const d = await graphql<{
-    addProjectV2DraftIssue: { projectItem: { id: string } }
-  }>(
-    `
-      mutation ($projectId: ID!, $title: String!, $body: String) {
-        addProjectV2DraftIssue(
-          input: { projectId: $projectId, title: $title, body: $body }
-        ) {
-          projectItem {
-            id
-          }
-        }
-      }
-    `,
-    { projectId, title, body },
-    o
-  )
-  return d.addProjectV2DraftIssue.projectItem.id
-}
-
-export async function editDraft(
-  draftId: string,
-  title: string,
-  body: string,
-  o: ApiOptions
-): Promise<void> {
-  await graphql(
-    `
-      mutation ($draftIssueId: ID!, $title: String!, $body: String) {
-        updateProjectV2DraftIssue(
-          input: { draftIssueId: $draftIssueId, title: $title, body: $body }
-        ) {
-          draftIssue {
-            id
-          }
-        }
-      }
-    `,
-    { draftIssueId: draftId, title, body },
-    o
-  )
-}
-
 export async function setValue(
   projectId: string,
   itemId: string,

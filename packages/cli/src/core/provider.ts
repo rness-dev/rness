@@ -1,5 +1,5 @@
 import type { Layout } from '../pulse/layout.ts'
-import type { BoardItem, Step } from '../pulse/plan.ts'
+import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
 import type { CreateRepositoryResult, RepositoryListing } from './github.ts'
 
 // The seam between the commands and the place the repositories live (spec
@@ -65,14 +65,23 @@ export interface Provider {
   /** The board `number` of `org`, or null when the provider has none. */
   board(org: string, number: number): Promise<Board | null>
   /**
-   * Adds the fields, options and views `layout` needs and returns what it
-   * added (`field X`, `option X`, `view X`); removes nothing, except the
-   * provider's default statuses on a board `createBoard` just made.
+   * Refuses, before any write, a workspace whose organization's `.rness`
+   * cannot hold the pulse's issues (spec 0018 §2). The caller asks before
+   * `createBoard`, and before `ensureLayout`, which writes.
+   */
+  checkIssues(org: string): Promise<void>
+  /**
+   * Adds the fields, options and views `layout` needs; makes the label of
+   * the pulse's issues and links the board to `.rness`. Returns what it
+   * added (`field X`, `option X`, `view X`, `label X`, `link X`); removes
+   * nothing, except the provider's default statuses on a board
+   * `createBoard` just made.
    */
   ensureLayout(board: Board, layout: Layout): Promise<string[]>
   /** The items of the board, not the archived ones. */
   items(board: Board): Promise<BoardItem[]>
-  apply(board: Board, step: Step): Promise<void>
+  /** The item and issue number a create or a convert gave; null for any other step. */
+  apply(board: Board, step: Step): Promise<Placed | null>
   /** Marks items as being worked on by `session`; null clears the mark. */
   mark(
     board: Board,

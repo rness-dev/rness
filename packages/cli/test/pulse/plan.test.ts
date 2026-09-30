@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { issueBody } from '../../src/pulse/body.ts'
 import type { Desired } from '../../src/pulse/layout.ts'
-import { type BoardItem, planSync } from '../../src/pulse/plan.ts'
+import {
+  type BoardItem,
+  type ItemIssue,
+  issuedAfter,
+  planBodies,
+  planSync,
+} from '../../src/pulse/plan.ts'
 
 const want = (path: string, over: Partial<Desired> = {}): Desired => ({
   path,
@@ -13,6 +20,14 @@ const want = (path: string, over: Partial<Desired> = {}): Desired => ({
   statusField: null,
   ...over,
 })
+const open = (number: number, over: Partial<ItemIssue> = {}): ItemIssue => ({
+  number,
+  open: true,
+  labelled: true,
+  body: '',
+  ...over,
+})
+/** rness's item: an open, labelled issue numbered after its id (`i5` → #5); `issue: null` is a 0.12.0 draft. */
 const have = (
   id: string,
   path: string | null,
@@ -20,6 +35,7 @@ const have = (
 ): BoardItem => ({
   id,
   path,
+  issue: open(Number(id.replace(/\D/g, '')) || 1),
   title: path === null ? 'by hand' : `T ${path}`,
   status: 'draft',
   collectionStatus: null,
@@ -29,18 +45,18 @@ const have = (
   ...over,
 })
 
-test('a missing path is created', () => {
+test('a document without an item gets one: create', () => {
   const w = want('a.md')
   assert.deepEqual(planSync([w], []), [{ kind: 'create', want: w }])
 })
 
-test('same path and fields: unchanged', () => {
+test('an open, labelled issue whose fields match: unchanged', () => {
   assert.deepEqual(planSync([want('a.md')], [have('i1', 'a.md')]), [
     { kind: 'unchanged', id: 'i1' },
   ])
 })
 
-test('another title, status or type: update', () => {
+test('another title, status or type, or a card moved by hand: update', () => {
   for (const over of [
     { title: 'new' },
     { status: 'done' },
@@ -49,42 +65,92 @@ test('another title, status or type: update', () => {
   ]) {
     const w = want('a.md', over)
     assert.deepEqual(planSync([w], [have('i1', 'a.md')]), [
-      { kind: 'update', id: 'i1', want: w },
+      { kind: 'update', id: 'i1', want: w, reopen: false },
     ])
   }
-})
-
-test('an item moved by hand to another status goes back: update', () => {
   const w = want('a.md')
   assert.deepEqual(planSync([w], [have('i1', 'a.md', { status: 'done' })]), [
-    { kind: 'update', id: 'i1', want: w },
+    { kind: 'update', id: 'i1', want: w, reopen: false },
   ])
 })
 
-test('an item whose document is gone is archived', () => {
-  assert.deepEqual(planSync([], [have('i1', 'gone.md')]), [
-    { kind: 'archive', id: 'i1' },
+test('an issue closed while its document exists is reopened; one that lost its label gets it back', () => {
+  const w = want('a.md')
+  assert.deepEqual(
+    planSync([w], [have('i1', 'a.md', { issue: open(1, { open: false }) })]),
+    [{ kind: 'update', id: 'i1', want: w, reopen: true }]
+  )
+  assert.deepEqual(
+    planSync(
+      [w],
+      [have('i1', 'a.md', { issue: open(1, { labelled: false }) })]
+    ),
+    [{ kind: 'update', id: 'i1', want: w, reopen: false }]
+  )
+})
+
+test('a draft of 0.12.0 with its path is converted, whatever its fields', () => {
+  const w = want('a.md')
+  assert.deepEqual(planSync([w], [have('i1', 'a.md', { issue: null })]), [
+    { kind: 'convert', id: 'i1', want: w },
   ])
 })
 
-test('an item without a path (made by hand) is left alone', () => {
+test('a document gone: its issue closed, a draft of it archived', () => {
+  assert.deepEqual(
+    planSync(
+      [],
+      [have('i1', 'gone.md'), have('d2', 'old.md', { issue: null })]
+    ),
+    [
+      { kind: 'close', id: 'i1' },
+      { kind: 'archive', id: 'd2' },
+    ]
+  )
+})
+
+test("an item without a path is the team's: left alone, and its document gets its own issue", () => {
   assert.deepEqual(planSync([], [have('i1', null)]), [])
+  assert.deepEqual(
+    planSync([want('a.md')], [have('i1', null, { title: 'T a.md' })]),
+    [{ kind: 'create', want: want('a.md') }]
+  )
 })
 
-test('a renamed document is one create and one archive', () => {
+test('a renamed document: a new issue, the old one closed', () => {
   const w = want('new.md')
   assert.deepEqual(planSync([w], [have('i1', 'old.md')]), [
     { kind: 'create', want: w },
-    { kind: 'archive', id: 'i1' },
+    { kind: 'close', id: 'i1' },
   ])
 })
 
-test('a second item on the same path is archived', () => {
+test('several items on one path: an open issue before a closed one, the lowest number first, a draft last; the others closed or archived', () => {
+  const items = [
+    have('d1', 'a.md', { issue: null }),
+    have('i7', 'a.md', { issue: open(7, { open: false }) }),
+    have('i5', 'a.md'),
+    have('i3', 'a.md', { issue: open(3, { open: false }) }),
+    have('i9', 'a.md'),
+  ]
+  assert.deepEqual(planSync([want('a.md')], items), [
+    { kind: 'unchanged', id: 'i5' },
+    { kind: 'close', id: 'i9' },
+    { kind: 'close', id: 'i3' },
+    { kind: 'close', id: 'i7' },
+    { kind: 'archive', id: 'd1' },
+  ])
+})
+
+test('a draft a 0.12.0 CLI made on a migrated board: archived, the issue kept', () => {
   assert.deepEqual(
-    planSync([want('a.md')], [have('i1', 'a.md'), have('i2', 'a.md')]),
+    planSync(
+      [want('a.md')],
+      [have('i4', 'a.md'), have('d1', 'a.md', { issue: null })]
+    ),
     [
-      { kind: 'unchanged', id: 'i1' },
-      { kind: 'archive', id: 'i2' },
+      { kind: 'unchanged', id: 'i4' },
+      { kind: 'archive', id: 'd1' },
     ]
   )
 })
@@ -92,10 +158,78 @@ test('a second item on the same path is archived', () => {
 test("a collection's own status field is compared when the collection has one", () => {
   const w = want('a.md', { statusField: 'Specs status' })
   assert.deepEqual(planSync([w], [have('i1', 'a.md')]), [
-    { kind: 'update', id: 'i1', want: w },
+    { kind: 'update', id: 'i1', want: w, reopen: false },
   ])
   assert.deepEqual(
     planSync([w], [have('i1', 'a.md', { collectionStatus: 'draft' })]),
     [{ kind: 'unchanged', id: 'i1' }]
+  )
+})
+
+test("after pass 1, each document's issue: as listed, or as pass 1 placed it", () => {
+  const listed = [
+    have('i1', 'a.md', { issue: open(1, { body: 'A' }) }),
+    have('d2', 'b.md', { issue: null }),
+    have('i9', 'gone.md'),
+  ]
+  const steps = planSync([want('a.md'), want('b.md'), want('c.md')], listed)
+  const issued = issuedAfter(
+    steps,
+    listed,
+    new Map([
+      ['b.md', { id: 'd2', number: 2 }],
+      ['c.md', { id: 'i3', number: 3 }],
+    ])
+  )
+  assert.deepEqual(
+    [...issued],
+    [
+      ['a.md', { id: 'i1', number: 1, body: 'A' }],
+      ['b.md', { id: 'd2', number: 2, body: null }],
+      ['c.md', { id: 'i3', number: 3, body: null }],
+    ]
+  )
+})
+
+const bodyOf = (text: string): string =>
+  issueBody({
+    path: 'a.md',
+    text,
+    org: 'acme',
+    numbers: new Map(),
+    files: new Set(),
+  })
+
+test("pass 2: a body is written when the issue's does not carry its digest", () => {
+  const now = bodyOf('# A\n\nText.\n')
+  const issued = (body: string | null) =>
+    new Map([['a.md', { id: 'i1', number: 1, body }]])
+  const bodies = new Map([['a.md', now]])
+  const write = [{ kind: 'body', id: 'i1', body: now }]
+  assert.deepEqual(planBodies(bodies, issued(now)), [], 'the same: nothing')
+  assert.deepEqual(
+    planBodies(bodies, issued(null)),
+    write,
+    'created or converted in pass 1'
+  )
+  assert.deepEqual(
+    planBodies(bodies, issued(bodyOf('# A\n\nOld.\n'))),
+    write,
+    'the document changed'
+  )
+  assert.deepEqual(
+    planBodies(bodies, issued(now.replace('Text.', 'Edited.'))),
+    write,
+    'edited by hand, its digest line kept'
+  )
+  assert.deepEqual(
+    planBodies(bodies, issued('a.md\n\nhttps://…')),
+    write,
+    "0.12.0's body, no digest"
+  )
+  assert.deepEqual(
+    planBodies(new Map([['x.md', now]]), issued(null)),
+    [],
+    'a document without an issue'
   )
 })

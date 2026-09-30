@@ -2,14 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
-  addDraft,
   addItem,
   archive,
   convertDraft,
   createField,
   createProject,
   createView,
-  editDraft,
   fields,
   findProject,
   graphql,
@@ -398,34 +396,18 @@ test('linkedRepositories lists owner/name; linkRepository links one', async (t) 
   })
 })
 
-test('addDraft returns the item id', async (t) => {
+test('setValue and archive send their mutations', async (t) => {
   const { requests, o } = await serve(t, {
-    addProjectV2DraftIssue: () =>
-      data({ addProjectV2DraftIssue: { projectItem: { id: 'I1' } } }),
-  })
-  assert.equal(await addDraft('P_1', 'T', 'B', o), 'I1')
-  assert.deepEqual(gql(requests[0]!).variables, {
-    projectId: 'P_1',
-    title: 'T',
-    body: 'B',
-  })
-})
-
-test('editDraft, setValue and archive send their mutations', async (t) => {
-  const { requests, o } = await serve(t, {
-    updateProjectV2DraftIssue: () => data({}),
     updateProjectV2ItemFieldValue: () => data({}),
     clearProjectV2ItemFieldValue: () => data({}),
     archiveProjectV2Item: () => data({}),
   })
-  await editDraft('D1', 'T', 'B', o)
   await setValue('P', 'I', 'F', { text: 'x' }, o)
   await setValue('P', 'I', 'F', { optionId: 'A' }, o)
   await setValue('P', 'I', 'F', null, o)
   await archive('P', 'I', o)
   const sent = requests.map(gql)
   const names = [
-    'updateProjectV2DraftIssue',
     'updateProjectV2ItemFieldValue',
     'updateProjectV2ItemFieldValue',
     'clearProjectV2ItemFieldValue',
@@ -435,24 +417,18 @@ test('editDraft, setValue and archive send their mutations', async (t) => {
     assert.match(r.query, new RegExp(`mutation[\\s\\S]*${names[i]}\\(`))
   )
   assert.deepEqual(sent[0]?.variables, {
-    draftIssueId: 'D1',
-    title: 'T',
-    body: 'B',
-  })
-  assert.deepEqual(sent[1]?.variables, {
     projectId: 'P',
     itemId: 'I',
     fieldId: 'F',
     value: { text: 'x' },
   })
-  assert.deepEqual(sent[2]?.variables['value'], { singleSelectOptionId: 'A' })
-  assert.match(sent[3]!.query, /clearProjectV2ItemFieldValue/)
-  assert.deepEqual(sent[3]?.variables, {
+  assert.deepEqual(sent[1]?.variables['value'], { singleSelectOptionId: 'A' })
+  assert.deepEqual(sent[2]?.variables, {
     projectId: 'P',
     itemId: 'I',
     fieldId: 'F',
   })
-  assert.deepEqual(sent[4]?.variables, { projectId: 'P', itemId: 'I' })
+  assert.deepEqual(sent[3]?.variables, { projectId: 'P', itemId: 'I' })
 })
 
 test('createView POSTs the documented REST body', async (t) => {

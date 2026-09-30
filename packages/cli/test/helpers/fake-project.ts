@@ -25,16 +25,53 @@ export interface FView {
   /** The field a board's columns follow, by name. */
   column?: string | null
 }
+/** An issue of a repository: `acme/.rness` unless said otherwise. */
+export interface FIssue {
+  id: string
+  number: number
+  title: string
+  body: string
+  state: 'OPEN' | 'CLOSED'
+  stateReason?: 'COMPLETED' | 'NOT_PLANNED'
+  labels: string[]
+  /** `owner/name`. */
+  repository: string
+}
 export interface FItem {
   id: string
-  /** Null: no longer a draft issue — converted to an issue by hand. */
+  /** A draft's id; null for any other content. */
   draftId: string | null
+  /** The issue the item is; absent or null: a draft, or other content (a pull request). */
+  issue?: FIssue | null
+  /** A draft's title; an issue's is its own. */
   title: string
   archived: boolean
   values: Record<string, string>
 }
+/** `acme/.rness` as GitHub shows it: there, Issues on, the label `rness` made, the board linked. */
+export interface FMemory {
+  exists: boolean
+  issues: boolean
+  label: boolean
+  linked: boolean
+}
 
-/** A GitHub project that remembers what it was told: fields, views, items and their values. */
+/** An issue of acme/.rness: open, labelled, no body yet. */
+export const anIssue = (
+  number: number,
+  over: Partial<FIssue> = {}
+): FIssue => ({
+  id: `ISSUE_${number}`,
+  number,
+  title: `#${number}`,
+  body: '',
+  state: 'OPEN',
+  labels: ['rness'],
+  repository: 'acme/.rness',
+  ...over,
+})
+
+/** A GitHub project, and acme/.rness's issues, that remember what they were told. */
 export async function board(
   t: TestContext,
   seed: {
@@ -47,6 +84,8 @@ export async function board(
     /** The view GitHub gives a new project; null: none. */
     defaultView?: { id: string; name: string } | null
     items?: FItem[]
+    /** acme/.rness; by default there, Issues on, labelled, linked. */
+    memory?: Partial<FMemory>
     /** Answers what is not the project's (`GET /user`, …); undefined falls through. */
     other?: (r: Recorded) => Reply | undefined
   } = {}
@@ -88,7 +127,20 @@ export async function board(
       column: null,
     })
   const items: FItem[] = seed.items ?? []
+  const memory: FMemory = {
+    exists: true,
+    issues: true,
+    label: true,
+    linked: true,
+    ...seed.memory,
+  }
+  const issues: FIssue[] = items.flatMap((i) =>
+    i.issue == null ? [] : [i.issue]
+  )
+  let nextNumber = 1 + Math.max(0, ...issues.map((i) => i.number))
+  const issueOf = (id: unknown) => issues.find((i) => i.id === id)
   const restViews: unknown[] = []
+  const restLabels: unknown[] = []
   const mutations: {
     op: string
     variables: Record<string, unknown>
@@ -108,6 +160,152 @@ export async function board(
     ] as const
   const answers: [string, (v: Record<string, unknown>, q: string) => Reply][] =
     [
+      [
+        'repository(owner: $owner',
+        () =>
+          memory.exists
+            ? data({
+                repository: {
+                  id: 'R_1',
+                  hasIssuesEnabled: memory.issues,
+                  label: memory.label ? { id: 'L_1' } : null,
+                },
+              })
+            : {
+                json: {
+                  data: { repository: null },
+                  errors: [
+                    {
+                      type: 'NOT_FOUND',
+                      message: 'Could not resolve to a Repository',
+                    },
+                  ],
+                },
+              },
+      ],
+      [
+        'createIssue(',
+        (v) => {
+          mutations.push({ op: 'createIssue', variables: v })
+          const made = anIssue(nextNumber++, {
+            id: `ISSUE_${next++}`,
+            title: String(v['title']),
+            body: String(v['body'] ?? ''),
+            labels: (v['labelIds'] as string[] | undefined)?.includes('L_1')
+              ? ['rness']
+              : [],
+          })
+          issues.push(made)
+          return data({
+            createIssue: { issue: { id: made.id, number: made.number } },
+          })
+        },
+      ],
+      [
+        'addProjectV2ItemById(',
+        (v) => {
+          mutations.push({ op: 'addItem', variables: v })
+          const id = `I_${next++}`
+          items.push({
+            id,
+            draftId: null,
+            issue: issueOf(v['contentId']) ?? null,
+            title: '',
+            archived: false,
+            values: {},
+          })
+          return data({ addProjectV2ItemById: { item: { id } } })
+        },
+      ],
+      [
+        'convertProjectV2DraftIssueItemToIssue(',
+        (v) => {
+          mutations.push({ op: 'convert', variables: v })
+          const item = items.find((i) => i.id === v['itemId'])!
+          const made = anIssue(nextNumber++, {
+            id: `ISSUE_${next++}`,
+            title: item.title,
+            labels: [],
+          })
+          issues.push(made)
+          item.draftId = null
+          item.issue = made
+          return data({
+            convertProjectV2DraftIssueItemToIssue: {
+              item: {
+                id: item.id,
+                content: { id: made.id, number: made.number },
+              },
+            },
+          })
+        },
+      ],
+      [
+        'updateIssue(',
+        (v) => {
+          mutations.push({ op: 'updateIssue', variables: v })
+          const issue = issueOf(v['id'])
+          if (issue !== undefined && typeof v['title'] === 'string')
+            issue.title = v['title']
+          if (issue !== undefined && typeof v['body'] === 'string')
+            issue.body = v['body']
+          return data({ updateIssue: { issue: { id: v['id'] } } })
+        },
+      ],
+      [
+        'closeIssue(',
+        (v, q) => {
+          mutations.push({ op: 'closeIssue', variables: v, query: q })
+          const issue = issueOf(v['id'])
+          if (issue !== undefined) {
+            issue.state = 'CLOSED'
+            issue.stateReason = /NOT_PLANNED/.test(q)
+              ? 'NOT_PLANNED'
+              : 'COMPLETED'
+          }
+          return data({ closeIssue: { issue: { id: v['id'] } } })
+        },
+      ],
+      [
+        'reopenIssue(',
+        (v) => {
+          mutations.push({ op: 'reopenIssue', variables: v })
+          const issue = issueOf(v['id'])
+          if (issue !== undefined) issue.state = 'OPEN'
+          return data({ reopenIssue: { issue: { id: v['id'] } } })
+        },
+      ],
+      [
+        'addLabelsToLabelable(',
+        (v) => {
+          mutations.push({ op: 'addLabels', variables: v })
+          const issue = issueOf(v['id'])
+          if (issue !== undefined && !issue.labels.includes('rness'))
+            issue.labels.push('rness')
+          return data({ addLabelsToLabelable: { clientMutationId: null } })
+        },
+      ],
+      [
+        'linkProjectV2ToRepository(',
+        (v) => {
+          mutations.push({ op: 'link', variables: v })
+          memory.linked = true
+          return data({
+            linkProjectV2ToRepository: { repository: { id: 'R_1' } },
+          })
+        },
+      ],
+      [
+        'repositories(first',
+        () =>
+          data({
+            node: {
+              repositories: {
+                nodes: memory.linked ? [{ nameWithOwner: 'acme/.rness' }] : [],
+              },
+            },
+          }),
+      ],
       [
         'createProjectV2Field',
         (v, q) => {
@@ -152,32 +350,6 @@ export async function board(
                 url: 'https://github.com/orgs/acme/projects/7',
               },
             },
-          })
-        },
-      ],
-      [
-        'addProjectV2DraftIssue',
-        (v) => {
-          mutations.push({ op: 'addDraft', variables: v })
-          const id = `I_${next++}`
-          items.push({
-            id,
-            draftId: `D_${id}`,
-            title: String(v['title']),
-            archived: false,
-            values: {},
-          })
-          return data({ addProjectV2DraftIssue: { projectItem: { id } } })
-        },
-      ],
-      [
-        'updateProjectV2DraftIssue',
-        (v) => {
-          mutations.push({ op: 'editDraft', variables: v })
-          const edited = items.find((i) => i.draftId === v['draftIssueId'])
-          if (edited !== undefined) edited.title = String(v['title'])
-          return data({
-            updateProjectV2DraftIssue: { draftIssue: { id: 'x' } },
           })
         },
       ],
@@ -294,9 +466,23 @@ export async function board(
                 nodes: items.map((i) => ({
                   id: i.id,
                   isArchived: i.archived,
-                  // The query selects DraftIssue only: other content is {}.
+                  // The query selects DraftIssue and Issue: other content is {}.
                   content:
-                    i.draftId === null ? {} : { id: i.draftId, title: i.title },
+                    i.issue != null
+                      ? {
+                          id: i.issue.id,
+                          number: i.issue.number,
+                          title: i.issue.title,
+                          state: i.issue.state,
+                          body: i.issue.body,
+                          repository: { nameWithOwner: i.issue.repository },
+                          labels: {
+                            nodes: i.issue.labels.map((name) => ({ name })),
+                          },
+                        }
+                      : i.draftId === null
+                        ? {}
+                        : { id: i.draftId, title: i.title },
                   fieldValues: {
                     nodes: Object.entries(i.values).map(([name, value]) => ({
                       ...(fields.find((f) => f.name === name)?.options
@@ -317,6 +503,14 @@ export async function board(
     if (other !== undefined) return other
     if (r.path !== '/graphql') {
       assert.equal(r.method, 'POST')
+      if (r.path === '/repos/acme/.rness/labels') {
+        restLabels.push(r.body)
+        memory.label = true
+        return {
+          status: 201,
+          json: { node_id: 'L_1', name: (r.body as { name: string }).name },
+        }
+      }
       assert.equal(r.path, '/orgs/acme/projectsV2/7/views')
       restViews.push(r.body)
       const body = r.body as {
@@ -349,7 +543,10 @@ export async function board(
     },
     viewList,
     items,
+    issues,
+    memory,
     restViews,
+    restLabels,
     mutations,
     requests: gh.requests,
   }
