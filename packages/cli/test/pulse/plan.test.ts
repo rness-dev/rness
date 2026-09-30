@@ -21,6 +21,9 @@ const want = (path: string, over: Partial<Desired> = {}): Desired => ({
   type: 'Specs',
   statusField: null,
   sessions: null,
+  values: {},
+  labels: [],
+  unlabels: [],
   ...over,
 })
 const open = (number: number, over: Partial<ItemIssue> = {}): ItemIssue => ({

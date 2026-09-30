@@ -13,6 +13,8 @@ const layout: Layout = {
     { name: 'ADR', type: 'ADR', field: null },
     { name: 'Marketing', type: 'Marketing', field: null },
   ],
+  declared: [],
+  labels: [],
 }
 
 const BOARD = {
@@ -370,6 +372,9 @@ const want = {
   type: 'ADR',
   statusField: null,
   sessions: null,
+  values: {},
+  labels: [],
+  unlabels: [],
 }
 
 test('apply create: an issue of .rness, labelled, the first line as body, added to the board, Path first, then the fields; its number returned', async (t) => {
@@ -732,6 +737,8 @@ test('a new board: every option is sent with its colour', async (t) => {
     types: ['ADR', 'Specs', 'Plans', 'Marketing'],
     fields: [],
     views: [],
+    declared: [],
+    labels: [],
   })
   assert.deepEqual(sentColours(g, 'setOptions'), [
     [
@@ -870,6 +877,8 @@ const own: Layout = {
     { name: 'ADR', type: 'ADR', field: 'ADR status' },
     { name: 'Marketing', type: 'Marketing', field: null },
   ],
+  declared: [],
+  labels: [],
 }
 
 test('a new board: a status field per collection, coloured, each board columned by its own; a statusless directory by Status', async (t) => {

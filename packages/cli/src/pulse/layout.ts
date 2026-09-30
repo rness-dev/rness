@@ -1,6 +1,8 @@
 import { STATUSES } from '../core/contract.ts'
 import { type StatusTab, statusTone } from '../core/status.ts'
+import type { Fields } from '../core/types.ts'
 import { headerOf } from './body.ts'
+import { type CollectionShape, type FieldType, valuesOf } from './collection.ts'
 
 /** The board's shape, from the documents of `rness status` (spec 0017 §3, kept by spec 0018 §6). */
 export interface Layout {
@@ -15,6 +17,24 @@ export interface Layout {
    * the adapter's.
    */
   views: { name: string; type: string; field: string | null }[]
+  /**
+   * A collection's own fields (spec 0025 §4), in order, a `select` with its
+   * options; none on Agent Pulse.
+   */
+  declared: { name: string; type: FieldType; options: string[] }[]
+  /** The labels a collection's project makes, besides `rness`; none on Agent Pulse. */
+  labels: string[]
+}
+
+/**
+ * A collection's own project (spec 0025 §4): what its README declares, each
+ * document's front matter by path, and its subdirectories, whose labels a
+ * document that left them loses.
+ */
+export interface Own {
+  shape: CollectionShape
+  fronts: ReadonlyMap<string, Fields>
+  directories?: readonly string[]
 }
 
 /** What one document should look like as an item of the board. */
@@ -29,6 +49,12 @@ export interface Desired {
   statusField: string | null
   /** `Session history`: the document's `sessions:`, each `agent · id` or `id`, joined by `, `; null: none (spec 0022 §3). */
   sessions: string | null
+  /** The collection's declared fields, by name (spec 0025 §4); empty on Agent Pulse. */
+  values: Record<string, string | null>
+  /** The labels its issue carries besides `rness`; empty on Agent Pulse. */
+  labels: string[]
+  /** Labels the collection makes that its issue must not carry. */
+  unlabels: string[]
 }
 
 /** `?` is how `rness status` shows a document without a status. */
@@ -138,34 +164,105 @@ function fieldsOf(
   return fields
 }
 
-export function layoutOf(tabs: readonly StatusTab[]): Layout {
-  const fields = fieldsOf(tabs)
+/** Each value once, in the order first met. */
+const once = (values: Iterable<string>): string[] => [...new Set(values)]
+
+/**
+ * The board's shape: Agent Pulse's from its tabs, as 0.16 made it; a
+ * collection's own project (`own`) from its one tab and what its README
+ * declares — `Status` alone for its columns, the declared statuses first.
+ */
+export function layoutOf(
+  tabs: readonly StatusTab[],
+  own?: { shape: CollectionShape; want: readonly Desired[] }
+): Layout {
+  if (own === undefined) {
+    const fields = fieldsOf(tabs)
+    return {
+      statuses: inLifecycleOrder(
+        [...fields.values()].flatMap((f) => f.statuses)
+      ),
+      fields: [...fields.values()],
+      types: tabs.map((t) => t.label),
+      views: tabs.map((t) => ({
+        name: t.label,
+        type: t.label,
+        field: fields.get(t.label)?.name ?? null,
+      })),
+      declared: [],
+      labels: [],
+    }
+  }
+  const { shape, want } = own
   return {
-    statuses: inLifecycleOrder([...fields.values()].flatMap((f) => f.statuses)),
-    fields: [...fields.values()],
+    statuses: once([
+      ...(shape.statuses ?? []),
+      ...tabs.flatMap(collectionStatuses),
+    ]),
+    fields: [],
     types: tabs.map((t) => t.label),
-    views: tabs.map((t) => ({
-      name: t.label,
-      type: t.label,
-      field: fields.get(t.label)?.name ?? null,
+    views: tabs.map((t) => ({ name: t.label, type: t.label, field: null })),
+    declared: shape.fields.map((f) => ({
+      name: f.name,
+      type: f.type,
+      options:
+        f.type === 'select'
+          ? once([
+              ...f.options,
+              ...want
+                .map((w) => w.values[f.name])
+                .filter((v): v is string => typeof v === 'string'),
+            ])
+          : [],
     })),
+    labels: once(want.flatMap((w) => [...w.labels, ...w.unlabels])),
   }
 }
 
-export function desiredOf(tabs: readonly StatusTab[], org: string): Desired[] {
-  const fields = fieldsOf(tabs)
-  return tabs.flatMap((tab) =>
-    tab.rows.map((row) => ({
-      path: row.path,
-      title: `${row.id} — ${row.title}`,
-      body: headerOf(row.path, org),
-      status: statusOf(row.status),
-      type: tab.label,
-      statusField: fields.get(tab.label)?.name ?? null,
-      sessions:
-        row.sessions
-          ?.map((e) => (e.agent === undefined ? e.id : `${e.agent} · ${e.id}`))
-          .join(', ') ?? null,
-    }))
+const sessionsOf = (row: StatusTab['rows'][number]): string | null =>
+  row.sessions
+    ?.map((e) => (e.agent === undefined ? e.id : `${e.agent} · ${e.id}`))
+    .join(', ') ?? null
+
+export function desiredOf(
+  tabs: readonly StatusTab[],
+  org: string,
+  own?: Own
+): Desired[] {
+  const fields = own === undefined ? fieldsOf(tabs) : new Map()
+  const wanted = tabs.flatMap((tab) =>
+    tab.rows.map((row) => {
+      const { values, labels } =
+        own === undefined
+          ? { values: {}, labels: [] }
+          : valuesOf(
+              own.shape,
+              own.fronts.get(row.path) ?? {},
+              row.path.slice(tab.name.length + 1)
+            )
+      return {
+        path: row.path,
+        title: `${row.id} — ${row.title}`,
+        body: headerOf(row.path, org),
+        status: statusOf(row.status),
+        type: tab.label,
+        statusField: fields.get(tab.label)?.name ?? null,
+        sessions: sessionsOf(row),
+        values,
+        labels,
+        unlabels: [] as string[],
+      }
+    })
   )
+  if (own === undefined) return wanted
+  // What the collection labels: its documents' labels, then its
+  // subdirectories', so a label nobody carries any more is still taken off.
+  const made = once([
+    ...wanted.flatMap((w) => w.labels),
+    ...(own.shape.labels?.kind === 'directory' ? (own.directories ?? []) : []),
+  ])
+  return wanted.map((w) => ({
+    ...w,
+    unlabels: made.filter((l) => !w.labels.includes(l)),
+  }))
 }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { StatusTab } from '../../src/core/status.ts'
+import type { CollectionShape } from '../../src/pulse/collection.ts'
 import { desiredOf, layoutOf, optionColor } from '../../src/pulse/layout.ts'
 
 const row = (id: string, status: string | null, path: string) => ({
@@ -68,6 +69,9 @@ test('desiredOf: title, the first line of its body, status, type', () => {
     statusField: 'ADR status',
     type: 'ADR',
     sessions: null,
+    values: {},
+    labels: [],
+    unlabels: [],
   })
   assert.equal(second?.status, null, '? is no status')
   assert.equal(third?.status, null)
@@ -279,4 +283,100 @@ test('layoutOf: a directory named like an Object.prototype member is a discovere
     layout.views.map((v) => v.field),
     ['Constructor status', null]
   )
+})
+
+// --- a collection's own project (spec 0025 §4) ----------------------------------
+
+const marketing: StatusTab = {
+  name: 'marketing',
+  label: 'Marketing',
+  rows: [
+    row('2026-09-30', 'Draft', 'marketing/linkedin/2026-09-30-first-post.md'),
+    row('2026-09-30', 'Idea', 'marketing/hn/2026-09-30-show-hn.md'),
+    row('2026-09-30', 'Paused', 'marketing/2026-09-30-loose.md'),
+  ],
+}
+const shape: CollectionShape = {
+  readme: '# The launch\n',
+  description: 'The launch.',
+  statuses: ['Idea', 'Draft', 'Ready', 'Published'],
+  fields: [
+    {
+      name: 'Publish date',
+      type: 'date',
+      from: ['published_at', 'scheduled_at'],
+      options: [],
+    },
+    {
+      name: 'Kind',
+      type: 'select',
+      from: ['kind'],
+      options: ['post', 'action'],
+    },
+  ],
+  labels: { kind: 'directory' },
+}
+const fronts = new Map<string, Record<string, unknown>>([
+  [
+    'marketing/linkedin/2026-09-30-first-post.md',
+    { status: 'Draft', kind: 'post', scheduled_at: '2026-10-01T08:30+02:00' },
+  ],
+  ['marketing/hn/2026-09-30-show-hn.md', { status: 'Idea', kind: 'launch' }],
+  ['marketing/2026-09-30-loose.md', { status: 'Paused' }],
+])
+
+test('layoutOf, own project: the declared statuses in order, each there, then those found; no second status field; a board by Status', () => {
+  const want = desiredOf([marketing], 'acme', { shape, fronts })
+  const layout = layoutOf([marketing], { shape, want })
+  assert.deepEqual(layout.statuses, [
+    'Idea',
+    'Draft',
+    'Ready',
+    'Published',
+    'Paused',
+  ])
+  assert.deepEqual(layout.fields, [])
+  assert.deepEqual(layout.views, [
+    { name: 'Marketing', type: 'Marketing', field: null },
+  ])
+})
+
+test('layoutOf, own project: the declared fields, a select with its options then the values found', () => {
+  const want = desiredOf([marketing], 'acme', { shape, fronts })
+  assert.deepEqual(layoutOf([marketing], { shape, want }).declared, [
+    { name: 'Publish date', type: 'date', options: [] },
+    { name: 'Kind', type: 'select', options: ['post', 'action', 'launch'] },
+  ])
+})
+
+test('layoutOf, Agent Pulse: nothing declared, whatever a collection says', () => {
+  assert.deepEqual(layoutOf(tabs).declared, [])
+  assert.deepEqual(layoutOf(tabs).labels, [])
+})
+
+test("desiredOf, own project: no second status field; the declared values; the labels, and the collection's others to take off", () => {
+  const [post, hn, loose] = desiredOf([marketing], 'acme', { shape, fronts })
+  assert.equal(post?.statusField, null)
+  assert.deepEqual(post?.values, { 'Publish date': '2026-10-01', Kind: 'post' })
+  assert.deepEqual(post?.labels, ['linkedin'])
+  assert.deepEqual(post?.unlabels, ['hn'])
+  assert.deepEqual(hn?.values, { 'Publish date': null, Kind: 'launch' })
+  assert.deepEqual(hn?.labels, ['hn'])
+  assert.deepEqual(hn?.unlabels, ['linkedin'])
+  assert.deepEqual(loose?.labels, [])
+  assert.deepEqual(loose?.unlabels, ['linkedin', 'hn'])
+  const want = desiredOf([marketing], 'acme', { shape, fronts })
+  assert.deepEqual(layoutOf([marketing], { shape, want }).labels, [
+    'linkedin',
+    'hn',
+  ])
+})
+
+test('desiredOf, own project: a subdirectory with no document left still has its label taken off', () => {
+  const [post] = desiredOf([marketing], 'acme', {
+    shape,
+    fronts,
+    directories: ['linkedin', 'hn', 'reddit'],
+  })
+  assert.deepEqual(post?.unlabels, ['hn', 'reddit'])
 })
