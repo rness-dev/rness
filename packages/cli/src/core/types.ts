@@ -28,10 +28,12 @@ export interface ScopeEntry {
 /** The hosting providers a workspace can name (spec 0017 §2.1). */
 export type ProviderName = 'github' | 'gitlab' | 'atlassian'
 
-/** The GitHub Project the pulse reads. */
-export interface PulseEntry {
-  project: number
-}
+/**
+ * The GitHub Projects the pulse writes, by name (spec 0025 §2): `pulse` is
+ * Agent Pulse, any other name a directory of `.rness/` with a project of its
+ * own. In the order `rness.json` gives them.
+ */
+export type Projects = Record<string, number>
 
 export interface Manifest {
   contract: 1
@@ -40,7 +42,8 @@ export interface Manifest {
   org: string | null
   /** The team's agents (spec 0011 §3.1); null when never asked, [] for none. */
   agents: string[] | null
-  pulse: PulseEntry | null
+  /** Null when none is declared. */
+  projects: Projects | null
   repos: Record<string, RepoEntry>
   scopes: Record<string, ScopeEntry>
 }

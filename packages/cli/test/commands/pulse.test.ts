@@ -404,7 +404,8 @@ test("GitHub's refusal comes as GitHub: <message>, without a stack", async (t) =
   assert.equal(r.err.trim(), 'GitHub: octo cannot create projects in acme')
   assert.doesNotMatch(r.err, /\n\s+at /)
   assert.equal(
-    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')).pulse,
+    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'))
+      .projects,
     undefined
   )
 })
@@ -480,7 +481,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   )
   assert.equal(manifest.provider, 'github')
-  assert.deepEqual(manifest.pulse, { project: 7 })
+  assert.deepEqual(manifest.projects, { pulse: 7 })
   assert.deepEqual(
     g.mutations
       .filter((m) => m.op === 'createIssue')
@@ -518,7 +519,7 @@ test('create: a view GitHub refuses once the project exists — declared all the
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   )
   assert.equal(manifest.provider, 'github')
-  assert.deepEqual(manifest.pulse, { project: 7 })
+  assert.deepEqual(manifest.projects, { pulse: 7 })
 
   refuseViews = false
   const synced = await run(() =>
@@ -569,8 +570,9 @@ test('create: a field GitHub refuses once the project exists — declared all th
   assert.equal(r.code, 1)
   assert.equal(r.err.trim(), 'GitHub: Name has already been taken')
   assert.deepEqual(
-    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')).pulse,
-    { project: 7 }
+    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'))
+      .projects,
+    { pulse: 7 }
   )
 })
 

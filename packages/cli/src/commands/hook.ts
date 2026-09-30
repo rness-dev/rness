@@ -112,7 +112,7 @@ function sessionOf(input: Input): string | null {
 /** Whether the workspace declares a pulse; never throws. */
 async function hasPulse(ws: Workspace): Promise<boolean> {
   try {
-    return (await loadManifest(ws.rnessDir)).pulse !== null
+    return (await loadManifest(ws.rnessDir)).projects !== null
   } catch {
     return false
   }

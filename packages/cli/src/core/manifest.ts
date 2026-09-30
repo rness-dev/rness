@@ -5,8 +5,8 @@ import { writeFileAtomic } from './fs.ts'
 import { repoUrl } from './remote.ts'
 import type {
   Manifest,
+  Projects,
   ProviderName,
-  PulseEntry,
   RepoEntry,
   ScopeEntry,
 } from './types.ts'
@@ -85,6 +85,7 @@ const KEYS = [
   'org',
   'agents',
   'pulse',
+  'projects',
   'repos',
   'scopes',
 ]
@@ -162,8 +163,8 @@ function readProvider(value: unknown): ProviderName | null {
   return name
 }
 
-/** `pulse`, when present: the GitHub Project the pulse reads, by number. */
-function readPulse(value: unknown): PulseEntry | null {
+/** The former `pulse`, 0.12 to 0.16: Agent Pulse alone, by number. */
+function readPulse(value: unknown): Projects | null {
   if (value === undefined) return null
   if (
     !isRecord(value) ||
@@ -175,7 +176,43 @@ function readPulse(value: unknown): PulseEntry | null {
     fail(
       `"pulse" must be { "project": <number> } (got ${JSON.stringify(value)})`
     )
-  return { project: value.project }
+  return { [PULSE]: value.project }
+}
+
+/** The name of Agent Pulse in `projects`; any other names a directory of `.rness/`. */
+export const PULSE = 'pulse'
+/** A name `projects` takes: a directory name, never hidden or a path. */
+const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/** `projects`, when present: names to distinct positive project numbers (spec 0025 §2). */
+function readProjects(value: unknown): Projects | null {
+  if (value === undefined) return null
+  const entries = isRecord(value) ? Object.entries(value) : []
+  const numbers = entries.map(([, n]) => n)
+  if (
+    entries.length === 0 ||
+    !entries.every(
+      ([name, n]) =>
+        PROJECT_NAME.test(name) &&
+        typeof n === 'number' &&
+        Number.isInteger(n) &&
+        n >= 1
+    ) ||
+    new Set(numbers).size !== numbers.length
+  )
+    fail(
+      `"projects" must map names to distinct project numbers, as { "pulse": 4, "marketing": 5 } (got ${JSON.stringify(value)})`
+    )
+  return Object.fromEntries(entries) as Projects
+}
+
+/** `projects`, else the former `pulse` read as `projects.pulse`; both at once refused. */
+function readProjectsOrPulse(data: Record<string, unknown>): Projects | null {
+  if (data.pulse !== undefined && data.projects !== undefined)
+    fail('"pulse" and "projects" at once: keep "projects" only')
+  return data.projects !== undefined
+    ? readProjects(data.projects)
+    : readPulse(data.pulse)
 }
 
 /** The key, else the first repository URL's host (github.com → github), else github. */
@@ -252,7 +289,7 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
     provider: readProvider(data.provider),
     org: readOrg(data.org),
     agents: readAgents(data.agents),
-    pulse: readPulse(data.pulse),
+    projects: readProjectsOrPulse(data),
     repos: readRepos(data.repos),
     scopes: readScopes(data.scopes),
   }
@@ -283,8 +320,12 @@ export async function writeManifest(
     lines.push(
       `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`
     )
-  if (manifest.pulse !== null)
-    lines.push(`  "pulse": { "project": ${manifest.pulse.project} },`)
+  if (manifest.projects !== null)
+    lines.push(
+      `  "projects": { ${Object.entries(manifest.projects)
+        .map(([name, n]) => `${JSON.stringify(name)}: ${n}`)
+        .join(', ')} },`
+    )
   lines.push(
     '  "repos": {',
     repos.join(',\n'),

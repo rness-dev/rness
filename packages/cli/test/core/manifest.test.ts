@@ -197,7 +197,7 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
     provider: null,
     org: null,
     agents: null,
-    pulse: null,
+    projects: null,
     repos: { web: { url: 'https://github.com/acme/web.git' } },
     scopes: {
       web: { path: 'org/web', extends: [] },
@@ -224,7 +224,7 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
     provider: null,
     org: 'acme',
     agents: null,
-    pulse: null,
+    projects: null,
     repos: {},
     scopes: {},
   })
@@ -237,7 +237,7 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
     provider: null,
     org: 'acme',
     agents: null,
-    pulse: null,
+    projects: null,
     repos: {},
     scopes: {},
   })
@@ -287,7 +287,7 @@ test('writeManifest puts agents after org, and writes [] too', async (t) => {
     provider: null,
     org: 'acme',
     agents: ['claude'],
-    pulse: null,
+    projects: null,
     repos: {},
     scopes: {},
   })
@@ -300,7 +300,7 @@ test('writeManifest puts agents after org, and writes [] too', async (t) => {
     provider: null,
     org: null,
     agents: [],
-    pulse: null,
+    projects: null,
     repos: {},
     scopes: {},
   })
@@ -336,15 +336,77 @@ test('provider: one of the three names, absent is null, anything else is an erro
   }
 })
 
-test('pulse: { "project": <positive integer> }, absent is null, anything else is an error', async (t) => {
-  for (const [pulse, expected] of [
+test('projects: a name to a project number; absent is null', async (t) => {
+  for (const [projects, expected] of [
     [undefined, null],
-    [{ project: 3 }, { project: 3 }],
+    [{ pulse: 4 }, { pulse: 4 }],
+    [
+      { pulse: 4, marketing: 5 },
+      { pulse: 4, marketing: 5 },
+    ],
+    [{ marketing: 5 }, { marketing: 5 }],
   ] as const) {
-    const d = await fixture({ contract: 1, pulse, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 1, projects, repos: {}, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
-    assert.deepEqual((await loadManifest(d)).pulse, expected)
+    assert.deepEqual((await loadManifest(d)).projects, expected)
   }
+})
+
+test('projects keeps the order it is written in', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    projects: { marketing: 5, pulse: 4, roadmap: 6 },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const projects = (await loadManifest(d)).projects
+  assert.deepEqual(Object.keys(projects ?? {}), [
+    'marketing',
+    'pulse',
+    'roadmap',
+  ])
+})
+
+test('the former pulse: { "project": n } reads as projects.pulse (spec 0025 §2)', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    pulse: { project: 3 },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  assert.deepEqual((await loadManifest(d)).projects, { pulse: 3 })
+})
+
+test('projects: anything but names to distinct positive integers is an error', async (t) => {
+  for (const projects of [
+    3,
+    null,
+    [],
+    {},
+    { pulse: 0 },
+    { pulse: -1 },
+    { pulse: 1.5 },
+    { pulse: '3' },
+    { pulse: 4, marketing: 4 },
+    { '../x': 5 },
+    { '.hidden': 5 },
+    { 'a b': 5 },
+    { '': 5 },
+  ]) {
+    const d = await fixture({ contract: 1, projects, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      new Error(
+        `rness.json: "projects" must map names to distinct project numbers, as { "pulse": 4, "marketing": 5 } (got ${JSON.stringify(projects)})`
+      )
+    )
+  }
+})
+
+test('the former pulse: anything but { "project": <positive integer> } is an error', async (t) => {
   for (const pulse of [
     3,
     null,
@@ -366,7 +428,24 @@ test('pulse: { "project": <positive integer> }, absent is null, anything else is
   }
 })
 
-test('writeManifest writes provider after contract and pulse after agents', async (t) => {
+test('pulse and projects at once are refused', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    pulse: { project: 3 },
+    projects: { pulse: 3 },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  await assert.rejects(
+    () => loadManifest(d),
+    new Error(
+      'rness.json: "pulse" and "projects" at once: keep "projects" only'
+    )
+  )
+})
+
+test('writeManifest writes provider after contract and projects after agents', async (t) => {
   const d = await fixture({ contract: 1, repos: {}, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const manifest: Manifest = {
@@ -374,7 +453,7 @@ test('writeManifest writes provider after contract and pulse after agents', asyn
     provider: 'github',
     org: 'acme',
     agents: ['claude'],
-    pulse: { project: 3 },
+    projects: { pulse: 3, marketing: 5 },
     repos: {},
     scopes: {},
   }
@@ -386,7 +465,7 @@ test('writeManifest writes provider after contract and pulse after agents', asyn
   "provider": "github",
   "org": "acme",
   "agents": ["claude"],
-  "pulse": { "project": 3 },
+  "projects": { "pulse": 3, "marketing": 5 },
   "repos": {
   },
   "scopes": {
@@ -395,15 +474,25 @@ test('writeManifest writes provider after contract and pulse after agents', asyn
 `
   )
   assert.deepEqual(await loadManifest(d), manifest)
-  await writeManifest(d, { ...manifest, provider: null, pulse: null })
-  assert.equal(
-    (await readFile(join(d, 'rness.json'), 'utf8')).includes('provider'),
-    false
-  )
-  assert.equal(
-    (await readFile(join(d, 'rness.json'), 'utf8')).includes('pulse'),
-    false
-  )
+  await writeManifest(d, { ...manifest, provider: null, projects: null })
+  const text = await readFile(join(d, 'rness.json'), 'utf8')
+  assert.equal(text.includes('provider'), false)
+  assert.equal(text.includes('projects'), false)
+})
+
+test('a manifest read with the former pulse is written back with projects', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    org: 'acme',
+    pulse: { project: 3 },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  await writeManifest(d, await loadManifest(d))
+  const text = await readFile(join(d, 'rness.json'), 'utf8')
+  assert.equal(text.includes('"projects": { "pulse": 3 },'), true)
+  assert.equal(text.includes('"pulse": {'), false)
 })
 
 test('providerOf: the key wins, else the first repository host, else github', () => {
@@ -412,7 +501,7 @@ test('providerOf: the key wins, else the first repository host, else github', ()
     provider: null,
     org: null,
     agents: null,
-    pulse: null,
+    projects: null,
     repos: {},
     scopes: {},
   }
