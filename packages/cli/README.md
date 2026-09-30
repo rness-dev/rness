@@ -159,16 +159,26 @@ status, …`) and its body the document (see **Body**). It carries the
   label `rness`, made if missing; `-label:rness` leaves these issues out of
   `.rness`'s Issues tab. An issue is open while its document exists. When
   the document is gone, the issue is closed as not planned and its item
-  archived. An issue closed while its document exists — by hand, or by a
-  `fixes #12` in a `.rness` commit — is reopened at the next sync. The
-  document's status is its field, not the issue's state. rness's items are
-  those with a `Path` whose content is an issue of `.rness`. Everything
-  else — an item without `Path`, an issue of another repository, an issue
-  of `.rness` without `Path` — is the team's: never edited, closed or
-  archived. The project is linked to `.rness`, so Agent Pulse shows in its
-  Projects tab. Comments are the team's: a spec's discussion lives on its
-  issue, and rness never writes or deletes one. `pulse create` and
-  `pulse sync` need Issues on `.rness`. Without them they stop before
+  archived. Gone means gone for this clone's git: the path is in its
+  history and no longer in its working tree; a path it has never seen — a
+  teammate's document not pulled yet — is left alone. An issue closed
+  while its document exists — by hand, or by a `fixes #12` in a `.rness`
+  commit — is reopened at the next sync. The document's status is its
+  field, not the issue's state. rness's items are those with a `Path`
+  whose content is an issue of `.rness`. A draft with a `Path` is rness's
+  from 0.12.0, and is converted into an issue of `.rness`. An issue of
+  `.rness` on the board, labelled `rness`, without `Path`, whose body's
+  first line is a document's first line, is one a stopped sync left: it
+  gets its `Path` and is brought up to date, and no second issue is made.
+  Anything else — an item without `Path`, an issue of another repository,
+  any other issue of `.rness` without `Path` — is the team's: never
+  edited, closed or archived. A clone behind the others writes what its
+  working tree holds — an older title, status or body — until it pulls;
+  the next up-to-date sync writes them back. The project is linked to
+  `.rness`, so Agent Pulse shows in its Projects tab. Comments are the
+  team's: a spec's discussion lives on its issue, and rness never writes
+  or deletes one. `pulse create` and `pulse sync` need Issues on
+  `.rness`. Without them they stop before
   writing anything: `the pulse needs Issues on <org>/.rness: turn them on
 in its Settings`.
 - **Body**: the document, the same bytes for the same document. It starts
@@ -245,7 +255,7 @@ added to project`) may change a field of rness's items; the next sync
 - **Hooks**, with `claude` in `agents` and a pulse declared: session start
   marks the `In progress` plans of the session's scope `Agent: working`, with
   the session; an edit of a document of `.rness/` marks it — one the agent has just written, with no item yet, gets its issue first
-  through a sync, and an edit of any other file of `.rness/` costs nothing;
+  through a sync, and an edit of any other file of `.rness/` costs no sync;
   the hooks' syncs run one at a time, an edit's skipped while another runs,
   the session end's waiting its turn; session end clears
   the marks of that session (its subagents' included) and syncs. Each one
@@ -493,10 +503,22 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - An edit of a document that has no item yet — a spec or a plan the agent
   has just written — now gives it its issue, then marks it `working`.
   Before, it was marked only once a sync had added it.
-- The package's `Provider` interface gains `checkIssues(org)`, and its
-  `apply` now returns the item and issue number of a create or a convert
-  (`Placed | null`). An implementation outside this package must add the
-  one and adapt the other.
+- A clone that has not pulled a teammate's new document leaves its item
+  alone. 0.12.0 archived it, and the next up-to-date sync made a second
+  one.
+- The package's `Provider` interface changes:
+  - `checkIssues(org)` is new;
+  - `apply` returns the item and issue number of a create or a convert:
+    `Placed | null`;
+  - `BoardItem` gains a required `issue`: the item's issue of `.rness`
+    (number, state, label, body), or null;
+  - `Step` gains the kinds `convert`, `close` and `body`, and `update`
+    gains `reopen`;
+  - `items(board, { bodies: false })` lists the items without their
+    issues' bodies (`body: null`).
+
+  An implementation outside this package must adapt to each.
+
 - Blocks are unchanged.
 
 ## 0.12.0 — `rness pulse`; the provider
