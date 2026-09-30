@@ -118,7 +118,10 @@ the files a given agent needs, for the agents the team declares in
   The rules stay in `.rness/CONVENTIONS.md`; the skills only add the steps.
   A new document takes the collection's first status (`Proposed` for an
   ADR, `Draft` otherwise) and the next number of the local checkout; two
-  branches can pick the same one. No skill commits.
+  branches can pick the same one. Each skill records its session: it adds
+  the Claude Code session id to `sessions:` in the front matter of what it
+  writes or closes — an edit made without a skill leaves none. No skill
+  commits.
 - rness owns values, not files: what is missing is added, nothing else is
   touched, and a file it cannot parse is reported, never rewritten.
   `sync --check` and `validate` report a missing value. Removing an agent
@@ -232,7 +235,11 @@ in its Settings`.
   `.rness/`, in lifecycle order, at most 50), `Collection` (one option per tab of
   `rness status`; not `Type`, which is GitHub's own issue-type field and
   filter), `Agent` (`working`), `Session` (`claude · 1a2b3c4d`, plus the
-  agent type for a subagent) and `Path`. A board per directory, named as
+  agent type for a subagent), `Path` and `Sessions` — the document's
+  `sessions:` (see "Agent targets"), joined by `, `, written by sync and
+  never cleared: which sessions wrote a specification or implemented a plan,
+  after they ended (`claude --resume <id>` reopens one on the machine it ran
+  on). A board made before 0.15.0 gains `Sessions` at its next sync. A board per directory, named as
   `rness status` names its tab, filtered on its `Collection`, its columns
   that collection's own steps: each collection has its own status field
   (`ADR status`, `Specs status`, …; a directory without statuses is columned
@@ -287,7 +294,9 @@ added to project`) may change a field of rness's items; the next sync
 - **Hooks**, with `claude` in `agents` and a pulse declared: session start
   marks the `In progress` plans of the session's scope `Agent: working`, with
   the session; an edit of a document of `.rness/` marks it — one the agent has just written, with no item yet, gets its issue first
-  through a sync, and an edit of any other file of `.rness/` costs no sync;
+  through a sync, and so does one whose status the edit changed, so its
+  card moves within seconds rather than at the session's end; an edit that
+  leaves the status alone, or of any other file of `.rness/`, costs no sync;
   the hooks' syncs run one at a time, an edit's skipped while another runs,
   the session end's waiting its turn; session end clears
   the marks of that session (its subagents' included) and syncs. Each one
@@ -302,7 +311,7 @@ added to project`) may change a field of rness's items; the next sync
   `cannot reach GitHub: …`. Two sessions marking one plan both write; the
   last wins.
 - **Rate**: rness sends one request at a time. A new document costs an
-  issue, its addition to the board, up to four fields, then its body. An
+  issue, its addition to the board, up to five fields, then its body. An
   unchanged document costs nothing but its share of the listing, which
   reads every item's body. On one of GitHub's rate limits rness waits as
   long as GitHub says (`waiting  60 s — GitHub's rate limit`), 10 minutes
@@ -512,6 +521,20 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.15.0 — Agent Pulse follows a status change; the sessions are kept
+
+- An edit that changes a document's status syncs Agent Pulse at once: its
+  card moves within seconds, not at the session's end. An edit that leaves
+  the status alone still costs nothing. See "Pulse".
+- `sessions:` in a document's front matter lists the Claude Code sessions
+  that wrote or changed it. The lifecycle skills add theirs; the board
+  shows them in a new field, `Sessions`, which a session's end never
+  clears. A board gains the field at its first sync with 0.15.0. See
+  "Pulse" and "Agent targets".
+- `rness upgrade` rewrites the four lifecycle skills; commit
+  `.claude/skills/rness/` in each repository.
+- Blocks are unchanged.
 
 ## 0.14.0 — the lifecycle skills; `/rness:status` names a second terminal
 
