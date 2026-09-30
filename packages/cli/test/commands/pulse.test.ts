@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -12,10 +12,16 @@ import {
   pulseSyncCommand,
 } from '../../src/commands/pulse.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
+import { digestOf, headerOf } from '../../src/pulse/body.ts'
 import { takeFailure } from '../../src/pulse/detached.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
-import { type FField, type FItem, board } from '../helpers/fake-project.ts'
+import {
+  type FField,
+  type FItem,
+  anIssue,
+  board,
+} from '../helpers/fake-project.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const doc = (status: string, title: string) =>
@@ -121,11 +127,64 @@ const seededFields = (): FField[] => [
   { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
 ]
 const VIEWS = ['ADR', 'Specs', 'Plans', 'Working']
+/** rness's item: an issue of acme/.rness numbered after its id (`i2` → #2), with no body yet. */
 const item = (
   id: string,
   values: Record<string, string>,
   title = id
-): FItem => ({ id, draftId: `D_${id}`, title, archived: false, values })
+): FItem => ({
+  id,
+  draftId: null,
+  issue: anIssue(Number(id.replace(/\D/g, '')), { title }),
+  title,
+  archived: false,
+  values,
+})
+/** A draft of 0.12.0. */
+const draft = (
+  id: string,
+  values: Record<string, string>,
+  title = id
+): FItem => ({
+  id,
+  draftId: `D_${id}`,
+  title,
+  archived: false,
+  values,
+})
+/** Output lines, the column's padding folded. */
+const lines = (out: string): string[] =>
+  out
+    .trim()
+    .split('\n')
+    .map((l) => l.replace(/\s+/, ' '))
+
+/** A declared pulse on a laid-out board, synced once: every document has its issue and its body. */
+async function settled(
+  t: TestContext,
+  seed: NonNullable<Parameters<typeof board>[1]> = {}
+) {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+    ...seed,
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const sync = () =>
+    run(() =>
+      pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    )
+  const first = await sync()
+  assert.equal(first.code, 0, first.err)
+  g.mutations.length = 0
+  return { g, cwd, sync }
+}
 
 test('create in a blank workspace: no organization, refused', async (t) => {
   await machine(t)
@@ -365,7 +424,10 @@ test('an organization that restricts OAuth apps: its 403 message, as it comes', 
 
 test('create: the project, then the layout it built and a first sync, and the manifest declares the pulse', async (t) => {
   await machine(t)
-  const g = await board(t, { other: asUser('repo, read:org, project') })
+  const g = await board(t, {
+    other: asUser('repo, read:org, project'),
+    memory: { label: false, linked: false },
+  })
   const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
   const r = await run(() =>
     pulseCreateCommand(
@@ -394,12 +456,15 @@ test('create: the project, then the layout it built and a first sync, and the ma
     /^created\s+options Draft, Proposed, Ready, Approved, In progress, Blocked, Accepted, Implemented, Completed, Rejected, Superseded, Abandoned$/
   )
   assert.match(lines[4]!, /^created\s+views All, ADR, Specs, Plans, Working$/)
-  assert.match(lines[5]!, /^synced\s+2 items: 2 created$/)
+  assert.match(lines[5]!, /^created\s+label rness$/)
+  assert.match(lines[6]!, /^linked\s+Agent Pulse to acme\/\.rness$/)
+  assert.match(lines[7]!, /^created\s+2 issues$/)
+  assert.match(lines[8]!, /^synced\s+2 items: 2 created$/)
   assert.match(
-    lines[6]!,
+    lines[9]!,
     /^declared\s+pulse in \.rness\/rness\.json — commit it: git -C \.rness commit -am "chore: rness pulse"$/
   )
-  assert.equal(lines.length, 7)
+  assert.equal(lines.length, 10)
   const manifest = JSON.parse(
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   )
@@ -407,7 +472,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
   assert.deepEqual(manifest.pulse, { project: 7 })
   assert.deepEqual(
     g.mutations
-      .filter((m) => m.op === 'addDraft')
+      .filter((m) => m.op === 'createIssue')
       .map((m) => m.variables['title']),
     ['0001 — A', '0002 — B']
   )
@@ -460,6 +525,7 @@ test('create: a view GitHub refuses once the project exists — declared all the
       'added view Specs',
       'added view Plans',
       'added view Working',
+      'created 2 issues',
       'synced 2 items: 2 created',
     ]
   )
@@ -505,13 +571,131 @@ test('sync without a pulse: refused', async (t) => {
   assert.equal(r.err.trim(), 'no pulse declared — rness pulse create')
 })
 
-test('sync: created, updated, unchanged and archived, each counted, the steps applied', async (t) => {
+test('a new document: its issue (labelled, the first line as body), added to the board, its fields, then its body — in that order', async (t) => {
   await machine(t)
   const g = await board(t, {
     fields: seededFields(),
     views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.err, '')
+  assert.deepEqual(lines(r.out), [
+    'created 2 issues',
+    'synced 2 items: 2 created',
+  ])
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    [
+      'createIssue',
+      'addItem',
+      'set',
+      'set',
+      'set',
+      'set',
+      'createIssue',
+      'addItem',
+      'set',
+      'set',
+      'set',
+      'set',
+      'updateIssue',
+      'updateIssue',
+    ]
+  )
+  assert.deepEqual(g.mutations[0]!.variables, {
+    repositoryId: 'R_1',
+    title: '0001 — A',
+    body: headerOf('adr/0001-a.md', 'acme'),
+    labelIds: ['L_1'],
+  })
+  assert.ok(
+    g.issues.every(
+      (i) => i.labels.includes('rness') && digestOf(i.body) !== null
+    )
+  )
+})
+
+test('sync again: nothing to do, nothing written', async (t) => {
+  const { g, sync } = await settled(t)
+  const r = await sync()
+  assert.deepEqual(lines(r.out), ['synced 2 items: 2 unchanged'])
+  assert.deepEqual(g.mutations, [])
+})
+
+test('a changed document: only its body is written', async (t) => {
+  const { g, cwd, sync } = await settled(t)
+  await writeFile(
+    join(cwd, '.rness', 'adr', '0001-a.md'),
+    `${FILES['adr/0001-a.md']}\nA new paragraph.\n`
+  )
+  const r = await sync()
+  assert.deepEqual(lines(r.out), ['synced 2 items: 1 updated, 1 unchanged'])
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['updateIssue']
+  )
+  assert.match(String(g.mutations[0]!.variables['body']), /A new paragraph\./)
+})
+
+test('hand changes on GitHub are written back: a body edited under its digest, a title, a closed issue reopened', async (t) => {
+  const { g, sync } = await settled(t)
+  const issueAt = (path: string) =>
+    g.items.find((i) => i.values['Path'] === path)!.issue!
+  const a = issueAt('adr/0001-a.md')
+  const b = issueAt('plans/0002-b.md')
+  const written = a.body
+  a.body = a.body.replace('on GitHub', 'on GitHub, edited by hand')
+  b.title = 'renamed by hand'
+  b.state = 'CLOSED'
+  const r = await sync()
+  assert.deepEqual(lines(r.out), [
+    'reopened 1 issue',
+    'synced 2 items: 2 updated',
+  ])
+  assert.deepEqual(
+    g.mutations.map((m) => [m.op, m.variables]),
+    [
+      ['reopenIssue', { id: b.id }],
+      ['updateIssue', { id: b.id, title: '0002 — B' }],
+      ['updateIssue', { id: a.id, body: written }],
+    ]
+  )
+  g.mutations.length = 0
+  assert.deepEqual(
+    lines((await sync()).out),
+    ['synced 2 items: 2 unchanged'],
+    'written once, then stable'
+  )
+})
+
+test('a gone document: its issue closed as not planned, its item archived', async (t) => {
+  const { g, cwd, sync } = await settled(t)
+  await rm(join(cwd, '.rness', 'plans', '0002-b.md'))
+  const r = await sync()
+  assert.deepEqual(lines(r.out), ['synced 1 item: 1 unchanged, 1 archived'])
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['closeIssue', 'archive']
+  )
+  assert.match(g.mutations[0]!.query!, /stateReason: NOT_PLANNED/)
+})
+
+test("the first sync with 0.13.0: 0.12.0's drafts converted in place, labelled, their bodies written, the board linked; the next writes nothing", async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    memory: { label: false, linked: false },
     items: [
-      item(
+      draft(
         'i1',
         {
           Path: 'adr/0001-a.md',
@@ -521,60 +705,7 @@ test('sync: created, updated, unchanged and archived, each counted, the steps ap
         },
         '0001 — A'
       ),
-      item(
-        'i2',
-        {
-          Path: 'plans/0002-b.md',
-          Collection: 'Plans',
-          Status: 'Draft',
-          'Plans status': 'Draft',
-        },
-        '0002 — B'
-      ),
-      item('i9', {
-        Path: 'adr/0009-gone.md',
-        Collection: 'ADR',
-        Status: 'Draft',
-      }),
-    ],
-    other: asUser('repo, project'),
-  })
-  const cwd = await makeWorkspace(t, {
-    org: 'acme',
-    pulse: { project: 7 },
-    files: { ...FILES, 'specs/0003-c.md': doc('Draft', '0003 — C') },
-  })
-  const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
-  )
-  assert.equal(r.err, '')
-  assert.equal(r.code, 0)
-  assert.match(
-    r.out.trim(),
-    /^synced\s+3 items: 1 created, 1 updated, 1 unchanged, 1 archived$/
-  )
-  assert.deepEqual(
-    g.mutations
-      .filter((m) => ['addDraft', 'editDraft', 'archive'].includes(m.op))
-      .map((m) => m.op),
-    ['addDraft', 'editDraft', 'archive']
-  )
-})
-
-test("sync: an item converted to an issue by hand is the team's — left alone, its document gets a new draft, every sync succeeds", async (t) => {
-  await machine(t)
-  const g = await board(t, {
-    fields: seededFields(),
-    views: VIEWS,
-    items: [
-      {
-        id: 'i1',
-        draftId: null,
-        title: '',
-        archived: false,
-        values: { Path: 'adr/0001-a.md', Collection: 'ADR', Status: 'Draft' },
-      },
-      item(
+      draft(
         'i2',
         {
           Path: 'plans/0002-b.md',
@@ -598,27 +729,286 @@ test("sync: an item converted to an issue by hand is the team's — left alone, 
     )
   const first = await sync()
   assert.equal(first.err, '')
-  assert.equal(first.code, 0)
-  assert.match(first.out.trim(), /^synced\s+2 items: 1 created, 1 unchanged$/)
+  assert.deepEqual(lines(first.out), [
+    'added label rness',
+    'added link acme/.rness',
+    'converted 2 drafts into issues of acme/.rness',
+    'synced 2 items: 2 converted',
+  ])
   assert.deepEqual(
-    g.mutations
-      .filter((m) => m.op === 'addDraft')
-      .map((m) => m.variables['title']),
-    ['0001 — A']
+    g.items.map((i) => [i.id, i.issue?.number, i.issue?.labels]),
+    [
+      ['i1', 1, ['rness']],
+      ['i2', 2, ['rness']],
+    ]
   )
-  const second = await sync()
-  assert.equal(second.code, 0)
-  assert.match(second.out.trim(), /^synced\s+2 items: 2 unchanged$/)
+  assert.ok(
+    g.items.every((i) => digestOf(i.issue?.body ?? '') !== null),
+    'every body written'
+  )
   assert.deepEqual(
-    g.mutations.filter(
-      (m) =>
-        m.variables['itemId'] === 'i1' ||
-        m.op === 'editDraft' ||
-        m.op === 'archive'
-    ),
+    g.mutations.filter((m) => m.op === 'set'),
     [],
-    'the converted item is neither edited, nor set, nor archived'
+    'the fields stay as they were'
   )
+  g.mutations.length = 0
+  assert.deepEqual(lines((await sync()).out), ['synced 2 items: 2 unchanged'])
+  assert.deepEqual(g.mutations, [])
+})
+
+test("a 0.12.0 CLI's drafts on a migrated board: archived, the issues kept", async (t) => {
+  const { g, sync } = await settled(t)
+  g.items.push(
+    draft(
+      'd9',
+      { Path: 'adr/0001-a.md', Collection: 'ADR', Status: 'Accepted' },
+      '0001 — A'
+    )
+  )
+  const r = await sync()
+  assert.deepEqual(lines(r.out), ['synced 2 items: 2 unchanged, 1 archived'])
+  assert.deepEqual(
+    g.mutations.map((m) => [m.op, m.variables['itemId']]),
+    [['archive', 'd9']]
+  )
+})
+
+test("the team's items are left alone: a draft without Path, another repository's issue, an issue of .rness without Path, a pull request", async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    items: [
+      {
+        id: 't1',
+        draftId: 'D_t1',
+        title: 'a note',
+        archived: false,
+        values: {},
+      },
+      {
+        id: 't2',
+        draftId: null,
+        issue: anIssue(40, { repository: 'acme/web' }),
+        title: '',
+        archived: false,
+        values: { Path: 'adr/0001-a.md' },
+      },
+      {
+        id: 't3',
+        draftId: null,
+        issue: anIssue(41),
+        title: '',
+        archived: false,
+        values: {},
+      },
+      {
+        id: 't4',
+        draftId: null,
+        title: '',
+        archived: false,
+        values: { Path: 'plans/0002-b.md' },
+      },
+    ],
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.err, '')
+  assert.deepEqual(lines(r.out), [
+    'created 2 issues',
+    'synced 2 items: 2 created',
+  ])
+  assert.doesNotMatch(JSON.stringify(g.mutations), /"t[1-4]"|ISSUE_4[01]/)
+})
+
+test('a body links another document to its issue, both new in the same sync: two passes', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: {
+      'adr/0001-a.md': `${doc('Accepted', '0001 — A')}\nSee [B](../plans/0002-b.md).\n`,
+      'plans/0002-b.md': `${doc('In progress', '0002 — B')}\nFollows [ADR 0001](../adr/0001-a.md#context).\n`,
+    },
+  })
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 0, r.err)
+  const [a, b] = [g.issues[0]!, g.issues[1]!]
+  assert.match(
+    a.body,
+    new RegExp(
+      `\\[B\\]\\(https://github\\.com/acme/\\.rness/issues/${b.number}\\)`
+    )
+  )
+  assert.match(
+    b.body,
+    new RegExp(
+      `\\[ADR 0001\\]\\(https://github\\.com/acme/\\.rness/issues/${a.number}\\)`
+    )
+  )
+})
+
+test('Issues off on .rness: sync refused before any write', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: ['ADR'],
+    memory: { issues: false, label: false, linked: false },
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 1)
+  assert.equal(
+    r.err.trim(),
+    'the pulse needs Issues on acme/.rness: turn them on in its Settings'
+  )
+  assert.deepEqual(g.mutations, [])
+  assert.deepEqual(g.restViews, [])
+  assert.deepEqual(g.restLabels, [])
+})
+
+test('Issues off on .rness: create refused before the project is made', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    memory: { issues: false },
+    other: asUser('repo, read:org, project'),
+  })
+  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const before = await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
+  const r = await run(() =>
+    pulseCreateCommand(
+      { cwd, yes: true, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 1)
+  assert.equal(r.out, '')
+  assert.equal(
+    r.err.trim(),
+    'the pulse needs Issues on acme/.rness: turn them on in its Settings'
+  )
+  assert.deepEqual(g.mutations, [])
+  assert.equal(
+    await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'),
+    before
+  )
+})
+
+/** A fake that answers createIssue with a rate limit, `times` times (Infinity: always). */
+const limitedCreate = (retryAfter: string, times: number) => () => {
+  let hits = 0
+  return (r: {
+    method: string
+    path: string
+    body?: unknown
+  }): Reply | undefined =>
+    asUser('repo, project')(r) ??
+    (JSON.stringify(r.body ?? '').includes('createIssue(') && hits++ < times
+      ? {
+          status: 403,
+          json: { message: 'You have exceeded a secondary rate limit.' },
+          headers: { 'retry-after': retryAfter },
+        }
+      : undefined)
+}
+
+test('a secondary rate limit is waited on as GitHub says, and said', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: limitedCreate('7', 1)(),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const slept: number[] = []
+  const r = await run(() =>
+    pulseSyncCommand(
+      {
+        cwd,
+        githubApi: g.base,
+        sleep: async (ms) => {
+          slept.push(ms)
+        },
+      },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(slept, [7_000])
+  assert.deepEqual(lines(r.out), [
+    "waiting 7 s — GitHub's rate limit",
+    'created 2 issues',
+    'synced 2 items: 2 created',
+  ])
+})
+
+test('a rate limit past the 10 minutes stops the sync with what is left; the next sync finishes, without duplicates', async (t) => {
+  await machine(t)
+  let limit = true
+  const limited = limitedCreate('601', Infinity)()
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: (r) => (limit ? limited(r) : asUser('repo, project')(r)),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    pulse: { project: 7 },
+    files: FILES,
+  })
+  const slept: number[] = []
+  const sync = () =>
+    run(() =>
+      pulseSyncCommand(
+        {
+          cwd,
+          githubApi: g.base,
+          sleep: async (ms) => {
+            slept.push(ms)
+          },
+        },
+        { terminal: NO_TTY }
+      )
+    )
+  const stopped = await sync()
+  assert.equal(stopped.code, 1)
+  assert.equal(
+    stopped.err.trim(),
+    "GitHub's rate limit outlasted the 10 minutes rness waits: 2 of 2 changes not made — the next rness pulse sync makes them"
+  )
+  assert.deepEqual(slept, [])
+  limit = false
+  const next = await sync()
+  assert.deepEqual(lines(next.out), [
+    'created 2 issues',
+    'synced 2 items: 2 created',
+  ])
+  assert.equal(g.issues.length, 2)
 })
 
 test('sync says what it added to the layout first', async (t) => {
@@ -638,7 +1028,8 @@ test('sync says what it added to the layout first', async (t) => {
   )
   const lines = r.out.trim().split('\n')
   assert.match(lines[0]!, /^added\s+view Plans$/)
-  assert.match(lines[1]!, /^synced\s+2 items: 2 created$/)
+  assert.match(lines[1]!, /^created\s+2 issues$/)
+  assert.match(lines[2]!, /^synced\s+2 items: 2 created$/)
 })
 
 test('mark sets Agent and Session on the items of the paths; --end clears only that session, then syncs', async (t) => {

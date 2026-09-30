@@ -1,5 +1,14 @@
+import { readFile, readdir } from 'node:fs/promises'
+import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+
 import type { CommandDeps } from '../core/deps.ts'
-import { GitHubMessageError } from '../core/github.ts'
+import {
+  GitHubMessageError,
+  RateLimitError,
+  type RateWait,
+  rateWait,
+} from '../core/github.ts'
 import { loadManifest, providerOf, writeManifest } from '../core/manifest.ts'
 import type { Board, Provider } from '../core/provider.ts'
 import { PROVIDERS, openProvider } from '../core/providers.ts'
@@ -8,9 +17,17 @@ import { defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
+import { issueBody } from '../pulse/body.ts'
 import { recordFailure } from '../pulse/detached.ts'
 import { desiredOf, layoutOf } from '../pulse/layout.ts'
-import { planSync } from '../pulse/plan.ts'
+import {
+  type BodyStep,
+  type Placed,
+  type Step,
+  issuedAfter,
+  planBodies,
+  planSync,
+} from '../pulse/plan.ts'
 import { reportError } from '../report.ts'
 import { loginCommand } from './login.ts'
 
@@ -20,6 +37,8 @@ export interface PulseOptions {
   cwd?: string
   /** Internal (tests): GitHub API base. */
   githubApi?: string
+  /** Internal (tests): how a rate-limit wait sleeps; default a timer. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 const PROJECT_SCOPE = 'project'
@@ -50,18 +69,33 @@ interface Context {
   provider: Provider
 }
 
+const apiOf = (opts: PulseOptions): { apiBase?: string } =>
+  opts.githubApi === undefined ? {} : { apiBase: opts.githubApi }
+
+const providerOptions = (
+  opts: PulseOptions,
+  wait?: RateWait
+): { apiBase?: string; wait?: RateWait } => ({
+  ...apiOf(opts),
+  ...(wait === undefined ? {} : { wait }),
+})
+
 /** The refusals every pulse command shares, in order; each throws one line. */
-async function context(opts: PulseOptions): Promise<Context> {
+async function context(opts: PulseOptions, wait?: RateWait): Promise<Context> {
   const ws = await findWorkspace(opts.cwd ?? process.cwd())
   const manifest = await loadManifest(ws.rnessDir)
-  const provider = await openProvider(manifest, apiOf(opts))
+  const provider = await openProvider(manifest, providerOptions(opts, wait))
   if (manifest.org === null)
     throw new Error('the pulse needs an organization: rness.json has no "org"')
   return { rnessDir: ws.rnessDir, manifest, org: manifest.org, provider }
 }
 
-const apiOf = (opts: PulseOptions): { apiBase?: string } =>
-  opts.githubApi === undefined ? {} : { apiBase: opts.githubApi }
+/** Rate-limit waits said as they begin: a pause of minutes must not look like a hang (spec 0018 §4). */
+const waitSaid = (opts: PulseOptions, ui: Ui): RateWait =>
+  rateWait(async (ms) => {
+    ui.line('waiting', `${Math.round(ms / 1000)} s — GitHub's rate limit`)
+    await (opts.sleep ?? ((n: number) => delay(n)))(ms)
+  })
 
 /**
  * What the login lacks for the pulse — a login, or the project scope — or
@@ -102,11 +136,78 @@ const createdByKind: SayLayout = (ui, added) => {
       .map((a) => a.slice(kind.length + 1))
     if (names.length > 0) ui.line('created', `${kind}s ${names.join(', ')}`)
   }
+  for (const a of added) {
+    if (a.startsWith('label ')) ui.line('created', a)
+    else if (a.startsWith('link '))
+      ui.line('linked', `Agent Pulse to ${a.slice('link '.length)}`)
+  }
+}
+
+/** Every file of `.rness/` by its path there, with `/`; not `.git` nor `node_modules` (spec 0018 §3.3). */
+async function filesOf(rnessDir: string): Promise<Set<string>> {
+  const files = new Set<string>()
+  const walk = async (rel: string): Promise<void> => {
+    const dir = rel === '' ? rnessDir : join(rnessDir, ...rel.split('/'))
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const path = rel === '' ? e.name : `${rel}/${e.name}`
+      if (e.isDirectory()) {
+        if (e.name !== '.git' && e.name !== 'node_modules') await walk(path)
+      } else if (e.isFile()) files.add(path)
+    }
+  }
+  await walk('')
+  return files
+}
+
+const count = (n: number, word: string): string =>
+  `${n} ${word}${n === 1 ? '' : 's'}`
+
+/**
+ * What a sync did (spec 0018 §4): to `.rness`'s Issues first, then to every
+ * item, as 0.12.0 said it; an item whose body alone was written is updated.
+ */
+function sayDone(
+  ui: Ui,
+  org: string,
+  documents: number,
+  steps: readonly Step[],
+  writes: readonly BodyStep[]
+): void {
+  const n = (kind: Step['kind']): number =>
+    steps.filter((s) => s.kind === kind).length
+  const reopened = steps.filter((s) => s.kind === 'update' && s.reopen).length
+  if (n('create') > 0) ui.line('created', count(n('create'), 'issue'))
+  if (n('convert') > 0)
+    ui.line(
+      'converted',
+      `${count(n('convert'), 'draft')} into issues of ${org}/.rness`
+    )
+  if (reopened > 0) ui.line('reopened', count(reopened, 'issue'))
+  const written = new Set(writes.map((w) => w.id))
+  const bodyOnly = steps.filter(
+    (s) => s.kind === 'unchanged' && written.has(s.id)
+  ).length
+  const parts = (
+    [
+      ['created', n('create')],
+      ['converted', n('convert')],
+      ['updated', n('update') + bodyOnly],
+      ['unchanged', n('unchanged') - bodyOnly],
+      ['archived', n('close') + n('archive')],
+    ] as const
+  )
+    .filter(([, k]) => k > 0)
+    .map(([word, k]) => `${k} ${word}`)
+  ui.line(
+    'synced',
+    `${plural(documents)}${parts.length > 0 ? `: ${parts.join(', ')}` : ''}`
+  )
 }
 
 /**
- * Layout first, then the documents: one way (spec 0017 §4). What it did is
- * said as `sync` says things, and the summary drops the parts that are zero.
+ * Issues first, then the layout, then the documents in two passes (spec
+ * 0018 §4): each gets its issue, title, label and fields; then the bodies,
+ * which link to one another's issues by number.
  */
 async function syncBoard(
   c: Context,
@@ -114,31 +215,55 @@ async function syncBoard(
   ui: Ui,
   sayLayout: SayLayout
 ): Promise<void> {
+  await fromGithub(c.provider.checkIssues(c.org))
   const tabs = await statusTabs(c.rnessDir)
   const want = desiredOf(tabs, c.org)
   sayLayout(
     ui,
     await fromGithub(c.provider.ensureLayout(board, layoutOf(tabs)))
   )
-  const steps = planSync(want, await fromGithub(c.provider.items(board)))
-  for (const step of steps) await fromGithub(c.provider.apply(board, step))
-  const count = (kind: string): number =>
-    steps.filter((s) => s.kind === kind).length
-  const parts = (
-    [
-      ['created', 'create'],
-      ['updated', 'update'],
-      ['unchanged', 'unchanged'],
-      ['archived', 'archive'],
-    ] as const
-  )
-    .map(([word, kind]) => [word, count(kind)] as const)
-    .filter(([, n]) => n > 0)
-    .map(([word, n]) => `${n} ${word}`)
-  ui.line(
-    'synced',
-    `${plural(want.length)}${parts.length > 0 ? `: ${parts.join(', ')}` : ''}`
-  )
+  const have = await fromGithub(c.provider.items(board))
+  const steps = planSync(want, have)
+  const changes = steps.filter((s) => s.kind !== 'unchanged').length
+  let writes: BodyStep[] = []
+  let made = 0
+  try {
+    const placed = new Map<string, Placed>()
+    for (const step of steps) {
+      const p = await fromGithub(c.provider.apply(board, step))
+      if (p !== null && (step.kind === 'create' || step.kind === 'convert'))
+        placed.set(step.want.path, p)
+      if (step.kind !== 'unchanged') made++
+    }
+    const issued = issuedAfter(steps, have, placed)
+    const numbers = new Map([...issued].map(([path, i]) => [path, i.number]))
+    const files = await filesOf(c.rnessDir)
+    const bodies = new Map<string, string>()
+    for (const w of want)
+      bodies.set(
+        w.path,
+        issueBody({
+          path: w.path,
+          text: await readFile(join(c.rnessDir, ...w.path.split('/')), 'utf8'),
+          org: c.org,
+          numbers,
+          files,
+        })
+      )
+    writes = planBodies(bodies, issued)
+    for (const step of writes) {
+      await fromGithub(c.provider.apply(board, step))
+      made++
+    }
+  } catch (e) {
+    if (!(e instanceof RateLimitError)) throw e
+    const total = changes + writes.length
+    throw new Error(
+      `${e.message}: ${total - made} of ${total} changes not made — the next rness pulse sync makes them`,
+      { cause: e }
+    )
+  }
+  sayDone(ui, c.org, want.length, steps, writes)
 }
 
 /** `rness pulse create`: the project, declared at once; then its layout and a first sync. */
@@ -149,7 +274,8 @@ export async function pulseCreateCommand(
   try {
     const terminal = deps.terminal ?? defaultTerminal
     const ui = deps.ui ?? (await makeUi(terminal))
-    let c = await context(opts)
+    const wait = waitSaid(opts, ui)
+    let c = await context(opts, wait)
     if (c.manifest.pulse !== null)
       throw new Error(
         `already declared: ${boardUrl(c.org, c.manifest.pulse.project)} — rness pulse sync`
@@ -185,10 +311,15 @@ export async function pulseCreateCommand(
         { terminal, ui, ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }) }
       )
       if (code !== 0) return code
-      c = { ...c, provider: await openProvider(c.manifest, apiOf(opts)) }
+      c = {
+        ...c,
+        provider: await openProvider(c.manifest, providerOptions(opts, wait)),
+      }
       const still = await missingAccess(c.provider)
       if (still !== null) throw new Error(still)
     }
+    // Before anything is written: the items are issues of .rness (spec 0018 §2).
+    await fromGithub(c.provider.checkIssues(c.org))
     const login = (await c.provider.identity())?.login ?? 'unknown'
     ui.line(
       'checked',
@@ -226,7 +357,7 @@ export async function pulseSyncCommand(
 ): Promise<number> {
   try {
     const ui = deps.ui ?? (await makeUi(deps.terminal ?? defaultTerminal))
-    const c = await context(opts)
+    const c = await context(opts, waitSaid(opts, ui))
     await syncBoard(c, await declaredBoard(c), ui, eachAdded)
     return 0
   } catch (e) {
