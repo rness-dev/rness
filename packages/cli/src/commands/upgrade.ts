@@ -151,9 +151,9 @@ interface CloneChanges {
 async function clonesToCommit(
   root: string,
   cwd: string,
-  manifest: Manifest
+  manifest: Manifest,
+  files: readonly string[]
 ): Promise<CloneChanges[]> {
-  const files = writtenFiles(manifest)
   const clones: CloneChanges[] = []
   for (const repo of Object.keys(manifest.repos)) {
     const dir = join(root, 'org', repo)
@@ -167,6 +167,40 @@ async function clonesToCommit(
     }
   }
   return clones
+}
+
+/**
+ * The files the sync writes in a clone. The sync ran in the copy just
+ * installed, whose release may write files this copy does not know — 0.13.0
+ * named two of the plugin's six files after syncing with 0.14.0. That copy is
+ * asked (`rness written-files`); a copy too old to answer leaves this copy's
+ * own list.
+ */
+async function filesTheSyncWrites(
+  root: string,
+  rnessDir: string,
+  manifest: Manifest
+): Promise<string[]> {
+  const own = writtenFiles(manifest)
+  const pinned = await readPinnedCli(rnessDir)
+  if (pinned === null) return own
+  try {
+    const { stdout } = await execFileP(
+      process.execPath,
+      [join(pinned.dir, pinned.bin), 'written-files', '--cwd', root],
+      {
+        cwd: root,
+        env: { ...process.env, NO_COLOR: '1', RNESS_NO_INSTALL: '1' },
+        timeout: 10_000,
+      }
+    )
+    const theirs: unknown = JSON.parse(stdout)
+    if (Array.isArray(theirs) && theirs.every((f) => typeof f === 'string'))
+      return [...new Set([...own, ...theirs])]
+  } catch {
+    // An older copy has no such command: this copy's list is what there is.
+  }
+  return own
 }
 
 /**
@@ -462,11 +496,15 @@ export async function upgradeCommand(
     }
     return finish(ui, cwd, ws.rnessDir, label, target, {
       commit: committed.kind,
-      clones: await clonesToCommit(
-        ws.root,
-        cwd,
-        await loadManifest(ws.rnessDir)
-      ),
+      clones: await (async () => {
+        const manifest = await loadManifest(ws.rnessDir)
+        return clonesToCommit(
+          ws.root,
+          cwd,
+          manifest,
+          await filesTheSyncWrites(ws.root, ws.rnessDir, manifest)
+        )
+      })(),
     })
   } catch (e) {
     return reportError(e)

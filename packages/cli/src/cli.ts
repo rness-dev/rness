@@ -18,6 +18,7 @@ import { type StatusOptions, statusCommand } from './commands/status.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
 import { type ValidateOptions, validateCommand } from './commands/validate.ts'
+import { writtenFilesCommand } from './commands/written-files.ts'
 import { PACKAGE_MANAGERS } from './core/pm.ts'
 import { banner, bold, paint } from './core/style.ts'
 import { VERSION } from './version.ts'
@@ -215,6 +216,14 @@ function buildProgram(state: RunState): Command {
     .argument('<operation>')
     .action(async (operation: string) => {
       state.code = await gitCredentialCommand(operation)
+    })
+
+  // What `upgrade` asks of the copy it installed: the files its sync writes.
+  program
+    .command('written-files', { hidden: true })
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (opts: { cwd?: string }) => {
+      state.code = await writtenFilesCommand(opts)
     })
 
   // What Claude Code runs for the hooks the Claude target writes (spec 0015).

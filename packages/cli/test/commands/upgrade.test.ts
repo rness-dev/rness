@@ -43,13 +43,14 @@ async function scaffoldPackage(pin: string): Promise<string> {
 
 /**
  * `npm` first on PATH: `view` answers FAKE_NPM_LATEST (or fails), `install`
- * materialises the pinned @rness/cli — a bin that prints what it was asked —
- * or fails as npm does when FAKE_NPM_FAIL is set; `pack` builds a tarball of
- * FAKE_NPM_SCAFFOLD as the package's scaffold.
+ * materialises the pinned @rness/cli — a bin that prints what it was asked,
+ * or FAKE_NPM_BIN's script when set — or fails as npm does when FAKE_NPM_FAIL
+ * is set; `pack` builds a tarball of FAKE_NPM_SCAFFOLD as the package's
+ * scaffold.
  */
 async function fakeNpm(
   t: TestContext,
-  env: { latest?: string; fail?: boolean; scaffold?: string }
+  env: { latest?: string; fail?: boolean; scaffold?: string; bin?: string }
 ): Promise<void> {
   const binDir = await mkdtemp(join(tmpdir(), 'rness-npm-'))
   t.after(() => rm(binDir, { recursive: true, force: true }))
@@ -75,7 +76,8 @@ async function fakeNpm(
       `    v=$("${process.execPath}" -p "require('./package.json').devDependencies['@rness/cli']")`,
       '    mkdir -p node_modules/@rness/cli/dist/bin',
       '    echo "{\\"name\\":\\"@rness/cli\\",\\"version\\":\\"$v\\",\\"bin\\":{\\"rness\\":\\"dist/bin/rness.js\\"}}" > node_modules/@rness/cli/package.json',
-      "    echo \"console.log('PINNED $v ' + process.argv.slice(2).join(' '))\" > node_modules/@rness/cli/dist/bin/rness.js ;;",
+      '    if [ -n "$FAKE_NPM_BIN" ]; then cp "$FAKE_NPM_BIN" node_modules/@rness/cli/dist/bin/rness.js; else',
+      "    echo \"console.log('PINNED $v ' + process.argv.slice(2).join(' '))\" > node_modules/@rness/cli/dist/bin/rness.js; fi ;;",
       'esac',
       '',
     ].join('\n')
@@ -86,6 +88,7 @@ async function fakeNpm(
     FAKE_NPM_LATEST: process.env['FAKE_NPM_LATEST'],
     FAKE_NPM_FAIL: process.env['FAKE_NPM_FAIL'],
     FAKE_NPM_SCAFFOLD: process.env['FAKE_NPM_SCAFFOLD'],
+    FAKE_NPM_BIN: process.env['FAKE_NPM_BIN'],
   }
   process.env['PATH'] = `${binDir}:${saved.PATH ?? ''}`
   const set = (key: string, value: string | undefined) => {
@@ -95,6 +98,7 @@ async function fakeNpm(
   set('FAKE_NPM_LATEST', env.latest)
   set('FAKE_NPM_FAIL', env.fail === true ? '1' : undefined)
   set('FAKE_NPM_SCAFFOLD', env.scaffold)
+  set('FAKE_NPM_BIN', env.bin)
   t.after(() => {
     for (const [key, value] of Object.entries(saved)) set(key, value)
   })
@@ -638,4 +642,53 @@ test('next steps name, per repository, the files sync writes that changed — no
     /^ {2}git -C org\/api add \.mcp\.json AGENTS\.md && git -C org\/api commit -m "chore: rness 0\.5\.0"$/m
   )
   assert.doesNotMatch(r.out, /org\/web|notes\.md/)
+})
+
+test('next steps also name the files only the new copy writes: it is asked, this copy may not know them', async (t) => {
+  // The installed copy answers `written-files` with a file this running copy
+  // has never heard of — as 0.14.0's skills were to 0.13.0.
+  const stub = join(await mkdtemp(join(tmpdir(), 'rness-bin-')), 'rness.js')
+  t.after(() => rm(dirname(stub), { recursive: true, force: true }))
+  await writeFile(
+    stub,
+    [
+      'const args = process.argv.slice(2)',
+      "if (args[0] === 'written-files') console.log(JSON.stringify(['AGENTS.md', '.claude/skills/rness/skills/new/SKILL.md']))",
+      "else console.log('PINNED ' + args.join(' '))",
+      '',
+    ].join('\n')
+  )
+  await fakeNpm(t, { latest: '0.5.0', bin: stub })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  await writeFile(
+    join(rnessDir, 'rness.json'),
+    JSON.stringify({
+      contract: 1,
+      org: 'acme',
+      agents: ['claude'],
+      repos: { api: { url: 'https://github.com/acme/api.git' } },
+      scopes: {},
+    })
+  )
+  await git(rnessDir, 'commit', '-qam', 'chore: a repository')
+  const api = join(root, 'org', 'api')
+  await mkdir(api, { recursive: true })
+  await git(api, 'init', '-q', '-b', 'main')
+  await git(api, 'commit', '-q', '--allow-empty', '-m', 'init')
+  // What the new copy's sync wrote: a file of its own, and one both know.
+  await mkdir(join(api, '.claude', 'skills', 'rness', 'skills', 'new'), {
+    recursive: true,
+  })
+  await writeFile(
+    join(api, '.claude', 'skills', 'rness', 'skills', 'new', 'SKILL.md'),
+    'new\n'
+  )
+  await writeFile(join(api, '.mcp.json'), '{}\n')
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^ {2}git -C org\/api add \.claude\/skills\/rness\/skills\/new\/SKILL\.md \.mcp\.json && git -C org\/api commit -m "chore: rness 0\.5\.0"$/m
+  )
 })
