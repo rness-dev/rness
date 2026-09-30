@@ -27,7 +27,7 @@ export interface Desired {
   type: string
   /** The collection's own status field, which carries `status` too; null: it has none. */
   statusField: string | null
-  /** `Sessions`: the document's `sessions:`, joined by `, `; null: none (spec 0020 §3.2). */
+  /** `Session history`: the document's `sessions:`, each `agent · id` or `id`, joined by `, `; null: none (spec 0022 §3). */
   sessions: string | null
 }
 
@@ -162,7 +162,10 @@ export function desiredOf(tabs: readonly StatusTab[], org: string): Desired[] {
       status: statusOf(row.status),
       type: tab.label,
       statusField: fields.get(tab.label)?.name ?? null,
-      sessions: row.sessions?.join(', ') ?? null,
+      sessions:
+        row.sessions
+          ?.map((e) => (e.agent === undefined ? e.id : `${e.agent} · ${e.id}`))
+          .join(', ') ?? null,
     }))
   )
 }

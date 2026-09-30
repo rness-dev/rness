@@ -832,7 +832,12 @@ test("a new board's first view becomes All: Title, Collection, Status, Session; 
   assert.deepEqual(updates[0]!.variables, {
     viewId: 'V_1',
     name: 'All',
-    visibleFieldIds: ['F_title', 'F_Collection', 'F_status', 'F_Working session'],
+    visibleFieldIds: [
+      'F_title',
+      'F_Collection',
+      'F_status',
+      'F_Working session',
+    ],
   })
   assert.match(updates[0]!.query!, /updateProjectV2View\(/)
   assert.match(updates[0]!.query!, /configuration: \{ visibleFieldIds:/)

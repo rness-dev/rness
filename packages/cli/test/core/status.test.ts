@@ -30,7 +30,7 @@ test('ADR, Specs and Plans always, in that order, even empty', async (t) => {
   )
 })
 
-test('rows: sessions from the front matter, only when a document records some (spec 0020 §3.1)', async (t) => {
+test('rows: sessions from the front matter — { id, agent } or a bare id; the first entry of an id wins (spec 0022 §3)', async (t) => {
   const fm = (sessions: string) =>
     `---\nstatus: Draft\nsessions: ${sessions}\n---\n\n# 0001 — A\n`
   const dir = await rness(t, {
@@ -38,15 +38,22 @@ test('rows: sessions from the front matter, only when a document records some (s
     'specs/0002-string.md': fm('s1'),
     'specs/0003-none.md': doc('Draft', '0003 — C'),
     'specs/0004-empty.md': fm('[]'),
+    'specs/0005-agents.md': fm(
+      '[{ id: s1, agent: Claude Opus 5.5 }, s2, { id: s1, agent: other }, { agent: no id }, { id: s3, agent: "" }]'
+    ),
   })
   const [, specs] = await statusTabs(dir)
   assert.deepEqual(
     specs?.rows.map((r) => [r.path, r.sessions]),
     [
+      [
+        'specs/0005-agents.md',
+        [{ id: 's1', agent: 'Claude Opus 5.5' }, { id: 's2' }, { id: 's3' }],
+      ],
       ['specs/0004-empty.md', undefined],
       ['specs/0003-none.md', undefined],
       ['specs/0002-string.md', undefined],
-      ['specs/0001-list.md', ['s1', 's2']],
+      ['specs/0001-list.md', [{ id: 's1' }, { id: 's2' }]],
     ]
   )
 })

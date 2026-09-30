@@ -74,7 +74,7 @@ test('desiredOf: title, the first line of its body, status, type', () => {
   assert.equal(third?.type, 'Marketing')
 })
 
-test('desiredOf: Sessions is the sessions a document records, joined; null when none', () => {
+test('desiredOf: Session history is each session a document records, its agent first when known, joined; null when none', () => {
   const [one] = desiredOf(
     [
       {
@@ -86,14 +86,14 @@ test('desiredOf: Sessions is the sessions a document records, joined; null when 
             title: 'P',
             status: 'Completed',
             path: 'plans/0029-p.md',
-            sessions: ['s1', 's2'],
+            sessions: [{ id: 's1', agent: 'Claude Opus 5.5' }, { id: 's2' }],
           },
         ],
       },
     ],
     'acme'
   )
-  assert.equal(one?.sessions, 's1, s2')
+  assert.equal(one?.sessions, 'Claude Opus 5.5 · s1, s2')
 })
 
 test('layoutOf: the contract statuses in lifecycle order, then the others in the order found', () => {

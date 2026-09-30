@@ -16,9 +16,15 @@ export interface StatusRow {
   path: string
   /**
    * The Claude Code sessions that wrote or changed it, oldest first, each
-   * once (spec 0020 §3.1); absent when it records none.
+   * once (spec 0020 §3.1, 0022 §3); absent when it records none.
    */
-  sessions?: string[]
+  sessions?: SessionEntry[]
+}
+
+/** A session in `sessions:`: its id, and the agent it ran as when recorded. */
+export interface SessionEntry {
+  id: string
+  agent?: string
 }
 
 export interface StatusTab {
@@ -48,14 +54,30 @@ function statusOf(item: MarkdownItem): string | null {
   return typeof status === 'string' && status !== '' ? status : null
 }
 
-/** `sessions:` as a list of ids: anything else in it is not one, and is left out. */
-function sessionsOf(item: MarkdownItem): string[] {
+/**
+ * `sessions:` as its entries: `{ id, agent }`, or a bare id as 0.15 wrote
+ * it. Anything else is left out, and an id listed twice keeps its first
+ * entry (spec 0022 §3).
+ */
+function sessionsOf(item: MarkdownItem): SessionEntry[] {
   const listed = item.fields?.['sessions']
   if (!Array.isArray(listed)) return []
-  const ids = listed.filter(
-    (s): s is string => typeof s === 'string' && s !== ''
-  )
-  return [...new Set(ids)]
+  const entries = new Map<string, SessionEntry>()
+  for (const entry of listed) {
+    const fields =
+      typeof entry === 'string'
+        ? { id: entry }
+        : entry !== null && typeof entry === 'object'
+          ? (entry as Record<string, unknown>)
+          : {}
+    const { id, agent } = fields
+    if (typeof id !== 'string' || id === '' || entries.has(id)) continue
+    entries.set(
+      id,
+      typeof agent === 'string' && agent !== '' ? { id, agent } : { id }
+    )
+  }
+  return [...entries.values()]
 }
 
 function rowOf(dir: string, item: MarkdownItem): StatusRow {
