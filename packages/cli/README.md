@@ -60,11 +60,15 @@ when dropped, red `?` when missing.
   screen back. Read-only.
 - Off a terminal — a pipe, CI, an agent's tool — Markdown: a table per tab.
 - From Claude Code, `/rness:status [tab]` shows those tables (see "Agent
-  targets"). For the view itself: `Ctrl+Z` suspends Claude Code, run
-  `npx @rness/cli status` (or `rness status` with a global install), `q`,
-  then `fg` resumes it — the skill ends with that line. Nothing started from inside
-  Claude Code gets the terminal, so the view cannot open from there
-  (verified with Claude Code 2.1.284 on 2026-09-29).
+  targets"). Nothing started from inside Claude Code gets the terminal, so
+  the view cannot open from there (verified with Claude Code 2.1.284 on
+  2026-09-29). Two ways to reach it, and the skill ends with both: in the
+  same terminal, `Ctrl+Z` suspends Claude Code, run `npx @rness/cli status`
+  (or `rness status` with a global install), `q`, then `fg` resumes it
+  (Unix only); or in another terminal, from the workspace's `.rness/`, with
+  the manager it installs with — `pnpm rness status`, `npx rness status`,
+  `yarn rness status` or `bunx rness status` — which runs the pinned copy
+  without the network (verified with each manager on 2026-09-30).
 
 ### Agent targets
 
@@ -91,11 +95,30 @@ the files a given agent needs, for the agents the team declares in
   which registers the MCP server; see "MCP server". The same settings file
   carries three hooks, and so does `.claude/settings.json` at the workspace
   root, which `sync` writes on every machine; see "Hooks". Both places also
-  get a Claude Code plugin, `.claude/skills/rness/`, with one command:
-  `/rness:status [tab]`, the tables of `rness status`. rness owns those
-  files whole — an edit by hand is reported by `sync --check` and written
-  back by `sync` — and nothing in them depends on the version. Claude Code
-  loads the plugin once the folder is trusted, in a session started there.
+  get a Claude Code plugin, `.claude/skills/rness/`, with five commands:
+  `/rness:status [tab]`, the tables of `rness status`, and the lifecycle
+  skills below. rness owns those files whole — an edit by hand is reported
+  by `sync --check` and written back by `sync`. Nothing in them depends on
+  the version; the last line of the status skill names the workspace's
+  package manager, so changing `packageManager` in `.rness/package.json`
+  leaves it stale until the next `sync`. Claude Code loads the plugin once
+  the folder is trusted, in a session started there.
+- **The lifecycle skills**: `/rness:adr [subject | NNNN]` records a decision
+  as an ADR, `/rness:spec [subject | NNNN]` writes a specification,
+  `/rness:plan <spec>` turns an approved specification into a plan, and
+  `/rness:done [plan]` closes a piece of work — each task checked on
+  evidence, then the plan `Completed`, its specification `Implemented`, and
+  the documents the work made inaccurate corrected. Each is a procedure
+  loaded into the conversation, not a file generator: after a decision has
+  been discussed, `/rness:adr` writes it from the conversation; otherwise
+  it asks, one question at a time. The skill stays in the conversation for
+  the next turns, and the file carries the work to the next session
+  (`/rness:adr 0010` reopens it). The agent may start one itself — an ADR
+  when a choice is expensive to reverse — but writes nothing without a yes.
+  The rules stay in `.rness/CONVENTIONS.md`; the skills only add the steps.
+  A new document takes the collection's first status (`Proposed` for an
+  ADR, `Draft` otherwise) and the next number of the local checkout; two
+  branches can pick the same one. No skill commits.
 - rness owns values, not files: what is missing is added, nothing else is
   touched, and a file it cannot parse is reported, never rewritten.
   `sync --check` and `validate` report a missing value. Removing an agent
@@ -489,6 +512,22 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.14.0 — the lifecycle skills; `/rness:status` names a second terminal
+
+- The `rness` plugin of Claude Code gains `/rness:adr`, `/rness:spec`,
+  `/rness:plan` and `/rness:done`: the workspace's lifecycle as procedures
+  the developer or the agent starts, which write nothing without a yes. See
+  "Agent targets".
+- `/rness:status` ends with two ways to the full-screen view: `Ctrl+Z` in
+  the same terminal, or another terminal from `.rness/` —
+  `pnpm rness status`, or the command of the workspace's package manager.
+  See "Status".
+- `rness upgrade` syncs, so it writes the four skills and rewrites
+  `plugin.json` and the status skill; then commit `.claude/skills/rness/` in
+  each repository, as its next steps list. Until then `sync --check` and
+  `validate` report them.
+- Blocks are unchanged.
 
 ## 0.13.0 — Agent Pulse: each document an issue of `.rness`, its content on the card
 
