@@ -15,16 +15,22 @@ import { makeWorkspace } from '../helpers/workspace.ts'
 const SETTINGS = '.claude/settings.json'
 const PLUGIN_JSON = '.claude/skills/rness/.claude-plugin/plugin.json'
 const SKILL = '.claude/skills/rness/skills/status/SKILL.md'
+/** The lifecycle skills (spec 0019 §2), after the status skill. */
+const LIFECYCLE = ['adr', 'spec', 'plan', 'done'].map(
+  (name) => `.claude/skills/rness/skills/${name}/SKILL.md`
+)
 
 /** Every file the Claude target writes here, in the order it walks them. */
 const LABELS = [
   SETTINGS,
   PLUGIN_JSON,
   SKILL,
+  ...LIFECYCLE,
   `org/api/${SETTINGS}`,
   'org/api/.mcp.json',
   `org/api/${PLUGIN_JSON}`,
   `org/api/${SKILL}`,
+  ...LIFECYCLE.map((f) => `org/api/${f}`),
 ]
 const all = (status: 'updated' | 'unchanged') =>
   LABELS.map((label) => ({ label, status, detail: null }))
@@ -205,6 +211,7 @@ test('the workspace root file is in no repository: never among the written files
     '.mcp.json',
     PLUGIN_JSON,
     SKILL,
+    ...LIFECYCLE,
   ])
 })
 
@@ -219,6 +226,11 @@ test('check writes nothing and says what is missing; an unreadable file is repor
     },
     { label: PLUGIN_JSON, status: 'stale', detail: 'missing' },
     { label: SKILL, status: 'stale', detail: 'missing' },
+    ...LIFECYCLE.map((label) => ({
+      label,
+      status: 'stale',
+      detail: 'missing',
+    })),
     {
       label: `org/api/${SETTINGS}`,
       status: 'stale',
@@ -232,6 +244,11 @@ test('check writes nothing and says what is missing; an unreadable file is repor
     },
     { label: `org/api/${PLUGIN_JSON}`, status: 'stale', detail: 'missing' },
     { label: `org/api/${SKILL}`, status: 'stale', detail: 'missing' },
+    ...LIFECYCLE.map((f) => ({
+      label: `org/api/${f}`,
+      status: 'stale',
+      detail: 'missing',
+    })),
   ])
   await mkdir(join(root, 'org', 'api', '.claude'))
   await writeFile(join(root, 'org', 'api', SETTINGS), '{ oops')

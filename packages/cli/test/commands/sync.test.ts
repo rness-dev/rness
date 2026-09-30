@@ -707,9 +707,22 @@ test('sync --agent claude declares it, then writes the Claude settings of every 
   const r = await sync(['--yes', '--agent', 'claude', '--cwd', root])
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /^declared agent claude in \.rness\/rness\.json\n/)
-  assert.match(
-    r.out,
-    /\nupdated {2}\.claude\/settings\.json\nupdated {2}\.claude\/skills\/rness\/\.claude-plugin\/plugin\.json\nupdated {2}\.claude\/skills\/rness\/skills\/status\/SKILL\.md\nupdated {2}org\/api\/\.claude\/settings\.json\nupdated {2}org\/api\/\.mcp\.json\nupdated {2}org\/api\/\.claude\/skills\/rness\/\.claude-plugin\/plugin\.json\nupdated {2}org\/api\/\.claude\/skills\/rness\/skills\/status\/SKILL\.md\n/
+  const plugin = (at: string) => [
+    `${at}.claude/skills/rness/.claude-plugin/plugin.json`,
+    ...['status', 'adr', 'spec', 'plan', 'done'].map(
+      (skill) => `${at}.claude/skills/rness/skills/${skill}/SKILL.md`
+    ),
+  ]
+  const written = [
+    '.claude/settings.json',
+    ...plugin(''),
+    'org/api/.claude/settings.json',
+    'org/api/.mcp.json',
+    ...plugin('org/api/'),
+  ]
+  assert.ok(
+    r.out.includes(`\n${written.map((f) => `updated  ${f}`).join('\n')}\n`),
+    r.out
   )
   assert.deepEqual((await loadManifestAt(root)).agents, ['claude'])
   const settings = JSON.parse(
