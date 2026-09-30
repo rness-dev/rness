@@ -157,8 +157,8 @@ test('optionColor: the contract statuses, a discovered status by its tone, colle
       'green',
       'green',
       'green',
-      'gray',
-      'gray',
+      'red',
+      'yellow',
       'gray',
     ]
   )

@@ -214,7 +214,7 @@ in its Settings`.
   that collection's own steps: each collection has its own status field
   (`ADR status`, `Specs status`, …; a directory without statuses is columned
   by `Status`, which holds them all for the `All` table). `pulse sync`
-  remakes a board built by an earlier version (its URL changes once); a `Working` table, filtered on `Agent: working`. A first view named `View 1` (GitHub's default) becomes `All` when no `All` exists, on create and on sync, showing Title, Collection, Status and Session. Options are coloured (statuses by lifecycle: blue proposed, purple approved, yellow in progress, red blocked, green done, gray dropped; collections and `working` too); a sync recolours rness's options and leaves other options' colours alone. rness does
+  remakes a board built by an earlier version (its URL changes once); a `Working` table, filtered on `Agent: working`. A first view named `View 1` (GitHub's default) becomes `All` when no `All` exists, on create and on sync, showing Title, Collection, Status and Session. Options are coloured (statuses by lifecycle: blue proposed, purple approved, yellow in progress, red blocked or rejected, yellow superseded, green done, gray abandoned; collections and `working` too); a sync recolours rness's options and leaves other options' colours alone. rness does
   not set the project's visibility: the project gets GitHub's default for a
   new organization project, which is private (`public: false`). Verified
   with Claude Code 2.1.284 on 2026-09-29.
@@ -534,6 +534,8 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   An implementation outside this package must adapt to each.
 
 - Blocks are unchanged.
+- Status colours: `Rejected` is red and `Superseded` yellow, in every
+  collection's field and in `Status`; a sync recolours them.
 
 ## 0.12.0 — `rness pulse`; the provider
 

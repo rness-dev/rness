@@ -62,8 +62,8 @@ const STATUS_COLORS: Readonly<Record<string, OptionColor>> = {
   Accepted: 'green',
   Implemented: 'green',
   Completed: 'green',
-  Rejected: 'gray',
-  Superseded: 'gray',
+  Rejected: 'red',
+  Superseded: 'yellow',
   Abandoned: 'gray',
 }
 const COLLECTION_COLORS: Readonly<Record<string, OptionColor>> = {
