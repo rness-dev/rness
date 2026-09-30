@@ -388,7 +388,7 @@ repository, the board).
   `"projects": { "pulse": <number> }`; both at once are refused.
 - A provider _written_ in `rness.json` that this version cannot talk to
   (`gitlab`) is refused by `validate`, `create`, `login` and `pulse`:
-  `provider "gitlab" is not supported by @rness/cli 0.17.0 (supported:
+  `provider "gitlab" is not supported by @rness/cli 0.17.1 (supported:
 github)`. `add`, `sync` and the local commands never refuse. `null` is not a
   value: an absent key means none.
 
@@ -564,6 +564,16 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.17.1 — pulse shows it is at work
+
+- `pulse create` and `pulse sync` show a transient line while they write a
+  project's items and bodies: each item is a few requests, one at a time,
+  and 34 cards took minutes with nothing on screen.
+- A collection's label is made only when a document carries it: a
+  directory with no card (`assets/`) is no label.
+- `pulse create <collection>` says `linked Marketing to <org>/.rness`, not
+  `Agent Pulse`.
 
 ## 0.17.0 — a collection on its own GitHub Project
 
