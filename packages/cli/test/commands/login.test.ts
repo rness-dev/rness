@@ -26,6 +26,13 @@ const HELPER_KEY = 'credential.https://github.com.helper'
 const BIN = '/usr/local/lib/node_modules/@rness/cli/dist/bin/rness.js'
 
 /** A private config directory and a private global git config. */
+/**
+ * Outside any workspace: login reads the manifest around its `cwd` (a pulse
+ * asks for the `project` scope), and the tests must not depend on where
+ * they are run — inside a workspace that declares one, they would.
+ */
+const NOWHERE = tmpdir()
+
 async function machine(t: TestContext) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-login-')))
   t.after(() => rm(dir, { recursive: true, force: true }))
@@ -116,7 +123,13 @@ test('login: the code, the wait, the name — and the token is stored, never pri
   const r = await run(() =>
     loginCommand(
       { githubApi: gh.base },
-      { terminal: term.t, sleep, open: (u) => opened.push(u), bin: BIN }
+      {
+        cwd: NOWHERE,
+        terminal: term.t,
+        sleep,
+        open: (u) => opened.push(u),
+        bin: BIN,
+      }
     )
   )
   assert.equal(r.code, 0, r.err)
@@ -146,7 +159,7 @@ test('login: the code, the wait, the name — and the token is stored, never pri
   const again = await run(() =>
     loginCommand(
       { githubApi: gh.base, setupGit: false },
-      { terminal: term.t, sleep, bin: BIN }
+      { cwd: NOWHERE, terminal: term.t, sleep, bin: BIN }
     )
   )
   assert.equal(
@@ -178,7 +191,7 @@ test('login over SSH or without a terminal opens no browser and asks nothing', a
   await run(() =>
     loginCommand(
       { githubApi: gh.base },
-      { terminal: term.t, sleep, open, bin: BIN }
+      { cwd: NOWHERE, terminal: term.t, sleep, open, bin: BIN }
     )
   )
   assert.deepEqual(opened, [], 'an SSH session has no browser to open')
@@ -192,7 +205,7 @@ test('a refused login and a disabled device flow are one line, exit 1', async (t
       : { json: {} }
   )
   const r = await run(() =>
-    loginCommand({}, { terminal: NO_TTY, sleep, bin: BIN })
+    loginCommand({}, { cwd: NOWHERE, terminal: NO_TTY, sleep, bin: BIN })
   )
   assert.equal(r.code, 1)
   assert.equal(
@@ -218,7 +231,7 @@ test('setup-git writes the empty entry and rness by absolute path; logout remove
   const r = await run(() =>
     loginCommand(
       { githubApi: gh.base },
-      { terminal: term.t, sleep, open: () => undefined, bin: BIN }
+      { cwd: NOWHERE, terminal: term.t, sleep, open: () => undefined, bin: BIN }
     )
   )
   assert.equal(r.code, 0, r.err)
@@ -262,6 +275,7 @@ test('--setup-git asks nothing; under npx the install line replaces the question
     loginCommand(
       { githubApi: gh.base },
       {
+        cwd: NOWHERE,
         terminal: term.t,
         sleep,
         open: () => undefined,
