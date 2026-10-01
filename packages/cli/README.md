@@ -114,7 +114,8 @@ the files a given agent needs, for the agents the team declares in
   it asks, one question at a time. The skill stays in the conversation for
   the next turns, and the file carries the work to the next session
   (`/rness:adr 0010` reopens it). The agent may start one itself — an ADR
-  when a choice is expensive to reverse — but writes nothing without a yes.
+  when a choice is expensive to reverse — but writes nothing without a yes,
+  except `/rness:done` on a plan whose last task has just passed.
   The rules stay in `.rness/CONVENTIONS.md`; the skills only add the steps.
   A new document takes the collection's first status (`Proposed` for an
   ADR, `Draft` otherwise) and the next number of the local checkout; two
@@ -122,7 +123,13 @@ the files a given agent needs, for the agents the team declares in
   `{ id: <session id>, agent: <model> }` to `sessions:` in the front matter
   of what it writes or closes. The agent is the model it runs as, as Claude
   Code names it (`Claude Opus 5.5`): no variable gives it to a skill. An
-  edit made without a skill leaves none. No skill commits.
+  edit made without a skill leaves none. The agent moves a status with the
+  work (a plan `In progress`, then `Completed`; a specification
+  `Implemented`) and whenever the developer says so; accepting an ADR or
+  approving a specification stays the developer's unless they asked it to
+  go ahead. Each skill ends in a commit of the files the agent alone
+  changed, added by name; a file someone else changed too is left
+  uncommitted and named. No skill pushes.
 - rness owns values, not files: what is missing is added, nothing else is
   touched, and a file it cannot parse is reported, never rewritten.
   `sync --check` and `validate` report a missing value. Removing an agent
@@ -564,6 +571,23 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.17.2 — the lifecycle skills move statuses and commit their files
+
+- `/rness:adr`, `/rness:spec`, `/rness:plan` and `/rness:done` let the
+  agent move a status as the work does — a plan `In progress` as its tasks
+  start, `Completed` once they pass, a specification `Implemented` with its
+  last plan — and whenever the developer says so. Accepting an ADR or
+  approving a specification stays the developer's unless they asked the
+  agent to go ahead. `/rness:done` closes a plan whose last task has just
+  passed without asking first.
+- Each of them ends in a commit of the files the agent alone changed, in
+  their repository, added by name. A file that had uncommitted changes
+  before the agent's first edit, or that someone else changed since, is
+  left out and named. Nothing is pushed. Until now they committed nothing,
+  which left their files for someone else to find.
+- `rness upgrade` rewrites the four skills under `.claude/skills/rness/`;
+  commit them in each repository, as its next steps list.
 
 ## 0.17.1 — pulse shows it is at work
 

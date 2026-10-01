@@ -61,6 +61,25 @@ interface Lifecycle {
   body: (rness: string) => string
 }
 
+/**
+ * Who moves a status, and what gets committed: the same words in every
+ * lifecycle skill. A status follows the work, whoever does it; accepting a
+ * decision stays the developer's. A commit holds only what the agent alone
+ * changed, so a teammate's work in progress is never swept in.
+ */
+const STATUS_RULE = `Move a status yourself when the work calls for it, and whenever the
+developer says so: a plan \`In progress\` as you start its tasks,
+\`Completed\` once they pass; a specification \`Implemented\` with its last
+plan; a document \`Superseded\` by the one that replaces it. Accepting a
+decision — an ADR \`Accepted\`, a specification \`Approved\` — is the
+developer's, unless they asked you to go ahead with the work.`
+
+const COMMIT_RULE = `Commit each file you changed, in its own repository, and only the files
+you alone changed: add them by name, never \`git add -A\` nor \`commit -a\`.
+A file that had uncommitted changes before your first edit (\`git status\`
+tells you), or that someone else changed since, stays uncommitted: say
+which. Never push.`
+
 const LIFECYCLE: readonly Lifecycle[] = [
   {
     name: 'adr',
@@ -100,9 +119,12 @@ Writing:
   \`Claude\`: for example \`Claude Opus 5.5\`.
 - The rness hook checks every edit under \`${rness}/\`: fix what it reports.
 
-After writing: give the path and the Decision section, and say the ADR
-stays \`Proposed\` until the developer accepts it. Change a status only when
-the developer says so. Do not commit.
+After writing: give the path and the Decision section. The ADR stays
+\`Proposed\` until it is accepted.
+
+${STATUS_RULE}
+
+${COMMIT_RULE}
 `,
   },
   {
@@ -144,9 +166,13 @@ Writing:
   \`Claude\`: for example \`Claude Opus 5.5\`.
 - The rness hook checks every edit under \`${rness}/\`: fix what it reports.
 
-After writing: give the path and the summary. It stays \`Draft\` until the
-developer moves it (\`Proposed\` for review, \`Approved\` to plan it). No plan
-here: \`/rness:plan NNNN\` once approved. Do not commit.
+After writing: give the path and the summary. It starts \`Draft\`:
+\`Proposed\` for review, \`Approved\` to plan it. No plan here:
+\`/rness:plan NNNN\` once approved.
+
+${STATUS_RULE}
+
+${COMMIT_RULE}
 `,
   },
   {
@@ -191,8 +217,13 @@ Writing:
   \`Claude\`: for example \`Claude Opus 5.5\`.
 - The rness hook checks every edit under \`${rness}/\`: fix what it reports.
 
-After writing: give the path and the list of tasks. It becomes \`Ready\` when
-the developer agrees. Do not commit.
+After writing: give the path and the list of tasks. It starts \`Draft\`, and
+becomes \`Ready\` once the developer agrees with it or asks you to carry it
+out.
+
+${STATUS_RULE}
+
+${COMMIT_RULE}
 `,
   },
   {
@@ -209,8 +240,9 @@ Arguments: \`$ARGUMENTS\`.
 
 1. The plan: the one named, else the one \`In progress\`. Several or none:
    ask.
-2. If the developer did not ask to close it in so many words, propose it in
-   a single line and wait for a yes.
+2. The developer asked to close it, or its last task has just passed in
+   this session: close it. Otherwise propose it in a single line and wait
+   for a yes.
 3. Read the plan, its specification and \`${rness}/CONVENTIONS.md\`.
 4. Evidence first. For each task, what shows it done: a test, a build, a
    command's output in this session. A task without evidence: run its
@@ -232,7 +264,9 @@ Arguments: \`$ARGUMENTS\`.
    blocker written in it. Say what remains.
 7. The rness hook checks every edit under \`${rness}/\`: fix what it reports.
 
-After: list the files changed and the statuses moved. Do not commit.
+After: list the files changed and the statuses moved.
+
+${COMMIT_RULE}
 `,
   },
 ]
