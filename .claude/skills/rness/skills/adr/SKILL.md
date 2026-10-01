@@ -37,6 +37,18 @@ Writing:
   `Claude`: for example `Claude Opus 5.5`.
 - The rness hook checks every edit under `../../.rness/`: fix what it reports.
 
-After writing: give the path and the Decision section, and say the ADR
-stays `Proposed` until the developer accepts it. Change a status only when
-the developer says so. Do not commit.
+After writing: give the path and the Decision section. The ADR stays
+`Proposed` until it is accepted.
+
+Move a status yourself when the work calls for it, and whenever the
+developer says so: a plan `In progress` as you start its tasks,
+`Completed` once they pass; a specification `Implemented` with its last
+plan; a document `Superseded` by the one that replaces it. Accepting a
+decision — an ADR `Accepted`, a specification `Approved` — is the
+developer's, unless they asked you to go ahead with the work.
+
+Commit each file you changed, in its own repository, and only the files
+you alone changed: add them by name, never `git add -A` nor `commit -a`.
+A file that had uncommitted changes before your first edit (`git status`
+tells you), or that someone else changed since, stays uncommitted: say
+which. Never push.

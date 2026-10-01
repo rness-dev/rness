@@ -13,8 +13,9 @@ Arguments: `$ARGUMENTS`.
 
 1. The plan: the one named, else the one `In progress`. Several or none:
    ask.
-2. If the developer did not ask to close it in so many words, propose it in
-   a single line and wait for a yes.
+2. The developer asked to close it, or its last task has just passed in
+   this session: close it. Otherwise propose it in a single line and wait
+   for a yes.
 3. Read the plan, its specification and `../../.rness/CONVENTIONS.md`.
 4. Evidence first. For each task, what shows it done: a test, a build, a
    command's output in this session. A task without evidence: run its
@@ -36,4 +37,10 @@ Arguments: `$ARGUMENTS`.
    blocker written in it. Say what remains.
 7. The rness hook checks every edit under `../../.rness/`: fix what it reports.
 
-After: list the files changed and the statuses moved. Do not commit.
+After: list the files changed and the statuses moved.
+
+Commit each file you changed, in its own repository, and only the files
+you alone changed: add them by name, never `git add -A` nor `commit -a`.
+A file that had uncommitted changes before your first edit (`git status`
+tells you), or that someone else changed since, stays uncommitted: say
+which. Never push.
