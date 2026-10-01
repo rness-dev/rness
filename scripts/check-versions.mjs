@@ -1,6 +1,8 @@
 // Every package in the workspace ships the same version, and the shims pin
 // @rness/cli to it. With `--tag vX.Y.Z` (the release workflow), the git tag
-// must name that same version.
+// must name that same version. Each package's `homepage` is the product,
+// not the repository: that is how a scanner tells an official package
+// (spec 0027 §5).
 import { glob, readFile } from 'node:fs/promises'
 
 function tagArgument(argv) {
@@ -27,12 +29,19 @@ if (!ok)
     `versions differ: ${manifests.map((m) => `${m.pkg.name}@${m.pkg.version}`).join(', ')}`
   )
 const [version] = versions
+const HOMEPAGE = 'https://rness.dev'
 for (const m of manifests) {
   const pinned = m.pkg.dependencies?.['@rness/cli']
   if (pinned !== undefined && pinned !== version) {
     ok = false
     console.error(
       `${m.pkg.name} pins @rness/cli@${pinned}, expected ${version}`
+    )
+  }
+  if (m.pkg.homepage !== HOMEPAGE) {
+    ok = false
+    console.error(
+      `${m.pkg.name} has homepage ${JSON.stringify(m.pkg.homepage)}, expected ${HOMEPAGE}`
     )
   }
 }

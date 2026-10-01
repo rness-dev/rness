@@ -5,11 +5,30 @@ import { type PackageManager, localRunner } from './pm.ts'
 /** The Claude Code plugin rness writes, whole (spec 0016 §3, 0019 §2). */
 const PLUGIN = '.claude/skills/rness'
 
+/**
+ * The manifest also carries the agent-plugins.org `$schema` and the fields
+ * it recommends (spec 0027 §5), so a scanner that looks for an Agent Plugins
+ * manifest finds one; Claude Code 2.1.286 validates it without a remark.
+ * No version: it would make every release rewrite the file.
+ */
 const PLUGIN_JSON = `${JSON.stringify(
   {
+    $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
     name: 'rness',
     description:
       'The rness workspace in Claude Code: /rness:status, /rness:adr, /rness:spec, /rness:plan, /rness:done.',
+    author: { name: 'rness-dev', url: 'https://rness.dev' },
+    homepage: 'https://rness.dev',
+    repository: 'https://github.com/rness-dev/rness',
+    license: 'MIT',
+    keywords: [
+      'rness',
+      'agents',
+      'claude-code',
+      'adr',
+      'specification',
+      'plan',
+    ],
   },
   null,
   2

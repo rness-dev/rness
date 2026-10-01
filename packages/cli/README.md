@@ -98,7 +98,11 @@ the files a given agent needs, for the agents the team declares in
   get a Claude Code plugin, `.claude/skills/rness/`, with five commands:
   `/rness:status [tab]`, the tables of `rness status`, and the lifecycle
   skills below. rness owns those files whole — an edit by hand is reported
-  by `sync --check` and written back by `sync`. Nothing in them depends on
+  by `sync --check` and written back by `sync`. The plugin's manifest,
+  `.claude-plugin/plugin.json`, also carries the agent-plugins.org
+  `$schema`, the author, homepage, repository, licence and keywords, so a
+  scanner that looks for an Agent Plugins manifest finds one; Claude Code
+  reads the same file. Nothing in them depends on
   the version; the last line of the status skill names the workspace's
   package manager, so changing `packageManager` in `.rness/package.json`
   leaves it stale until the next `sync`. Claude Code loads the plugin once
@@ -571,6 +575,20 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.17.3 — the packages name the product; the plugin manifest for scanners
+
+- `homepage` of `@rness/cli`, `create-rness` and `@rness/create` is
+  `https://rness.dev`; `repository` and `bugs` stay on GitHub. That is
+  how a scanner tells an official package from a fork;
+  `pnpm check:versions` checks it with the versions.
+- `.claude/skills/rness/.claude-plugin/plugin.json`, written by the Claude
+  target, carries the agent-plugins.org `$schema`, the author, homepage,
+  repository, licence and keywords. `rness sync` rewrites it once in each
+  repository; commit it there.
+- `skills/rness/SKILL.md` at the root of the repository: when to use Rness
+  and how to install and run it, for `npx skills add rness-dev/rness`
+  and skills.sh.
 
 ## 0.17.2 — the lifecycle skills move statuses and commit their files
 

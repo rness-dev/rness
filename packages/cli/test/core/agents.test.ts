@@ -50,8 +50,24 @@ const hooks = (start: string, edit: string, end: string) => [
 // version-specific: an upgrade rewrites a file only when its text changes.
 // The status skill's last line names the workspace's manager (spec 0019 §5).
 const PLUGIN_JSON = `{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "rness",
-  "description": "The rness workspace in Claude Code: /rness:status, /rness:adr, /rness:spec, /rness:plan, /rness:done."
+  "description": "The rness workspace in Claude Code: /rness:status, /rness:adr, /rness:spec, /rness:plan, /rness:done.",
+  "author": {
+    "name": "rness-dev",
+    "url": "https://rness.dev"
+  },
+  "homepage": "https://rness.dev",
+  "repository": "https://github.com/rness-dev/rness",
+  "license": "MIT",
+  "keywords": [
+    "rness",
+    "agents",
+    "claude-code",
+    "adr",
+    "specification",
+    "plan"
+  ]
 }
 `
 const skill = (rness: string, run = 'npx') => `---
