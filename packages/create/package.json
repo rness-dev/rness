@@ -1,6 +1,6 @@
 {
   "name": "@rness/create",
-  "version": "0.17.2",
+  "version": "0.17.3",
   "description": "npm create @rness — start or join the rness workspace of a GitHub organization",
   "license": "MIT",
   "type": "module",
@@ -12,7 +12,7 @@
     "url": "git+https://github.com/rness-dev/rness.git",
     "directory": "packages/create"
   },
-  "homepage": "https://github.com/rness-dev/rness",
+  "homepage": "https://rness.dev",
   "bin": {
     "create": "index.js"
   },
@@ -21,6 +21,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@rness/cli": "0.17.2"
+    "@rness/cli": "0.17.3"
   }
 }
