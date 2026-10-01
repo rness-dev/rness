@@ -102,7 +102,8 @@ the files a given agent needs, for the agents the team declares in
   `.claude-plugin/plugin.json`, also carries the agent-plugins.org
   `$schema`, the author, homepage, repository, licence and keywords, so a
   scanner that looks for an Agent Plugins manifest finds one; Claude Code
-  reads the same file. Nothing in them depends on
+  reads the same file. The repository root also carries a `plugin.json` in
+  that form, describing the repository, where a scanner looks first. Nothing in them depends on
   the version; the last line of the status skill names the workspace's
   package manager, so changing `packageManager` in `.rness/package.json`
   leaves it stale until the next `sync`. Claude Code loads the plugin once
