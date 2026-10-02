@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "rness",
-  "description": "The rness workspace in Claude Code: /rness:status, /rness:adr, /rness:spec, /rness:plan, /rness:done.",
+  "description": "The rness workspace in Claude Code: /rness:status, /rness:adr, /rness:spec, /rness:plan.",
   "author": {
     "name": "rness-dev",
     "url": "https://rness.dev"
