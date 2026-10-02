@@ -2518,6 +2518,37 @@ test('a restricted organization, approved while rness waits: the page opens, the
   assert.match(r.err, /^warning: acme has not approved rness/m)
 })
 
+test('Ctrl+C while waiting for the approval: cancelled, exit 0, nothing written', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const locked = fakeProvider({
+    login: 'octo',
+    access: 'restricted',
+    repositories: [],
+  })
+  const term = terminal({ select: [''], text: ['acme'], approve: true })
+  const cwd = await scratch(t)
+  // The clock moves, so a wait that missed the interrupt still ends.
+  let clockMs = 0
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    locked.provider,
+    {
+      open: () => undefined,
+      sleep: async (ms) => {
+        clockMs += ms
+        process.emit('SIGINT', 'SIGINT')
+      },
+      now: () => clockMs,
+    }
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.err, /^cancelled$/m)
+  assert.equal(locked.accessCalls.length, 1)
+  await assert.rejects(access(join(cwd, 'acme')))
+})
+
 test('--org in a terminal still reaches the approval; --yes prints the page for an owner and asks nothing', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   const locked = fakeProvider({

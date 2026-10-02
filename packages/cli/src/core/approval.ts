@@ -91,24 +91,46 @@ export async function checkAccess(input: {
   const who = input.canGrant === true ? org : `an owner of ${org}`
   const waiting = `for ${who} to approve rness on github.com`
   if (!ui.session) ui.line('waiting', `${waiting}…`)
-  const outcome = await ui.step(
-    {
-      doing: `waiting  ${waiting}`,
-      sentence: `Waiting ${waiting}`,
-      quiet: true,
-    },
-    async (): Promise<OrganizationAccess | 'timeout'> => {
-      const deadline = now() + APPROVAL_WAIT_MS
-      for (;;) {
-        await sleep(APPROVAL_INTERVAL_MS)
-        const again = await provider.organizationAccess(org)
-        // `unknown` is a request that failed: asked again until the deadline.
-        if (again === 'member' || again === 'not-member') return again
-        if (now() >= deadline) return 'timeout'
-      }
-    },
-    (r) => (r === 'member' ? ['member', `${org}${as}`] : null)
-  )
+  // Ctrl+C while waiting is a cancel, as at any question: nothing written,
+  // exit 0, not the 130 of a killed process. The session look's spinner
+  // already treats it so; the plain look listens for the time of the wait.
+  let interrupted = false
+  let wake = (): void => undefined
+  const interrupt = (): void => {
+    interrupted = true
+    wake()
+  }
+  if (!ui.session) process.once('SIGINT', interrupt)
+  let outcome: OrganizationAccess | 'timeout' | 'cancelled'
+  try {
+    outcome = await ui.step(
+      {
+        doing: `waiting  ${waiting}`,
+        sentence: `Waiting ${waiting}`,
+        quiet: true,
+      },
+      async (): Promise<OrganizationAccess | 'timeout' | 'cancelled'> => {
+        const deadline = now() + APPROVAL_WAIT_MS
+        for (;;) {
+          await Promise.race([
+            sleep(APPROVAL_INTERVAL_MS),
+            new Promise<void>((resolve) => {
+              wake = resolve
+            }),
+          ])
+          if (interrupted) return 'cancelled'
+          const again = await provider.organizationAccess(org)
+          // `unknown` is a request that failed: asked again until the deadline.
+          if (again === 'member' || again === 'not-member') return again
+          if (now() >= deadline) return 'timeout'
+        }
+      },
+      (r) => (r === 'member' ? ['member', `${org}${as}`] : null)
+    )
+  } finally {
+    process.off('SIGINT', interrupt)
+  }
+  if (outcome === 'cancelled') return outcome
   if (outcome === 'member') {
     if (!ui.session) member()
     return outcome

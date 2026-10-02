@@ -131,6 +131,39 @@ test('restricted, yes: the page opens, the membership is polled every 5 s until 
   ])
 })
 
+test('restricted, yes, Ctrl+C while waiting: cancelled, the polling stops, SIGINT is given back', async () => {
+  const gh = fakeProvider({ login: 'octo', access: 'restricted' })
+  const time = clock()
+  const listeners = process.listenerCount('SIGINT')
+  const c = capture()
+  let outcome: unknown
+  try {
+    outcome = await checkAccess({
+      org: 'acme',
+      provider: gh.provider,
+      ui: plainUi,
+      interactive: true,
+      prompts: prompts(true).prompts,
+      canGrant: null,
+      deps: {
+        open: () => undefined,
+        now: time.now,
+        sleep: async (ms) => {
+          await time.sleep(ms)
+          // Ctrl+C after the first poll.
+          if (gh.accessCalls.length === 2) process.emit('SIGINT', 'SIGINT')
+        },
+      },
+    })
+  } finally {
+    c.restore()
+  }
+  assert.equal(outcome, 'cancelled')
+  // One check before the question, one poll, then nothing.
+  assert.equal(gh.accessCalls.length, 2)
+  assert.equal(process.listenerCount('SIGINT'), listeners)
+})
+
 test('an owner waits for the organization; a member, or an unknown role, waits for an owner of it', async (t) => {
   const owner = await run(t, {
     access: ['restricted', 'member'],
