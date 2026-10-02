@@ -130,7 +130,9 @@ packages to npm, then starts the `Release` workflow of
 request that freezes the docs for that version. That last step needs the
 repository secret `DOCS_RELEASE_TOKEN` (Settings, Secrets and variables,
 Actions): a fine-grained personal access token with Actions read and write
-on `rness-dev/docs` only. Without it the docs wait for their hourly run.
+on `rness-dev/docs` only, since a workflow's own token cannot start a
+workflow in another repository. Without it, or when GitHub refuses it, the
+run warns and the docs wait for their hourly run.
 
 ## Community
 

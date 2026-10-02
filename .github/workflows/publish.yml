@@ -65,5 +65,10 @@ jobs:
             echo "::warning::DOCS_RELEASE_TOKEN is not set: the docs freeze $version at their next scheduled run"
             exit 0
           fi
-          gh workflow run Release -R "$DOCS" -f version="$version"
+          # A token refused (expired, wrong repository) is said as loudly as a
+          # missing one: the docs would otherwise lag without anyone knowing.
+          if ! gh workflow run Release -R "$DOCS" -f version="$version"; then
+            echo "::warning::could not start the Release workflow of $DOCS: the docs freeze $version at their next scheduled run"
+            exit 0
+          fi
           echo "asked $DOCS to freeze $version"
