@@ -98,7 +98,7 @@ const LIFECYCLE = {
 name: adr
 description: Record a decision of the rness workspace as an ADR in .rness/adr/ — a choice expensive to reverse or that creates a lasting constraint — or reopen one. Use when the developer asks for an ADR, or when the conversation reaches such a decision.
 argument-hint: '[create <subject> | open NNNN]'
-allowed-tools: Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status adr --cwd "\${CLAUDE_PROJECT_DIR}"), Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new adr --cwd "\${CLAUDE_PROJECT_DIR}")
+allowed-tools: Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status adr --cwd "\${CLAUDE_PROJECT_DIR}"), Bash(node "${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new adr)
 ---
 
 !\`node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status adr --cwd "\${CLAUDE_PROJECT_DIR}"\`
@@ -124,7 +124,9 @@ Creating:
 3. The subject is the arguments, else the decision just discussed. Context,
    alternatives or consequences missing from the conversation: ask for
    them, one question at a time. Never invent them.
-4. Allocate the file: run \`node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new adr --cwd "\${CLAUDE_PROJECT_DIR}"\` (pre-approved above). It writes
+4. Allocate the file: run \`node "${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new adr\` from the project directory, where
+   Claude Code was opened (pre-approved above as typed; \`CLAUDE_PROJECT_DIR\`
+   is not set in your shell, so the path is relative). It writes
    \`adr/NNNN-untitled.md\` with the next number, the front matter
    and the opening sections, and prints the path. Rename it to
    \`NNNN-<slug>.md\`, the slug a few lowercase words of the title joined by
@@ -163,7 +165,7 @@ which. Never push.
 name: spec
 description: Write a specification of the rness workspace in .rness/specs/ — the outcome wanted and its scope, before any plan — or reopen one. Use when the developer asks for a spec, or when agreed work is too large to start without one.
 argument-hint: '[create <subject> | open NNNN]'
-allowed-tools: Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status specs --cwd "\${CLAUDE_PROJECT_DIR}"), Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new specs --cwd "\${CLAUDE_PROJECT_DIR}")
+allowed-tools: Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status specs --cwd "\${CLAUDE_PROJECT_DIR}"), Bash(node "${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new specs)
 ---
 
 !\`node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status specs --cwd "\${CLAUDE_PROJECT_DIR}"\`
@@ -188,7 +190,9 @@ Creating:
 3. The subject is the arguments, else the work just discussed. The problem,
    what is in and out of scope, the ADRs it rests on: ask what the
    conversation does not say, one question at a time.
-4. Allocate the file: run \`node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new specs --cwd "\${CLAUDE_PROJECT_DIR}"\` (pre-approved above). It writes
+4. Allocate the file: run \`node "${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new specs\` from the project directory, where
+   Claude Code was opened (pre-approved above as typed; \`CLAUDE_PROJECT_DIR\`
+   is not set in your shell, so the path is relative). It writes
    \`specs/NNNN-untitled.md\` with the next number, the front matter
    and the opening sections, and prints the path. Rename it to
    \`NNNN-<slug>.md\`, the slug a few lowercase words of the title joined by
@@ -232,7 +236,7 @@ which. Never push.
 name: plan
 description: The plans of the rness workspace in .rness/plans/ — a plan from a specification (from, which approves it), from the conversation (create), reopened (open), or closed on evidence (check). Use when the developer asks for a plan, to approve a specification, or to check the work of a plan.
 argument-hint: '[create <subject> | from <spec> | open NNNN | check NNNN]'
-allowed-tools: Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status plans --cwd "\${CLAUDE_PROJECT_DIR}"), Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new plans --cwd "\${CLAUDE_PROJECT_DIR}")
+allowed-tools: Bash(node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status plans --cwd "\${CLAUDE_PROJECT_DIR}"), Bash(node "${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new plans)
 ---
 
 !\`node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" status plans --cwd "\${CLAUDE_PROJECT_DIR}"\`
@@ -264,7 +268,9 @@ it — \`check\` alone means the plan \`In progress\`; a bare reference is
    a yes first: the approval is theirs, never yours.
 3. Read the code and the repositories the specification touches: every
    task names real files and real commands.
-4. Allocate the file: run \`node "\${CLAUDE_PROJECT_DIR}/${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new plans --cwd "\${CLAUDE_PROJECT_DIR}"\` (pre-approved above). It writes
+4. Allocate the file: run \`node "${rness}/node_modules/@rness/cli/dist/bin/rness.js" doc new plans\` from the project directory, where
+   Claude Code was opened (pre-approved above as typed; \`CLAUDE_PROJECT_DIR\`
+   is not set in your shell, so the path is relative). It writes
    \`plans/NNNN-untitled.md\` with the next number, the front matter
    and the opening sections, and prints the path. Rename it to
    \`NNNN-<slug>.md\`, the slug a few lowercase words of the title joined by
@@ -468,10 +474,11 @@ test('each ! line is the first command its allowed-tools names, the second alloc
     )
     // Spec 0028 §9: the number comes from the CLI, by a fixed line the body names.
     assert.equal(allowed.length, 2, f.file)
-    assert.ok(
-      allowed[1]?.endsWith(
-        ` doc new ${tabs[name]} --cwd "\${CLAUDE_PROJECT_DIR}"`
-      ),
+    // Typed by the model in a shell where CLAUDE_PROJECT_DIR is not set
+    // (verified 2026-10-02): relative to the project directory.
+    assert.equal(
+      allowed[1],
+      `node "${f.at === 'root' ? '.rness' : '../../.rness'}/node_modules/@rness/cli/dist/bin/rness.js" doc new ${tabs[name]}`,
       f.file
     )
     assert.ok(f.content.includes(`run \`${allowed[1]}\``), f.file)

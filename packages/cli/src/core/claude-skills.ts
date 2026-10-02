@@ -113,7 +113,9 @@ const SESSION_LINE = `\`{ id: \${CLAUDE_SESSION_ID}, agent: <model> }\` at the e
  * pre-approved; no argument of the developer's reaches a shell.
  */
 const allocateStep = (allocate: string, collection: string): string =>
-  `Allocate the file: run \`${allocate}\` (pre-approved above). It writes
+  `Allocate the file: run \`${allocate}\` from the project directory, where
+   Claude Code was opened (pre-approved above as typed; \`CLAUDE_PROJECT_DIR\`
+   is not set in your shell, so the path is relative). It writes
    \`${collection}/NNNN-untitled.md\` with the next number, the front matter
    and the opening sections, and prints the path. Rename it to
    \`NNNN-<slug>.md\`, the slug a few lowercase words of the title joined by
@@ -329,10 +331,12 @@ const RETIRED_SKILLS = ['done'] as const
  * without a yes (spec 0019 §3.1).
  */
 function lifecycleSkill(rness: string, s: Lifecycle): string {
-  const bin = `node "\${CLAUDE_PROJECT_DIR}/${rness}/${PINNED_BIN}"`
-  const command = `${bin} status ${s.tab} --cwd "\${CLAUDE_PROJECT_DIR}"`
-  // The second fixed line: the allocation of spec 0028 §9, no argument in it.
-  const allocate = `${bin} doc new ${s.tab} --cwd "\${CLAUDE_PROJECT_DIR}"`
+  const command = `node "\${CLAUDE_PROJECT_DIR}/${rness}/${PINNED_BIN}" status ${s.tab} --cwd "\${CLAUDE_PROJECT_DIR}"`
+  // The second fixed line: the allocation of spec 0028 §9, no argument in
+  // it. Typed by the model in its own shell, where Claude Code sets no
+  // CLAUDE_PROJECT_DIR (verified 2026-10-02): the path is relative to the
+  // project directory, as every path of this file is.
+  const allocate = `node "${rness}/${PINNED_BIN}" doc new ${s.tab}`
   return `---
 name: ${s.name}
 description: ${s.description}
