@@ -38,8 +38,8 @@ npm create rness
   to it). `rness sync --check` fails CI when a block is out of date.
 - **Claude Code wired in.** Hooks load the workspace context at session
   start and validate every edit under `.rness/`; the `/rness:status`,
-  `/rness:adr`, `/rness:spec`, `/rness:plan` and `/rness:done` commands run
-  the document lifecycle from the conversation; `rness mcp` serves the
+  `/rness:adr`, `/rness:spec` and `/rness:plan` commands run the document
+  lifecycle from the conversation; `rness mcp` serves the
   same context to any MCP client.
 - **Where everything stands.** `rness status` shows every decision,
   specification and plan and its status, in a terminal or as Markdown.

@@ -108,23 +108,32 @@ the files a given agent needs, for the agents the team declares in
   package manager, so changing `packageManager` in `.rness/package.json`
   leaves it stale until the next `sync`. Claude Code loads the plugin once
   the folder is trusted, in a session started there.
-- **The lifecycle skills**: `/rness:adr [subject | NNNN]` records a decision
-  as an ADR, `/rness:spec [subject | NNNN]` writes a specification,
-  `/rness:plan <spec>` turns an approved specification into a plan, and
-  `/rness:done [plan]` closes a piece of work — each task checked on
-  evidence, then the plan `Completed`, its specification `Implemented`, and
-  the documents the work made inaccurate corrected. Each is a procedure
-  loaded into the conversation, not a file generator: after a decision has
-  been discussed, `/rness:adr` writes it from the conversation; otherwise
-  it asks, one question at a time. The skill stays in the conversation for
-  the next turns, and the file carries the work to the next session
-  (`/rness:adr 0010` reopens it). The agent may start one itself — an ADR
-  when a choice is expensive to reverse — but writes nothing without a yes,
-  except `/rness:done` on a plan whose last task has just passed.
-  The rules stay in `.rness/CONVENTIONS.md`; the skills only add the steps.
-  A new document takes the collection's first status (`Proposed` for an
-  ADR, `Draft` otherwise) and the next number of the local checkout; two
-  branches can pick the same one. Each skill records its session: it adds
+- **The lifecycle skills**, one per collection, on one grammar: the first
+  word is the verb, a bare number reopens, anything else is the subject of
+  a `create`. `/rness:adr [create <subject> | open NNNN]` records a decision
+  as an ADR or reopens one; `/rness:spec [create <subject> | open NNNN]`
+  writes a specification or reopens one; `/rness:plan` takes four verbs:
+  `from <spec NNNN>` writes a plan from a specification and approves it
+  (typing the command is the approval), `create [subject]` writes a plan
+  from the conversation for work too small for a specification, `open NNNN`
+  reopens a plan, and `check NNNN` runs the proofs of a plan — each task's
+  command, run now — and closes it when they all pass: the plan `Completed`,
+  its specification `Implemented`, the documents the work made inaccurate
+  corrected; one task without evidence and nothing moves. Each is a
+  procedure loaded into the conversation, not a file generator: after a
+  decision has been discussed, `/rness:adr` writes it from the
+  conversation; otherwise it asks, one question at a time. The skill stays
+  in the conversation for the next turns, and the file carries the work to
+  the next session (`/rness:adr 0010` reopens it). The agent may start one
+  itself — an ADR when a choice is expensive to reverse — but writes nothing
+  without a yes, except `/rness:plan check` on a plan whose last task has
+  just passed. The rules stay in `.rness/CONVENTIONS.md`; the skills only
+  add the steps. A new document takes the collection's first status
+  (`Proposed` for an ADR, `Draft` otherwise) and the next number, allocated
+  by `rness doc new <collection>` — the second pre-approved line of each
+  skill, so that every runtime and a bare terminal get the same number;
+  `rness validate` refuses two documents with one number, the case a merge
+  of two branches can still produce. Each skill records its session: it adds
   `{ id: <session id>, agent: <model> }` to `sessions:` in the front matter
   of what it writes or closes. The agent is the model it runs as, as Claude
   Code names it (`Claude Opus 5.5`): no variable gives it to a skill. An
@@ -386,11 +395,13 @@ it through one adapter; `git` still does what git does (clone, pull, push,
 credentials), and the provider's API the rest (organizations, creating a
 repository, the board).
 
-- `rness create` asks `Where does your organization live?`: GitHub, and
-  GitLab and Atlassian (Bitbucket + Jira) shown disabled, coming later.
-  `--provider github` answers it off a terminal. A blank workspace asks
-  nothing. Joining an organization asks first as well, then takes the
-  provider its `rness.json` names.
+- `rness create` asks `Where does your organization live?` first: GitHub,
+  GitLab and Atlassian (Bitbucket + Jira) shown disabled, coming later, and
+  `No organization yet: a blank local workspace` (the `--blank` of
+  "Blank workspace"). `--provider github` answers it off a terminal;
+  `--org`, `--repos` and `--blank` settle it unasked. Joining an
+  organization asks first as well, then takes the provider its `rness.json`
+  names.
 - A workspace without the key is read from its first repository URL: a
   GitLab host reads as `gitlab`, any other host — or no repository — as
   `github`. Nothing to change: `pulse create` writes it, and refuses a
@@ -462,8 +473,21 @@ anonymously.
   GitHub, anonymous or with `--yes`, it prints the two manual steps instead
   — create the empty repository on github.com, then `git remote add origin …
 && git push`. No other tool is ever needed.
-- An organization that restricts OAuth apps hides its private repositories
-  until an owner approves "Rness"; `create` says so, with the link.
+- Logged in, the wizard lists every organization you belong to, your
+  account last, then `an organization I'm not a member of…` for a typed
+  name (an outside collaborator's, a public one). Right after the
+  organization, before the SSH test, the probe of `<org>/.rness` and the
+  listing, `create` checks your access: an organization that restricts
+  OAuth apps and has not approved "Rness" hides its private repositories,
+  so the wizard asks `Open github.com to approve rness for <org> now?`,
+  opens the approval page in your browser (printed only over SSH) and waits
+  — polling every 5 seconds, for 10 minutes at most — until an owner's
+  click makes you a member in its eyes; then it goes on with the full
+  listing. Declined, or timed out, it goes on with what is visible and
+  names the page for later; with `--yes` or off a terminal it prints the
+  warning and the page, and asks nothing. The order matters: a private
+  `.rness` probed through a token the organization has not approved would
+  read as absent, and `create` would start a second one.
 - Over HTTPS, rness's own clones and pulls carry the login — through the
   environment of that one git command, never in a URL or `.git/config`. For
   your own `git pull` and `git push`, `login` offers to make rness git's
@@ -576,6 +600,37 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.18.0 — the wizard asks where first and waits for the approval; the skills on one grammar; Node 22.17
+
+- The published CLI runs on **Node 22.17 or later** (ADR 0010); the guard
+  compares major and minor. A workspace pinned to 0.17.x keeps refusing
+  Node 22 until its pin moves: from inside it, `npx @rness/cli@latest
+  upgrade` works under Node 22, since `upgrade` is served by the copy
+  invoked, never the pinned one.
+- `rness create` asks **where the organization lives first** — the blank
+  workspace is that question's last answer — then offers the login, which
+  now lists **every organization you belong to** (your account last, then
+  `an organization I'm not a member of…`). Right after the organization and
+  before anything reads it, an organization that restricts OAuth apps and
+  has not approved "Rness" gets its **approval page opened in your
+  browser**; the wizard waits for the owner's click (10 minutes at most)
+  and then lists the private repositories too. See "GitHub login".
+- `/rness:adr`, `/rness:spec` and `/rness:plan` read their first word as
+  the verb: `create`, `open` (a bare number), and for a plan `from <spec>`
+  — which **approves the specification** it plans — and `check NNNN`, the
+  proofs of a plan, in place of `/rness:done`. `/rness:done` is retired:
+  `rness sync` removes its `SKILL.md` where an earlier release wrote it
+  (`removed` in its output); commit the deletion in each repository, as
+  `upgrade`'s next steps list. Note: `/rness:plan 0028` now opens plan
+  0028; a plan is made with `from <spec>`. See "Agent targets".
+- `rness doc new <collection> [--title <text>]` writes the next numbered
+  document of `adr`, `specs` or `plans` and prints its path: the skills
+  allocate with it instead of counting. `rness validate` and the edit hook
+  refuse two documents with one number in a collection.
+- The day of a release, `pnpm create rness` runs the previous version:
+  pnpm ≥ 11 holds back a package younger than 24 hours
+  (`minimumReleaseAge`). `rness upgrade` installs the latest all the same.
 
 ## 0.17.3 — the packages name the product; the plugin manifest for scanners
 
