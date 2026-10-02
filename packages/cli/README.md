@@ -606,7 +606,7 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - The published CLI runs on **Node 22.17 or later** (ADR 0010); the guard
   compares major and minor. A workspace pinned to 0.17.x keeps refusing
   Node 22 until its pin moves: from inside it, `npx @rness/cli@latest
-  upgrade` works under Node 22, since `upgrade` is served by the copy
+upgrade` works under Node 22, since `upgrade` is served by the copy
   invoked, never the pinned one.
 - `rness create` asks **where the organization lives first** — the blank
   workspace is that question's last answer — then offers the login, which
