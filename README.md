@@ -6,7 +6,7 @@
   <a href="https://www.npmjs.com/package/@rness/cli"><img src="https://img.shields.io/npm/v/@rness/cli?label=%40rness%2Fcli&color=4ade80" alt="npm version"></a>
   <a href="https://github.com/rness-dev/rness/actions/workflows/ci.yml"><img src="https://github.com/rness-dev/rness/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-4ade80" alt="MIT licence"></a>
-  <img src="https://img.shields.io/node/v/@rness/cli?color=4ade80" alt="Node 24 or later">
+  <img src="https://img.shields.io/node/v/@rness/cli?color=4ade80" alt="Node 22.17 or later">
 </p>
 
 # Rness
@@ -97,7 +97,7 @@ did.
 
 ## Develop
 
-Node 24 or later, pnpm through Corepack, TypeScript.
+Node 24 or later to develop (the published CLI runs on Node 22.17 or later, ADR 0010), pnpm through Corepack, TypeScript.
 
 ```bash
 pnpm install

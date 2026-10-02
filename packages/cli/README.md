@@ -1077,4 +1077,4 @@ workspace pins exactly that build and no cache serves an older one under its
 number. To try it in a workspace that exists, run `rness upgrade <version>`
 inside it; the deploy prints the line.
 
-Node ≥ 24. MIT.
+Node ≥ 22.17. MIT.
