@@ -2,6 +2,7 @@ import { join } from 'node:path'
 
 import { collectMarkdown } from './collect.ts'
 import { COLLECTIONS } from './context.ts'
+import { documentNumber } from './documents.ts'
 import type { CollectionName } from './types.ts'
 
 /** Collections whose files must carry front matter with a `status`. */
@@ -27,6 +28,25 @@ export async function checkContract(rnessDir: string): Promise<string[]> {
   for (const name of COLLECTIONS) {
     const allowed = STATUSES[name]
     const items = await collectMarkdown(join(rnessDir, name))
+    // One number, one document (spec 0028 §9): the clash a merge of two
+    // branches that each made the next document can still produce.
+    const byNumber = new Map<string, string[]>()
+    for (const item of items) {
+      const where = `${name}/${item.rel}`
+      if (SKIP.has(where)) continue
+      const number = allowed === undefined ? null : documentNumber(item.rel)
+      if (number !== null)
+        byNumber.set(number, [...(byNumber.get(number) ?? []), where])
+    }
+    for (const [number, files] of byNumber) {
+      if (files.length < 2) continue
+      for (const where of files)
+        problems.push(
+          `${where}: the number ${number} is also that of ${files
+            .filter((f) => f !== where)
+            .join(', ')}`
+        )
+    }
     for (const item of items) {
       const where = `${name}/${item.rel}`
       if (SKIP.has(where)) continue

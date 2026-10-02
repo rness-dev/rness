@@ -3,6 +3,7 @@ import { Command, CommanderError, Option } from 'commander'
 import { type AddOptions, addCommand } from './commands/add.ts'
 import { type ContextOptions, contextCommand } from './commands/context.ts'
 import { type CreateOptions, createCommand } from './commands/create.ts'
+import { docNewCommand } from './commands/doc.ts'
 import { gitCredentialCommand } from './commands/git-credential.ts'
 import { hookCommand } from './commands/hook.ts'
 import { type LoginOptions, loginCommand } from './commands/login.ts'
@@ -82,6 +83,24 @@ function buildProgram(state: RunState): Command {
     .action(async (tab: string | undefined, opts: StatusOptions) => {
       state.code = await statusCommand(tab, opts)
     })
+
+  // What the lifecycle skills allocate a number with (spec 0028 §9).
+  const doc = program
+    .command('doc')
+    .description('Documents of the workspace: doc new <collection>')
+  doc
+    .command('new')
+    .description(
+      'Write the next numbered document of a collection (adr, specs, plans) and print its path'
+    )
+    .argument('<collection>', 'adr, specs or plans')
+    .option('--title <text>', 'the title; the file name takes its slug')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(
+      async (collection: string, opts: { title?: string; cwd?: string }) => {
+        state.code = await docNewCommand(collection, opts)
+      }
+    )
 
   program
     .command('validate')

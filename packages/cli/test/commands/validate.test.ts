@@ -405,3 +405,26 @@ test('a host detected from a repository URL is not a problem', async (t) => {
   c.restore()
   assert.equal(code, 0, c.err())
 })
+
+test('two documents with one number: exit 1, both named', async (t) => {
+  const doc = (title: string) =>
+    `---\ndate: 2026-10-02\nstatus: Draft\nrepo: x\n---\n\n# ${title}\n`
+  const root = await makeWorkspace(t, {
+    files: {
+      'specs/0029-a.md': doc('0029 — A'),
+      'specs/0029-b.md': doc('0029 — B'),
+    },
+  })
+  const c = capture()
+  try {
+    const code = await validateCommand({ cwd: root })
+    assert.equal(code, 1)
+    assert.equal(
+      c.err(),
+      'specs/0029-a.md: the number 0029 is also that of specs/0029-b.md\n' +
+        'specs/0029-b.md: the number 0029 is also that of specs/0029-a.md\n'
+    )
+  } finally {
+    c.restore()
+  }
+})

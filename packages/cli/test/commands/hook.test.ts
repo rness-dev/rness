@@ -270,6 +270,24 @@ test("a valid edit is silent; a broken one gets that file's problems back, exit 
   assert.equal(relative.code, 2)
 })
 
+test('an edit that gives a document the number of another: exit 2, that file named', async (t) => {
+  const root = await workspace(t, {
+    'specs/0029-a.md': spec('Draft', '0029 — A'),
+    'specs/0029-b.md': spec('Draft', '0029 — B'),
+  })
+  const web = join(root, 'org', 'web')
+  const r = await hook(
+    'post-tool-use',
+    edit(join(root, '.rness', 'specs', '0029-b.md'), web)
+  )
+  assert.equal(r.code, 2)
+  assert.equal(
+    r.err,
+    'rness: specs/0029-b.md: the number 0029 is also that of specs/0029-a.md\n' +
+      'Fix it in specs/0029-b.md; rness validate checks the whole workspace.\n'
+  )
+})
+
 test('an edit of rness.json that rness refuses: exit 2 with the reason', async (t) => {
   const root = await workspace(t)
   const file = join(root, '.rness', 'rness.json')
