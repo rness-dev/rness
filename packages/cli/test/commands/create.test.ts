@@ -28,6 +28,7 @@ import {
   type Prompts,
   createCommand,
 } from '../../src/commands/create.ts'
+import type { CommandDeps } from '../../src/core/deps.ts'
 import { originUrl } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import type { Provider } from '../../src/core/provider.ts'
@@ -703,6 +704,11 @@ interface Script {
   /** "Which GitHub organization?" answers. */
   select?: string[]
   /**
+   * The answer to "Open github.com to approve rness for <org> now?". Left
+   * out, declined without being recorded, as the login is.
+   */
+  approve?: boolean | typeof CANCEL
+  /**
    * The answer to "Log in to GitHub…?". Left out, the question is declined
    * without being recorded: every wizard test that is not about the login
    * reads as it did before there was one.
@@ -723,6 +729,7 @@ function terminal(script: Script) {
   const offered: unknown[] = []
   const preselected: unknown[] = []
   const providerOptions: unknown[] = []
+  const orgOptions: unknown[] = []
   const next = <T>(queue: T[] | undefined, message: string): T => {
     const answer = queue?.shift()
     if (answer === undefined)
@@ -747,9 +754,12 @@ function terminal(script: Script) {
       if (opts.message === LOGIN_Q && script.login === undefined) return false
       const publishing = PUBLISH_Q.test(opts.message)
       if (publishing && script.publish === undefined) return false
+      const approving = APPROVE_Q.test(opts.message)
+      if (approving && script.approve === undefined) return false
       asked.push(opts.message)
       if (opts.message === LOGIN_Q) return script.login
       if (publishing) return script.publish
+      if (approving) return script.approve
       return next(script.confirm, opts.message)
     },
     async multiselect(opts: { message: string; options: { value: string }[] }) {
@@ -760,8 +770,6 @@ function terminal(script: Script) {
       throw new Error(`no scripted answer for: ${opts.message}`)
     },
     async select(opts: { message: string; options: { value: string }[] }) {
-      if (opts.message === START_Q && script.start === undefined)
-        return 'github'
       if (opts.message === PROVIDER_Q) {
         providerOptions.push(opts.options)
         if (script.provider === undefined) return 'github'
@@ -770,7 +778,7 @@ function terminal(script: Script) {
       }
       asked.push(opts.message)
       offered.push(opts.options.map((o) => o.value))
-      if (opts.message === START_Q) return script.start
+      if (opts.message === ORG_LIST_Q) orgOptions.push(opts.options)
       return next(script.select, opts.message)
     },
     async autocompleteMultiselect(opts: {
@@ -786,14 +794,23 @@ function terminal(script: Script) {
     isCancel: (value: unknown) => value === CANCEL,
   } as unknown as Prompts
   const deps: CreateDeps = { isTty: () => true, prompts: async () => prompts }
-  return { deps, asked, refused, offered, preselected, providerOptions }
+  return {
+    deps,
+    asked,
+    refused,
+    offered,
+    preselected,
+    providerOptions,
+    orgOptions,
+  }
 }
 
 async function wizard(
   opts: Parameters<typeof createCommand>[0],
   deps: CreateDeps,
   transport?: Transport,
-  provider?: Provider
+  provider?: Provider,
+  clock?: Pick<CommandDeps, 'open' | 'sleep' | 'now'>
 ) {
   const c = capture()
   try {
@@ -801,6 +818,7 @@ async function wizard(
       terminal: deps,
       ...(transport === undefined ? {} : { transport }),
       ...(provider === undefined ? {} : { provider }),
+      ...clock,
     })
     return { code, out: c.out(), err: c.err() }
   } finally {
@@ -812,12 +830,28 @@ async function stagedJoins(): Promise<string[]> {
   return (await readdir(tmpdir())).filter((n) => n.startsWith('rness-join-'))
 }
 
-const START_Q = 'How do you want to start?'
 const PROVIDER_Q = 'Where does your organization live?'
+const ORG_LIST_Q = 'Which GitHub organization?'
+const APPROVE_Q = /^Open github\.com to approve rness for \S+ now\?$/
+const PROVIDER_OPTIONS = [
+  { value: 'github', label: 'GitHub', disabled: false },
+  { value: 'gitlab', label: 'GitLab (coming later)', disabled: true },
+  {
+    value: 'atlassian',
+    label: 'Atlassian — Bitbucket + Jira (coming later)',
+    disabled: true,
+  },
+  {
+    value: 'blank',
+    label: 'No organization yet: a blank local workspace',
+    disabled: false,
+  },
+]
 const AGENTS_Q = 'Which agents does your team use?'
 const NAME_Q = 'What should the workspace be called?'
 const ORG_Q = 'What is your GitHub organization named?'
-const LOGIN_Q = 'Log in to GitHub to list private repositories?'
+const LOGIN_Q =
+  'Log in to GitHub to list your organizations and private repositories?'
 const PUBLISH_Q = /^Create \S+\/\.rness on GitHub \(private\) and push it\?$/
 const REPOS_Q = 'Which repositories do you want in your workspace?'
 const NO_TOKEN_NOTE =
@@ -983,8 +1017,8 @@ test('wizard, join: a cancelled picker exits 0, writes nothing and leaves no sta
 test('wizard: flags only, in a terminal, keep one confirm; declining exits 0 and writes nothing', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   const cwd = await scratch(t)
-  // An organization settles how to start: asked, the first question would cancel.
-  const term = terminal({ start: CANCEL, confirm: [false] })
+  // An organization settles where it lives: asked, the first question would cancel.
+  const term = terminal({ provider: CANCEL, confirm: [false] })
   const r = await wizard(
     {
       org: 'acme',
@@ -1323,8 +1357,6 @@ test('join of an SSH workspace without SSH access stops before anything is writt
 
 // --- logged in to GitHub (spec 0004) -----------------------------------------
 
-const ORG_LIST_Q = 'Which GitHub organization?'
-
 test('logged in: the organization is picked from a list, access is stated, private repositories are listed and cloned with the login', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   await remote.addRepo('vault', { 'README.md': '# vault\n' })
@@ -1352,9 +1384,10 @@ test('logged in: the organization is picked from a list, access is stated, priva
     { value: 'site', label: 'site' },
     { value: 'vault', label: 'vault 🔒' },
   ])
+  // Access is stated before anything reads the organization (spec 0028 §3).
   assert.match(
     r.out,
-    /^member {3}acme \(as octo\)\nlisting {2}acme repositories…\n/m
+    /^member {3}acme \(as octo\)\nnot found acme\/\.rness[^\n]*\nlisting {2}acme repositories…\n/m
   )
   assert.doesNotMatch(r.out, /only public repositories/)
   assert.deepEqual(gh.listed, ['acme'])
@@ -1366,7 +1399,7 @@ test('logged in: the organization is picked from a list, access is stated, priva
   await access(join(cwd, 'acme', 'org', 'vault', 'README.md'))
 })
 
-test('"another one…" and an empty list lead to the text prompt; a restricted organization is said, verbatim', async (t) => {
+test('"an organization I\'m not a member of…" and an empty list lead to the text prompt; a restricted organization is said, verbatim', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   const locked = fakeProvider({
     login: 'octo',
@@ -1383,9 +1416,17 @@ test('"another one…" and an empty list lead to the text prompt; a restricted o
   )
   assert.equal(r.code, 0, r.err)
   assert.deepEqual(term.asked, [ORG_LIST_Q, ORG_Q, REPOS_Q])
+  assert.deepEqual(term.orgOptions, [
+    [
+      { value: 'other-org', label: 'other-org' },
+      { value: 'octo', label: 'octo', hint: 'your account' },
+      { value: '', label: "an organization I'm not a member of…" },
+    ],
+  ])
+  // The approval was declined (silently, by the script): the page is named for later.
   assert.match(
     r.err,
-    /^warning: acme restricts OAuth apps, so its private repositories are hidden from rness\nask an owner to approve it: https:\/\/github\.com\/settings\/connections\/applications\/\S+\n/
+    /^warning: acme has not approved rness, so its private repositories are hidden\napprove it later: https:\/\/github\.test\/settings\/connections\/applications\/rness\n/
   )
   assert.doesNotMatch(r.out, /^member /m)
 
@@ -1889,15 +1930,18 @@ test('blank: a failed install is rolled back, the directory too', async (t) => {
 
 test('wizard, blank: the first question, then the name; GitHub is never asked', async (t) => {
   const cwd = await scratch(t)
-  const term = terminal({ start: 'blank', text: ['my project', 'my-project'] })
+  const term = terminal({
+    provider: 'blank',
+    text: ['my project', 'my-project'],
+  })
   const r = await wizard(
     { skipInstall: true, pm: 'npm', cwd },
     term.deps,
     ...offline()
   )
   assert.equal(r.code, 0, r.err)
-  assert.deepEqual(term.asked, [START_Q, NAME_Q], 'no login, no confirm')
-  assert.deepEqual(term.offered, [['github', 'blank']])
+  assert.deepEqual(term.asked, [PROVIDER_Q, NAME_Q], 'no login, no confirm')
+  assert.deepEqual(term.providerOptions, [PROVIDER_OPTIONS])
   assert.deepEqual(term.refused, [NAME_RULE_ERROR('my project')])
   const m = await loadManifest(join(cwd, 'my-project', '.rness'))
   assert.equal(m.org, null)
@@ -1918,14 +1962,14 @@ test('wizard, blank: --blank <name> keeps one confirm; a cancel anywhere writes 
     'Create blank workspace my-project in ./my-project?',
   ])
 
-  const atStart = terminal({ start: CANCEL })
+  const atStart = terminal({ provider: CANCEL })
   const r2 = await wizard(
     { skipInstall: true, pm: 'npm', cwd },
     atStart.deps,
     ...offline()
   )
   assert.equal(r2.code, 0)
-  assert.deepEqual(atStart.asked, [START_Q])
+  assert.deepEqual(atStart.asked, [PROVIDER_Q])
 
   const atName = terminal({ text: [CANCEL] })
   const r3 = await wizard(
@@ -2122,17 +2166,21 @@ test('wizard: a new workspace asks which agents, before the confirm; blank too',
   ])
   await access(join(cwd, 'acme', 'org', 'api', '.claude', 'settings.json'))
 
-  const blank = terminal({ start: 'blank', text: ['demo'], agents: [] })
+  const blank = terminal({ provider: 'blank', text: ['demo'], agents: [] })
   const b = await wizard(
     { skipInstall: true, pm: 'npm', cwd },
     blank.deps,
     ...offline()
   )
   assert.equal(b.code, 0, b.err)
-  assert.deepEqual(blank.asked, [START_Q, NAME_Q, AGENTS_Q])
+  assert.deepEqual(blank.asked, [PROVIDER_Q, NAME_Q, AGENTS_Q])
   assert.deepEqual((await loadManifest(join(cwd, 'demo', '.rness'))).agents, [])
 
-  const cancel = terminal({ start: 'blank', text: ['other'], agents: CANCEL })
+  const cancel = terminal({
+    provider: 'blank',
+    text: ['other'],
+    agents: CANCEL,
+  })
   const c = await wizard(
     { skipInstall: true, pm: 'npm', cwd },
     cancel.deps,
@@ -2199,30 +2247,38 @@ test('wizard: the organization path asks where it lives, GitLab and Atlassian sh
     term.deps
   )
   assert.equal(r.code, 0, r.err)
-  assert.equal(term.asked[0], PROVIDER_Q)
-  assert.deepEqual(term.providerOptions, [
-    [
-      { value: 'github', label: 'GitHub', disabled: false },
-      { value: 'gitlab', label: 'GitLab (coming later)', disabled: true },
-      {
-        value: 'atlassian',
-        label: 'Atlassian — Bitbucket + Jira (coming later)',
-        disabled: true,
-      },
-    ],
-  ])
+  // --org settles it: the wizard starts past the first question (spec 0028 §2).
+  assert.deepEqual(term.providerOptions, [])
   assert.match(
     await readFile(join(cwd, 'acme', '.rness', 'rness.json'), 'utf8'),
     /"provider": "github"/
   )
 })
 
-test('wizard: the question follows "how do you want to start"; a cancel writes nothing', async (t) => {
+test('wizard: where the organization lives is the first question, the blank workspace its last answer; a cancel writes nothing', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
   const cwd = await scratch(t)
-  const term = terminal({ start: 'github', provider: CANCEL })
-  const r = await wizard({ skipInstall: true, pm: 'npm', cwd }, term.deps)
-  assert.equal(r.code, 0)
-  assert.deepEqual(term.asked, [START_Q, PROVIDER_Q])
+  // No --org, no --repos: the question is asked. Anonymous, with nothing
+  // to list, the picker is skipped and the typed organization is the confirmation.
+  const term = terminal({ provider: 'github', text: ['acme'] })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    fakeProvider({ repositories: [] }).provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [PROVIDER_Q, ORG_Q])
+  assert.deepEqual(term.providerOptions, [PROVIDER_OPTIONS])
+
+  const atStart = terminal({ provider: CANCEL })
+  const r2 = await wizard(
+    { skipInstall: true, pm: 'npm', cwd: await scratch(t) },
+    atStart.deps
+  )
+  assert.equal(r2.code, 0)
+  assert.deepEqual(atStart.asked, [PROVIDER_Q])
 })
 
 test('--provider github -y --org acme: no question, and it is written', async (t) => {
@@ -2291,14 +2347,15 @@ test('--provider: an unavailable or unknown provider exits 2 before anything els
 
 test('--blank asks no provider and writes none; --provider is refused with it', async (t) => {
   const cwd = await scratch(t)
-  const term = terminal({ start: 'blank', text: ['demo'] })
+  const term = terminal({ provider: 'blank', text: ['demo'] })
   const r = await wizard(
     { skipInstall: true, pm: 'npm', cwd },
     term.deps,
     ...offline()
   )
   assert.equal(r.code, 0, r.err)
-  assert.deepEqual(term.providerOptions, [])
+  // The blank workspace is an answer to the provider question, which was asked once.
+  assert.equal(term.providerOptions.length, 1)
   assert.doesNotMatch(
     await readFile(join(cwd, 'demo', '.rness', 'rness.json'), 'utf8'),
     /"provider"/
@@ -2336,5 +2393,160 @@ test('joining an existing .rness asks nothing and leaves its rness.json as publi
   assert.equal(
     await readFile(join(cwd, 'acme', '.rness', 'rness.json'), 'utf8'),
     published
+  )
+})
+
+test('an organization that has not approved rness wears the padlock and says so; the account is last', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const gh = fakeProvider({
+    login: 'octo',
+    organizations: [
+      { login: 'locked', approved: false, canGrant: true },
+      'acme',
+    ],
+    access: 'member',
+    repositories: [],
+  })
+  const term = terminal({ select: ['acme'], confirm: [true] })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd: await scratch(t) },
+    term.deps,
+    undefined,
+    gh.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.orgOptions, [
+    [
+      { value: 'locked', label: 'locked 🔒', hint: 'rness not approved' },
+      { value: 'acme', label: 'acme' },
+      { value: 'octo', label: 'octo', hint: 'your account' },
+      { value: '', label: "an organization I'm not a member of…" },
+    ],
+  ])
+})
+
+test('a restricted organization: the approval is asked before the SSH test, the probe and the listing; a cancel writes nothing', async (t) => {
+  const { transport, calls } = await fakeTransport(t, 'acme', SSH_OK)
+  const locked = fakeProvider({
+    login: 'octo',
+    access: 'restricted',
+    repositories: [{ name: 'site', private: false, archived: false }],
+  })
+  const term = terminal({ select: [''], text: ['acme'], approve: CANCEL })
+  const cwd = await scratch(t)
+  const before = await stagedJoins()
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', cwd },
+    term.deps,
+    transport,
+    locked.provider
+  )
+  assert.equal(r.code, 0)
+  assert.match(r.err, /cancelled\n$/)
+  assert.deepEqual(term.asked, [
+    ORG_LIST_Q,
+    ORG_Q,
+    'Open github.com to approve rness for acme now?',
+  ])
+  assert.deepEqual(calls, [], 'no SSH test before the answer')
+  assert.deepEqual(locked.asked, [], 'no probe before the answer')
+  assert.deepEqual(locked.listed, [], 'no listing before the answer')
+  assert.deepEqual(await stagedJoins(), before)
+  await assert.rejects(access(join(cwd, 'acme')))
+})
+
+test('a restricted organization, approved while rness waits: the page opens, the wait ends on the membership, the private repositories are listed', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const locked = fakeProvider({
+    login: 'octo',
+    access: ['restricted', 'restricted', 'member'],
+    repositories: [{ name: 'vault', private: true, archived: false }],
+  })
+  const term = terminal({
+    select: [''],
+    text: ['acme'],
+    approve: true,
+    pick: [[]],
+  })
+  const opened: string[] = []
+  const slept: number[] = []
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd: await scratch(t) },
+    term.deps,
+    undefined,
+    locked.provider,
+    {
+      open: (u) => opened.push(u),
+      sleep: async (ms) => {
+        slept.push(ms)
+      },
+      now: () => 0,
+    }
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    ORG_LIST_Q,
+    ORG_Q,
+    'Open github.com to approve rness for acme now?',
+    REPOS_Q,
+  ])
+  assert.deepEqual(opened, [
+    'https://github.test/settings/connections/applications/rness',
+  ])
+  assert.deepEqual(slept, [5000, 5000])
+  assert.match(
+    r.out,
+    /^open {5}https:\/\/github\.test\S+\nwaiting {2}for acme to approve rness on github\.com…\nmember {3}acme \(as octo\)\n/m
+  )
+  assert.deepEqual(term.offered[1], [{ value: 'vault', label: 'vault 🔒' }])
+  assert.match(r.err, /^warning: acme has not approved rness/m)
+})
+
+test('--org in a terminal still reaches the approval; --yes prints the page for an owner and asks nothing', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const locked = fakeProvider({
+    login: 'octo',
+    access: 'restricted',
+    repositories: [],
+  })
+  const term = terminal({ approve: false, confirm: [true] })
+  const r = await wizard(
+    {
+      org: 'acme',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      cwd: await scratch(t),
+    },
+    term.deps,
+    undefined,
+    locked.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    'Open github.com to approve rness for acme now?',
+    'Create workspace acme in ./acme?',
+  ])
+  assert.match(r.err, /approve it later: https:\/\/github\.test\S+\n/)
+
+  const quiet = terminal({})
+  const r2 = await wizard(
+    {
+      org: 'acme',
+      yes: true,
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      cwd: await scratch(t),
+    },
+    quiet.deps,
+    undefined,
+    locked.provider
+  )
+  assert.equal(r2.code, 0, r2.err)
+  assert.deepEqual(quiet.asked, [])
+  assert.match(
+    r2.err,
+    /^warning: acme has not approved rness, so its private repositories are hidden\nan owner approves it at https:\/\/github\.test\S+\n/m
   )
 })

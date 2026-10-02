@@ -440,23 +440,42 @@ export async function getUser(options: ApiOptions): Promise<{ login: string }> {
   return { login }
 }
 
-/** The organizations the token's user belongs to (`read:org`), first page of 100. */
-export async function listUserOrganizations(
+export interface UserMembership {
+  login: string
+  /** `admin` is an owner. */
+  role: string
+}
+
+/**
+ * The organizations the token's user is an active member of (`read:org`),
+ * with the user's role, first page of 100. An organization that restricts
+ * OAuth apps and has not approved this one is not in the answer.
+ */
+export async function listUserMemberships(
   options: ApiOptions
-): Promise<string[]> {
+): Promise<UserMembership[]> {
   const { status, body } = await getJson(
-    `/user/orgs?per_page=${PER_PAGE}`,
+    `/user/memberships/orgs?state=active&per_page=${PER_PAGE}`,
     options
   )
   if (status !== 200 || !Array.isArray(body))
-    throw new Error(`GitHub API answered ${status} for /user/orgs`)
-  return body
-    .map((o: unknown) =>
-      o !== null && typeof o === 'object'
-        ? (o as Record<string, unknown>)['login']
+    throw new Error(`GitHub API answered ${status} for /user/memberships/orgs`)
+  const memberships: UserMembership[] = []
+  for (const m of body as unknown[]) {
+    if (m === null || typeof m !== 'object') continue
+    const entry = m as Record<string, unknown>
+    const org = entry['organization']
+    const login =
+      org !== null && typeof org === 'object'
+        ? (org as Record<string, unknown>)['login']
         : undefined
-    )
-    .filter((l): l is string => typeof l === 'string')
+    if (typeof login !== 'string' || entry['state'] !== 'active') continue
+    memberships.push({
+      login,
+      role: typeof entry['role'] === 'string' ? entry['role'] : '',
+    })
+  }
+  return memberships
 }
 
 export type OrgMembership = 'member' | 'not-member' | 'restricted' | 'unknown'

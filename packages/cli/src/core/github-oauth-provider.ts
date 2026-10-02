@@ -2,6 +2,7 @@ import type { StatusUpdate } from '../pulse/collection.ts'
 import type { Layout } from '../pulse/layout.ts'
 import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
 import { type ResolvedToken, resolveToken } from './auth.ts'
+import { approvalUrl } from './device-flow.ts'
 import { GitHubBoards } from './github-board.ts'
 import {
   type ApiOptions,
@@ -13,7 +14,7 @@ import {
   getScopes,
   getUser,
   listRepositories,
-  listUserOrganizations,
+  listUserMemberships,
 } from './github.ts'
 import type {
   Board,
@@ -75,8 +76,16 @@ export class GitHubOAuthProvider implements Provider {
 
   async listOrganizations(): Promise<Organization[]> {
     if (this.#token === null) return []
-    const logins = await listUserOrganizations(this.#api(this.#token.token))
-    return logins.map((login) => ({ login }))
+    const memberships = await listUserMemberships(this.#api(this.#token.token))
+    return memberships.map((m) => ({
+      login: m.login,
+      approved: true,
+      canGrant: m.role === 'admin',
+    }))
+  }
+
+  approvalUrl(): string | null {
+    return approvalUrl()
   }
 
   async organizationAccess(org: string): Promise<OrganizationAccess> {

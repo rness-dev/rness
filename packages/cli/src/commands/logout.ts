@@ -1,8 +1,8 @@
 import { clearAuth, readAuth } from '../core/auth.ts'
+import { approvalUrl } from '../core/device-flow.ts'
 import { removeGitSetup } from '../core/setup-git.ts'
 import { status } from '../core/style.ts'
 import { reportError } from '../report.ts'
-import { revokeUrl } from './login.ts'
 
 /** `rness logout`: forget the stored login and undo `setup-git` (spec 0004 §2, §5). */
 export async function logoutCommand(): Promise<number> {
@@ -22,7 +22,7 @@ export async function logoutCommand(): Promise<number> {
       process.stdout.write(
         `${status('updated', 'git: rness no longer answers for https://github.com')}\n`
       )
-    process.stdout.write(`revoke rness on GitHub: ${revokeUrl()}\n`)
+    process.stdout.write(`revoke rness on GitHub: ${approvalUrl()}\n`)
     return 0
   } catch (e) {
     return reportError(e)

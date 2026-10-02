@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 
 import { SUPPORTED_AGENTS, unsupportedAgents } from '../core/agents.ts'
+import { checkAccess } from '../core/approval.ts'
 import { askAgents } from '../core/ask-agents.ts'
-import { askProvider } from '../core/ask-provider.ts'
+import { BLANK, askProvider } from '../core/ask-provider.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { clone, publish } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
@@ -31,7 +32,11 @@ import {
   isPackageManager,
   rnessCommand,
 } from '../core/pm.ts'
-import type { GitCredentials, Provider } from '../core/provider.ts'
+import type {
+  GitCredentials,
+  Organization,
+  Provider,
+} from '../core/provider.ts'
 import { PROVIDERS, isProviderName, openProvider } from '../core/providers.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
@@ -64,7 +69,7 @@ import {
   createBlank,
   workspaceNameError,
 } from './create-blank.ts'
-import { loginCommand, revokeUrl } from './login.ts'
+import { loginCommand } from './login.ts'
 import { syncCommand } from './sync.ts'
 
 export interface CreateOptions {
@@ -141,24 +146,6 @@ async function pickRepositories(input: {
   catalogue: Readonly<Record<string, unknown>>
 }): Promise<{ picked: string[]; prompted: boolean } | null> {
   const { org, prompts, provider, ui } = input
-  // Logged in: say as whom rness looks at the organization, and when the
-  // organization hides its private repositories from OAuth apps (spec 0004 §3).
-  if (provider.authenticated) {
-    const access = await provider.organizationAccess(org)
-    const login = (await provider.identity())?.login
-    if (access === 'member')
-      ui.line(
-        'member',
-        `${org}${login === undefined ? '' : ` (as ${login})`}`,
-        `You are a member of ${org}${login === undefined ? '' : ` (as ${login})`}`
-      )
-    else if (access === 'restricted') {
-      ui.warn(
-        `${org} restricts OAuth apps, so its private repositories are hidden from rness`
-      )
-      ui.hint(`ask an owner to approve it: ${revokeUrl()}`, 'stderr')
-    }
-  }
   let listed: { name: string; private: boolean; archived: boolean }[] = []
   let failed = false
   // The plain look announces the listing; the session look spins on it.
@@ -380,24 +367,6 @@ function blankConflict(opts: CreateOptions): string | null {
   return null
 }
 
-/**
- * The wizard's first question (spec 0012): from a GitHub organization, the
- * flow below, or a blank local workspace. Null is a cancel.
- */
-async function chooseStart(
-  prompts: Prompts
-): Promise<'github' | 'blank' | null> {
-  const answer = await prompts.select<string>({
-    message: 'How do you want to start?',
-    options: [
-      { value: 'github', label: 'From a GitHub organization' },
-      { value: 'blank', label: 'Blank local workspace' },
-    ],
-  })
-  if (prompts.isCancel(answer)) return null
-  return answer === 'blank' ? 'blank' : 'github'
-}
-
 /** Refuses a `--provider` value that names no provider, or one not yet available. */
 function providerFlagError(value: string): string | null {
   if (!isProviderName(value))
@@ -410,36 +379,50 @@ function providerFlagError(value: string): string | null {
 }
 
 const OTHER = Symbol('another organization')
+export const OTHER_LABEL = "an organization I'm not a member of…"
+export const NOT_APPROVED = 'rness not approved'
 
 /**
- * Logged in, the organization is picked from the user's own and their
- * account rather than typed. `OTHER` leads to the text prompt — as does
- * having nothing to offer; null is a cancel.
+ * Logged in, the organization is picked from the login's own and their
+ * account rather than typed (spec 0028 §2). An organization the provider
+ * does not let rness read wears the padlock of spec 0009's picker, with the
+ * hint that tells it from a private repository. `OTHER` leads to the text
+ * prompt — the organization of an outside collaborator, a public one the
+ * user does not belong to, or a listing that failed — as does having
+ * nothing to offer; null is a cancel.
  */
 async function chooseOrganization(
   provider: Provider,
   prompts: Prompts
-): Promise<string | typeof OTHER | null> {
+): Promise<{ org: string; canGrant: boolean | null } | typeof OTHER | null> {
   if (!provider.authenticated) return OTHER
-  let names: string[]
+  let organizations: Organization[]
+  let self: string | undefined
   try {
-    const self = (await provider.identity())?.login
-    names = (await provider.listOrganizations()).map((o) => o.login)
-    if (self !== undefined) names.push(self)
+    self = (await provider.identity())?.login
+    organizations = await provider.listOrganizations()
   } catch {
     return OTHER
   }
-  if (names.length === 0) return OTHER
+  if (organizations.length === 0 && self === undefined) return OTHER
+  const padlock = unicode()
+  const options: { value: string; label: string; hint?: string }[] =
+    organizations.map((o) => ({
+      value: o.login,
+      label: !o.approved && padlock ? `${o.login} ${PRIVATE_MARK}` : o.login,
+      ...(o.approved ? {} : { hint: NOT_APPROVED }),
+    }))
+  if (self !== undefined)
+    options.push({ value: self, label: self, hint: 'your account' })
+  options.push({ value: '', label: OTHER_LABEL })
   const answer = await prompts.select<string>({
     message: 'Which GitHub organization?',
-    options: [
-      ...names.map((name) => ({ value: name, label: name })),
-      { value: '', label: 'another one…' },
-    ],
+    options,
   })
   if (prompts.isCancel(answer)) return null
   if (typeof answer !== 'string' || answer === '') return OTHER
-  return answer
+  const picked = organizations.find((o) => o.login === answer)
+  return { org: answer, canGrant: picked?.canGrant ?? null }
 }
 
 /**
@@ -504,6 +487,11 @@ export async function createCommand(
 ): Promise<number> {
   const terminal = deps.terminal ?? defaultTerminal
   const transport = deps.transport ?? defaultTransport
+  const clock = {
+    ...(deps.open === undefined ? {} : { open: deps.open }),
+    ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+    ...(deps.now === undefined ? {} : { now: deps.now }),
+  }
   // Built on first use: it reads the stored login, which most paths never need.
   let provider = deps.provider
   const getProvider = async (): Promise<Provider> =>
@@ -608,18 +596,23 @@ export async function createCommand(
       return 1
     }
 
-    // Blank, or the wizard's first answer: no GitHub step at all. An
-    // organization or repositories on the command line settle it.
+    // Where the organization lives, or nowhere: the blank workspace is the
+    // last answer of the first question (spec 0028 §2). The flag, an
+    // organization or repositories on the command line settle it unasked.
     let blank = opts.blank === true
-    if (
+    let chosenProvider: ProviderName = 'github'
+    if (opts.provider !== undefined && isProviderName(opts.provider))
+      chosenProvider = opts.provider
+    else if (
       !blank &&
       interactive &&
       opts.org === undefined &&
       opts.repos === undefined
     ) {
-      const start = await chooseStart(await prompts())
-      if (start === null) return cancelled(ui)
-      blank = start === 'blank'
+      const answer = await askProvider(await prompts())
+      if (typeof answer !== 'string') return cancelled(ui)
+      if (answer === BLANK) blank = true
+      else chosenProvider = answer
     }
     if (blank)
       return await createBlank({
@@ -633,17 +626,6 @@ export async function createCommand(
         ui,
         prompts,
       })
-
-    // Where the organization lives: the flag, else asked in a terminal, else
-    // GitHub. It precedes the organization, which only that provider names.
-    let chosenProvider: ProviderName = 'github'
-    if (opts.provider !== undefined && isProviderName(opts.provider))
-      chosenProvider = opts.provider
-    else if (interactive) {
-      const answer = await askProvider(await prompts())
-      if (typeof answer !== 'string') return cancelled(ui)
-      chosenProvider = answer
-    }
 
     let prompted = false
     let org = opts.org
@@ -660,19 +642,22 @@ export async function createCommand(
     ) {
       const p = await prompts()
       const login = await p.confirm({
-        message: 'Log in to GitHub to list private repositories?',
+        message:
+          'Log in to GitHub to list your organizations and private repositories?',
         initialValue: true,
       })
       if (p.isCancel(login)) return cancelled(ui)
       if (login === true) {
         const code = await loginCommand(
           opts.githubApi === undefined ? {} : { githubApi: opts.githubApi },
-          { terminal, ui }
+          { terminal, ui, ...clock }
         )
         if (code !== 0) return code
         provider = await githubProvider(opts.githubApi)
       }
     }
+    // What the listing knew of the identity's role there (spec 0028 §3).
+    let canGrant: boolean | null = null
     if (org === undefined) {
       const chosen = await chooseOrganization(
         await getProvider(),
@@ -680,7 +665,8 @@ export async function createCommand(
       )
       if (chosen === null) return cancelled(ui)
       if (chosen !== OTHER) {
-        org = chosen
+        org = chosen.org
+        canGrant = chosen.canGrant
         prompted = true
       }
     }
@@ -715,6 +701,20 @@ export async function createCommand(
       )
       return 2
     }
+
+    // Access to the organization before anything reads it (spec 0028 §3):
+    // the probe below must see a private `.rness` through a token the
+    // organization has approved, or it would start a second one.
+    const outcome = await checkAccess({
+      org,
+      provider: await getProvider(),
+      ui,
+      interactive,
+      prompts,
+      canGrant,
+      deps: clock,
+    })
+    if (outcome === 'cancelled') return cancelled(ui)
 
     const host = await chooseHost()
     const contextUrl = repoUrl(host, org, '.rness')

@@ -1,0 +1,123 @@
+import { canOpenBrowser, openInBrowser } from './browser.ts'
+import { rnessCommand } from './pm.ts'
+import type { OrganizationAccess, Provider } from './provider.ts'
+import type { Prompts } from './terminal.ts'
+import type { Ui } from './ui.ts'
+
+/** How often the membership is asked while the approval is awaited. */
+export const APPROVAL_INTERVAL_MS = 5_000
+/** How long the wait lasts; the device flow's code lasts 15 minutes. */
+export const APPROVAL_WAIT_MS = 10 * 60_000
+
+export function approvalQuestion(org: string): string {
+  return `Open github.com to approve rness for ${org} now?`
+}
+
+/** The clock and the browser, injected so a test drives the wait. */
+export interface ApprovalDeps {
+  open?: (url: string) => void
+  sleep?: (ms: number) => Promise<void>
+  now?: () => number
+}
+
+/** `cancelled` is the user's: nothing is written after it. */
+export type AccessOutcome = OrganizationAccess | 'cancelled'
+
+/**
+ * Access to the organization, before anything reads it (spec 0028 §3): a
+ * member is said as whom; an organization that restricts OAuth apps and has
+ * not approved rness is offered the approval page in the browser, and the
+ * membership is polled until it answers or ten minutes pass. The order
+ * matters: the probe of `<org>/.rness` and the listing come after, so a
+ * private `.rness` is never read as absent through a token that cannot see
+ * it yet.
+ */
+export async function checkAccess(input: {
+  org: string
+  provider: Provider
+  ui: Ui
+  interactive: boolean
+  prompts: () => Promise<Prompts>
+  /** The identity's role, when the listing knew it; null: the provider would not say. */
+  canGrant: boolean | null
+  deps?: ApprovalDeps
+}): Promise<AccessOutcome> {
+  const { org, provider, ui } = input
+  if (!provider.authenticated) return 'unknown'
+  const login = (await provider.identity())?.login
+  const as = login === undefined ? '' : ` (as ${login})`
+  const member = (): void =>
+    ui.line('member', `${org}${as}`, `You are a member of ${org}${as}`)
+  const access = await provider.organizationAccess(org)
+  if (access === 'member') {
+    member()
+    return access
+  }
+  if (access !== 'restricted') return access
+
+  const url = provider.approvalUrl()
+  ui.warn(
+    `${org} has not approved rness, so its private repositories are hidden`
+  )
+  if (!input.interactive || url === null) {
+    ui.hint(
+      url === null
+        ? `ask an owner to approve rness for ${org}`
+        : `an owner approves it at ${url}`,
+      'stderr'
+    )
+    return 'restricted'
+  }
+  const p = await input.prompts()
+  const ok = await p.confirm({
+    message: approvalQuestion(org),
+    initialValue: true,
+  })
+  if (p.isCancel(ok)) return 'cancelled'
+  if (ok !== true) {
+    ui.hint(`approve it later: ${url}`, 'stderr')
+    return 'restricted'
+  }
+
+  ui.line('open', url, `Open ${url} and approve rness for ${org}`)
+  if (canOpenBrowser()) (input.deps?.open ?? openInBrowser)(url)
+  const sleep =
+    input.deps?.sleep ??
+    ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const now = input.deps?.now ?? Date.now
+  // An owner approves it themself on the page; a member can only ask there.
+  const who = input.canGrant === false ? `an owner of ${org}` : org
+  const waiting = `for ${who} to approve rness on github.com`
+  if (!ui.session) ui.line('waiting', `${waiting}…`)
+  const outcome = await ui.step(
+    {
+      doing: `waiting  ${waiting}`,
+      sentence: `Waiting ${waiting}`,
+      quiet: true,
+    },
+    async (): Promise<OrganizationAccess | 'timeout'> => {
+      const deadline = now() + APPROVAL_WAIT_MS
+      for (;;) {
+        await sleep(APPROVAL_INTERVAL_MS)
+        const again = await provider.organizationAccess(org)
+        // `unknown` is a request that failed: asked again until the deadline.
+        if (again === 'member' || again === 'not-member') return again
+        if (now() >= deadline) return 'timeout'
+      }
+    },
+    (r) => (r === 'member' ? ['member', `${org}${as}`] : null)
+  )
+  if (outcome === 'member') {
+    if (!ui.session) member()
+    return outcome
+  }
+  if (outcome === 'not-member') return outcome
+  ui.warn(
+    `${org} still has not approved rness; its private repositories stay hidden this time`
+  )
+  ui.hint(
+    `once an owner approves it, run ${rnessCommand()} create ${org} again`,
+    'stderr'
+  )
+  return 'restricted'
+}

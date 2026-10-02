@@ -1,13 +1,12 @@
-import { spawn } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 
 import { envToken, readAuth, resolveToken, writeAuth } from '../core/auth.ts'
+import { canOpenBrowser, openInBrowser } from '../core/browser.ts'
 import {
   LoginError,
   PULSE_SCOPE,
   type PollDeps,
   SCOPES,
-  clientId,
   pollForToken,
   requestDeviceCode,
 } from '../core/device-flow.ts'
@@ -41,22 +40,6 @@ export interface LoginDeps extends PollDeps {
   bin?: string
   /** Where to look for the workspace; the current directory by default. */
   cwd?: string
-}
-
-function openInBrowser(url: string): void {
-  const [command, args] =
-    process.platform === 'darwin'
-      ? ['open', [url]]
-      : process.platform === 'win32'
-        ? ['cmd', ['/c', 'start', '', url]]
-        : ['xdg-open', [url]]
-  try {
-    const child = spawn(command, args, { stdio: 'ignore', detached: true })
-    child.on('error', () => undefined)
-    child.unref()
-  } catch {
-    // no browser here: the URL is on the screen
-  }
 }
 
 /** The question of spec 0004 §5, or the line that replaces it under npx. */
@@ -159,7 +142,7 @@ export async function loginCommand(
       ui.line('open', code.verificationUri)
       ui.line('code', code.userCode)
     }
-    if (terminal.isTty() && process.env['SSH_CONNECTION'] === undefined)
+    if (terminal.isTty() && canOpenBrowser())
       (deps.open ?? openInBrowser)(code.verificationUri)
     // The plain look says it is waiting, then who logged in; the session
     // look spins, and the spinner ends as that second line.
@@ -193,9 +176,4 @@ export async function loginCommand(
     }
     return reportError(e)
   }
-}
-
-/** Where a user revokes what `rness login` was granted; doing it by API needs the client secret. */
-export function revokeUrl(): string {
-  return `https://github.com/settings/connections/applications/${clientId()}`
 }

@@ -13,6 +13,16 @@ export function clientId(): string {
   return process.env['RNESS_GITHUB_CLIENT_ID'] ?? GITHUB_CLIENT_ID
 }
 
+/**
+ * The OAuth app's page in the user's settings: where an owner approves rness
+ * for an organization that restricts OAuth apps, a member asks for it, and
+ * anyone revokes what `rness login` was granted (spec 0028 §3). Doing any of
+ * it by API needs the client secret.
+ */
+export function approvalUrl(): string {
+  return `https://github.com/settings/connections/applications/${clientId()}`
+}
+
 /** `https://github.com`; `RNESS_GITHUB_WEB` overrides it in tests. */
 export function webBase(): string {
   return (process.env['RNESS_GITHUB_WEB'] ?? GITHUB_WEB).replace(/\/+$/, '')

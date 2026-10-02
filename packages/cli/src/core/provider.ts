@@ -15,6 +15,15 @@ export interface GitCredentials {
 
 export interface Organization {
   login: string
+  /**
+   * The provider lets rness read this organization; false would wear the
+   * padlock of spec 0028 §4. On GitHub it is always true: an organization
+   * that restricts OAuth apps and has not approved rness is not listed at
+   * all, whatever the API asked (plan 0037, task 1).
+   */
+  approved: boolean
+  /** The identity can approve rness there itself (an owner); false: it can only ask; null: the provider would not say. */
+  canGrant: boolean | null
 }
 
 /**
@@ -40,6 +49,8 @@ export interface Provider {
   /** The organizations of the identity; empty when anonymous. */
   listOrganizations(): Promise<Organization[]>
   organizationAccess(org: string): Promise<OrganizationAccess>
+  /** Where a person approves rness for an organization (spec 0028 §3); null when the provider has no such page. */
+  approvalUrl(): string | null
   listRepositories(owner: string): Promise<RepositoryListing>
   /**
    * Create the private repository `owner/name` — how a new workspace's

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { clientId } from '../../src/core/device-flow.ts'
 import { GitHubOAuthProvider } from '../../src/core/github-oauth-provider.ts'
 import { type Recorded, fakeGithub } from '../helpers/fake-github.ts'
 
@@ -18,6 +19,11 @@ test('anonymous: no identity, no organizations, no credentials, public listing',
   assert.equal(await provider.identity(), null)
   assert.deepEqual(await provider.listOrganizations(), [])
   assert.equal(await provider.organizationAccess('acme'), 'unknown')
+  // The approval page is the app's, not the token's: known anonymously too.
+  assert.match(
+    provider.approvalUrl() ?? '',
+    /^https:\/\/github\.com\/settings\/connections\/applications\//
+  )
   assert.equal(provider.credentialsFor('https://github.com/acme/api.git'), null)
   const listing = await provider.listRepositories('acme')
   assert.deepEqual(listing.repositories, [repo('web')])
@@ -58,8 +64,22 @@ test('a stored login knows its name; an environment token asks GitHub once', asy
 
 test('organizations, and access: member, not a member, hidden by an OAuth restriction', async (t) => {
   const route = (r: Recorded) => {
-    if (r.path.startsWith('/user/orgs'))
-      return { json: [{ login: 'acme' }, { login: 'Other-Org' }] }
+    if (r.path.startsWith('/user/memberships/orgs?'))
+      return {
+        json: [
+          { organization: { login: 'acme' }, state: 'active', role: 'admin' },
+          {
+            organization: { login: 'Other-Org' },
+            state: 'active',
+            role: 'member',
+          },
+          {
+            organization: { login: 'invited' },
+            state: 'pending',
+            role: 'member',
+          },
+        ],
+      }
     if (r.path === '/user/memberships/orgs/acme')
       return { json: { state: 'active' } }
     if (r.path === '/user/memberships/orgs/stranger')
@@ -76,10 +96,16 @@ test('organizations, and access: member, not a member, hidden by an OAuth restri
   }
   const gh = await fakeGithub(t, route)
   const provider = new GitHubOAuthProvider({ token: TOKEN, apiBase: gh.base })
+  // Every organization GitHub lists has approved rness: an unapproved one
+  // is simply absent (plan 0037, task 1), so `approved` is always true here.
   assert.deepEqual(await provider.listOrganizations(), [
-    { login: 'acme' },
-    { login: 'Other-Org' },
+    { login: 'acme', approved: true, canGrant: true },
+    { login: 'Other-Org', approved: true, canGrant: false },
   ])
+  assert.equal(
+    provider.approvalUrl(),
+    `https://github.com/settings/connections/applications/${clientId()}`
+  )
   assert.equal(await provider.organizationAccess('acme'), 'member')
   assert.equal(await provider.organizationAccess('stranger'), 'not-member')
   assert.equal(await provider.organizationAccess('locked'), 'restricted')
