@@ -125,7 +125,12 @@ change; it also clears the npx cache (`<npm cache>/_npx`), which would
 otherwise keep serving the first copy of that version to `npm create`.
 
 Maintainers release by tagging `vX.Y.Z`; GitHub Actions publishes the
-packages to npm.
+packages to npm, then starts the `Release` workflow of
+[rness-dev/docs](https://github.com/rness-dev/docs), which opens the pull
+request that freezes the docs for that version. That last step needs the
+repository secret `DOCS_RELEASE_TOKEN` (Settings, Secrets and variables,
+Actions): a fine-grained personal access token with Actions read and write
+on `rness-dev/docs` only. Without it the docs wait for their hourly run.
 
 ## Community
 

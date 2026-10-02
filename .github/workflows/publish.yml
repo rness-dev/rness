@@ -41,3 +41,29 @@ jobs:
       # cli, then create, then create-rness; a version already on npm is skipped,
       # so a re-run after a partial release (or a hand publish) goes green.
       - run: node scripts/publish.mjs
+
+      # The docs freeze this version now, not at their next scheduled run,
+      # which GitHub delays by hours: their Release workflow waits for npm to
+      # answer the version, then opens the pull request that deploys it. The
+      # tag is the only input. DOCS_RELEASE_TOKEN: a fine-grained token with
+      # Actions read and write on the docs repository only. The packages are
+      # out by now, so this step never fails the run.
+      - name: Ask the docs to freeze this version
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_RELEASE_TOKEN }}
+          DOCS: ${{ github.repository_owner }}/docs
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          case "$version" in
+            *-*)
+              echo "$version is a prerelease: the docs keep the release they show"
+              exit 0
+              ;;
+          esac
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::DOCS_RELEASE_TOKEN is not set: the docs freeze $version at their next scheduled run"
+            exit 0
+          fi
+          gh workflow run Release -R "$DOCS" -f version="$version"
+          echo "asked $DOCS to freeze $version"
