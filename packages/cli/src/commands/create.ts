@@ -40,7 +40,7 @@ import type {
 import { PROVIDERS, isProviderName, openProvider } from '../core/providers.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
-import { PRIVATE_MARK, banner, unicode } from '../core/style.ts'
+import { PRIVATE_MARK, banner, count, unicode } from '../core/style.ts'
 import { syncBlocks } from '../core/sync-blocks.ts'
 import {
   type Prompts,
@@ -162,7 +162,7 @@ async function pickRepositories(input: {
       // list below it must agree (spec 0009).
       (l) => [
         'listed',
-        `${l.repositories.filter(isMemberRepo).length} repositories of ${org}`,
+        `${count(l.repositories.filter(isMemberRepo).length, ['repository', 'repositories'])} of ${org}`,
       ]
     )
     listed = listing.repositories

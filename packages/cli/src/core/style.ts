@@ -140,6 +140,11 @@ export function inverse(
   return painted === text ? plain : painted
 }
 
+/** `1 repository`, `2 repositories`: the noun agrees with the number. */
+export function count(n: number, [one, many]: [string, string]): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
 /** Grey, for what is read after the rest: a box of next steps. */
 export function grey(
   text: string,

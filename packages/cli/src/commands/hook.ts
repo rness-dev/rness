@@ -9,6 +9,7 @@ import { parseFrontMatter } from '../core/frontmatter.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
 import { pinDrift, workspacePackageManager } from '../core/pinned.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
+import { count } from '../core/style.ts'
 import type { CollectionName, Workspace } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { scopeSummary } from '../mcp/tools.ts'
@@ -68,10 +69,6 @@ function cwdOf(input: Input, env: NodeJS.ProcessEnv): string {
 }
 
 const toPosix = (p: string): string => p.split(sep).join(posix.sep)
-
-function count(n: number, [one, many]: [string, string]): string {
-  return `${n} ${n === 1 ? one : many}`
-}
 
 /** Why the context may be wrong: the installed copy, then validate's problems. */
 async function safetyNet(

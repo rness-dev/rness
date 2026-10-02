@@ -32,6 +32,7 @@ import {
 import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { openGitProvider } from '../core/providers.ts'
+import { count } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
   CHECKING,
@@ -156,7 +157,7 @@ async function askWhatToSync(input: {
         {
           value: SELECT_ALL,
           label: 'Select all',
-          hint: `${input.missing.length} repositories from rness.json`,
+          hint: `${count(input.missing.length, ['repository', 'repositories'])} from rness.json`,
         },
         ...input.missing.map((name) => ({ value: name, label: name })),
       ],

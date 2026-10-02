@@ -5,6 +5,7 @@ import { type TestContext, test } from 'node:test'
 import {
   badge,
   banner,
+  count,
   grey,
   paint,
   status,
@@ -116,4 +117,10 @@ test('badge: the tone chooses the background; a stream without colour keeps the 
     badge('Create a workspace', terminal(8)),
     badge('Create a workspace', 'intro', terminal(8))
   )
+})
+
+test('count: the singular for one, the plural otherwise', () => {
+  assert.equal(count(1, ['repository', 'repositories']), '1 repository')
+  assert.equal(count(0, ['repository', 'repositories']), '0 repositories')
+  assert.equal(count(2, ['problem', 'problems']), '2 problems')
 })
