@@ -428,3 +428,23 @@ test('two documents with one number: exit 1, both named', async (t) => {
     c.restore()
   }
 })
+
+test('a plan without a number: exit 1, named with the next number', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: {
+      'plans/dapp/2026-10-02-copy-fix.md':
+        '---\ndate: 2026-10-02\nstatus: Completed\nrepo: dapp\n---\n\n# Copy fix\n',
+    },
+  })
+  const c = capture()
+  try {
+    const code = await validateCommand({ cwd: root })
+    assert.equal(code, 1)
+    assert.equal(
+      c.err(),
+      'plans/dapp/2026-10-02-copy-fix.md: not numbered; name it 0001-<slug>.md, the next number of plans\n'
+    )
+  } finally {
+    c.restore()
+  }
+})

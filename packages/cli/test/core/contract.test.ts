@@ -15,16 +15,18 @@ const scopedDir = fileURLToPath(
 
 test('reports every problem of the broken tree, in every collection', async () => {
   const problems = await checkContract(brokenDir)
-  const find = (prefix: string) =>
-    problems.find((p) => p.startsWith(prefix)) ?? ''
-  assert.equal(problems.length, 4, problems.join('\n'))
-  assert.match(find('specs/bad.md'), /missing a front-matter block/)
-  assert.match(find('plans/invalid-yaml.md'), /invalid front matter/)
-  assert.match(find('skills/bad.md'), /invalid front matter/)
-  assert.match(
-    find('standards/web/placed.md'),
-    /front matter "scopes" is not supported/
-  )
+  const has = (prefix: string, re: RegExp) =>
+    assert.ok(
+      problems.some((p) => p.startsWith(prefix) && re.test(p)),
+      problems.join('\n')
+    )
+  assert.equal(problems.length, 7, problems.join('\n'))
+  has('specs/bad.md', /missing a front-matter block/)
+  has('plans/invalid-yaml.md', /invalid front matter/)
+  has('skills/bad.md', /invalid front matter/)
+  has('standards/web/placed.md', /front matter "scopes" is not supported/)
+  for (const where of ['adr/ok.md', 'specs/bad.md', 'plans/invalid-yaml.md'])
+    has(where, /not numbered/)
 })
 
 test('standards and skills need no front matter and no status', async () => {
@@ -48,5 +50,24 @@ test('two documents with one number in a collection are each named after the oth
   assert.deepEqual(await checkContract(join(root, '.rness')), [
     'specs/0029-a.md: the number 0029 is also that of specs/0029-b.md',
     'specs/0029-b.md: the number 0029 is also that of specs/0029-a.md',
+  ])
+})
+
+test('a document of adr, specs or plans without a number is named, with the next number; a dated name is not a number', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: {
+      'plans/0001-a.md': doc('Completed', '0001 — A'),
+      'plans/web/2026-10-02-copy-fix.md': doc('In progress', 'Copy fix'),
+      'plans/2026-10-03-other.md': doc('Draft', 'Other'),
+      'specs/notes.md': doc('Draft', 'Notes'),
+      'adr/0000-template.md': doc('Proposed', '0000 — Template'),
+      'standards/style.md': '# Style\n',
+    },
+  })
+  // Two dated plans of one year are no clash on a number 2026.
+  assert.deepEqual(await checkContract(join(root, '.rness')), [
+    'specs/notes.md: not numbered; name it 0001-<slug>.md, the next number of specs',
+    'plans/2026-10-03-other.md: not numbered; name it 0002-<slug>.md, the next number of plans',
+    'plans/web/2026-10-02-copy-fix.md: not numbered; name it 0002-<slug>.md, the next number of plans',
   ])
 })

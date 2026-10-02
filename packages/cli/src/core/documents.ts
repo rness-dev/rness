@@ -2,7 +2,11 @@ import { posix } from 'node:path'
 
 /** A document's number: the `NNNN` its file name starts with, else null. */
 export function documentNumber(rel: string): string | null {
-  return /^(\d{4})-/.exec(posix.basename(rel))?.[1] ?? null
+  const base = posix.basename(rel)
+  // A dated file name (`2026-10-02-slug`) starts with four digits too: a
+  // date, not a number.
+  if (/^\d{4}-\d{2}-\d{2}-/.test(base)) return null
+  return /^(\d{4})-/.exec(base)?.[1] ?? null
 }
 
 /** The scaffold's heading is `NNNN — Title`; the number is shown once. */

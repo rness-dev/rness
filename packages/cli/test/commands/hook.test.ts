@@ -288,6 +288,24 @@ test('an edit that gives a document the number of another: exit 2, that file nam
   )
 })
 
+test('a plan written without a number: exit 2, the next number given', async (t) => {
+  const root = await workspace(t, {
+    'plans/0001-a.md': spec('Completed', '0001 — A'),
+    'plans/2026-10-02-copy-fix.md': spec('Draft', 'Copy fix'),
+  })
+  const web = join(root, 'org', 'web')
+  const r = await hook(
+    'post-tool-use',
+    edit(join(root, '.rness', 'plans', '2026-10-02-copy-fix.md'), web)
+  )
+  assert.equal(r.code, 2)
+  assert.equal(
+    r.err,
+    'rness: plans/2026-10-02-copy-fix.md: not numbered; name it 0002-<slug>.md, the next number of plans\n' +
+      'Fix it in plans/2026-10-02-copy-fix.md; rness validate checks the whole workspace.\n'
+  )
+})
+
 test('an edit of rness.json that rness refuses: exit 2 with the reason', async (t) => {
   const root = await workspace(t)
   const file = join(root, '.rness', 'rness.json')

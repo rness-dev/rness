@@ -132,6 +132,17 @@ test('doc new refuses a collection that is not numbered (exit 2); the next numbe
   await access(join(clash, '.rness', 'specs', '0002-untitled.md'))
 })
 
+test('doc new: a dated file name is not a number', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: {
+      'plans/web/2026-10-02-copy-fix.md': doc('Completed', 'Copy fix'),
+    },
+  })
+  const r = await docNew('plans', { cwd: root })
+  assert.equal(r.code, 0, r.err)
+  assert.equal(r.out, `${join(root, '.rness', 'plans', '0001-untitled.md')}\n`)
+})
+
 test('rness doc new through the command line, and outside a workspace', async (t) => {
   const root = await makeWorkspace(t, {})
   const c = capture()

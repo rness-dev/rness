@@ -12,6 +12,11 @@
 - **Skill** (`skills/`): reusable agent skills, resolved per scope the same
   way.
 
+ADRs, specifications and plans are named `NNNN-<slug>.md`: the next number
+of their collection, which `rness doc new <collection>` gives, then a few
+lowercase words of the title. `rness validate` reports a file named
+otherwise, a dated name included.
+
 ## Metadata and status
 
 ADRs, specifications and plans start with YAML front matter before the first

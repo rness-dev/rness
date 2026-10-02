@@ -47,9 +47,18 @@ export async function checkContract(rnessDir: string): Promise<string[]> {
             .join(', ')}`
         )
     }
+    // `rness doc new` numbers every document of these collections; a file
+    // written another way (a dated name, a bare slug) gets the next number.
+    const next = String(
+      Math.max(0, ...[...byNumber.keys()].map(Number)) + 1
+    ).padStart(4, '0')
     for (const item of items) {
       const where = `${name}/${item.rel}`
       if (SKIP.has(where)) continue
+      if (allowed !== undefined && documentNumber(item.rel) === null)
+        problems.push(
+          `${where}: not numbered; name it ${next}-<slug>.md, the next number of ${name}`
+        )
       if (item.fieldsError !== null) {
         problems.push(`${where}: invalid front matter (${item.fieldsError})`)
         continue
