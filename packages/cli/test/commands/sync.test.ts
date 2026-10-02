@@ -8,7 +8,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { run } from '../../src/cli.ts'
@@ -701,6 +701,26 @@ async function agentWorkspace(
     dirs: ['org/api'],
   })
 }
+
+test('a done/SKILL.md written by 0.17 is removed at the root and in each clone, and sync says so (spec 0028 §8)', async (t) => {
+  const root = await agentWorkspace(t)
+  const first = await sync(['--yes', '--agent', 'claude', '--cwd', root])
+  assert.equal(first.code, 0, first.err)
+  const retired = '.claude/skills/rness/skills/done/SKILL.md'
+  for (const at of ['', 'org/api/']) {
+    const file = join(root, ...`${at}${retired}`.split('/'))
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, '---\nname: done\n---\n')
+  }
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, new RegExp(`^removed {2}${retired}$`, 'm'))
+  assert.match(r.out, new RegExp(`^removed {2}org/api/${retired}$`, 'm'))
+  for (const at of ['', 'org/api/'])
+    await assert.rejects(access(join(root, ...`${at}${retired}`.split('/'))))
+  const again = await sync(['--yes', '--cwd', root])
+  assert.doesNotMatch(again.out, /done\/SKILL\.md/)
+})
 
 test('sync --agent claude declares it, then writes the Claude settings of every clone', async (t) => {
   const root = await agentWorkspace(t)

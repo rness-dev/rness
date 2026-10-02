@@ -85,8 +85,10 @@ export async function checkAccess(input: {
     input.deps?.sleep ??
     ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = input.deps?.now ?? Date.now
-  // An owner approves it themself on the page; a member can only ask there.
-  const who = input.canGrant === false ? `an owner of ${org}` : org
+  // An owner approves it themself on the page; a member can only ask there,
+  // and so can anyone whose role the provider would not say: waiting for an
+  // owner is true of them all.
+  const who = input.canGrant === true ? org : `an owner of ${org}`
   const waiting = `for ${who} to approve rness on github.com`
   if (!ui.session) ui.line('waiting', `${waiting}…`)
   const outcome = await ui.step(

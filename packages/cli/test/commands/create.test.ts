@@ -2496,7 +2496,7 @@ test('a restricted organization, approved while rness waits: the page opens, the
   assert.deepEqual(slept, [5000, 5000])
   assert.match(
     r.out,
-    /^open {5}https:\/\/github\.test\S+\nwaiting {2}for acme to approve rness on github\.com…\nmember {3}acme \(as octo\)\n/m
+    /^open {5}https:\/\/github\.test\S+\nwaiting {2}for an owner of acme to approve rness on github\.com…\nmember {3}acme \(as octo\)\n/m
   )
   assert.deepEqual(term.offered[1], [{ value: 'vault', label: 'vault 🔒' }])
   assert.match(r.err, /^warning: acme has not approved rness/m)

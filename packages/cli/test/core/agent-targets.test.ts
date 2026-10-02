@@ -222,26 +222,33 @@ test('the workspace root file is in no repository: never among the written files
 test('a retired skill file is removed where it is found, named under check, silent when absent (spec 0028 §8)', async (t) => {
   const { root, manifest } = await workspace(t, ['claude'])
   await agentTargets(root, manifest, { check: false })
+  // 0.17 wrote it at the workspace root and in every clone.
+  const atRoot = join(root, ...RETIRED.split('/'))
   const stale = join(root, 'org', 'api', ...RETIRED.split('/'))
-  await mkdir(dirname(stale), { recursive: true })
-  await writeFile(stale, '---\nname: done\n---\n')
+  for (const file of [atRoot, stale]) {
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, '---\nname: done\n---\n')
+  }
   const retired = (outcomes: { label: string }[]) =>
     outcomes.filter((o) => o.label.endsWith('done/SKILL.md'))
+  const gone = 'no longer written by rness; remove it'
   assert.deepEqual(
     retired(await agentTargets(root, manifest, { check: true })),
     [
-      {
-        label: `org/api/${RETIRED}`,
-        status: 'stale',
-        detail: 'no longer written by rness; remove it',
-      },
+      { label: RETIRED, status: 'stale', detail: gone },
+      { label: `org/api/${RETIRED}`, status: 'stale', detail: gone },
     ]
   )
+  await access(atRoot)
   await access(stale)
   assert.deepEqual(
     retired(await agentTargets(root, manifest, { check: false })),
-    [{ label: `org/api/${RETIRED}`, status: 'removed', detail: null }]
+    [
+      { label: RETIRED, status: 'removed', detail: null },
+      { label: `org/api/${RETIRED}`, status: 'removed', detail: null },
+    ]
   )
+  await assert.rejects(access(atRoot))
   await assert.rejects(access(stale))
   await assert.rejects(access(dirname(stale)), 'its directory went with it')
   assert.deepEqual(

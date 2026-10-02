@@ -117,7 +117,10 @@ test('restricted, yes: the page opens, the membership is polled every 5 s until 
     /acme has not approved rness, so its private repositories are hidden/
   )
   assert.match(r.out, /open\s+https:\/\/github\.test\/settings/)
-  assert.match(r.out, /waiting\s+for acme to approve rness on github\.com/)
+  assert.match(
+    r.out,
+    /waiting\s+for an owner of acme to approve rness on github\.com/
+  )
   assert.match(r.out, /member\s+acme \(as octo\)\n$/)
   // One access check before the question, then one per poll.
   assert.equal(r.polls, 4)
@@ -128,17 +131,21 @@ test('restricted, yes: the page opens, the membership is polled every 5 s until 
   ])
 })
 
-test('a member waits for an owner; an owner, or an unknown role, waits for the organization', async (t) => {
-  const member = await run(t, {
-    access: ['restricted', 'member'],
-    canGrant: false,
-  })
-  assert.match(member.out, /waiting\s+for an owner of acme to approve rness/)
+test('an owner waits for the organization; a member, or an unknown role, waits for an owner of it', async (t) => {
   const owner = await run(t, {
     access: ['restricted', 'member'],
     canGrant: true,
   })
   assert.match(owner.out, /waiting\s+for acme to approve rness/)
+  const member = await run(t, {
+    access: ['restricted', 'member'],
+    canGrant: false,
+  })
+  assert.match(member.out, /waiting\s+for an owner of acme to approve rness/)
+  // A typed organization that restricts rness: its role cannot be read, and
+  // waiting for an owner is true of whoever waits.
+  const unknown = await run(t, { access: ['restricted', 'member'] })
+  assert.match(unknown.out, /waiting\s+for an owner of acme to approve rness/)
 })
 
 test('approved but not a member: the wait ends there, silently', async (t) => {
