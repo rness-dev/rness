@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { run } from '../cli.ts'
 import { OWN_COMMANDS, catchUp } from '../core/catch-up.ts'
 import { findDelegate } from '../core/delegate.ts'
-import { MIN_NODE_MAJOR, isSupportedNode } from '../core/node-version.ts'
+import { MIN_NODE_LABEL, isSupportedNode } from '../core/node-version.ts'
 import { reportError } from '../report.ts'
 import { VERSION } from '../version.ts'
 
@@ -23,7 +23,7 @@ process.stdout.on('error', (e: NodeJS.ErrnoException) => {
 async function main(): Promise<number> {
   if (!isSupportedNode(process.versions.node)) {
     process.stderr.write(
-      `rness needs Node ${MIN_NODE_MAJOR} or newer (running ${process.version})\n`
+      `rness needs Node ${MIN_NODE_LABEL} or newer (running ${process.version})\n`
     )
     return 1
   }

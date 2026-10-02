@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "packageManager": "__RNESS_PM__",
-  "engines": { "node": ">=24" },
+  "engines": { "node": ">=22.17" },
   "scripts": {
     "context": "rness context",
     "validate": "rness validate",

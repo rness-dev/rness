@@ -28,7 +28,7 @@ const PACKAGE_JSON = `{
   "name": "rness-context",
   "private": true,
   "packageManager": "pnpm@12.2.1",
-  "engines": { "node": ">=24" },
+  "engines": { "node": ">=22.17" },
   "devDependencies": {
     "@rness/cli": "0.4.0",
     "other": "0.4.0"
