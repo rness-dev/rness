@@ -162,7 +162,10 @@ test('restricted, yes, nobody approves: the wait ends after 10 minutes with a wa
     r.err,
     /acme still has not approved rness; its private repositories stay hidden this time/
   )
-  assert.match(r.err, /once an owner approves it, run .*create acme again/)
+  assert.match(
+    r.err,
+    /once an owner approves it, add its private repositories with .*add <repo>/
+  )
 })
 
 test('restricted, no: the page is named for later, nothing opens', async (t) => {
@@ -187,6 +190,16 @@ test('restricted off a terminal: the warning, the page for an owner, no question
   assert.match(
     r.err,
     /an owner approves it at https:\/\/github\.test\/settings/
+  )
+})
+
+test('no approval page (an environment token): the warning, whose approval is needed, no question', async (t) => {
+  const r = await run(t, { access: 'restricted', approvalUrl: null })
+  assert.equal(r.outcome, 'restricted')
+  assert.equal(r.asked.length, 0)
+  assert.match(
+    r.err,
+    /^warning: acme has not approved rness, so its private repositories are hidden\nan owner of acme has to approve the app your token belongs to\n$/
   )
 })
 

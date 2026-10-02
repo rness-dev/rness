@@ -136,8 +136,9 @@ const LIFECYCLE: readonly Lifecycle[] = [
     ) => `You keep the decisions of this workspace: the ADRs in \`${rness}/adr/\`. The table
 above lists the existing ones, newest first. Arguments: \`$ARGUMENTS\`.
 
-The first word is the verb. A bare number (\`0010\`, or a path) is \`open\`;
-anything else is the subject of a \`create\`:
+The first word is the verb, when a reference (\`0010\`, or a path) follows
+it; a bare reference is \`open\`; any other words are the subject of a
+\`create\` (\`open source licensing\` is a subject):
 
 - \`create [subject]\`, or nothing: a new ADR, numbered by rness.
 - \`open NNNN\`: reopen ADR NNNN. An \`Accepted\` ADR is never edited: offer a
@@ -184,8 +185,9 @@ ${COMMIT_RULE}
     ) => `You keep the specifications of this workspace, in \`${rness}/specs/\`. The table
 above lists the existing ones, newest first. Arguments: \`$ARGUMENTS\`.
 
-The first word is the verb. A bare number (\`0028\`, or a path) is \`open\`;
-anything else is the subject of a \`create\`:
+The first word is the verb, when a reference (\`0028\`, or a path) follows
+it; a bare reference is \`open\`; any other words are the subject of a
+\`create\`:
 
 - \`create [subject]\`, or nothing: a new specification, numbered by rness.
 - \`open NNNN\`: reopen specification NNNN. One that is \`Implemented\`,
@@ -227,7 +229,7 @@ ${COMMIT_RULE}
   {
     name: 'plan',
     description:
-      'The plans of the rness workspace in .rness/plans/: one from an approved specification (from), one from the conversation (create), one reopened (open), one closed on evidence (check). Use when the developer asks for a plan, when a specification is ready to plan, or when the work of a plan is done.',
+      'The plans of the rness workspace in .rness/plans/ — a plan from a specification (from, which approves it), from the conversation (create), reopened (open), or closed on evidence (check). Use when the developer asks for a plan, to approve a specification, or to check the work of a plan.',
     hint: '[create <subject> | from <spec> | open NNNN | check NNNN]',
     tab: 'plans',
     body: (
@@ -236,8 +238,9 @@ ${COMMIT_RULE}
     ) => `You keep the plans of this workspace, in \`${rness}/plans/\`. The table above
 lists the existing ones, newest first. Arguments: \`$ARGUMENTS\`.
 
-The first word is the verb. A bare number (\`0037\`, or a path) is \`open\`;
-anything else is the subject of a \`create\`:
+The first word is the verb, when a reference (\`0037\`, or a path) follows
+it — \`check\` alone means the plan \`In progress\`; a bare reference is
+\`open\`; any other words are the subject of a \`create\`:
 
 - \`from NNNN\`: a plan from specification NNNN, which this approves.
 - \`create [subject]\`, or nothing: a plan from the conversation, for work
@@ -252,9 +255,11 @@ anything else is the subject of a \`create\`:
    \`Implemented\`, \`Superseded\` or \`Rejected\` is refused: say its status,
    write nothing. A plan of it that is neither \`Completed\` nor \`Abandoned\`:
    reopen it rather than write a second.
-2. Typing this command is the developer's approval: the specification moves
-   from \`Draft\` or \`Proposed\` to \`Approved\`, \`updated\` today, in the same
-   commit as the plan. No confirmation question.
+2. The developer typed this command: that is their approval, and the
+   specification moves from \`Draft\` or \`Proposed\` to \`Approved\`, \`updated\`
+   today, in the same commit as the plan — no confirmation question. If
+   you are proposing it yourself, propose it in a single line and wait for
+   a yes first: the approval is theirs, never yours.
 3. Read the code and the repositories the specification touches: every
    task names real files and real commands.
 4. ${allocateStep(allocate, 'plans')}
@@ -280,11 +285,14 @@ the same specification.
 
 1. The plan: the one named, else the one \`In progress\`. Several or none:
    ask.
-2. Read the plan, its specification and \`${rness}/CONVENTIONS.md\`.
-3. Evidence first. For each task, what proves it: its command run now, or
+2. The developer asked for the check, or the plan's last task has just
+   passed in this session: run it. Otherwise propose it in a single line
+   and wait for a yes.
+3. Read the plan, its specification and \`${rness}/CONVENTIONS.md\`.
+4. Evidence first. For each task, what proves it: its command run now, or
    its result read in this session. Never mark a task done on belief. A
    check has no cache: run twice, it proves twice.
-4. Every task proven:
+5. Every task proven:
    - the plan: \`status: Completed\`, \`updated\` today, the checkboxes of the
      proven tasks ticked, and a section \`Verification (YYYY-MM-DD)\` — what
      ran, what it showed, what could not run and why;
@@ -293,10 +301,10 @@ the same specification.
    - the plan and the specification: add ${SESSION_LINE};
    - the smallest set of documents the work makes inaccurate: \`${rness}/docs/\`,
      the READMEs of the repositories it changed.
-5. A task not proven: nothing moves — the plan stays \`In progress\`, or
-   \`Blocked\` with the blocker written in it. Say, task by task, what passed
-   and what remains.
-6. ${HOOK_LINE(rness)}
+6. A task not proven: nothing moves, the plan stays \`In progress\`. Say,
+   task by task, what passed and what remains. A blocker the developer
+   names is a move of its own: \`Blocked\`, the blocker written in the plan.
+7. ${HOOK_LINE(rness)}
 
 After writing: give the path and the list of tasks, or the statuses moved.
 A new plan starts \`Draft\`, and becomes \`Ready\` once the developer agrees

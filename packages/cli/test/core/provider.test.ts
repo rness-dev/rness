@@ -19,11 +19,8 @@ test('anonymous: no identity, no organizations, no credentials, public listing',
   assert.equal(await provider.identity(), null)
   assert.deepEqual(await provider.listOrganizations(), [])
   assert.equal(await provider.organizationAccess('acme'), 'unknown')
-  // The approval page is the app's, not the token's: known anonymously too.
-  assert.match(
-    provider.approvalUrl() ?? '',
-    /^https:\/\/github\.com\/settings\/connections\/applications\//
-  )
+  // No login, nothing to approve rness with: no page.
+  assert.equal(provider.approvalUrl(), null)
   assert.equal(provider.credentialsFor('https://github.com/acme/api.git'), null)
   const listing = await provider.listRepositories('acme')
   assert.deepEqual(listing.repositories, [repo('web')])
@@ -59,6 +56,9 @@ test('a stored login knows its name; an environment token asks GitHub once', asy
   assert.deepEqual(await env.identity(), { login: 'from-api' })
   assert.deepEqual(await env.identity(), { login: 'from-api' })
   assert.equal(gh.requests.length, 1)
+  // An environment token belongs to some other app (gh, a PAT): rness's
+  // approval page would not end a wait for it.
+  assert.equal(env.approvalUrl(), null)
   assert.equal(gh.requests[0]?.headers['authorization'], 'Bearer ghp_env')
 })
 

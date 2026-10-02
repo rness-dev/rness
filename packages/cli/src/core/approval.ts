@@ -62,7 +62,7 @@ export async function checkAccess(input: {
   if (!input.interactive || url === null) {
     ui.hint(
       url === null
-        ? `ask an owner to approve rness for ${org}`
+        ? `an owner of ${org} has to approve the app your token belongs to`
         : `an owner approves it at ${url}`,
       'stderr'
     )
@@ -117,8 +117,10 @@ export async function checkAccess(input: {
   ui.warn(
     `${org} still has not approved rness; its private repositories stay hidden this time`
   )
+  // The run goes on and makes the workspace: what is missing afterwards is
+  // its private repositories, which `add` brings in.
   ui.hint(
-    `once an owner approves it, run ${rnessCommand()} create ${org} again`,
+    `once an owner approves it, add its private repositories with ${rnessCommand()} add <repo>`,
     'stderr'
   )
   return 'restricted'

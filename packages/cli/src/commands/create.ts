@@ -379,7 +379,9 @@ function providerFlagError(value: string): string | null {
 }
 
 const OTHER = Symbol('another organization')
-export const OTHER_LABEL = "an organization I'm not a member of…"
+export const OTHER_LABEL = 'an organization not listed here…'
+/** Why one may be missing: the list is the approved organizations of the login (plan 0037, task 1). */
+export const OTHER_HINT = 'not a member, or it has not approved rness yet'
 export const NOT_APPROVED = 'rness not approved'
 
 /**
@@ -414,7 +416,7 @@ async function chooseOrganization(
     }))
   if (self !== undefined)
     options.push({ value: self, label: self, hint: 'your account' })
-  options.push({ value: '', label: OTHER_LABEL })
+  options.push({ value: '', label: OTHER_LABEL, hint: OTHER_HINT })
   const answer = await prompts.select<string>({
     message: 'Which GitHub organization?',
     options,

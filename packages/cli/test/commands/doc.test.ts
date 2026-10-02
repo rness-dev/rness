@@ -103,7 +103,7 @@ test('doc new adr: Proposed, no updated, the sections of the workspace template,
   )
 })
 
-test('doc new refuses a collection that is not numbered (exit 2) and never overwrites (exit 1)', async (t) => {
+test('doc new refuses a collection that is not numbered (exit 2); the next number never names a file present', async (t) => {
   const root = await makeWorkspace(t, {
     files: { 'specs/0001-a.md': doc('Draft', '0001 — A') },
   })

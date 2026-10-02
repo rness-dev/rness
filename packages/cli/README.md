@@ -473,9 +473,11 @@ anonymously.
   GitHub, anonymous or with `--yes`, it prints the two manual steps instead
   — create the empty repository on github.com, then `git remote add origin …
 && git push`. No other tool is ever needed.
-- Logged in, the wizard lists every organization you belong to, your
-  account last, then `an organization I'm not a member of…` for a typed
-  name (an outside collaborator's, a public one). Right after the
+- Logged in, the wizard lists the organizations you belong to that have
+  approved "Rness" — GitHub shows an OAuth app no other — your account
+  last, then `an organization not listed here…` for a typed name: one that
+  has not approved rness yet, an outside collaborator's, a public one.
+  Right after the
   organization, before the SSH test, the probe of `<org>/.rness` and the
   listing, `create` checks your access: an organization that restricts
   OAuth apps and has not approved "Rness" hides its private repositories,
@@ -610,8 +612,9 @@ upgrade` works under Node 22, since `upgrade` is served by the copy
   invoked, never the pinned one.
 - `rness create` asks **where the organization lives first** — the blank
   workspace is that question's last answer — then offers the login, which
-  now lists **every organization you belong to** (your account last, then
-  `an organization I'm not a member of…`). Right after the organization and
+  now lists **the organizations you belong to that have approved rness**
+  (your account last, then `an organization not listed here…` for the
+  rest). Right after the organization and
   before anything reads it, an organization that restricts OAuth apps and
   has not approved "Rness" gets its **approval page opened in your
   browser**; the wizard waits for the owner's click (10 minutes at most)

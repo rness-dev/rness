@@ -1399,7 +1399,7 @@ test('logged in: the organization is picked from a list, access is stated, priva
   await access(join(cwd, 'acme', 'org', 'vault', 'README.md'))
 })
 
-test('"an organization I\'m not a member of…" and an empty list lead to the text prompt; a restricted organization is said, verbatim', async (t) => {
+test('"an organization not listed here…" and an empty list lead to the text prompt; a restricted organization is said, verbatim', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   const locked = fakeProvider({
     login: 'octo',
@@ -1420,7 +1420,11 @@ test('"an organization I\'m not a member of…" and an empty list lead to the te
     [
       { value: 'other-org', label: 'other-org' },
       { value: 'octo', label: 'octo', hint: 'your account' },
-      { value: '', label: "an organization I'm not a member of…" },
+      {
+        value: '',
+        label: 'an organization not listed here…',
+        hint: 'not a member, or it has not approved rness yet',
+      },
     ],
   ])
   // The approval was declined (silently, by the script): the page is named for later.
@@ -2420,7 +2424,11 @@ test('an organization that has not approved rness wears the padlock and says so;
       { value: 'locked', label: 'locked 🔒', hint: 'rness not approved' },
       { value: 'acme', label: 'acme' },
       { value: 'octo', label: 'octo', hint: 'your account' },
-      { value: '', label: "an organization I'm not a member of…" },
+      {
+        value: '',
+        label: 'an organization not listed here…',
+        hint: 'not a member, or it has not approved rness yet',
+      },
     ],
   ])
 })

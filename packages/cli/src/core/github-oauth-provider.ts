@@ -85,7 +85,10 @@ export class GitHubOAuthProvider implements Provider {
   }
 
   approvalUrl(): string | null {
-    return approvalUrl()
+    // The page approves rness, the OAuth app of `rness login`. A token from
+    // the environment belongs to some other app (gh, a PAT): approving rness
+    // would not end a wait for it, so there is no page to offer.
+    return this.#token?.source === 'login' ? approvalUrl() : null
   }
 
   async organizationAccess(org: string): Promise<OrganizationAccess> {

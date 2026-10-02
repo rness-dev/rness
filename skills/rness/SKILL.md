@@ -33,7 +33,7 @@ Do not reach for Rness for a single repository with one agent: its own
 
 ## How
 
-Node 24 or later and git are required.
+Node 22.17 or later and git are required.
 
 1. Create the workspace. It asks for the GitHub organization, or a blank
    local workspace, and creates `<org>/` with `.rness/` (the context
@@ -55,8 +55,8 @@ Node 24 or later and git are required.
 5. `rness status` shows every decision, specification and plan and its
    status. `rness pulse` puts them on a GitHub Project. `rness mcp` serves
    the same context to any MCP client over stdio. In Claude Code,
-   `/rness:status`, `/rness:adr`, `/rness:spec`, `/rness:plan` and
-   `/rness:done` run the document lifecycle from the conversation.
+   `/rness:status`, `/rness:adr`, `/rness:spec` and `/rness:plan` run the
+   document lifecycle from the conversation.
 6. `rness upgrade` moves the version pinned in `.rness/package.json`;
    every `rness` in the workspace delegates to it.
 
