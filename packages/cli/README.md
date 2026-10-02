@@ -133,7 +133,8 @@ the files a given agent needs, for the agents the team declares in
   by `rness doc new <collection>` — the second pre-approved line of each
   skill, so that every runtime and a bare terminal get the same number;
   `rness validate` refuses two documents with one number, the case a merge
-  of two branches can still produce. Each skill records its session: it adds
+  of two branches can still produce, and a document named without one
+  (`NNNN-<slug>.md`, never a date). Each skill records its session: it adds
   `{ id: <session id>, agent: <model> }` to `sessions:` in the front matter
   of what it writes or closes. The agent is the model it runs as, as Claude
   Code names it (`Claude Opus 5.5`): no variable gives it to a skill. An
@@ -602,6 +603,28 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.18.1 — a document without a number is caught; small fixes
+
+- `rness validate` and the edit hook name a document of `adr/`, `specs/` or
+  `plans/` whose file name has no number, with the next one:
+  `plans/2026-10-02-x.md: not numbered; name it 0002-<slug>.md, the next
+number of plans`. A plan another agent's skill wrote with a dated name
+  is the usual case; rename it, or let the agent do it when the hook
+  tells it. A workspace with such a file fails `validate` (and its CI)
+  after the upgrade until it is renamed. The scaffold's `CONVENTIONS.md`
+  states the rule, and `upgrade` merges it in.
+- A dated file name is no longer read as a number: `rness doc new` after
+  `2026-10-02-x.md` gave `2027`, and two dated plans of one year were
+  reported as one number twice.
+- `rness doc new` racing another one at the same number says `<file>
+exists; nothing written` (exit 1) instead of a raw `EEXIST`.
+- `1 repository`, not `1 repositories`, in `create` and `sync`.
+- When the SSH test passes only by asking for the key's passphrase,
+  `create`, `add` and `sync` say once how to load it into an agent
+  (`ssh-add`), since every clone would ask again.
+- Ctrl+C while `create` waits for an organization's approval is a cancel
+  in the plain look too: `cancelled`, nothing written, exit 0 (it was 130).
 
 ## 0.18.0 — the wizard asks where first and waits for the approval; the skills on one grammar; Node 22.17
 
