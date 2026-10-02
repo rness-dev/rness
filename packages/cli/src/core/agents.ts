@@ -22,7 +22,12 @@ export type Guarantee =
 export type TargetFile = {
   file: string
   at: 'clones' | 'root'
-} & ({ guarantees: readonly Guarantee[] } | { content: string })
+} & (
+  | { guarantees: readonly Guarantee[] }
+  | { content: string }
+  /** A file a former rness wrote whole and this one no longer does: removed when present. */
+  | { retired: true }
+)
 
 /** What a target's files depend on in one workspace (spec 0019 §5). */
 export interface TargetContext {

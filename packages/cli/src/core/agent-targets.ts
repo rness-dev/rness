@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm, rmdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import {
@@ -20,13 +20,13 @@ import type { Manifest } from './types.ts'
 export interface TargetOutcome {
   /** Workspace-relative: `org/<repo>/.claude/settings.json`. */
   label: string
-  status: 'updated' | 'unchanged' | 'stale' | 'invalid'
+  status: 'updated' | 'unchanged' | 'stale' | 'invalid' | 'removed'
   /** What is missing (stale) or why the file is refused (invalid). */
   detail: string | null
 }
 
 type OwnedFile = { file: string; label: string } & (
-  { guarantees: readonly Guarantee[] } | { content: string }
+  { guarantees: readonly Guarantee[] } | { content: string } | { retired: true }
 )
 
 /** What a whole file lacks against what rness writes; null when equal. */
@@ -126,6 +126,25 @@ export async function agentTargets(
   for (const owned of await filesOf(root, manifest, declared(manifest))) {
     const { file, label } = owned
     const existing = await readOrNull(file)
+    if ('retired' in owned) {
+      // A file rness wrote whole in an earlier release and no longer writes
+      // (spec 0028 §7: the `done` skill). Absent: nothing to say. Present:
+      // it would keep a retired command alive, so it goes, and its directory
+      // with it when that leaves it empty.
+      if (existing === null) continue
+      if (opts.check) {
+        outcomes.push({
+          label,
+          status: 'stale',
+          detail: 'no longer written by rness; remove it',
+        })
+        continue
+      }
+      await rm(file)
+      await rmdir(dirname(file)).catch(() => undefined)
+      outcomes.push({ label, status: 'removed', detail: null })
+      continue
+    }
     if ('content' in owned) {
       // A whole file (spec 0016 §3.2): written when missing or different.
       const diff = wholeDiff(existing, owned.content)
@@ -187,6 +206,7 @@ export async function leftoverTargets(
   )
   const leftovers: string[] = []
   for (const owned of await filesOf(root, manifest, undeclared)) {
+    if ('retired' in owned) continue
     const existing = await readOrNull(owned.file)
     if (existing === null) continue
     if ('content' in owned) {

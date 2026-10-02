@@ -709,7 +709,7 @@ test('sync --agent claude declares it, then writes the Claude settings of every 
   assert.match(r.out, /^declared agent claude in \.rness\/rness\.json\n/)
   const plugin = (at: string) => [
     `${at}.claude/skills/rness/.claude-plugin/plugin.json`,
-    ...['status', 'adr', 'spec', 'plan', 'done'].map(
+    ...['status', 'adr', 'spec', 'plan'].map(
       (skill) => `${at}.claude/skills/rness/skills/${skill}/SKILL.md`
     ),
   ]

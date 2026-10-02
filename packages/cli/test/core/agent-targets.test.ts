@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
 import {
@@ -16,9 +16,11 @@ const SETTINGS = '.claude/settings.json'
 const PLUGIN_JSON = '.claude/skills/rness/.claude-plugin/plugin.json'
 const SKILL = '.claude/skills/rness/skills/status/SKILL.md'
 /** The lifecycle skills (spec 0019 §2), after the status skill. */
-const LIFECYCLE = ['adr', 'spec', 'plan', 'done'].map(
+const LIFECYCLE = ['adr', 'spec', 'plan'].map(
   (name) => `.claude/skills/rness/skills/${name}/SKILL.md`
 )
+/** Written up to 0.17; removed when found, silent when absent (spec 0028 §8). */
+const RETIRED = '.claude/skills/rness/skills/done/SKILL.md'
 
 /** Every file the Claude target writes here, in the order it walks them. */
 const LABELS = [
@@ -212,7 +214,40 @@ test('the workspace root file is in no repository: never among the written files
     PLUGIN_JSON,
     SKILL,
     ...LIFECYCLE,
+    // Named so that its deletion is committed with the rest (plan 0037).
+    RETIRED,
   ])
+})
+
+test('a retired skill file is removed where it is found, named under check, silent when absent (spec 0028 §8)', async (t) => {
+  const { root, manifest } = await workspace(t, ['claude'])
+  await agentTargets(root, manifest, { check: false })
+  const stale = join(root, 'org', 'api', ...RETIRED.split('/'))
+  await mkdir(dirname(stale), { recursive: true })
+  await writeFile(stale, '---\nname: done\n---\n')
+  const retired = (outcomes: { label: string }[]) =>
+    outcomes.filter((o) => o.label.endsWith('done/SKILL.md'))
+  assert.deepEqual(
+    retired(await agentTargets(root, manifest, { check: true })),
+    [
+      {
+        label: `org/api/${RETIRED}`,
+        status: 'stale',
+        detail: 'no longer written by rness; remove it',
+      },
+    ]
+  )
+  await access(stale)
+  assert.deepEqual(
+    retired(await agentTargets(root, manifest, { check: false })),
+    [{ label: `org/api/${RETIRED}`, status: 'removed', detail: null }]
+  )
+  await assert.rejects(access(stale))
+  await assert.rejects(access(dirname(stale)), 'its directory went with it')
+  assert.deepEqual(
+    retired(await agentTargets(root, manifest, { check: false })),
+    []
+  )
 })
 
 test('check writes nothing and says what is missing; an unreadable file is reported and kept', async (t) => {
