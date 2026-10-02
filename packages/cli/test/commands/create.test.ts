@@ -1262,6 +1262,7 @@ test('the SSH test runs unattended first; only when that fails does a terminal g
     r.out
   )
   assert.deepEqual(agent.calls, [{ interactive: false }])
+  assert.doesNotMatch(r.err, /ssh asked for your passphrase/)
 
   // A protected key and no agent: refused unattended, accepted once ssh could ask.
   const locked = await fakeTransport(t, 'acme', [SSH_DENIED, SSH_OK])
@@ -1282,6 +1283,13 @@ test('the SSH test runs unattended first; only when that fails does a terminal g
     { interactive: false },
     { interactive: true },
   ])
+  // Every clone would ask again: how to load the key, said once.
+  assert.equal(
+    r2.err.match(/ssh asked for your passphrase/g)?.length,
+    1,
+    r2.err
+  )
+  assert.match(r2.err, /\n {2}ssh-add .*~\/\.ssh\/id_ed25519\n/)
 })
 
 test('join: a .rness reachable over SSH only is found, and cloned over SSH', async (t) => {

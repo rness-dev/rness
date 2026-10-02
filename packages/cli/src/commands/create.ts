@@ -54,6 +54,7 @@ import {
   type SshTest,
   defaultTransport,
   isSshUrl,
+  passphraseHint,
   sshWorkspaceLines,
   testGithubSsh,
   usingRest,
@@ -560,6 +561,7 @@ export async function createCommand(
       )
       // Unattended SSH never asks anything: git steps may animate.
       if (sshTest.unattended) ui.gitIsSilent = true
+      else if (sshTest.access.ok) ui.hint(passphraseHint(), 'stderr')
     }
     return sshTest.access
   }

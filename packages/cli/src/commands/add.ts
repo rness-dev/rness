@@ -21,6 +21,7 @@ import {
   defaultTransport,
   httpsFlagLine,
   isSshUrl,
+  passphraseHint,
   sshWorkspaceLines,
   testGithubSsh,
   usingRest,
@@ -144,6 +145,7 @@ export async function addCommand(
         () => ui.line(...CHECKING)
       )
       if (unattended || !access.ok) ui.gitIsSilent = true
+      else ui.hint(passphraseHint(), 'stderr')
       const overSsh = Object.values(manifest.repos).some((r) =>
         isSshUrl(r.url, transport.hosts)
       )

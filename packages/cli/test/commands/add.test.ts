@@ -224,6 +224,25 @@ test('add <repo> writes the SSH URL when the SSH test passes', async (t) => {
   })
 })
 
+test('add: SSH that worked only by asking for the passphrase prints how to load the key, once', async (t) => {
+  const locked = await fakeTransport(t, 'acme', [SSH_DENIED, SSH_OK])
+  await locked.ssh.addRepo('api', { 'README.md': '# api\n' })
+  const root = await makeWorkspace(t, { org: 'acme', dirs: ['org'] })
+  const r = await addWith(
+    'api',
+    { cwd: root },
+    confirming([true]).terminal,
+    locked.transport
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(locked.calls, [
+    { interactive: false },
+    { interactive: true },
+  ])
+  assert.equal(r.err.match(/ssh asked for your passphrase/g)?.length, 1, r.err)
+  assert.match(r.err, /\n {2}ssh-add .*~\/\.ssh\/id_ed25519\n/)
+})
+
 test('without SSH access, a workspace that does not clone over SSH falls back to HTTPS', async (t) => {
   const denied = await fakeTransport(t, 'acme', SSH_DENIED)
   await denied.https.addRepo('api', { 'README.md': '# api\n' })

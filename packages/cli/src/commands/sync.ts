@@ -39,6 +39,7 @@ import {
   INSTEAD_OF_LINES,
   defaultTransport,
   isSshUrl,
+  passphraseHint,
   sshWorkspaceLines,
   testGithubSsh,
 } from '../core/transport.ts'
@@ -304,6 +305,7 @@ export async function syncCommand(
         () => ui.line(...CHECKING)
       )
       if (unattended) ui.gitIsSilent = true
+      else if (access.ok) ui.hint(passphraseHint(), 'stderr')
       if (!access.ok) {
         process.stderr.write(
           `${[...sshWorkspaceLines(access.reason), ...INSTEAD_OF_LINES].join('\n')}\n`

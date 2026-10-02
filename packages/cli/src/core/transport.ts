@@ -203,6 +203,19 @@ export function agentHintLines(
   ]
 }
 
+/**
+ * The SSH test passed only once ssh could ask (a passphrase, and no agent
+ * holding the key): every clone over SSH asks again. Said once, before them.
+ */
+export function passphraseHint(
+  platform: NodeJS.Platform = process.platform
+): string {
+  return [
+    'ssh asked for your passphrase, and asks again for every repository unless an agent holds the key:',
+    ...agentHintLines(platform).slice(1),
+  ].join('\n')
+}
+
 export function sshWorkspaceLines(reason: string): [string, string] {
   return [
     `this workspace clones over SSH (rness.json) but ssh to github.com fails: ${reason}`,
