@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises'
 import { join, posix } from 'node:path'
 
 import { collectMarkdown } from './collect.ts'
-import { documentNumber, documentTitle } from './documents.ts'
+import { documentDate, documentNumber, documentTitle } from './documents.ts'
 import type { MarkdownItem } from './types.ts'
 
 /** One document of a tab (spec 0016 §2.1). */
@@ -82,9 +82,8 @@ function sessionsOf(item: MarkdownItem): SessionEntry[] {
 
 function rowOf(dir: string, item: MarkdownItem): StatusRow {
   const base = posix.basename(item.rel, '.md')
-  // A dated file name (`2026-10-02-slug`) starts with four digits too.
-  const date = /^(\d{4}-\d{2}-\d{2})-/.exec(base)?.[1] ?? null
-  const number = date === null ? documentNumber(item.rel) : null
+  const date = documentDate(item.rel)
+  const number = documentNumber(item.rel)
   const sessions = sessionsOf(item)
   return {
     id: date ?? number ?? base,

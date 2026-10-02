@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { collectMarkdown } from '../core/collect.ts'
@@ -62,6 +62,26 @@ async function adrSections(rnessDir: string): Promise<string[]> {
 }
 
 /**
+ * Write a new document, never over a file: the next number names a file
+ * present only when two sessions allocate at once, and then the second one
+ * writes nothing (`wx` decides, atomically). Prints the path, or why not.
+ */
+export async function writeDocument(
+  file: string,
+  text: string
+): Promise<number> {
+  try {
+    await writeFile(file, text, { flag: 'wx' })
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+    process.stderr.write(`${file} exists; nothing written\n`)
+    return 1
+  }
+  process.stdout.write(`${file}\n`)
+  return 0
+}
+
+/**
  * `rness doc new <collection> [--title]` (spec 0028 §9): the next number of
  * the collection, the file with the collection's front matter and opening
  * sections, its path printed. The number comes from the files present, so
@@ -110,18 +130,7 @@ export async function docNewCommand(
       ...(name === 'plans' ? [] : ['', '---']),
       ...sections.flatMap((s) => ['', `## ${s}`]),
     ]
-    try {
-      await access(file)
-      process.stderr.write(`${file} exists; nothing written\n`)
-      return 1
-    } catch {
-      // absent: ours to write
-    }
-    await writeFile(file, `${[...front, '', ...body].join('\n')}\n`, {
-      flag: 'wx',
-    })
-    process.stdout.write(`${file}\n`)
-    return 0
+    return await writeDocument(file, `${[...front, '', ...body].join('\n')}\n`)
   } catch (e) {
     return reportError(e)
   }

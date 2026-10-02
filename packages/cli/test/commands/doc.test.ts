@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { access, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { run } from '../../src/cli.ts'
-import { docNewCommand } from '../../src/commands/doc.ts'
+import { docNewCommand, writeDocument } from '../../src/commands/doc.ts'
 import { checkContract } from '../../src/core/contract.ts'
 import { capture } from '../helpers/capture.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
@@ -103,7 +103,7 @@ test('doc new adr: Proposed, no updated, the sections of the workspace template,
   )
 })
 
-test('doc new refuses a collection that is not numbered (exit 2); the next number never names a file present', async (t) => {
+test('doc new refuses a collection that is not numbered (exit 2)', async (t) => {
   const root = await makeWorkspace(t, {
     files: { 'specs/0001-a.md': doc('Draft', '0001 — A') },
   })
@@ -113,23 +113,26 @@ test('doc new refuses a collection that is not numbered (exit 2); the next numbe
     bad.err,
     'standards is not a numbered collection of this workspace (adr, specs, plans)\n'
   )
-  // A file at the next path, by some other hand, is not overwritten.
-  const taken = await makeWorkspace(t, {
-    files: {
-      'specs/0001-a.md': doc('Draft', '0001 — A'),
-      'specs/0002-untitled.md': 'mine\n',
-    },
-  })
-  // The highest number is 0002, so the next is 0003: no clash. Force one by
-  // numbering nothing but the taken name under a non-numbered file.
-  const clash = await makeWorkspace(t, {
+})
+
+test('a document is never written over a file: the second of two allocations at once is refused', async (t) => {
+  // Two sessions that allocate at once both read the same next number; the
+  // write decides, and the second one writes nothing.
+  const root = await makeWorkspace(t, {
     files: { 'specs/0001-untitled.md': 'mine\n' },
   })
-  // 0001-untitled.md carries a number, so the next is 0002: still no clash.
-  // The guard is the write mode: a race writing the same path fails.
-  assert.equal((await docNew('specs', { cwd: taken })).code, 0)
-  assert.equal((await docNew('specs', { cwd: clash })).code, 0)
-  await access(join(clash, '.rness', 'specs', '0002-untitled.md'))
+  const file = join(root, '.rness', 'specs', '0001-untitled.md')
+  const c = capture()
+  let code: number
+  try {
+    code = await writeDocument(file, 'theirs\n')
+  } finally {
+    c.restore()
+  }
+  assert.equal(code, 1)
+  assert.equal(c.out(), '')
+  assert.equal(c.err(), `${file} exists; nothing written\n`)
+  assert.equal(await readFile(file, 'utf8'), 'mine\n')
 })
 
 test('doc new: a dated file name is not a number', async (t) => {
@@ -141,6 +144,20 @@ test('doc new: a dated file name is not a number', async (t) => {
   const r = await docNew('plans', { cwd: root })
   assert.equal(r.code, 0, r.err)
   assert.equal(r.out, `${join(root, '.rness', 'plans', '0001-untitled.md')}\n`)
+  // A title that starts like a month and a day keeps its number.
+  const digits = await docNew('plans', { title: '10-02 review', cwd: root })
+  assert.equal(
+    digits.out,
+    `${join(root, '.rness', 'plans', '0002-10-02-review.md')}\n`
+  )
+  const next = await docNew('plans', { cwd: root })
+  assert.equal(
+    next.out,
+    `${join(root, '.rness', 'plans', '0003-untitled.md')}\n`
+  )
+  assert.deepEqual(await checkContract(join(root, '.rness')), [
+    'plans/web/2026-10-02-copy-fix.md: not numbered; name it 0004-<slug>.md, the next number of plans',
+  ])
 })
 
 test('rness doc new through the command line, and outside a workspace', async (t) => {
