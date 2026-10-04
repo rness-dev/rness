@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
+import { TARGETS } from '../src/core/agents.ts'
+
 /**
  * The Agent Plugins manifest at the repository root (spec 0027 §5): the
  * agent-plugins.org form, where a scanner looks for it. The Claude Code
@@ -27,5 +29,23 @@ test('the root plugin.json is an Agent Plugins manifest naming rness', async () 
   assert.ok(
     typeof manifest['description'] === 'string' &&
       manifest['description'].length > 0
+  )
+})
+
+test('the mod folder’s plugin.json is the one sync writes, so claude plugin test loads what ships', async () => {
+  const written = TARGETS['claude']
+    ?.files({ packageManager: 'npm' })
+    .find(
+      (f) =>
+        f.at === 'root' &&
+        f.file === '.claude/skills/rness/.claude-plugin/plugin.json'
+    )
+  assert.ok(written !== undefined && 'content' in written)
+  assert.equal(
+    await readFile(
+      new URL('../mod/.claude-plugin/plugin.json', import.meta.url),
+      'utf8'
+    ),
+    written.content
   )
 })

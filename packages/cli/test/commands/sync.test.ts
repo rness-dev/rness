@@ -732,6 +732,9 @@ test('sync --agent claude declares it, then writes the Claude settings of every 
     ...['status', 'adr', 'spec', 'plan'].map(
       (skill) => `${at}.claude/skills/rness/skills/${skill}/SKILL.md`
     ),
+    ...['hooks/hooks.json', 'hooks/register.tsx', 'types/index.d.ts'].map(
+      (rel) => `${at}.claude/skills/rness/${rel}`
+    ),
   ]
   const written = [
     '.claude/settings.json',

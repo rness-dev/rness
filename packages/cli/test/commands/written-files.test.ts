@@ -26,6 +26,7 @@ test('written-files: the files this copy’s sync writes in a clone, as JSON, fr
   })
   const expected = writtenFiles(await loadManifest(join(root, '.rness')))
   assert.ok(expected.includes('.claude/skills/rness/skills/done/SKILL.md'))
+  assert.ok(expected.includes('.claude/skills/rness/hooks/register.tsx'))
   for (const cwd of [root, join(root, 'org', 'api')]) {
     const r = await run(cwd)
     assert.equal(r.code, 0, r.err)

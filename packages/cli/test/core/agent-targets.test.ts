@@ -19,6 +19,12 @@ const SKILL = '.claude/skills/rness/skills/status/SKILL.md'
 const LIFECYCLE = ['adr', 'spec', 'plan'].map(
   (name) => `.claude/skills/rness/skills/${name}/SKILL.md`
 )
+/** The mod (spec 0029 §3.1), after the skills. */
+const MOD = [
+  '.claude/skills/rness/hooks/hooks.json',
+  '.claude/skills/rness/hooks/register.tsx',
+  '.claude/skills/rness/types/index.d.ts',
+]
 /** Written up to 0.17; removed when found, silent when absent (spec 0028 §8). */
 const RETIRED = '.claude/skills/rness/skills/done/SKILL.md'
 
@@ -28,11 +34,13 @@ const LABELS = [
   PLUGIN_JSON,
   SKILL,
   ...LIFECYCLE,
+  ...MOD,
   `org/api/${SETTINGS}`,
   'org/api/.mcp.json',
   `org/api/${PLUGIN_JSON}`,
   `org/api/${SKILL}`,
   ...LIFECYCLE.map((f) => `org/api/${f}`),
+  ...MOD.map((f) => `org/api/${f}`),
 ]
 const all = (status: 'updated' | 'unchanged') =>
   LABELS.map((label) => ({ label, status, detail: null }))
@@ -227,6 +235,7 @@ test('the workspace root file is in no repository: never among the written files
     PLUGIN_JSON,
     SKILL,
     ...LIFECYCLE,
+    ...MOD,
     // Named so that its deletion is committed with the rest (plan 0037).
     RETIRED,
   ])
@@ -281,7 +290,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
     },
     { label: PLUGIN_JSON, status: 'stale', detail: 'missing' },
     { label: SKILL, status: 'stale', detail: 'missing' },
-    ...LIFECYCLE.map((label) => ({
+    ...[...LIFECYCLE, ...MOD].map((label) => ({
       label,
       status: 'stale',
       detail: 'missing',
@@ -299,7 +308,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
     },
     { label: `org/api/${PLUGIN_JSON}`, status: 'stale', detail: 'missing' },
     { label: `org/api/${SKILL}`, status: 'stale', detail: 'missing' },
-    ...LIFECYCLE.map((f) => ({
+    ...[...LIFECYCLE, ...MOD].map((f) => ({
       label: `org/api/${f}`,
       status: 'stale',
       detail: 'missing',
@@ -391,4 +400,29 @@ test('no org/ — a standalone checkout of .rness, as in its CI: nothing at the 
   for (const check of [true, false])
     assert.deepEqual(await agentTargets(root, manifest, { check }), [])
   await assert.rejects(readFile(join(root, SETTINGS), 'utf8'))
+})
+
+test('the mod is written whole; the module names the one .rness of its place, the rest is the same bytes', async (t) => {
+  const { root, manifest } = await workspace(t, ['claude'])
+  await agentTargets(root, manifest, { check: false })
+  const read = (at: string[], file: string) =>
+    readFile(join(root, ...at, ...file.split('/')), 'utf8')
+  for (const file of [MOD[0]!, MOD[2]!])
+    assert.equal(await read([], file), await read(['org', 'api'], file), file)
+  const atRoot = await read([], MOD[1]!)
+  const inClone = await read(['org', 'api'], MOD[1]!)
+  // A clone runs the workspace's pinned copy, never one its own tree holds.
+  assert.match(atRoot, /^const RNESS = '\.rness'$/m)
+  assert.match(inClone, /^const RNESS = '\.\.\/\.\.\/\.rness'$/m)
+  assert.equal(
+    inClone.replace("const RNESS = '../../.rness'", "const RNESS = '.rness'"),
+    atRoot
+  )
+  const module = join(root, 'org', 'api', ...MOD[1]!.split('/'))
+  await writeFile(module, '// mine\n')
+  assert.deepEqual(await outcome(root, manifest, `org/api/${MOD[1]}`, true), {
+    label: `org/api/${MOD[1]}`,
+    status: 'stale',
+    detail: 'differs from what rness writes',
+  })
 })

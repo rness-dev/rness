@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { parse as parseYaml } from 'yaml'
@@ -81,9 +82,19 @@ const PLUGIN_JSON = `{
     "adr",
     "specification",
     "plan"
-  ]
+  ],
+  "types": "./types/index.d.ts"
 }
 `
+/**
+ * The mod's files (spec 0029 §3.1), as they are in the package's mod/; the
+ * module with the path of `.rness` of its place written in.
+ */
+const MOD = (rel: string, rness: string) =>
+  readFileSync(new URL(`../../mod/${rel}`, import.meta.url), 'utf8').replace(
+    "const RNESS = '.rness'",
+    `const RNESS = '${rness}'`
+  )
 const skill = (rness: string, run = 'npx') => `---
 name: status
 description: The status of every decision, specification, plan and other tracked document of the rness workspace, one table per directory. Read-only.
@@ -371,6 +382,13 @@ const plugin = (rness: string, at: 'clones' | 'root') => [
     at,
     content: LIFECYCLE[name](rness),
   })),
+  ...['hooks/hooks.json', 'hooks/register.tsx', 'types/index.d.ts'].map(
+    (rel) => ({
+      file: `.claude/skills/rness/${rel}`,
+      at,
+      content: MOD(rel, rness),
+    })
+  ),
   // Written up to 0.17, replaced by `/rness:plan check` (spec 0028 §8):
   // removed where it is still found.
   { file: '.claude/skills/rness/skills/done/SKILL.md', at, retired: true },

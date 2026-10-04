@@ -1,3 +1,7 @@
+import { readFileSync, statSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import type { TargetContext, TargetFile } from './agents.ts'
 import { PINNED_BIN } from './delegate.ts'
 import { type PackageManager, localRunner } from './pm.ts'
@@ -29,6 +33,8 @@ const PLUGIN_JSON = `${JSON.stringify(
       'specification',
       'plan',
     ],
+    // The contract of the mod's `$.state` (spec 0029 §3.1).
+    types: './types/index.d.ts',
   },
   null,
   2
@@ -349,6 +355,65 @@ allowed-tools: Bash(${command}), Bash(${allocate})
 ${s.body(rness, allocate)}`
 }
 
+/**
+ * The mod's folder in the package (spec 0029 §3.1): from the sources
+ * (`src/core/` → `../../mod`) and from the bundle (`dist/` → `../mod`), the
+ * way `scaffoldDir` finds `scaffold/`.
+ */
+function modDir(): string {
+  let dir = dirname(fileURLToPath(import.meta.url))
+  for (let i = 0; i < 4; i += 1) {
+    const candidate = join(dir, 'mod')
+    try {
+      if (statSync(join(candidate, 'hooks', 'hooks.json')).isFile())
+        return candidate
+    } catch {
+      // keep walking
+    }
+    dir = dirname(dir)
+  }
+  throw new Error('mod directory not found next to the @rness/cli package')
+}
+
+/** The mod's files `sync` writes, by their path in the plugin. */
+const MOD_FILES = [
+  'hooks/hooks.json',
+  'hooks/register.tsx',
+  'types/index.d.ts',
+] as const
+
+/** The one line of the module that differs between places: where `.rness` is. */
+const RNESS_LINE = "const RNESS = '.rness'"
+
+let modSources: ReadonlyMap<string, string> | null = null
+
+/** The mod's files as shipped, read once. */
+function modSource(rel: (typeof MOD_FILES)[number]): string {
+  if (modSources === null) {
+    const dir = modDir()
+    modSources = new Map(
+      MOD_FILES.map((f) => [
+        f,
+        readFileSync(join(dir, ...f.split('/')), 'utf8'),
+      ])
+    )
+  }
+  return modSources.get(rel) ?? ''
+}
+
+/**
+ * One file of the mod, `rness` being the path of `.rness` from the project
+ * directory. The module runs the pinned copy at that one path, as the
+ * settings hooks do: never one a clone's own tree could hold.
+ */
+function modFile(rel: (typeof MOD_FILES)[number], rness: string): string {
+  const text = modSource(rel)
+  if (rel !== 'hooks/register.tsx') return text
+  if (!text.includes(RNESS_LINE))
+    throw new Error(`mod/hooks/register.tsx lacks ${RNESS_LINE}`)
+  return text.replace(RNESS_LINE, `const RNESS = '${rness}'`)
+}
+
 /** The plugin's files, for a project directory reaching `.rness` at `rness`. */
 export function pluginFiles(
   rness: string,
@@ -366,6 +431,11 @@ export function pluginFiles(
       file: `${PLUGIN}/skills/${s.name}/SKILL.md`,
       at,
       content: lifecycleSkill(rness, s),
+    })),
+    ...MOD_FILES.map((rel) => ({
+      file: `${PLUGIN}/${rel}`,
+      at,
+      content: modFile(rel, rness),
     })),
     ...RETIRED_SKILLS.map((name) => ({
       file: `${PLUGIN}/skills/${name}/SKILL.md`,
