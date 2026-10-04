@@ -259,7 +259,10 @@ function buildProgram(state: RunState): Command {
   // What Claude Code runs for the hooks the Claude target writes (spec 0015).
   program
     .command('hook', { hidden: true })
-    .argument('<event>', 'session-start, post-tool-use or session-end')
+    .argument(
+      '<event>',
+      'session-start, pre-tool-use, post-tool-use or session-end'
+    )
     .action(async (event: string) => {
       state.code = await hookCommand(event)
     })

@@ -61,6 +61,18 @@ const hooksFor = (rness: string) => ({
       ],
     },
   ],
+  PreToolUse: [
+    {
+      matcher: 'Edit|Write',
+      hooks: [
+        {
+          type: 'command',
+          command: hookLine(rness, 'pre-tool-use'),
+          timeout: 10,
+        },
+      ],
+    },
+  ],
   PostToolUse: [
     {
       matcher: 'Edit|Write',
@@ -182,6 +194,7 @@ test("the team's own hooks stay; rness's are appended after them", async (t) => 
     team.hooks.SessionStart[0],
     ...hooksFor('../../.rness').SessionStart,
   ])
+  assert.deepEqual(hooks.PreToolUse, hooksFor('../../.rness').PreToolUse)
   assert.deepEqual(hooks.PostToolUse, hooksFor('../../.rness').PostToolUse)
   assert.deepEqual(hooks.SessionEnd, hooksFor('../../.rness').SessionEnd)
 })
@@ -264,7 +277,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
       label: SETTINGS,
       status: 'stale',
       detail:
-        'hooks.SessionStart lacks the rness session-start hook; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
+        'hooks.SessionStart lacks the rness session-start hook; hooks.PreToolUse lacks the rness pre-tool-use hook; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
     },
     { label: PLUGIN_JSON, status: 'stale', detail: 'missing' },
     { label: SKILL, status: 'stale', detail: 'missing' },
@@ -277,7 +290,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
       label: `org/api/${SETTINGS}`,
       status: 'stale',
       detail:
-        'permissions.additionalDirectories lacks ../../.rness; hooks.SessionStart lacks the rness session-start hook; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
+        'permissions.additionalDirectories lacks ../../.rness; hooks.SessionStart lacks the rness session-start hook; hooks.PreToolUse lacks the rness pre-tool-use hook; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
     },
     {
       label: 'org/api/.mcp.json',

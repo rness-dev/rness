@@ -2111,6 +2111,7 @@ test('create --agent declares it in the new workspace and writes its files in ev
   })
   assert.deepEqual(Object.keys(settings.hooks), [
     'SessionStart',
+    'PreToolUse',
     'PostToolUse',
     'SessionEnd',
   ])

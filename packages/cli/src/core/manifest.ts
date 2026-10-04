@@ -270,6 +270,11 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
   } catch {
     fail('not found')
   }
+  return parseManifest(raw)
+}
+
+/** Validate the text of a `rness.json`, as `loadManifest` does the file's. */
+export function parseManifest(raw: string): Manifest {
   let data: unknown
   try {
     data = JSON.parse(raw)

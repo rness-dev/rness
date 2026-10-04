@@ -45,7 +45,8 @@ export interface AgentTarget {
   files: (ctx: TargetContext) => readonly TargetFile[]
 }
 
-export type HookEvent = 'session-start' | 'post-tool-use' | 'session-end'
+export type HookEvent =
+  'session-start' | 'pre-tool-use' | 'post-tool-use' | 'session-end'
 
 /**
  * The line Claude Code runs for a hook (spec 0015 §2.2), `rness` being the
@@ -64,7 +65,7 @@ export function hookLine(rness: string, event: HookEvent): string {
   return `${run} else echo '${missing}'; fi`
 }
 
-/** The three hook entries, for a project directory reaching `.rness` at `rness`. */
+/** The four hook entries, for a project directory reaching `.rness` at `rness`. */
 function hooks(rness: string): Guarantee[] {
   return [
     {
@@ -79,6 +80,22 @@ function hooks(rness: string): Guarantee[] {
         ],
       },
       label: 'the rness session-start hook',
+    },
+    {
+      // Before an edit: refused when it would change what sync generates,
+      // or break the contract of .rness (spec 0029 §4).
+      path: ['hooks', 'PreToolUse'],
+      contains: {
+        matcher: 'Edit|Write',
+        hooks: [
+          {
+            type: 'command',
+            command: hookLine(rness, 'pre-tool-use'),
+            timeout: 10,
+          },
+        ],
+      },
+      label: 'the rness pre-tool-use hook',
     },
     {
       path: ['hooks', 'PostToolUse'],

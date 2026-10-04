@@ -17,21 +17,33 @@ const CLONE_START =
   'f="$CLAUDE_PROJECT_DIR/../../.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook session-start; else echo \'{"systemMessage":"rness: ../../.rness is not installed, so the workspace context is not loaded. Clone the workspace, then install its dependencies in .rness."}\'; fi'
 const CLONE_EDIT =
   'f="$CLAUDE_PROJECT_DIR/../../.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook post-tool-use; fi'
+const CLONE_GUARD =
+  'f="$CLAUDE_PROJECT_DIR/../../.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook pre-tool-use; fi'
 const ROOT_START =
   'f="$CLAUDE_PROJECT_DIR/.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook session-start; else echo \'{"systemMessage":"rness: .rness is not installed, so the workspace context is not loaded. Clone the workspace, then install its dependencies in .rness."}\'; fi'
 const ROOT_EDIT =
   'f="$CLAUDE_PROJECT_DIR/.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook post-tool-use; fi'
 
+const ROOT_GUARD =
+  'f="$CLAUDE_PROJECT_DIR/.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook pre-tool-use; fi'
 const CLONE_END =
   'f="$CLAUDE_PROJECT_DIR/../../.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook session-end; fi'
 const ROOT_END =
   'f="$CLAUDE_PROJECT_DIR/.rness/node_modules/@rness/cli/dist/bin/rness.js"; if [ -f "$f" ]; then node "$f" hook session-end; fi'
 
-const hooks = (start: string, edit: string, end: string) => [
+const hooks = (start: string, guard: string, edit: string, end: string) => [
   {
     path: ['hooks', 'SessionStart'],
     contains: { hooks: [{ type: 'command', command: start, timeout: 10 }] },
     label: 'the rness session-start hook',
+  },
+  {
+    path: ['hooks', 'PreToolUse'],
+    contains: {
+      matcher: 'Edit|Write',
+      hooks: [{ type: 'command', command: guard, timeout: 10 }],
+    },
+    label: 'the rness pre-tool-use hook',
   },
   {
     path: ['hooks', 'PostToolUse'],
@@ -378,7 +390,7 @@ test('Claude Code is the one target: read access to .rness, the rness MCP server
           path: ['permissions', 'additionalDirectories'],
           contains: '../../.rness',
         },
-        ...hooks(CLONE_START, CLONE_EDIT, CLONE_END),
+        ...hooks(CLONE_START, CLONE_GUARD, CLONE_EDIT, CLONE_END),
       ],
     },
     {
@@ -401,7 +413,7 @@ test('Claude Code is the one target: read access to .rness, the rness MCP server
     {
       file: '.claude/settings.json',
       at: 'root',
-      guarantees: hooks(ROOT_START, ROOT_EDIT, ROOT_END),
+      guarantees: hooks(ROOT_START, ROOT_GUARD, ROOT_EDIT, ROOT_END),
     },
     ...plugin('.rness', 'root'),
   ])
