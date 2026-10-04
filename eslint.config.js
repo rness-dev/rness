@@ -12,6 +12,8 @@ export default defineConfig([
     'packages/cli/scaffold/**',
     // Byte-exact inputs and expected outputs of the merge tests.
     'packages/cli/test/fixtures/**',
+    // Claude Code's API types, laid when it loads the mod from this folder.
+    'packages/cli/mod/.claude-plugin/types/**',
   ]),
   js.configs.recommended,
   ...tseslint.configs.recommended,
