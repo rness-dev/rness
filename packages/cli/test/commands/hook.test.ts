@@ -737,3 +737,23 @@ test('pre-tool-use: outside a workspace, or with no path, exit 0 and silent', as
       err: '',
     })
 })
+
+test('pre-tool-use: straight quotes for the block’s curly ones are matched as the Edit tool matches them, and refused', async (t) => {
+  const root = await guarded(t)
+  const web = join(root, 'org', 'web')
+  await writeFile(
+    join(web, 'AGENTS.md'),
+    AGENTS.replace('Titles matter.', 'The product’s titles matter.')
+  )
+  const r = await hook(
+    'pre-tool-use',
+    editOf(
+      join(web, 'AGENTS.md'),
+      web,
+      "The product's titles matter.",
+      'Titles rule.'
+    )
+  )
+  assert.equal(r.code, 2)
+  assert.match(r.err, /from \.rness\/standards\/web\/seo\.md\./)
+})

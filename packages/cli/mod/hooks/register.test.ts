@@ -250,3 +250,21 @@ test('one path to the pinned CLI, the one sync wrote: a missing copy is never lo
     /\/\.rness\/node_modules\/@rness\/cli\/dist\/bin\/rness\.js$/
   )
 })
+
+test('/rness:status in a session nobody watches (claude -p): the skill answers with its tables', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  on('command.run', async () => ({ text: 'the skill' }))
+  await $.session.start({
+    cwd: '/w',
+    surface: null,
+    isInteractive: false,
+  } as never)
+  await clock.advance(0)
+  const ran = await $.command.run({
+    command: 'rness:status',
+    args: '',
+  } as never)
+  expect(ran.text).toBe('the skill')
+})

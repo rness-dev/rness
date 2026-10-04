@@ -12,10 +12,50 @@ export interface Replayed {
   spans: readonly (readonly [number, number])[]
 }
 
+/** The non-overlapping occurrences of `needle` in `text`, as character ranges. */
+function occurrences(text: string, needle: string): [number, number][] {
+  const spans: [number, number][] = []
+  for (
+    let i = text.indexOf(needle);
+    i !== -1;
+    i = text.indexOf(needle, i + needle.length)
+  )
+    spans.push([i, i + needle.length])
+  return spans
+}
+
+const QUOTES: Readonly<Record<string, string>> = {
+  '\u2018': "'",
+  '\u2019': "'",
+  '\u201c': '"',
+  '\u201d': '"',
+}
+
+/**
+ * A text as the Edit tool compares it when the exact string is not found:
+ * curly quotes read straight, a CRLF reads as LF. `at` maps each of its
+ * characters, and its end, back to the original's offsets.
+ */
+function loose(text: string): { text: string; at: number[] } {
+  let out = ''
+  const at: number[] = []
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i] ?? ''
+    if (c === '\r' && text[i + 1] === '\n') continue
+    out += QUOTES[c] ?? c
+    at.push(i)
+  }
+  at.push(text.length)
+  return { text: out, at }
+}
+
 /**
  * An `Edit` replayed as the tool does it: every occurrence under
- * `replace_all`, else exactly one. Null when the tool would refuse it
- * (nothing found, found twice, an empty `old_string`): it fails on its own.
+ * `replace_all`, else exactly one; the exact string first, then as the tool
+ * also finds it, straight quotes for curly ones and LF for CRLF (seen
+ * 2026-10-04: `product's` sent for a block's `product’s`). Null when the
+ * tool would refuse it (nothing found, found twice, an empty `old_string`):
+ * it fails on its own.
  */
 export function replayEdit(
   text: string,
@@ -24,15 +64,18 @@ export function replayEdit(
   all: boolean
 ): Replayed | null {
   if (oldString === '') return null
-  const spans: [number, number][] = []
-  for (
-    let i = text.indexOf(oldString);
-    i !== -1;
-    i = text.indexOf(oldString, i + oldString.length)
-  )
-    spans.push([i, i + oldString.length])
+  let spans = occurrences(text, oldString)
+  if (spans.length === 0) {
+    const file = loose(text)
+    spans = occurrences(file.text, loose(oldString).text).map(
+      ([s, e]): [number, number] => [file.at[s] ?? 0, (file.at[e - 1] ?? 0) + 1]
+    )
+  }
   if (spans.length === 0 || (!all && spans.length !== 1)) return null
-  return { after: text.split(oldString).join(newString), spans }
+  let after = text
+  for (const [s, e] of [...spans].reverse())
+    after = `${after.slice(0, s)}${newString}${after.slice(e)}`
+  return { after, spans }
 }
 
 /** The whole files rness writes in a project directory (spec 0016 §3.2). */

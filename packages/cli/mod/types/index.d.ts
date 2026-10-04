@@ -31,6 +31,8 @@ declare module 'claude-code' {
       prompted: boolean
       /** The pane's tab, by its index in the snapshot. */
       tab: number
+      /** Whether someone watches the session: no pane for `claude -p`. */
+      interactive: boolean
     }
   }
 }

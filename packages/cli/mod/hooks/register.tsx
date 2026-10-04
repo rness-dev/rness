@@ -16,6 +16,10 @@ import type { RnessSnapshot } from '../types'
 const snapshot = atom({ plugin: 'rness', key: 'snapshot' } as const, null)
 const prompted = atom({ plugin: 'rness', key: 'prompted' } as const, false)
 const tab = atom({ plugin: 'rness', key: 'tab' } as const, 0)
+const interactive = atom(
+  { plugin: 'rness', key: 'interactive' } as const,
+  false
+)
 
 const PANE = 'rness'
 const BIN = 'node_modules/@rness/cli/dist/bin/rness.js'
@@ -58,6 +62,7 @@ const later = ($: EngineInterface): void => {
 
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
+    await update($, interactive, () => e.isInteractive)
     later($)
     return next(e)
   })
@@ -109,8 +114,12 @@ export const register: Register = (on) => {
   })
 
   // `/rness:status` is the skill's name: answered here with the pane, it
-  // runs no model turn; with no snapshot, the skill's tables answer it.
+  // runs no model turn; with no snapshot, or no one to see a pane, the
+  // skill's tables answer it.
   on('command.run', { command: 'rness:status' }, async ($, e, next) => {
+    // Nobody to see a pane (`claude -p`): the tables are the answer.
+    if (!(await $.state.get({ plugin: 'rness', key: 'interactive' })).value)
+      return next(e)
     const shown =
       (await $.state.get({ plugin: 'rness', key: 'snapshot' })).value ??
       (await refresh($))
@@ -120,7 +129,12 @@ export const register: Register = (on) => {
       (t) => t.name.toLowerCase() === wanted || t.label.toLowerCase() === wanted
     )
     await update($, tab, (i) => (index === -1 ? i : index))
-    await $.ui.open({ id: PANE, title: `${shown.workspace} · status` })
+    const opened = await $.ui.open({
+      id: PANE,
+      title: `${shown.workspace} · status`,
+    })
+    // A surface that places no pane (an older desktop): the tables instead.
+    if (!opened.isPlaced) return next(e)
     return {
       text: 'The status of the workspace is open beside the conversation.',
     }
