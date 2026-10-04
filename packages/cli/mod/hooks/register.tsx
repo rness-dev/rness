@@ -1,0 +1,165 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
+
+import type { RnessSnapshot } from '../types'
+
+// The rness plugin's mod (spec 0029 §3): the workspace on screen, drawn from
+// what the pinned CLI prints (`rness status --json`). Nothing is computed
+// here: the CLI words every line, the module only draws and refreshes.
+//
+// `sync` writes this file whole into `.claude/skills/rness/hooks/`, at the
+// workspace root and at the root of each clone. It finds `.rness` itself,
+// so the file is the same in every place.
+
+const snapshot = atom({ plugin: 'rness', key: 'snapshot' } as const, null)
+const prompted = atom({ plugin: 'rness', key: 'prompted' } as const, false)
+const tab = atom({ plugin: 'rness', key: 'tab' } as const, 0)
+
+const PANE = 'rness'
+const BIN = 'node_modules/@rness/cli/dist/bin/rness.js'
+/** Where `sync` writes the plugin, from the project directory: `.rness` sits beside it, or two levels up. */
+const RNESS = ['.rness', '../../.rness']
+const STATE = /[\\/]\.rness[\\/]/
+
+/** The project directory: the plugin lives in its `.claude/skills/rness`. */
+const projectOf = (root: string): string =>
+  root.replace(/[\\/]\.claude[\\/]skills[\\/]rness[\\/]?$/, '')
+
+/**
+ * Reads the snapshot from the pinned CLI and keeps it; the status line
+ * follows. No pinned copy, or a run that fails: no snapshot, nothing drawn.
+ */
+async function refresh($: EngineInterface): Promise<RnessSnapshot | null> {
+  let next: RnessSnapshot | null = null
+  try {
+    const project = projectOf($.plugin.root)
+    for (const at of RNESS) {
+      const bin = `${project}/${at}/${BIN}`
+      if (!(await $.fs.exists(bin))) continue
+      const ran = await $.process.run(
+        ['node', bin, 'status', '--json', '--cwd', project],
+        { cwd: project, timeoutMs: 20_000 }
+      )
+      if (ran.exitCode === 0) next = JSON.parse(ran.stdout) as RnessSnapshot
+      break
+    }
+  } catch {
+    next = null
+  }
+  await update($, snapshot, () => next)
+  $.ui.status(next?.statusLine)
+  return next
+}
+
+/** A refresh off the dispatch that asked for it: a turn never waits for node. */
+const later = ($: EngineInterface): void => {
+  $.clock.after(0, () => void refresh($))
+}
+
+export const register: Register = (on) => {
+  on('session.start', async ($, e, next) => {
+    later($)
+    return next(e)
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    await update($, prompted, () => true)
+    return next(e)
+  })
+
+  // An edit of `.rness/` changes what the band and the pane show.
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    const ran = await next(e)
+    if (STATE.test(e.file_path)) later($)
+    return ran
+  })
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    const ran = await next(e)
+    if (STATE.test(e.file_path)) later($)
+    return ran
+  })
+
+  // What no tool shows: a `git pull`, a file written through Bash.
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId === undefined) later($)
+    return next(e)
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const shown = await read($, snapshot)
+    if (e.props.hasSurvey || shown === null) return next(e)
+    if ((await read($, prompted)) && shown.notes.length === 0) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="column">
+        <Box key="banner">
+          <Text dimColor wrap="truncate-end">
+            {shown.banner}
+          </Text>
+        </Box>
+        {shown.notes.map((note, i) => (
+          <Box key={`note-${i}`}>
+            <Text color="yellow" wrap="truncate-end">
+              {note}
+            </Text>
+          </Box>
+        ))}
+      </Box>
+    )
+  })
+
+  // `/rness:status` is the skill's name: answered here with the pane, it
+  // runs no model turn; with no snapshot, the skill's tables answer it.
+  on('command.run', { command: 'rness:status' }, async ($, e, next) => {
+    const shown =
+      (await $.state.get({ plugin: 'rness', key: 'snapshot' })).value ??
+      (await refresh($))
+    if (shown === null || shown === undefined) return next(e)
+    const wanted = e.args.trim().toLowerCase()
+    const index = shown.tabs.findIndex(
+      (t) => t.name.toLowerCase() === wanted || t.label.toLowerCase() === wanted
+    )
+    await update($, tab, (i) => (index === -1 ? i : index))
+    await $.ui.open({ id: PANE, title: `${shown.workspace} · status` })
+    return {
+      text: 'The status of the workspace is open beside the conversation.',
+    }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const shown = await read($, snapshot)
+    if (shown === null)
+      return <Text dimColor>rness: the workspace status cannot be read.</Text>
+    const at = Math.min(await read($, tab), Math.max(0, shown.tabs.length - 1))
+    const current = shown.tabs[at]
+    const room = Math.max(1, (e.viewport?.rows ?? 24) - 4)
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row" gap={1} flexWrap="wrap">
+          {shown.tabs.map((t, i) => (
+            <Button
+              key={`tab-${t.name}`}
+              label={`${t.label} (${t.rows.length})`}
+              variant={i === at ? 'primary' : 'secondary'}
+              onPress={() => update($, tab, () => i)}
+            />
+          ))}
+        </Box>
+        {current === undefined || current.rows.length === 0 ? (
+          <Box key="empty">
+            <Text dimColor>Nothing here yet.</Text>
+          </Box>
+        ) : (
+          current.rows.slice(0, room).map((row) => (
+            <Box key={`row-${row.id}`}>
+              <Text wrap="truncate-end">
+                {row.id} {row.title} <Text dimColor>{row.status ?? '?'}</Text>
+              </Text>
+            </Box>
+          ))
+        )}
+      </Box>
+    )
+  })
+}

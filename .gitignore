@@ -4,3 +4,6 @@ node_modules/
 dist/
 *.tgz
 .verdaccio/
+
+# Laid by Claude Code when it loads the mod from this folder (its API types)
+packages/cli/mod/.claude-plugin/types/
