@@ -37,10 +37,12 @@ npm create rness
   that apply into each clone's `AGENTS.md` (and a `CLAUDE.md` that points
   to it). `rness sync --check` fails CI when a block is out of date.
 - **Claude Code wired in.** Hooks load the workspace context at session
-  start and validate every edit under `.rness/`; the `/rness:status`,
-  `/rness:adr`, `/rness:spec` and `/rness:plan` commands run the document
-  lifecycle from the conversation; `rness mcp` serves the
-  same context to any MCP client.
+  start, refuse an edit of what `sync` generates, and check every edit under
+  `.rness/` before it is written; the `/rness:status`, `/rness:adr`,
+  `/rness:spec` and `/rness:plan` commands run the document lifecycle from
+  the conversation, and the plugin's mod keeps the workspace in view: a
+  band above the prompt, the status line, `/rness:status` in a pane;
+  `rness mcp` serves the same context to any MCP client.
 - **Where everything stands.** `rness status` shows every decision,
   specification and plan and its status, in a terminal or as Markdown.
   `rness pulse` puts them on a GitHub Project, Agent Pulse: one issue per

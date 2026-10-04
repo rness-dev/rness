@@ -28,7 +28,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness login [--setup-git|--no-setup-git]
     rness logout
     rness context [--scope <name>] [--json]
-    rness status [<tab>]
+    rness status [<tab>] [--json]
     rness pulse create [<collection>] [-y]
     rness pulse sync
     rness validate
@@ -48,6 +48,7 @@ writes nothing and exits 1 when a block is out of date — use it in CI.
 
     rness status            # every decision, specification and plan, a tab per directory
     rness status specs      # open on one tab (off a terminal: print only that one)
+    rness status --json     # one JSON object: what the Claude Code plugin draws
 
 A tab for `ADR`, `Specs` and `Plans`, always, then one for each other
 directory of `.rness/` whose Markdown files carry a `status` in their front
@@ -59,8 +60,15 @@ when dropped, red `?` when missing.
   `PgUp`/`PgDn`, `Home`/`End` scroll, `q` or `Esc` closes and gives the
   screen back. Read-only.
 - Off a terminal — a pipe, CI, an agent's tool — Markdown: a table per tab.
-- From Claude Code, `/rness:status [tab]` shows those tables (see "Agent
-  targets"). Nothing started from inside Claude Code gets the terminal, so
+- `--json`, terminal or not: the tabs and their rows, with what a Claude
+  Code session shows of the workspace, worded by the CLI — the session-start
+  banner, the status line entry, the scope's plans `In progress` and the
+  notes of the safety net (see "Hooks"). The plugin's mod reads it (see
+  "The mod").
+- From Claude Code, `/rness:status [tab]` opens a pane beside the
+  conversation when the plugin's mod is loaded (see "The mod"), and shows
+  those tables otherwise (see "Agent targets"). Nothing started from inside
+  Claude Code gets the terminal, so
   the view cannot open from there (verified with Claude Code 2.1.284 on
   2026-09-29). Two ways to reach it, and the skill ends with both: in the
   same terminal, `Ctrl+Z` suspends Claude Code, run `npx @rness/cli status`
@@ -93,11 +101,12 @@ the files a given agent needs, for the agents the team declares in
   applies it once the repository has been trusted interactively. Verified
   with Claude Code 2.1.284 on 2026-09-29. Each clone also gets `.mcp.json`,
   which registers the MCP server; see "MCP server". The same settings file
-  carries three hooks, and so does `.claude/settings.json` at the workspace
+  carries four hooks, and so does `.claude/settings.json` at the workspace
   root, which `sync` writes on every machine; see "Hooks". Both places also
-  get a Claude Code plugin, `.claude/skills/rness/`, with five commands:
+  get a Claude Code plugin, `.claude/skills/rness/`, with four commands:
   `/rness:status [tab]`, the tables of `rness status`, and the lifecycle
-  skills below. rness owns those files whole — an edit by hand is reported
+  skills below; and a mod, its hooks module (see "The mod"). rness owns
+  those files whole — an edit by hand is reported
   by `sync --check` and written back by `sync`. The plugin's manifest,
   `.claude-plugin/plugin.json`, also carries the agent-plugins.org
   `$schema`, the author, homepage, repository, licence and keywords, so a
@@ -152,10 +161,45 @@ the files a given agent needs, for the agents the team declares in
 - Other agents (Codex, Cursor, GitHub Copilot) read the `AGENTS.md` block;
   `sync` refuses an agent it has no target for.
 
+### The mod
+
+Since 0.19.0 the plugin carries a hooks module — what Claude Code calls a
+mod — in `hooks/hooks.json`, `hooks/register.tsx` and `types/index.d.ts`.
+It draws the workspace in the session, from `rness status --json` run by
+the pinned copy, and computes nothing itself:
+
+- **A band above the prompt**: the session-start banner, from the start of
+  the session to the first prompt, and again whenever a note needs action
+  (a pin the installed copy does not match, problems `validate` would
+  report), with those notes.
+- **The status line**: `rness · <scope> · <n> in progress`, with `⚠ <n>`
+  when there are notes.
+- **`/rness:status [tab]` as a pane** beside the conversation, a tab per
+  collection, a row per document; no model turn. In `claude -p`, or where
+  no pane can be placed, the skill's tables answer instead.
+
+It reads the snapshot again at session start, after an `Edit` or `Write`
+of a file under `.rness/`, and at the end of each turn, off the turn's
+path. The module runs the pinned copy at the one path `sync` writes into it
+for its place (`.rness` at the root, `../../.rness` in a clone), as the
+settings hooks do: never a copy a clone's own tree could hold. It loads
+where the plugin loads — a trusted folder, `claude -p` included — on a
+Claude Code that has mods: run by 2.1.280 and later, ignored without an
+error by 2.1.240 and 2.1.199, where the skills work as before (verified on
+2026-10-04). Mods are early access in Claude Code: a release that changes
+their API may stop the band or the pane until the next rness release; the
+skills and the settings hooks do not depend on it.
+
+To work on it, from `org/rness`: `pnpm check:mod` runs
+`claude plugin validate` and `claude plugin test` on `packages/cli/mod`
+(Claude Code needed, so not in CI); `tsc -p packages/cli/mod` type-checks it
+once a `claude --plugin-dir packages/cli/mod` session has laid Claude
+Code's types there.
+
 ### Hooks
 
 With `claude` in `agents`, each clone's `.claude/settings.json` and the
-workspace root's carry three Claude Code hooks, all run by the pinned copy:
+workspace root's carry four Claude Code hooks, all run by the pinned copy:
 
 - **At session start** (`SessionStart`, every source): a line for the
   developer — `rness 0.10.0 · acme · scope web — 3 standards, 2 decisions`
@@ -164,6 +208,16 @@ workspace root's carry three Claude Code hooks, all run by the pinned copy:
   repository or nothing installed there, a `rness.json` rness refuses, a pin
   the installed copy does not match, the problems `rness validate` reports.
   After a compaction, the context only.
+- **Before an edit** (`PreToolUse` on `Edit|Write`): refused, with the
+  reason for the model, when it would change what `sync` generates — a
+  line of the block of an `AGENTS.md` or `CLAUDE.md` (the reason names the
+  standard that line comes from, to edit instead), or a file of
+  `.claude/skills/rness/` — or add a problem to a document of `.rness/` or
+  to `rness.json`. Only the problems the edit adds: a document already
+  broken stays editable. The `old_string` is found as Claude Code's `Edit`
+  finds it, straight quotes matching curly ones. Writes through Bash are
+  not seen: the guard is best effort. About 0.07 s per edit, 0.11 s for a
+  document of `.rness/` (measured 2026-10-04).
 - **After an edit** (`PostToolUse` on `Edit|Write`): when the file is under
   `.rness/`, its front-matter problems — or those of `rness.json` — go back
   to the model, which fixes them in the same turn. Any other edit costs one
@@ -181,7 +235,7 @@ hand counts as missing, and the next `sync` adds a second one. The team's
 own hooks stay where they are.
 
 Claude Code runs hooks from a committed settings file without asking each
-developer, including in `claude -p`. These three read `.rness/`, write
+developer, including in `claude -p`. These four read `.rness/`, write
 nothing in the workspace and run no install. Only with a pulse declared do
 they reach the network, through a detached `rness` process that uses your
 login; when that process fails, it writes why to `pulse.json` in rness's
@@ -603,6 +657,22 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## 0.19.0 — the plugin's mod; edits of generated files refused before they land
+
+- The Claude Code plugin gains a mod (see "The mod"): the session-start
+  banner kept above the prompt while there is something to act on, a status
+  line entry, and `/rness:status` as a pane beside the conversation, with no
+  model turn. `sync` writes three more files into `.claude/skills/rness/`,
+  at the root and in each clone; an upgrade lists the clone's for commit.
+  Claude Code without mods ignores them.
+- A fourth hook, `PreToolUse` on `Edit|Write`: an edit of the block of an
+  `AGENTS.md` or `CLAUDE.md`, or of the plugin's files, is refused before
+  it is written, naming the file to edit instead; so is an edit that would
+  add a problem to a document of `.rness/` or to `rness.json`. Until the
+  upgrade has run on a machine, a session there runs the old pinned copy,
+  which says `unknown hook event "pre-tool-use"` and lets the edit through.
+- `rness status --json` prints the tabs and what the mod draws.
 
 ## 0.18.1 — a document without a number is caught; small fixes
 
