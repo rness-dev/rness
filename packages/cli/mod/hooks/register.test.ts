@@ -40,14 +40,17 @@ const SNAPSHOT: RnessSnapshot = {
   ],
 }
 
-/** The pinned CLI as the module finds it; `runs` counts the status calls. */
-function cli(on: On, snapshot: RnessSnapshot | null) {
+/** The pinned CLI as the module finds it; `runs` counts the status calls, `looked` the paths tried. */
+function cli(on: On, snapshot: RnessSnapshot | null, looked: string[] = []) {
   const runs: (readonly string[])[] = []
-  on('fs.exists', async (_$, e) => ({
-    value:
-      snapshot !== null &&
-      e.path.endsWith('/.rness/node_modules/@rness/cli/dist/bin/rness.js'),
-  }))
+  on('fs.exists', async (_$, e) => {
+    looked.push(e.path)
+    return {
+      value:
+        snapshot !== null &&
+        e.path.endsWith('/.rness/node_modules/@rness/cli/dist/bin/rness.js'),
+    }
+  })
   on('process.run', async (_$, e) => {
     runs.push(e.argv)
     return {
@@ -233,4 +236,17 @@ test('/rness:status with no pinned CLI falls through to the skill', async ($, on
     args: '',
   } as never)
   expect(ran.text).toBe('the skill')
+})
+
+test('one path to the pinned CLI, the one sync wrote: a missing copy is never looked for elsewhere', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  const looked: string[] = []
+  cli(on, null, looked)
+  await $.session.start(start)
+  await clock.advance(0)
+  expect(looked.length).toBe(1)
+  expect(looked[0]).toMatch(
+    /\/\.rness\/node_modules\/@rness\/cli\/dist\/bin\/rness\.js$/
+  )
 })

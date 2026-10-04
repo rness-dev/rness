@@ -8,8 +8,10 @@ import type { RnessSnapshot } from '../types'
 // here: the CLI words every line, the module only draws and refreshes.
 //
 // `sync` writes this file whole into `.claude/skills/rness/hooks/`, at the
-// workspace root and at the root of each clone. It finds `.rness` itself,
-// so the file is the same in every place.
+// workspace root and at the root of each clone, with `RNESS` set to the path
+// of `.rness` from that place, as the settings hooks have it. One path, never
+// a guess: a clone runs the workspace's pinned copy, never one its own tree
+// could hold.
 
 const snapshot = atom({ plugin: 'rness', key: 'snapshot' } as const, null)
 const prompted = atom({ plugin: 'rness', key: 'prompted' } as const, false)
@@ -17,8 +19,8 @@ const tab = atom({ plugin: 'rness', key: 'tab' } as const, 0)
 
 const PANE = 'rness'
 const BIN = 'node_modules/@rness/cli/dist/bin/rness.js'
-/** Where `sync` writes the plugin, from the project directory: `.rness` sits beside it, or two levels up. */
-const RNESS = ['.rness', '../../.rness']
+/** `.rness` from the project directory; `sync` writes `../../.rness` in a clone. */
+const RNESS = '.rness'
 const STATE = /[\\/]\.rness[\\/]/
 
 /** The project directory: the plugin lives in its `.claude/skills/rness`. */
@@ -33,15 +35,13 @@ async function refresh($: EngineInterface): Promise<RnessSnapshot | null> {
   let next: RnessSnapshot | null = null
   try {
     const project = projectOf($.plugin.root)
-    for (const at of RNESS) {
-      const bin = `${project}/${at}/${BIN}`
-      if (!(await $.fs.exists(bin))) continue
+    const bin = `${project}/${RNESS}/${BIN}`
+    if (await $.fs.exists(bin)) {
       const ran = await $.process.run(
         ['node', bin, 'status', '--json', '--cwd', project],
         { cwd: project, timeoutMs: 20_000 }
       )
       if (ran.exitCode === 0) next = JSON.parse(ran.stdout) as RnessSnapshot
-      break
     }
   } catch {
     next = null
