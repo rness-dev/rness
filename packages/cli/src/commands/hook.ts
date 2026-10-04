@@ -2,19 +2,16 @@ import { realpath } from 'node:fs/promises'
 import { isAbsolute, posix, relative, resolve, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
-import { checkWorkspace } from '../core/check-workspace.ts'
-import { COLLECTIONS, assembleContext } from '../core/context.ts'
+import { COLLECTIONS } from '../core/context.ts'
 import { checkContract } from '../core/contract.ts'
-import { parseFrontMatter } from '../core/frontmatter.ts'
-import { loadManifest, workspaceName } from '../core/manifest.ts'
-import { pinDrift, workspacePackageManager } from '../core/pinned.ts'
+import { loadManifest } from '../core/manifest.ts'
+import { safetyNet } from '../core/safety-net.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
-import { count } from '../core/style.ts'
-import type { CollectionName, Workspace } from '../core/types.ts'
+import { plansInProgress } from '../core/status.ts'
+import type { Workspace } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
-import { scopeSummary } from '../mcp/tools.ts'
 import { type Spawn, detached, takeFailure } from '../pulse/detached.ts'
-import { VERSION } from '../version.ts'
+import { noteLines, scopeBanner } from './snapshot.ts'
 
 /**
  * `rness hook <event>`: what Claude Code runs for the hooks the Claude
@@ -32,16 +29,6 @@ export interface HookIo {
 }
 
 type Input = Record<string, unknown>
-
-const NOUNS: Record<CollectionName, [string, string]> = {
-  standards: ['standard', 'standards'],
-  adr: ['decision', 'decisions'],
-  specs: ['specification', 'specifications'],
-  plans: ['plan', 'plans'],
-  skills: ['skill', 'skills'],
-}
-/** How many of `validate`'s problems the session start spells out. */
-const SHOWN_PROBLEMS = 3
 
 /** The hook's JSON on stdin; `{}` from a terminal or for anything else. */
 async function readInput(input: HookIo['input']): Promise<Input> {
@@ -69,30 +56,6 @@ function cwdOf(input: Input, env: NodeJS.ProcessEnv): string {
 }
 
 const toPosix = (p: string): string => p.split(sep).join(posix.sep)
-
-/** Why the context may be wrong: the installed copy, then validate's problems. */
-async function safetyNet(
-  ws: Workspace,
-  manifest: Awaited<ReturnType<typeof loadManifest>>
-): Promise<string[]> {
-  const notes: string[] = []
-  const drift = await pinDrift(ws.rnessDir)
-  if (drift !== null)
-    notes.push(
-      `.rness pins @rness/cli ${drift.pin} but ${drift.installed ?? 'nothing'} is installed — run ${await workspacePackageManager(ws.rnessDir)} install in .rness`
-    )
-  try {
-    const { problems } = await checkWorkspace(ws, manifest)
-    if (problems.length > 0)
-      notes.push(
-        `${count(problems.length, ['problem', 'problems'])} in the workspace context — run rness validate`,
-        ...problems.slice(0, SHOWN_PROBLEMS).map((p) => `  ${p}`)
-      )
-  } catch (e) {
-    notes.push(message(e))
-  }
-  return notes
-}
 
 /** `claude · <first 8 of session_id>`, with the agent type when there is one. */
 function sessionOf(input: Input): string | null {
@@ -136,29 +99,6 @@ async function markDetached(
   }
 }
 
-/** The plans of the scope whose status is In progress, as `.rness/`-relative paths. */
-async function plansInProgress(
-  ws: Workspace,
-  manifest: Awaited<ReturnType<typeof loadManifest>>,
-  scope: string | null
-): Promise<string[]> {
-  const context = await assembleContext({
-    rnessDir: ws.rnessDir,
-    manifest,
-    scope,
-  })
-  const plans = context.collections.find((c) => c.name === 'plans')
-  return (plans?.files ?? [])
-    .filter((f) => {
-      try {
-        return parseFrontMatter(f.body)?.['status'] === 'In progress'
-      } catch {
-        return false
-      }
-    })
-    .map((f) => `plans/${f.rel}`)
-}
-
 /**
  * A banner for the developer and the scope's summary for the model (spec
  * 0015 §3). One JSON object, always, and exit 0: a failure is a line of it.
@@ -175,15 +115,11 @@ async function sessionStart(
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
     const scope = resolveScope(manifest, toPosix(relative(ws.root, cwd)))
-    const summary = await scopeSummary(ws, manifest, scope)
-    const counts = COLLECTIONS.flatMap((c) => {
-      const n = summary.counts[c]
-      return n === undefined ? [] : [count(n, NOUNS[c])]
-    })
-    banner = `rness ${VERSION} · ${workspaceName(manifest, ws.root)} · ${scope === null ? 'global scope' : `scope ${scope}`} — ${counts.length === 0 ? 'nothing applies yet' : counts.join(', ')}`
+    const view = await scopeBanner(ws, manifest, scope)
+    banner = view.banner
     const at = toPosix(relative(cwd, ws.rnessDir)) || '.rness'
     context = [
-      ...summary.lines,
+      ...view.lines,
       `These documents are in ${at}: read one there, or with rness_read when the rness MCP server is connected.`,
     ]
     notes = await safetyNet(ws, manifest)
@@ -198,7 +134,7 @@ async function sessionStart(
   }
   const failure = await takeFailure()
   if (failure !== null) notes.push(`pulse not updated — ${failure}`)
-  const warnings = notes.map((n) => `rness: ${n}`)
+  const warnings = noteLines(notes)
   const shown = [
     ...(banner !== null && input['source'] !== 'compact' ? [banner] : []),
     ...warnings,

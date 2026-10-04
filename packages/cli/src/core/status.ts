@@ -2,8 +2,10 @@ import { readdir } from 'node:fs/promises'
 import { join, posix } from 'node:path'
 
 import { collectMarkdown } from './collect.ts'
+import { assembleContext } from './context.ts'
 import { documentDate, documentNumber, documentTitle } from './documents.ts'
-import type { MarkdownItem } from './types.ts'
+import { parseFrontMatter } from './frontmatter.ts'
+import type { Manifest, MarkdownItem, Workspace } from './types.ts'
 
 /** One document of a tab (spec 0016 §2.1). */
 export interface StatusRow {
@@ -196,4 +198,27 @@ export function statusMarkdown(
     out.push('')
   }
   return out.join('\n')
+}
+
+/** The plans of the scope whose status is In progress, as `.rness/`-relative paths. */
+export async function plansInProgress(
+  ws: Workspace,
+  manifest: Manifest,
+  scope: string | null
+): Promise<string[]> {
+  const context = await assembleContext({
+    rnessDir: ws.rnessDir,
+    manifest,
+    scope,
+  })
+  const plans = context.collections.find((c) => c.name === 'plans')
+  return (plans?.files ?? [])
+    .filter((f) => {
+      try {
+        return parseFrontMatter(f.body)?.['status'] === 'In progress'
+      } catch {
+        return false
+      }
+    })
+    .map((f) => `plans/${f.rel}`)
 }

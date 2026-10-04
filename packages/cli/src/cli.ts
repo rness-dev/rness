@@ -79,6 +79,7 @@ function buildProgram(state: RunState): Command {
       'Show the status of every decision, specification and plan, a tab per directory'
     )
     .argument('[tab]', 'open on this tab: adr, specs, plans, …')
+    .option('--json', 'print JSON instead: what the Claude Code plugin draws')
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (tab: string | undefined, opts: StatusOptions) => {
       state.code = await statusCommand(tab, opts)

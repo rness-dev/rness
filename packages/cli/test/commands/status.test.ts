@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { type TestContext, test } from 'node:test'
 
 import { run } from '../../src/cli.ts'
 import { statusCommand } from '../../src/commands/status.ts'
+import { VERSION } from '../../src/version.ts'
 import { capture } from '../helpers/capture.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
@@ -141,3 +144,105 @@ test('in a terminal, a tab named opens the view on it', async (t) => {
   assert.match(fake.written(), /\[Plans \(0\)\]/)
   assert.match(fake.written(), /Nothing here yet\./)
 })
+
+// --- --json: what the Claude Code mod draws (spec 0029 §3.2) ---------------
+
+async function snapshot(args: string[]) {
+  const c = capture()
+  const code = await run(['status', '--json', ...args])
+  c.restore()
+  return { code, json: code === 0 ? JSON.parse(c.out()) : null, err: c.err() }
+}
+
+async function scoped(t: TestContext, files: Record<string, string> = {}) {
+  return makeWorkspace(t, {
+    org: 'acme',
+    repos: { web: { url: 'https://github.com/acme/web.git' } },
+    scopes: { web: { path: 'org/web' } },
+    files: {
+      'standards/style.md': '# Style\n',
+      'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
+      'plans/0002-b.md': doc('In progress', '0002 — Second'),
+      'plans/0001-a.md': doc('Completed', '0001 — First'),
+      ...files,
+    },
+    dirs: ['org/web'],
+  })
+}
+
+test('--json at the workspace root: the banner, the status line, the tabs', async (t) => {
+  const root = await scoped(t)
+  const { code, json, err } = await snapshot(['--cwd', root])
+  assert.equal(code, 0, err)
+  assert.equal(json.version, VERSION)
+  assert.equal(json.workspace, 'acme')
+  assert.equal(json.scope, null)
+  assert.equal(
+    json.banner,
+    `rness ${VERSION} · acme · global scope — 1 standard, 1 decision, 2 plans`
+  )
+  assert.deepEqual(json.inProgress, ['plans/0002-b.md'])
+  assert.deepEqual(json.notes, [])
+  assert.equal(json.statusLine, 'rness · global · 1 in progress')
+  assert.deepEqual(
+    json.tabs.map((tab: { name: string }) => tab.name),
+    ['adr', 'specs', 'plans']
+  )
+  assert.deepEqual(json.tabs[2].rows[0], {
+    id: '0002',
+    title: 'Second',
+    status: 'In progress',
+    path: 'plans/0002-b.md',
+  })
+})
+
+test('--json in a clone: the scope of the directory', async (t) => {
+  const root = await scoped(t)
+  const { json } = await snapshot(['--cwd', join(root, 'org', 'web')])
+  assert.equal(json.scope, 'web')
+  assert.match(json.banner, / · acme · scope web — /)
+  assert.equal(json.statusLine, 'rness · web · 1 in progress')
+})
+
+test('--json: the notes of the safety net, counted on the status line', async (t) => {
+  const root = await scoped(t, { 'specs/0001-a.md': doc('Done', '0001 — A') })
+  await writeFile(
+    join(root, '.rness', 'package.json'),
+    JSON.stringify({ devDependencies: { '@rness/cli': '9.9.9' } })
+  )
+  const { json } = await snapshot(['--cwd', root])
+  assert.deepEqual(json.notes, [
+    'rness: .rness pins @rness/cli 9.9.9 but nothing is installed — run npm install in .rness',
+    'rness: 1 problem in the workspace context — run rness validate',
+    'rness:   specs/0001-a.md: unknown status "Done" (expected Draft, Proposed, Approved, Implemented, Superseded, Rejected)',
+  ])
+  assert.equal(json.statusLine, 'rness · global · 1 in progress · ⚠ 2')
+})
+
+test('--json with a tab: that tab only; an unknown one is a usage error', async (t) => {
+  const root = await scoped(t)
+  const { json } = await snapshot(['plans', '--cwd', root])
+  assert.deepEqual(
+    json.tabs.map((tab: { name: string }) => tab.name),
+    ['plans']
+  )
+  const bad = await snapshot(['kanban', '--cwd', root])
+  assert.equal(bad.code, 2)
+})
+
+test(
+  '--json in a terminal: JSON, never the view',
+  { timeout: 3000 },
+  async (t) => {
+    const root = await scoped(t)
+    const fake = fakeTerminal()
+    const code = await statusCommand(
+      undefined,
+      { cwd: root, json: true },
+      fake.terminal
+    )
+    assert.equal(code, 0)
+    assert.ok(!fake.written().includes('\x1b[?1049h'), 'no alternate screen')
+    assert.equal(JSON.parse(fake.written()).workspace, 'acme')
+  }
+)

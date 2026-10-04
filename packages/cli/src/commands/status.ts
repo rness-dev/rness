@@ -1,6 +1,8 @@
+import { posix, relative, sep } from 'node:path'
 import { emitKeypressEvents } from 'node:readline'
 
 import { loadManifest, workspaceName } from '../core/manifest.ts'
+import { resolveScope } from '../core/scope.ts'
 import {
   type Key,
   type Look,
@@ -19,10 +21,13 @@ import {
 import { bold, grey, inverse, paint } from '../core/style.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
+import { statusSnapshot } from './snapshot.ts'
 
 export interface StatusOptions {
   /** Internal (tests, the Claude skill): directory to resolve from; default `process.cwd()`. */
   cwd?: string
+  /** One JSON object, what the Claude Code mod draws (spec 0029 §3.2), terminal or not. */
+  json?: boolean
 }
 
 /** The terminal the view takes: the process's own, a fake one in tests. */
@@ -159,7 +164,8 @@ export async function statusCommand(
   terminal: StatusTerminal = { input: process.stdin, output: process.stdout }
 ): Promise<number> {
   try {
-    const ws = await findWorkspace(opts.cwd ?? process.cwd())
+    const cwd = opts.cwd ?? process.cwd()
+    const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
     const workspace = workspaceName(manifest, ws.root)
     const tabs = await statusTabs(ws.rnessDir)
@@ -170,6 +176,17 @@ export async function statusCommand(
       )
       return 2
     }
+    const shown = wanted === undefined ? tabs : [wanted]
+    if (opts.json === true) {
+      const scope = resolveScope(
+        manifest,
+        relative(ws.root, cwd).split(sep).join(posix.sep)
+      )
+      terminal.output.write(
+        `${JSON.stringify(await statusSnapshot(ws, manifest, scope, shown))}\n`
+      )
+      return 0
+    }
     if (terminal.input.isTTY === true && terminal.output.isTTY === true) {
       await showView(
         tabs,
@@ -179,9 +196,7 @@ export async function statusCommand(
       )
       return 0
     }
-    terminal.output.write(
-      statusMarkdown(workspace, wanted === undefined ? tabs : [wanted])
-    )
+    terminal.output.write(statusMarkdown(workspace, shown))
     return 0
   } catch (e) {
     return reportError(e)
