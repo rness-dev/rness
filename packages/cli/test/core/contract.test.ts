@@ -71,3 +71,49 @@ test('a document of adr, specs or plans without a number is named, with the next
     'plans/web/2026-10-02-copy-fix.md: not numbered; name it 0002-<slug>.md, the next number of plans',
   ])
 })
+
+// --- one file read from a text: the check before an edit (spec 0029 §4.3) ---
+
+test('an override replaces the file on disk, for the check only', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: { 'specs/0001-a.md': doc('Draft', '0001 — A') },
+  })
+  const rnessDir = join(root, '.rness')
+  assert.deepEqual(
+    await checkContract(rnessDir, {
+      rel: 'specs/0001-a.md',
+      text: doc('Done', '0001 — A'),
+    }),
+    [
+      'specs/0001-a.md: unknown status "Done" (expected Draft, Proposed, Approved, Implemented, Superseded, Rejected)',
+    ]
+  )
+  assert.deepEqual(await checkContract(rnessDir), [], 'the disk is untouched')
+})
+
+test('an override of a file not on disk adds it: a new unnumbered plan is named', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: { 'plans/0003-c.md': doc('Draft', '0003 — C') },
+  })
+  assert.deepEqual(
+    await checkContract(join(root, '.rness'), {
+      rel: 'plans/draft.md',
+      text: doc('Draft', 'Draft'),
+    }),
+    [
+      'plans/draft.md: not numbered; name it 0004-<slug>.md, the next number of plans',
+    ]
+  )
+})
+
+test('an override equal to the disk changes nothing', async (t) => {
+  const broken = doc('Done', '0001 — A')
+  const root = await makeWorkspace(t, {
+    files: { 'specs/0001-a.md': broken },
+  })
+  const rnessDir = join(root, '.rness')
+  assert.deepEqual(
+    await checkContract(rnessDir, { rel: 'specs/0001-a.md', text: broken }),
+    await checkContract(rnessDir)
+  )
+})

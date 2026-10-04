@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import { collectMarkdown } from './collect.ts'
+import { collectMarkdown, markdownItem } from './collect.ts'
 import { COLLECTIONS } from './context.ts'
 import { documentNumber } from './documents.ts'
 import type { CollectionName } from './types.ts'
@@ -22,12 +22,48 @@ const SKIP = new Set(['adr/0000-template.md'])
 /** Front-matter keys from the withdrawn routing feature — the directory decides. */
 const PLACEMENT_KEYS = ['scopes', 'scope'] as const
 
-/** Human-readable problems across every collection; empty when the tree is valid. */
-export async function checkContract(rnessDir: string): Promise<string[]> {
+/**
+ * One file of `.rness/` read from a text rather than the disk: what an edit
+ * would leave, checked before it is written (spec 0029 §4.3).
+ */
+export interface ContractOverride {
+  /** `.rness/`-relative, POSIX: `specs/0001-a.md`. */
+  rel: string
+  text: string
+}
+
+/** The collection's files, with the override in place of (or beside) its file. */
+async function itemsOf(
+  rnessDir: string,
+  name: CollectionName,
+  override: ContractOverride | undefined
+) {
+  const items = await collectMarkdown(join(rnessDir, name))
+  const prefix = `${name}/`
+  if (override === undefined || !override.rel.startsWith(prefix)) return items
+  const rel = override.rel.slice(prefix.length)
+  const item = markdownItem(
+    join(rnessDir, ...override.rel.split('/')),
+    rel,
+    override.text
+  )
+  return [...items.filter((i) => i.rel !== rel), item].sort((a, b) =>
+    a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0
+  )
+}
+
+/**
+ * Human-readable problems across every collection; empty when the tree is
+ * valid. With an override, that one file is read from its text.
+ */
+export async function checkContract(
+  rnessDir: string,
+  override?: ContractOverride
+): Promise<string[]> {
   const problems: string[] = []
   for (const name of COLLECTIONS) {
     const allowed = STATUSES[name]
-    const items = await collectMarkdown(join(rnessDir, name))
+    const items = await itemsOf(rnessDir, name, override)
     // One number, one document (spec 0028 §9): the clash a merge of two
     // branches that each made the next document can still produce.
     const byNumber = new Map<string, string[]>()
