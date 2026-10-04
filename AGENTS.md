@@ -1,7 +1,7 @@
 # rness workspace member — scope: rness
 
 <!-- BEGIN rness -->
-<!-- rness · scope: rness · contract: 1 · hash: 780c42f93d86 · generated: run `rness sync`, never edit inside this block -->
+<!-- rness · scope: rness · contract: 1 · hash: c695cb252c67 · generated: run `rness sync`, never edit inside this block -->
 This directory is scope `rness` of rness workspace `rness-dev`. Full context lives in
 `../../.rness/` — start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
 live: `rness context --scope rness`. If `.rness/` is not reachable, this is a
@@ -12,11 +12,13 @@ standalone clone: the rules below are all you have.
 # Dependencies (scope `rness`)
 
 The published packages of the `rness` repository take the dependencies that
-earn their place ([ADR 0007](../../adr/0007-cli-stack-and-npm-naming.md)).
+earn their place (ADR 0007).
 This standard is how to apply that day to day.
 
-- Prefer a Node ≥ 24 built-in when it does the job as well: `fs.glob`,
-  `util.styleText`, `node:test`, native type stripping for development.
+- Prefer a built-in of the published floor, Node ≥ 22.17 (ADR 0010), when it
+  does the job as well: `fs.glob`, `util.styleText`, `node:test`. Native type
+  stripping serves development (the repository runs on Node 24); the published
+  `dist/` does not need it.
 - Adding a dependency is a reviewed change: pin it, and say in the PR what
   built-in or existing dependency does not cover the need.
 - Keep `context` and `validate` lean: no prompt library and no network code
