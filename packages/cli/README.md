@@ -186,9 +186,17 @@ settings hooks do: never a copy a clone's own tree could hold. It loads
 where the plugin loads — a trusted folder, `claude -p` included — on a
 Claude Code that has mods: run by 2.1.280 and later, ignored without an
 error by 2.1.240 and 2.1.199, where the skills work as before (verified on
-2026-10-04). Mods are early access in Claude Code: a release that changes
-their API may stop the band or the pane until the next rness release; the
-skills and the settings hooks do not depend on it.
+2026-10-04). An older Claude Code is told so once per version and machine,
+in the session-start line: `rness: Claude Code 2.1.240 shows no rness band,
+status line or pane; 2.1.280 or later does — claude update`. The version
+comes from `AI_AGENT`, which Claude Code sets; the versions told are kept in
+`claude-code.json` beside the login (`~/.config/rness/` by default). Not in
+`claude -p` or another SDK session, where nobody would read it; not after a
+compaction. Versions between 2.1.240 and 2.1.280 were not tried: one of
+them that loads mods is told to update for nothing. Mods are early access
+in Claude Code: a release that changes their API may stop the band or the
+pane until the next rness release; the skills and the settings hooks do not
+depend on it.
 
 To work on it, from `org/rness`: `pnpm check:mod` runs
 `claude plugin validate` and `claude plugin test` on `packages/cli/mod`
@@ -207,7 +215,8 @@ workspace root's carry four Claude Code hooks, all run by the pinned copy:
   them. When the context may be wrong, both say why: no `.rness` next to the
   repository or nothing installed there, a `rness.json` rness refuses, a pin
   the installed copy does not match, the problems `rness validate` reports.
-  After a compaction, the context only.
+  A Claude Code too old for the plugin's mod gets one more line, once (see
+  "The mod"). After a compaction, the context only.
 - **Before an edit** (`PreToolUse` on `Edit|Write`): refused, with the
   reason for the model, when it would change what `sync` generates — a
   line of the block of an `AGENTS.md` or `CLAUDE.md` (the reason names the
@@ -665,7 +674,8 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   line entry, and `/rness:status` as a pane beside the conversation, with no
   model turn. `sync` writes three more files into `.claude/skills/rness/`,
   at the root and in each clone; an upgrade lists the clone's for commit.
-  Claude Code without mods ignores them.
+  Claude Code without mods ignores them; older than 2.1.280, it is told once
+  per version, in the session-start line, to run `claude update`.
 - A fourth hook, `PreToolUse` on `Edit|Write`: an edit of the block of an
   `AGENTS.md` or `CLAUDE.md`, or of the plugin's files, is refused before
   it is written, naming the file to edit instead; so is an edit that would
