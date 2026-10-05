@@ -27,8 +27,6 @@ declare module 'claude-code' {
     rness: {
       /** The last snapshot; null while none could be read. */
       snapshot: RnessSnapshot | null
-      /** Whether the developer has sent a prompt: the band then waits for a note. */
-      prompted: boolean
       /** The pane's tab, by its index in the snapshot. */
       tab: number
       /** Whether someone watches the session: no pane for `claude -p`. */

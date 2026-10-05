@@ -85,7 +85,15 @@ function engine(on: On, status: (string | undefined)[] = []) {
 
 const start = { cwd: '/w', surface: 'terminal', isInteractive: true } as never
 
-test('the band shows the banner from the start of the session to the first prompt', async ($, on) => {
+const BAND = {
+  plugin: 'rness',
+  component: 'AbovePrompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 10 } as never,
+} as const
+
+const NOTE = 'rness: 1 problem in the workspace context — run rness validate'
+
+test('no note: no band, before and after the first prompt — the session-start line says the banner', async ($, on) => {
   const clock = mock.clock(on)
   engine(on)
   const runs = cli(on, SNAPSHOT)
@@ -96,51 +104,39 @@ test('the band shows the banner from the start of the session to the first promp
     expect.arrayContaining(['status', '--json'])
   )
   for (const surface of SURFACES) {
-    const band = await $.ui.mount({
-      plugin: 'rness',
-      surface,
-      component: 'AbovePrompt',
-      props: { hasSurvey: false, isWorking: false, maxRows: 10 } as never,
-    })
-    expect((await band.find({ key: 'banner' }))?.text).toBe(SNAPSHOT.banner)
+    const band = await $.ui.mount({ ...BAND, surface })
+    expect(await band.findAll({ type: 'Text' })).toHaveLength(0)
   }
   await $.prompt.submit({
     text: 'hello',
     origin: { kind: 'composer' },
   } as never)
-  const after = await $.ui.mount({
-    plugin: 'rness',
-    surface: 'terminal',
-    component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 10 } as never,
-  })
-  expect(await after.find({ key: 'banner' })).toBeUndefined()
+  const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await after.findAll({ type: 'Text' })).toHaveLength(0)
 })
 
-test('a note brings the band back after the first prompt, with its lines', async ($, on) => {
+test('a note: the band with its line and no banner, before and after the first prompt', async ($, on) => {
   const clock = mock.clock(on)
   engine(on)
   cli(on, {
     ...SNAPSHOT,
-    notes: ['rness: 1 problem in the workspace context — run rness validate'],
+    notes: [NOTE],
     statusLine: 'global · 1 in progress · ⚠ 1',
   })
   await $.session.start(start)
   await clock.advance(0)
+  for (const surface of SURFACES) {
+    const band = await $.ui.mount({ ...BAND, surface })
+    expect((await band.find({ key: 'note-0' }))?.text).toBe(NOTE)
+    expect(await band.find({ text: SNAPSHOT.banner })).toBeUndefined()
+  }
   await $.prompt.submit({
     text: 'hello',
     origin: { kind: 'composer' },
   } as never)
-  const band = await $.ui.mount({
-    plugin: 'rness',
-    surface: 'terminal',
-    component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 10 } as never,
-  })
-  expect((await band.find({ key: 'banner' }))?.text).toBe(SNAPSHOT.banner)
-  expect((await band.find({ key: 'note-0' }))?.text).toBe(
-    'rness: 1 problem in the workspace context — run rness validate'
-  )
+  const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await after.find({ key: 'note-0' }))?.text).toBe(NOTE)
+  expect(await after.findAll({ type: 'Text' })).toHaveLength(1)
 })
 
 test('no pinned CLI: no band', async ($, on) => {

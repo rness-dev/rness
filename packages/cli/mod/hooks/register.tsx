@@ -14,7 +14,6 @@ import type { RnessSnapshot } from '../types'
 // could hold.
 
 const snapshot = atom({ plugin: 'rness', key: 'snapshot' } as const, null)
-const prompted = atom({ plugin: 'rness', key: 'prompted' } as const, false)
 const tab = atom({ plugin: 'rness', key: 'tab' } as const, 0)
 const interactive = atom(
   { plugin: 'rness', key: 'interactive' } as const,
@@ -67,11 +66,6 @@ export const register: Register = (on) => {
     return next(e)
   })
 
-  on('prompt.submit', async ($, e, next) => {
-    await update($, prompted, () => true)
-    return next(e)
-  })
-
   // An edit of `.rness/` changes what the band and the pane show.
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     const ran = await next(e)
@@ -90,18 +84,16 @@ export const register: Register = (on) => {
     return next(e)
   })
 
+  // The notes to act on, whenever there are some (plan 0042). The banner is
+  // the session-start line's, said once in the transcript: drawn here too,
+  // it said the same thing twice.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const shown = await read($, snapshot)
-    if (e.props.hasSurvey || shown === null) return next(e)
-    if ((await read($, prompted)) && shown.notes.length === 0) return next(e)
+    if (e.props.hasSurvey || shown === null || shown.notes.length === 0)
+      return next(e)
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
-        <Box key="banner">
-          <Text dimColor wrap="truncate-end">
-            {shown.banner}
-          </Text>
-        </Box>
         {shown.notes.map((note, i) => (
           <Box key={`note-${i}`}>
             <Text color="yellow" wrap="truncate-end">
