@@ -60,10 +60,14 @@ when dropped, red `?` when missing.
   `PgUp`/`PgDn`, `Home`/`End` scroll, `q` or `Esc` closes and gives the
   screen back. Read-only.
 - Off a terminal — a pipe, CI, an agent's tool — Markdown: a table per tab.
-- `--json`, terminal or not: the tabs and their rows, with what a Claude
-  Code session shows of the workspace, worded by the CLI — the session-start
-  banner, the status line entry, the scope's plans `In progress` and the
-  notes of the safety net (see "Hooks"). The plugin's mod reads it (see
+- `--json`, terminal or not: the tabs and their rows — each row with the
+  colour of its status on Agent Pulse (`color`, the board's name for it:
+  `yellow` for `In progress`; `red` without a status) and its item there
+  (`link`, the board filtered on its path; null without a pulse) — the
+  board (`pulse`), and what a Claude Code session shows of the workspace,
+  worded by the CLI — the session-start banner, the status line entry, the
+  scope's plans `In progress` and the notes of the safety net (see
+  "Hooks"). The plugin's mod reads it (see
   "The mod").
 - From Claude Code, `/rness:status [tab]` opens a pane beside the
   conversation when the plugin's mod is loaded (see "The mod"), and shows
@@ -176,13 +180,24 @@ the pinned copy, and computes nothing itself:
   there are notes. Claude Code draws it after the plugin's name:
   `⚠ rness: web · 1 in progress` (2.1.289).
 - **`/rness:status [tab]` as a pane** beside the conversation, a tab per
-  collection, a row per document; no model turn. The pane takes the
-  keyboard as it opens: a tab's digit (written before its name), or Tab
-  then Enter, shows that tab; ↑/↓, `PgUp`/`PgDn`, `Home`/`End` scroll, as
-  in the full-screen `rness status`; Esc and `q` close it, and so does Esc
-  at an empty prompt once the prompt has the keys back. A pane has no
-  ←/→ in Claude Code 2.1.289. In `claude -p`, or where no pane can be
-  placed, the skill's tables answer instead.
+  collection, a row per document, its status in the colour Agent Pulse
+  gives it (yellow in progress, green done, red blocked, gray draft or
+  abandoned, blue proposed, purple approved — the board's purple is the
+  terminal's magenta); no model turn. The pane takes the keyboard as it
+  opens, the ring on the newest row: a tab's digit (written before its
+  name), or Tab then Enter, shows that tab; Tab and Shift+Tab walk the
+  rows; ↑/↓, `PgUp`/`PgDn`, `Home`/`End` scroll, as in the full-screen
+  `rness status`; Esc and `q` close it, and
+  so does Esc at an empty prompt once the prompt has the keys back. A pane
+  has no ←/→ in Claude Code 2.1.289. **Enter, or a click, on a row shows
+  the document** in the pane, read from `.rness/` without its front
+  matter, as the board's card shows it; `q` brings the list back, Esc
+  still closes. An edit of the document shows at the next refresh. **Agent
+  Pulse is a link** when the workspace declares a pulse: the board from the
+  list, the document's item (the board filtered on its path) from the
+  document. The terminal opens it as it opens any hyperlink (cmd+click on
+  macOS, as a rule), a desktop surface on a click. In `claude -p`, or where
+  no pane can be placed, the skill's tables answer instead.
 
 It reads the snapshot again at session start, after an `Edit` or `Write`
 of a file under `.rness/`, and at the end of each turn, off the turn's
@@ -673,6 +688,14 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## Unreleased
+
+- `/rness:status` in Claude Code: each row's status in Agent Pulse's colour;
+  Enter, or a click, on a row shows the document in the pane and `q` brings
+  the list back; Agent Pulse is a link — the board from the list, the
+  document's item from the document. `rness status --json` prints each
+  row's `color` and `link`, and the board as `pulse`.
 
 ## 0.19.0 — the plugin's mod; edits of generated files refused before they land
 
