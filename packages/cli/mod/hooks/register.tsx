@@ -121,8 +121,9 @@ export const register: Register = (on) => {
       (t) => t.name.toLowerCase() === wanted || t.label.toLowerCase() === wanted
     )
     await update($, tab, (i) => (index === -1 ? i : index))
-    // The keys of the full-screen `rness status` (plan 0042): the pane takes
-    // them, the arrows and Tab change the tab, Esc and `q` close it.
+    // The pane takes the keys (plan 0042): a digit or Tab then Enter shows a
+    // tab, ↑/↓ scroll as in the full-screen `rness status`, Esc and `q`
+    // close it. A pane binds no ←/→ (Claude Code 2.1.289).
     const opened = await $.ui.open({
       id: PANE,
       title: `${shown.workspace} · status`,
@@ -136,17 +137,6 @@ export const register: Register = (on) => {
     }
   })
 
-  // The ring on a tab's button shows that tab: no Enter to press.
-  on('ui.focus', { requestId: PANE }, async ($, e, next) => {
-    const moved = await next(e)
-    const name = e.element?.startsWith('tab-') ? e.element.slice(4) : null
-    const shown = await read($, snapshot)
-    const index = shown?.tabs.findIndex((t) => t.name === name) ?? -1
-    if (moved.deny === undefined && index !== -1)
-      await update($, tab, () => index)
-    return moved
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const shown = await read($, snapshot)
@@ -154,14 +144,16 @@ export const register: Register = (on) => {
       return <Text dimColor>rness: the workspace status cannot be read.</Text>
     const at = Math.min(await read($, tab), Math.max(0, shown.tabs.length - 1))
     const current = shown.tabs[at]
-    const room = Math.max(1, (e.viewport?.rows ?? 24) - 4)
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" gap={1} flexWrap="wrap">
           {shown.tabs.map((t, i) => (
             <Button
               key={`tab-${t.name}`}
-              label={`${t.label} (${t.rows.length})`}
+              // Where the body has nothing to scroll, ↑/↓ walk these buttons:
+              // only a press (Enter, a digit, a click) changes the tab.
+              label={`${i < 9 ? `${i + 1} ` : ''}${t.label} (${t.rows.length})`}
+              {...(i < 9 ? { hotkey: String(i + 1) } : {})}
               variant={i === at ? 'primary' : 'secondary'}
               {...(i === at ? { autoFocus: true as const } : {})}
               onPress={() => update($, tab, () => i)}
@@ -181,7 +173,8 @@ export const register: Register = (on) => {
             <Text dimColor>Nothing here yet.</Text>
           </Box>
         ) : (
-          current.rows.slice(0, room).map((row) => (
+          // Every row: the engine scrolls the body (↑/↓, PgUp/PgDn, Home/End).
+          current.rows.map((row) => (
             <Box key={`row-${row.id}`}>
               <Text wrap="truncate-end">
                 {row.id} {row.title} <Text dimColor>{row.status ?? '?'}</Text>

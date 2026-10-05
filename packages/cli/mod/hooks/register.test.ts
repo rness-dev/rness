@@ -172,7 +172,7 @@ test('no pinned CLI: no band', async ($, on) => {
     component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking: false, maxRows: 10 } as never,
   })
-  expect(await band.find({ key: 'banner' })).toBeUndefined()
+  expect(await band.findAll({ type: 'Text' })).toHaveLength(0)
 })
 
 test('the status line carries the snapshot’s', async ($, on) => {
@@ -292,7 +292,7 @@ const PANE = {
   props: {} as never,
 } as const
 
-test('/rness:status takes the keyboard: the pane opens focused, and Esc closes it', async ($, on) => {
+test('/rness:status takes the keyboard: the pane opens focused, for Esc to close (closeOnEscape)', async ($, on) => {
   const clock = mock.clock(on)
   const panes: Panes = { opened: [], closed: [] }
   engine(on, [], panes)
@@ -305,8 +305,8 @@ test('/rness:status takes the keyboard: the pane opens focused, and Esc closes i
   ])
 })
 
-/** The person's arrow moving the pane's ring onto the button keyed `element`. */
-const arrow = ($: Engine, element: string) =>
+/** The ring moved onto the button keyed `element`: Tab, or ↑/↓ where the body has nothing to scroll. */
+const ring = ($: Engine, element: string) =>
   $.ui.focus({
     component: 'Pane',
     requestId: 'rness',
@@ -315,7 +315,7 @@ const arrow = ($: Engine, element: string) =>
     origin: { kind: 'person' },
   })
 
-test('the arrows change the tab: the ring on a tab’s button shows that tab, with no press', async ($, on) => {
+test('a digit shows its tab: each tab’s button is on its number, written in its label', async ($, on) => {
   const clock = mock.clock(on)
   engine(on)
   cli(on, SNAPSHOT)
@@ -324,17 +324,52 @@ test('the arrows change the tab: the ring on a tab’s button shows that tab, wi
   await $.command.run({ command: 'rness:status', args: 'plans' } as never)
   for (const surface of SURFACES) {
     const pane = await $.ui.mount({ ...PANE, surface })
-    expect((await pane.find({ key: 'tab-plans' }))?.props['autoFocus']).toBe(
-      true
-    )
+    expect((await pane.find({ key: 'tab-adr' }))?.props).toMatchObject({
+      hotkey: '1',
+      label: '1 ADR (0)',
+    })
+    expect((await pane.find({ key: 'tab-plans' }))?.props).toMatchObject({
+      hotkey: '2',
+      label: '2 Plans (2)',
+      autoFocus: true,
+    })
     expect(
       (await pane.find({ key: 'tab-adr' }))?.props['autoFocus']
     ).toBeUndefined()
-    await arrow($, 'tab-adr')
+    await pane.press({ key: 'tab-adr' })
     expect((await pane.find({ key: 'empty' }))?.text).toMatch(/Nothing/)
-    await arrow($, 'tab-plans')
-    expect((await pane.find({ key: 'row-0002' }))?.text).toMatch(/Second/)
+    await pane.press({ key: 'tab-plans' })
   }
+})
+
+test('the ring moving alone never changes the tab: ↓ on a short tab moves the highlight, not the rows', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ring($, 'tab-adr')
+  expect((await pane.find({ key: 'row-0002' }))?.text).toMatch(/Second/)
+})
+
+test('every row is drawn: the engine scrolls them, ↑/↓ as in the full-screen view', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  const rows = Array.from({ length: 60 }, (_, i) => {
+    const id = String(i + 1).padStart(4, '0')
+    return { id, title: `Plan ${id}`, status: 'Draft', path: `plans/${id}.md` }
+  })
+  cli(on, {
+    ...SNAPSHOT,
+    tabs: [{ name: 'plans', label: 'Plans', rows }],
+  })
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: '' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ key: 'row-0060' }))?.text).toMatch(/Plan 0060/)
 })
 
 test('q closes the pane: a plain Close button on q', async ($, on) => {
