@@ -20,6 +20,12 @@ delete process.env['npm_config_user_agent']
 delete process.env['GITHUB_TOKEN']
 delete process.env['GH_TOKEN']
 
+// Run from a Claude Code session, the tests inherit its AI_AGENT and
+// CLAUDE_CODE_ENTRYPOINT: an older Claude Code would add its line to every
+// session start a child process prints. Tests that want one set it.
+delete process.env['AI_AGENT']
+delete process.env['CLAUDE_CODE_ENTRYPOINT']
+
 // The stored GitHub login lives under the config directory: tests must never
 // read — or overwrite — the developer's own. Every test process gets an
 // empty one; a test that needs a login sets its own.

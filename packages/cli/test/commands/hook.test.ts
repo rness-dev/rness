@@ -9,6 +9,7 @@ import { type TestContext, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { hookCommand } from '../../src/commands/hook.ts'
+import { configDir } from '../../src/core/auth.ts'
 import { OWN_COMMANDS } from '../../src/core/catch-up.ts'
 import { recordFailure } from '../../src/pulse/detached.ts'
 import { VERSION } from '../../src/version.ts'
@@ -505,6 +506,48 @@ test('a failure recorded by an earlier mark is in the next session start, once',
     second.hookSpecificOutput.additionalContext,
     /pulse not updated/
   )
+})
+
+// --- a Claude Code too old for the mod (plan 0041) ---------------------------
+
+const TOO_OLD =
+  'rness: Claude Code 2.1.240 shows no rness band, status line or pane; 2.1.280 or later does — claude update'
+
+/** No version told yet: the file the hook records them in, removed. */
+const noneTold = () =>
+  rm(join(configDir(), 'claude-code.json'), { force: true })
+
+test('a Claude Code too old for the mod: the line for the developer, after the banner, once', async (t) => {
+  const root = await workspace(t)
+  await noneTold()
+  const env = { AI_AGENT: 'claude-code_2-1-240_harness' }
+  const first = JSON.parse(
+    (await hook('session-start', { cwd: root, source: 'startup' }, env)).out
+  )
+  const lines: string[] = first.systemMessage.split('\n')
+  assert.match(lines[0] ?? '', /^rness \S+ · acme · global scope — /)
+  assert.deepEqual(lines.slice(1), [TOO_OLD])
+  assert.doesNotMatch(
+    first.hookSpecificOutput.additionalContext,
+    /Claude Code 2\.1\.240/
+  )
+  const second = JSON.parse(
+    (await hook('session-start', { cwd: root, source: 'startup' }, env)).out
+  )
+  assert.equal(second.systemMessage.split('\n').length, 1)
+  assert.doesNotMatch(second.systemMessage, /Claude Code/)
+})
+
+test('a Claude Code at or above the floor, or no AI_AGENT: no line', async (t) => {
+  const root = await workspace(t)
+  await noneTold()
+  for (const env of [{ AI_AGENT: 'claude-code_2-1-289_harness' }, {}]) {
+    const answer = JSON.parse(
+      (await hook('session-start', { cwd: root, source: 'startup' }, env)).out
+    )
+    assert.equal(answer.systemMessage.split('\n').length, 1)
+    assert.doesNotMatch(answer.systemMessage, /Claude Code/)
+  }
 })
 
 // --- pre-tool-use (spec 0029 §4) ----------------------------------------------

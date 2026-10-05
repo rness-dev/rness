@@ -3,6 +3,7 @@ import { isAbsolute, posix, relative, resolve, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
 import { BLOCK_FILES } from '../core/agent-targets.ts'
+import { takeModNotice } from '../core/claude-code.ts'
 import { COLLECTIONS } from '../core/context.ts'
 import { checkContract } from '../core/contract.ts'
 import {
@@ -145,9 +146,12 @@ async function sessionStart(
   const failure = await takeFailure()
   if (failure !== null) notes.push(`pulse not updated — ${failure}`)
   const warnings = noteLines(notes)
+  // For the developer only: the model has nothing to do about it.
+  const tooOld = await takeModNotice(io.env)
   const shown = [
     ...(banner !== null && input['source'] !== 'compact' ? [banner] : []),
     ...warnings,
+    ...(tooOld !== null ? [tooOld] : []),
   ]
   return {
     ...(shown.length > 0 ? { systemMessage: shown.join('\n') } : {}),
