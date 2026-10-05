@@ -189,8 +189,9 @@ error by 2.1.240 and 2.1.199, where the skills work as before (verified on
 2026-10-04). An older Claude Code is told so once per version and machine,
 in the session-start line: `rness: Claude Code 2.1.240 shows no rness band,
 status line or pane; 2.1.280 or later does — claude update`. The version
-comes from `AI_AGENT`, which Claude Code sets; the versions told are kept in
-`claude-code.json` beside the login (`~/.config/rness/` by default). Not in
+comes from `AI_AGENT`, which Claude Code sets (2.1.240 does); one that does
+not set it, or not in that form, is told nothing. The versions told are kept
+in `claude-code.json` beside the login (`~/.config/rness/` by default). Not in
 `claude -p` or another SDK session, where nobody would read it; not after a
 compaction. Versions between 2.1.240 and 2.1.280 were not tried: one of
 them that loads mods is told to update for nothing. Mods are early access
@@ -675,7 +676,8 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   model turn. `sync` writes three more files into `.claude/skills/rness/`,
   at the root and in each clone; an upgrade lists the clone's for commit.
   Claude Code without mods ignores them; older than 2.1.280, it is told once
-  per version, in the session-start line, to run `claude update`.
+  per version, in the session-start line, to run `claude update` (when it
+  sets `AI_AGENT`, as 2.1.240 does).
 - A fourth hook, `PreToolUse` on `Edit|Write`: an edit of the block of an
   `AGENTS.md` or `CLAUDE.md`, or of the plugin's files, is refused before
   it is written, naming the file to edit instead; so is an edit that would
