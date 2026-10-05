@@ -42,9 +42,10 @@ export const noteLines = (notes: readonly string[]): string[] =>
   notes.map((n) => `rness: ${n}`)
 
 /**
- * The status line entry (spec 0029 §3.3): the scope, the plans in progress,
- * and the notes to act on, counted. A note's indented detail lines do not
- * count.
+ * The status line entry (spec 0029 §3.3, plan 0042): the scope, the plans in
+ * progress, and the notes to act on, counted. A note's indented detail lines
+ * do not count. No leading `rness`: Claude Code draws the plugin's name
+ * before the entry.
  */
 export function statusLine(
   scope: string | null,
@@ -52,7 +53,7 @@ export function statusLine(
   notes: readonly string[]
 ): string {
   const acting = notes.filter((n) => !n.startsWith(' ')).length
-  return `rness · ${scope ?? 'global'} · ${inProgress.length} in progress${acting > 0 ? ` · ⚠ ${acting}` : ''}`
+  return `${scope ?? 'global'} · ${inProgress.length} in progress${acting > 0 ? ` · ⚠ ${acting}` : ''}`
 }
 
 /** What `rness status --json` prints: everything the mod draws, worded here. */

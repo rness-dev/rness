@@ -183,7 +183,7 @@ test('--json at the workspace root: the banner, the status line, the tabs', asyn
   )
   assert.deepEqual(json.inProgress, ['plans/0002-b.md'])
   assert.deepEqual(json.notes, [])
-  assert.equal(json.statusLine, 'rness · global · 1 in progress')
+  assert.equal(json.statusLine, 'global · 1 in progress')
   assert.deepEqual(
     json.tabs.map((tab: { name: string }) => tab.name),
     ['adr', 'specs', 'plans']
@@ -201,7 +201,7 @@ test('--json in a clone: the scope of the directory', async (t) => {
   const { json } = await snapshot(['--cwd', join(root, 'org', 'web')])
   assert.equal(json.scope, 'web')
   assert.match(json.banner, / · acme · scope web — /)
-  assert.equal(json.statusLine, 'rness · web · 1 in progress')
+  assert.equal(json.statusLine, 'web · 1 in progress')
 })
 
 test('--json: the notes of the safety net, counted on the status line', async (t) => {
@@ -216,7 +216,7 @@ test('--json: the notes of the safety net, counted on the status line', async (t
     'rness: 1 problem in the workspace context — run rness validate',
     'rness:   specs/0001-a.md: unknown status "Done" (expected Draft, Proposed, Approved, Implemented, Superseded, Rejected)',
   ])
-  assert.equal(json.statusLine, 'rness · global · 1 in progress · ⚠ 2')
+  assert.equal(json.statusLine, 'global · 1 in progress · ⚠ 2')
 })
 
 test('--json with a tab: that tab only; an unknown one is a usage error', async (t) => {

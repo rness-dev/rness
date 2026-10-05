@@ -14,7 +14,7 @@ const SNAPSHOT: RnessSnapshot = {
   workspace: 'acme',
   scope: null,
   banner: 'rness 0.19.0 · acme · global scope — 1 standard, 2 plans',
-  statusLine: 'rness · global · 1 in progress',
+  statusLine: 'global · 1 in progress',
   inProgress: ['plans/0002-b.md'],
   notes: [],
   tabs: [
@@ -123,7 +123,7 @@ test('a note brings the band back after the first prompt, with its lines', async
   cli(on, {
     ...SNAPSHOT,
     notes: ['rness: 1 problem in the workspace context — run rness validate'],
-    statusLine: 'rness · global · 1 in progress · ⚠ 1',
+    statusLine: 'global · 1 in progress · ⚠ 1',
   })
   await $.session.start(start)
   await clock.advance(0)
