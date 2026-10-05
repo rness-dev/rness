@@ -327,7 +327,7 @@ export const register: Register = (on) => {
               role="dismiss"
               onPress={() => $.ui.close({ id: PANE })}
             />,
-            ...(shown.pulse !== null
+            ...(shown.pulse != null
               ? [<Link key="pulse" href={shown.pulse} label="Agent Pulse" />]
               : []),
           ]}
@@ -338,13 +338,14 @@ export const register: Register = (on) => {
           </Box>
         ) : (
           // Every row: the engine scrolls the body (↑/↓, PgUp/PgDn, Home/End).
-          // Enter, or a click, on a row opens its document.
+          // Enter, or a click, on a row opens its document. Keyed by path: two
+          // documents of one date share an id.
           current.rows.map((row, i) => {
             const status = row.status ?? '?'
             return (
-              <Box key={`row-${row.id}`} flexDirection="row" gap={1}>
+              <Box key={`row-${row.path}`} flexDirection="row" gap={1}>
                 <Button
-                  key={`open-${row.id}`}
+                  key={`open-${row.path}`}
                   plain
                   label={cut(
                     `${row.id} ${row.title}`,
