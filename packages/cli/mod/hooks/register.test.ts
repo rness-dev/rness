@@ -1,5 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 
 import type { RnessSnapshot } from '../types'
 
@@ -66,15 +67,34 @@ function cli(on: On, snapshot: RnessSnapshot | null, looked: string[] = []) {
   return runs
 }
 
-/** What the engine answers beneath the plugins in a session; `status` collects the status line. */
-function engine(on: On, status: (string | undefined)[] = []) {
+/** The panes the module opened (their arguments) and closed (their ids). */
+interface Panes {
+  opened: unknown[]
+  closed: string[]
+}
+
+/** What the engine answers beneath the plugins in a session; `status` collects the status line, `panes` the opens and closes. */
+function engine(
+  on: On,
+  status: (string | undefined)[] = [],
+  panes: Panes = { opened: [], closed: [] }
+) {
   on('session.start', async () => ({ cwd: '/w' }))
   on('prompt.submit', async (_$, e) => ({ text: e.text }))
   on('ui.status', async (_$, e) => {
     status.push(e.text)
     return { value: undefined }
   })
-  on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+  on('ui.open', async (_$, e) => {
+    panes.opened.push(e)
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.close', async (_$, e) => {
+    panes.closed.push(e.id)
+    return { value: undefined }
+  })
+  // The ring moves where the chain leaves it.
+  on('ui.focus', async () => ({}))
   // The engine's own drawing: an empty Box where no plugin draws.
   on('ui.render', async () => ({
     type: 'Box' as const,
@@ -263,4 +283,77 @@ test('/rness:status in a session nobody watches (claude -p): the skill answers w
     args: '',
   } as never)
   expect(ran.text).toBe('the skill')
+})
+
+const PANE = {
+  plugin: 'rness',
+  component: 'Pane',
+  requestId: 'rness',
+  props: {} as never,
+} as const
+
+test('/rness:status takes the keyboard: the pane opens focused, and Esc closes it', async ($, on) => {
+  const clock = mock.clock(on)
+  const panes: Panes = { opened: [], closed: [] }
+  engine(on, [], panes)
+  cli(on, SNAPSHOT)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: '' } as never)
+  expect(panes.opened).toEqual([
+    expect.objectContaining({ id: 'rness', focus: true, closeOnEscape: true }),
+  ])
+})
+
+/** The person's arrow moving the pane's ring onto the button keyed `element`. */
+const arrow = ($: Engine, element: string) =>
+  $.ui.focus({
+    component: 'Pane',
+    requestId: 'rness',
+    plugin: 'rness',
+    element,
+    origin: { kind: 'person' },
+  })
+
+test('the arrows change the tab: the ring on a tab’s button shows that tab, with no press', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  for (const surface of SURFACES) {
+    const pane = await $.ui.mount({ ...PANE, surface })
+    expect((await pane.find({ key: 'tab-plans' }))?.props['autoFocus']).toBe(
+      true
+    )
+    expect(
+      (await pane.find({ key: 'tab-adr' }))?.props['autoFocus']
+    ).toBeUndefined()
+    await arrow($, 'tab-adr')
+    expect((await pane.find({ key: 'empty' }))?.text).toMatch(/Nothing/)
+    await arrow($, 'tab-plans')
+    expect((await pane.find({ key: 'row-0002' }))?.text).toMatch(/Second/)
+  }
+})
+
+test('q closes the pane: a plain Close button on q', async ($, on) => {
+  const clock = mock.clock(on)
+  const panes: Panes = { opened: [], closed: [] }
+  engine(on, [], panes)
+  cli(on, SNAPSHOT)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: '' } as never)
+  const drawn = await Promise.all(
+    SURFACES.map((surface) => $.ui.mount({ ...PANE, surface }))
+  )
+  for (const pane of drawn)
+    expect((await pane.find({ key: 'close' }))?.props).toMatchObject({
+      hotkey: 'q',
+      plain: true,
+      role: 'dismiss',
+    })
+  await drawn[0]?.press({ key: 'close' })
+  expect(panes.closed).toEqual(['rness'])
 })

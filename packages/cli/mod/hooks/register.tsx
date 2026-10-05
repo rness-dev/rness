@@ -121,15 +121,30 @@ export const register: Register = (on) => {
       (t) => t.name.toLowerCase() === wanted || t.label.toLowerCase() === wanted
     )
     await update($, tab, (i) => (index === -1 ? i : index))
+    // The keys of the full-screen `rness status` (plan 0042): the pane takes
+    // them, the arrows and Tab change the tab, Esc and `q` close it.
     const opened = await $.ui.open({
       id: PANE,
       title: `${shown.workspace} · status`,
+      focus: true,
+      closeOnEscape: true,
     })
     // A surface that places no pane (an older desktop): the tables instead.
     if (!opened.isPlaced) return next(e)
     return {
       text: 'The status of the workspace is open beside the conversation.',
     }
+  })
+
+  // The ring on a tab's button shows that tab: no Enter to press.
+  on('ui.focus', { requestId: PANE }, async ($, e, next) => {
+    const moved = await next(e)
+    const name = e.element?.startsWith('tab-') ? e.element.slice(4) : null
+    const shown = await read($, snapshot)
+    const index = shown?.tabs.findIndex((t) => t.name === name) ?? -1
+    if (moved.deny === undefined && index !== -1)
+      await update($, tab, () => index)
+    return moved
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -148,9 +163,18 @@ export const register: Register = (on) => {
               key={`tab-${t.name}`}
               label={`${t.label} (${t.rows.length})`}
               variant={i === at ? 'primary' : 'secondary'}
+              {...(i === at ? { autoFocus: true as const } : {})}
               onPress={() => update($, tab, () => i)}
             />
           ))}
+          <Button
+            key="close"
+            label="Close"
+            plain
+            hotkey="q"
+            role="dismiss"
+            onPress={() => $.ui.close({ id: PANE })}
+          />
         </Box>
         {current === undefined || current.rows.length === 0 ? (
           <Box key="empty">
