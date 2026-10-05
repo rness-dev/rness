@@ -691,7 +691,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.20.0 — the status pane opens a document; ↑/↓ select, Tab changes the tab; Agent Pulse's colours and links
 
 - `/rness:status` in Claude Code: each row's status in Agent Pulse's colour;
   ↑/↓ select a row, Tab and Shift+Tab change the tab; Enter, or a click, on
