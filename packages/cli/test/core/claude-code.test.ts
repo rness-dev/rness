@@ -29,7 +29,13 @@ test('the version is read from AI_AGENT; anything else is no version', () => {
     claudeCodeVersion({ AI_AGENT: 'claude-code_2-1-240_harness' }),
     '2.1.240'
   )
+  // What a command run by the model's Bash tool sees (2.1.289).
+  assert.equal(
+    claudeCodeVersion({ AI_AGENT: 'claude-code_2-1-289_agent' }),
+    '2.1.289'
+  )
   assert.equal(claudeCodeVersion({ AI_AGENT: 'claude-code_x_harness' }), null)
+  assert.equal(claudeCodeVersion({ AI_AGENT: 'claude-code_2-1-240' }), null)
   assert.equal(claudeCodeVersion({ AI_AGENT: 'codex_1-2-3_harness' }), null)
   assert.equal(claudeCodeVersion({ AI_AGENT: '' }), null)
   assert.equal(claudeCodeVersion({}), null)

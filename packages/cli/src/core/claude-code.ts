@@ -15,8 +15,10 @@ import { writeFileAtomic } from './fs.ts'
 export const MOD_FLOOR = '2.1.280'
 
 // Set by the running Claude Code itself, never inherited from a parent
-// session, unlike CLAUDE_CODE_VERSION (verified on 2.1.240 to 2.1.289).
-const AGENT = /^claude-code_(\d+)-(\d+)-(\d+)_harness$/
+// session, unlike CLAUDE_CODE_VERSION (verified on 2.1.240 to 2.1.289). The
+// suffix says who runs the command: `_harness` for a hook, `_agent` for the
+// model's Bash tool; the version is the same.
+const AGENT = /^claude-code_(\d+)-(\d+)-(\d+)_[a-z]+$/
 
 /** `2.1.240` from `AI_AGENT=claude-code_2-1-240_harness`; null for another agent or another form. */
 export function claudeCodeVersion(env: NodeJS.ProcessEnv): string | null {
