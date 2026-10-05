@@ -168,15 +168,18 @@ mod — in `hooks/hooks.json`, `hooks/register.tsx` and `types/index.d.ts`.
 It draws the workspace in the session, from `rness status --json` run by
 the pinned copy, and computes nothing itself:
 
-- **A band above the prompt**: the session-start banner, from the start of
-  the session to the first prompt, and again whenever a note needs action
-  (a pin the installed copy does not match, problems `validate` would
-  report), with those notes.
-- **The status line**: `rness · <scope> · <n> in progress`, with `⚠ <n>`
-  when there are notes.
+- **A band above the prompt**, whenever a note needs action (a pin the
+  installed copy does not match, problems `validate` would report): those
+  notes. The banner is not repeated there; the session-start line says it
+  once, in the transcript.
+- **The status line**: `<scope> · <n> in progress`, with `⚠ <n>` when
+  there are notes. Claude Code draws it after the plugin's name:
+  `⚠ rness: web · 1 in progress` (2.1.289).
 - **`/rness:status [tab]` as a pane** beside the conversation, a tab per
-  collection, a row per document; no model turn. In `claude -p`, or where
-  no pane can be placed, the skill's tables answer instead.
+  collection, a row per document; no model turn. The pane takes the
+  keyboard as it opens, with the keys of the full-screen `rness status`:
+  ←/→ and Tab change the tab, Esc and `q` close it. In `claude -p`, or
+  where no pane can be placed, the skill's tables answer instead.
 
 It reads the snapshot again at session start, after an `Edit` or `Write`
 of a file under `.rness/`, and at the end of each turn, off the turn's
@@ -670,10 +673,9 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 
 ## 0.19.0 — the plugin's mod; edits of generated files refused before they land
 
-- The Claude Code plugin gains a mod (see "The mod"): the session-start
-  banner kept above the prompt while there is something to act on, a status
-  line entry, and `/rness:status` as a pane beside the conversation, with no
-  model turn. `sync` writes three more files into `.claude/skills/rness/`,
+- The Claude Code plugin gains a mod (see "The mod"): the notes to act on
+  above the prompt, a status line entry, and `/rness:status` as a pane
+  beside the conversation, with no model turn, driven by the keyboard. `sync` writes three more files into `.claude/skills/rness/`,
   at the root and in each clone; an upgrade lists the clone's for commit.
   Claude Code without mods ignores them; older than 2.1.280, it is told once
   per version, in the session-start line, to run `claude update` (when it
