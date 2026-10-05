@@ -177,9 +177,12 @@ the pinned copy, and computes nothing itself:
   `⚠ rness: web · 1 in progress` (2.1.289).
 - **`/rness:status [tab]` as a pane** beside the conversation, a tab per
   collection, a row per document; no model turn. The pane takes the
-  keyboard as it opens, with the keys of the full-screen `rness status`:
-  ←/→ and Tab change the tab, Esc and `q` close it. In `claude -p`, or
-  where no pane can be placed, the skill's tables answer instead.
+  keyboard as it opens: a tab's digit (written before its name), or Tab
+  then Enter, shows that tab; ↑/↓, `PgUp`/`PgDn`, `Home`/`End` scroll, as
+  in the full-screen `rness status`; Esc and `q` close it, and so does Esc
+  at an empty prompt once the prompt has the keys back. A pane has no
+  ←/→ in Claude Code 2.1.289. In `claude -p`, or where no pane can be
+  placed, the skill's tables answer instead.
 
 It reads the snapshot again at session start, after an `Edit` or `Write`
 of a file under `.rness/`, and at the end of each turn, off the turn's
