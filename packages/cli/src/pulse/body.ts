@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 
 import { stripFrontMatter } from '../core/frontmatter.ts'
+import { blobUrl, issueUrl } from './urls.ts'
 
 /**
  * A document of `.rness/` as its issue's body (spec 0018 §3): the same
@@ -23,11 +24,6 @@ export interface BodySource {
   /** Every file of `.rness/`, by path. */
   files: ReadonlySet<string>
 }
-
-const blobUrl = (org: string, path: string): string =>
-  `https://github.com/${org}/.rness/blob/main/${encodeURI(path)}`
-const issueUrl = (org: string, number: number): string =>
-  `https://github.com/${org}/.rness/issues/${number}`
 
 /** A body's first line (spec 0018 §3.1); the whole body of an issue whose document is not written yet. */
 export function headerOf(path: string, org: string): string {

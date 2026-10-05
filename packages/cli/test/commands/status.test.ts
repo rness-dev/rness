@@ -193,7 +193,53 @@ test('--json at the workspace root: the banner, the status line, the tabs', asyn
     title: 'Second',
     status: 'In progress',
     path: 'plans/0002-b.md',
+    color: 'yellow',
+    link: null,
   })
+  assert.equal(json.pulse, null)
+})
+
+test('--json: each row in Agent Pulse’s colour; with a pulse, the board and each row’s item on it', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { pulse: 4, marketing: 7 },
+    files: {
+      'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
+      'specs/0003-c.md': doc('Reviewing', '0003 — Third'),
+      'specs/0002-b.md': '# 0002 — No front matter\n',
+      'plans/0002-b.md': doc('In progress', '0002 — Second'),
+      'plans/0001-a.md': doc('Draft', '0001 — First'),
+    },
+  })
+  const { code, json, err } = await snapshot(['--cwd', root])
+  assert.equal(code, 0, err)
+  assert.equal(json.pulse, 'https://github.com/orgs/acme/projects/4')
+  const colors = Object.fromEntries(
+    json.tabs.flatMap((tab: { rows: { path: string; color: string }[] }) =>
+      tab.rows.map((row) => [row.path, row.color])
+    )
+  )
+  assert.deepEqual(colors, {
+    'adr/0001-org.md': 'green',
+    'specs/0003-c.md': 'yellow',
+    'specs/0002-b.md': 'red',
+    'plans/0002-b.md': 'yellow',
+    'plans/0001-a.md': 'gray',
+  })
+  assert.equal(
+    json.tabs[2].rows[0].link,
+    'https://github.com/orgs/acme/projects/4?filterQuery=path%3A%22plans%2F0002-b.md%22'
+  )
+})
+
+test('--json without an organization: no pulse, no item, even with a project declared', async (t) => {
+  const root = await makeWorkspace(t, {
+    projects: { pulse: 4 },
+    files: { 'plans/0001-a.md': doc('Draft', '0001 — First') },
+  })
+  const { json } = await snapshot(['--cwd', root])
+  assert.equal(json.pulse, null)
+  assert.equal(json.tabs[2].rows[0].link, null)
 })
 
 test('--json in a clone: the scope of the directory', async (t) => {

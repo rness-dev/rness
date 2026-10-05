@@ -50,6 +50,7 @@ import {
   stillOpened,
   unwantedPaths,
 } from '../pulse/plan.ts'
+import { boardUrl } from '../pulse/urls.ts'
 import { reportError } from '../report.ts'
 import { loginCommand } from './login.ts'
 
@@ -68,9 +69,6 @@ export interface PulseOptions {
 const PROJECT_SCOPE = 'project'
 const NEEDS_LOGIN = 'the pulse needs a GitHub login: run rness login'
 const NEEDS_SCOPE = 'the pulse needs the project scope: run rness login'
-
-const boardUrl = (org: string, project: number): string =>
-  `https://github.com/orgs/${org}/projects/${project}`
 
 /**
  * GitHub's own words, named as GitHub's unless they already say so. rness's

@@ -18,6 +18,7 @@ const SNAPSHOT: RnessSnapshot = {
   statusLine: 'global · 1 in progress',
   inProgress: ['plans/0002-b.md'],
   notes: [],
+  pulse: 'https://github.com/orgs/acme/projects/4',
   tabs: [
     { name: 'adr', label: 'ADR', rows: [] },
     {
@@ -29,16 +30,47 @@ const SNAPSHOT: RnessSnapshot = {
           title: 'Second',
           status: 'In progress',
           path: 'plans/0002-b.md',
+          color: 'yellow',
+          link: 'https://github.com/orgs/acme/projects/4?filterQuery=path%3A%22plans%2F0002-b.md%22',
         },
         {
           id: '0001',
           title: 'First',
           status: 'Completed',
           path: 'plans/0001-a.md',
+          color: 'green',
+          link: 'https://github.com/orgs/acme/projects/4?filterQuery=path%3A%22plans%2F0001-a.md%22',
         },
       ],
     },
   ],
+}
+
+/** The one document of `.rness/` the tests open, as the file holds it. */
+const DOC = `---
+date: 2026-10-05
+status: In progress
+---
+
+# 0002 — Second
+
+A paragraph.
+
+\`\`\`sh
+rness status
+\`\`\`
+`
+
+/** What the mod reads from `.rness/`: `path` holds `text`; any other path is missing. */
+function files(on: On, text: string | null, path = '/.rness/plans/0002-b.md') {
+  const reads: string[] = []
+  on('fs.read', async (_$, e) => {
+    reads.push(e.path)
+    if (text === null || !e.path.endsWith(path))
+      throw new Error(`ENOENT: ${e.path}`)
+    return { value: text }
+  })
+  return reads
 }
 
 /** The pinned CLI as the module finds it; `runs` counts the status calls, `looked` the paths tried. */
@@ -232,7 +264,9 @@ test('/rness:status opens the pane on the tab named, without the skill', async (
       requestId: 'rness',
       props: {} as never,
     })
-    expect((await pane.find({ key: 'row-0002' }))?.text).toMatch(/Second/)
+    expect((await pane.find({ key: 'open-0002' }))?.props['label']).toMatch(
+      /Second/
+    )
     await pane.press({ key: 'tab-adr' })
     expect((await pane.find({ key: 'empty' }))?.text).toMatch(/Nothing/)
     // The tab is the session's, whatever draws it: back to Plans for the next surface.
@@ -315,7 +349,7 @@ const ring = ($: Engine, element: string) =>
     origin: { kind: 'person' },
   })
 
-test('a digit shows its tab: each tab’s button is on its number, written in its label', async ($, on) => {
+test('a digit shows its tab: each tab’s button is on its number, written in its label; the ring starts on the newest row', async ($, on) => {
   const clock = mock.clock(on)
   engine(on)
   cli(on, SNAPSHOT)
@@ -331,13 +365,18 @@ test('a digit shows its tab: each tab’s button is on its number, written in it
     expect((await pane.find({ key: 'tab-plans' }))?.props).toMatchObject({
       hotkey: '2',
       label: '2 Plans (2)',
-      autoFocus: true,
     })
-    expect(
-      (await pane.find({ key: 'tab-adr' }))?.props['autoFocus']
-    ).toBeUndefined()
+    for (const key of ['tab-adr', 'tab-plans', 'open-0001'])
+      expect((await pane.find({ key }))?.props['autoFocus']).toBeUndefined()
+    expect((await pane.find({ key: 'open-0002' }))?.props).toMatchObject({
+      plain: true,
+      autoFocus: true,
+      label: '0002 Second',
+    })
+    // An empty tab: the ring starts on its button.
     await pane.press({ key: 'tab-adr' })
     expect((await pane.find({ key: 'empty' }))?.text).toMatch(/Nothing/)
+    expect((await pane.find({ key: 'tab-adr' }))?.props['autoFocus']).toBe(true)
     await pane.press({ key: 'tab-plans' })
   }
 })
@@ -351,7 +390,9 @@ test('the ring moving alone never changes the tab: ↓ on a short tab moves the 
   await $.command.run({ command: 'rness:status', args: 'plans' } as never)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ring($, 'tab-adr')
-  expect((await pane.find({ key: 'row-0002' }))?.text).toMatch(/Second/)
+  expect((await pane.find({ key: 'open-0002' }))?.props['label']).toMatch(
+    /Second/
+  )
 })
 
 test('every row is drawn: the engine scrolls them, ↑/↓ as in the full-screen view', async ($, on) => {
@@ -359,7 +400,14 @@ test('every row is drawn: the engine scrolls them, ↑/↓ as in the full-screen
   engine(on)
   const rows = Array.from({ length: 60 }, (_, i) => {
     const id = String(i + 1).padStart(4, '0')
-    return { id, title: `Plan ${id}`, status: 'Draft', path: `plans/${id}.md` }
+    return {
+      id,
+      title: `Plan ${id}`,
+      status: 'Draft',
+      path: `plans/${id}.md`,
+      color: 'gray',
+      link: null,
+    }
   })
   cli(on, {
     ...SNAPSHOT,
@@ -369,7 +417,9 @@ test('every row is drawn: the engine scrolls them, ↑/↓ as in the full-screen
   await clock.advance(0)
   await $.command.run({ command: 'rness:status', args: '' } as never)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await pane.find({ key: 'row-0060' }))?.text).toMatch(/Plan 0060/)
+  expect((await pane.find({ key: 'open-0060' }))?.props['label']).toMatch(
+    /Plan 0060/
+  )
 })
 
 test('q closes the pane: a plain Close button on q', async ($, on) => {
@@ -391,4 +441,189 @@ test('q closes the pane: a plain Close button on q', async ($, on) => {
     })
   await drawn[0]?.press({ key: 'close' })
   expect(panes.closed).toEqual(['rness'])
+})
+
+test('each row’s status in Agent Pulse’s colour, as the CLI names it', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  for (const surface of SURFACES) {
+    const pane = await $.ui.mount({ ...PANE, surface })
+    const row = await pane.find({ key: 'row-0002' })
+    expect(row?.children).toContainEqual(
+      expect.objectContaining({
+        type: 'Text',
+        props: expect.objectContaining({ color: 'yellow' }),
+      })
+    )
+    const done = await pane.find({ key: 'row-0001' })
+    expect(done?.children).toContainEqual(
+      expect.objectContaining({
+        type: 'Text',
+        props: expect.objectContaining({ color: 'green' }),
+      })
+    )
+  }
+})
+
+test('Enter on a row opens its document: read from .rness/, drawn without its front matter, Agent Pulse a link; q brings the list back', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  const reads = files(on, DOC)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  for (const surface of SURFACES) {
+    const pane = await $.ui.mount({ ...PANE, surface })
+    await pane.press({ key: 'open-0002' })
+    expect(reads.at(-1)).toMatch(/\/\.rness\/plans\/0002-b\.md$/)
+    const drawn = await pane.findAll({ type: 'Markdown' })
+    expect(drawn).toHaveLength(1)
+    expect(drawn[0]?.props['text']).toBe(
+      '# 0002 — Second\n\nA paragraph.\n\n```sh\nrness status\n```\n'
+    )
+    expect((await pane.find({ key: 'head' }))?.text).toMatch(
+      /0002 Second.*In progress/s
+    )
+    expect((await pane.find({ type: 'Link' }))?.props).toMatchObject({
+      href: SNAPSHOT.tabs[1]?.rows[0]?.link,
+      label: 'Agent Pulse',
+    })
+    expect((await pane.find({ key: 'back' }))?.props).toMatchObject({
+      hotkey: 'q',
+      plain: true,
+      autoFocus: true,
+    })
+    expect(await pane.find({ key: 'open-0002' })).toBeUndefined()
+    await pane.press({ key: 'back' })
+    expect((await pane.find({ key: 'open-0002' }))?.props['label']).toBe(
+      '0002 Second'
+    )
+    expect(await pane.findAll({ type: 'Markdown' })).toHaveLength(0)
+  }
+})
+
+test('the list links to the board', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  files(on, DOC)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ type: 'Link' }))?.props).toMatchObject({
+    href: SNAPSHOT.pulse,
+    label: 'Agent Pulse',
+  })
+})
+
+test('no pulse declared: no link in the list nor on a document', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, {
+    ...SNAPSHOT,
+    pulse: null,
+    tabs: SNAPSHOT.tabs.map((t) => ({
+      ...t,
+      rows: t.rows.map((r) => ({ ...r, link: null })),
+    })),
+  })
+  files(on, DOC)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.findAll({ type: 'Link' })).toHaveLength(0)
+  await pane.press({ key: 'open-0002' })
+  expect(await pane.findAll({ type: 'Link' })).toHaveLength(0)
+  expect(await pane.findAll({ type: 'Markdown' })).toHaveLength(1)
+})
+
+test('a document that cannot be read says so, and q still brings the list back', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  files(on, null)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'open-0001' })
+  expect((await pane.find({ key: 'unread' }))?.text).toMatch(
+    /plans\/0001-a\.md cannot be read/
+  )
+  expect(await pane.findAll({ type: 'Markdown' })).toHaveLength(0)
+  await pane.press({ key: 'back' })
+  expect(await pane.find({ key: 'open-0001' })).toBeDefined()
+})
+
+test('a long document is drawn in pieces a Markdown can take, cut at blank lines, never inside a code fence', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  // 60 paragraphs of 400 characters, then a fenced block of 30 lines of 100.
+  const paragraphs = Array.from(
+    { length: 60 },
+    (_, i) => `${String(i).padStart(3, '0')} ${'x'.repeat(396)}`
+  )
+  const fence = `\`\`\`\n${Array.from({ length: 30 }, () => 'y'.repeat(100)).join('\n\n')}\n\`\`\``
+  files(on, [...paragraphs, fence, 'The end.'].join('\n\n'))
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'open-0002' })
+  const drawn = await pane.findAll({ type: 'Markdown' })
+  const texts = drawn.map((m) => String(m.props['text']))
+  expect(texts.length).toBeGreaterThan(2)
+  for (const text of texts) expect(text.length).toBeLessThanOrEqual(10000)
+  // Every paragraph whole, in order; the fence in one piece.
+  expect(texts.join('\n\n')).toBe(
+    [...paragraphs, fence, 'The end.'].join('\n\n')
+  )
+  expect(texts.filter((t) => t.includes('```'))).toHaveLength(1)
+})
+
+test('/rness:status typed while a document shows brings the list back', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  files(on, DOC)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'open-0002' })
+  expect(await pane.findAll({ type: 'Markdown' })).toHaveLength(1)
+  await $.command.run({ command: 'rness:status', args: '' } as never)
+  expect(await pane.find({ key: 'open-0002' })).toBeDefined()
+})
+
+test('a refresh reads the open document again: an edit of it shows', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  let text = DOC
+  on('fs.read', async () => ({ value: text }))
+  on('tool.call', async () => ({ result: 'ok' }) as never)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'open-0002' })
+  text = `${DOC}\nA line added.\n`
+  await $.tool.call({
+    tool: 'Edit',
+    file_path: '/w/.rness/plans/0002-b.md',
+    old_string: 'a',
+    new_string: 'b',
+  } as never)
+  await clock.advance(0)
+  const drawn = await pane.findAll({ type: 'Markdown' })
+  expect(drawn[0]?.props['text']).toMatch(/A line added\.\n$/)
 })
