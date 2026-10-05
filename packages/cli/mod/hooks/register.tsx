@@ -15,6 +15,7 @@ import type { RnessRow, RnessSnapshot } from '../types'
 
 const snapshot = atom({ plugin: 'rness', key: 'snapshot' } as const, null)
 const tab = atom({ plugin: 'rness', key: 'tab' } as const, 0)
+const selected = atom({ plugin: 'rness', key: 'selected' } as const, 0)
 const interactive = atom(
   { plugin: 'rness', key: 'interactive' } as const,
   false
@@ -50,6 +51,33 @@ const PIECE = 9000
 const projectOf = (root: string): string =>
   root.replace(/[\\/]\.claude[\\/]skills[\\/]rness[\\/]?$/, '')
 
+const clamp = (n: number, low: number, high: number): number =>
+  Math.min(Math.max(n, low), high)
+
+/**
+ * Blank lines under the rows, so that the body is always taller than the
+ * pane: in a pane ↑/↓ are scroll keys (`pane:scrollUp`/`Down` on 2.1.289),
+ * which raise `ui.scroll` — the selection's keys here — only while there is
+ * something to scroll; otherwise they walk the buttons.
+ */
+const padOf = (bodyRows: number, rows: number): number =>
+  Math.max(0, bodyRows + 1 - (1 + rows))
+
+// The values as the state holds them now, read outside a drawing: each
+// reference a literal, so that the engine can list what the module reads.
+const SNAPSHOT = { plugin: 'rness', key: 'snapshot' } as const
+const TAB = { plugin: 'rness', key: 'tab' } as const
+const SELECTED = { plugin: 'rness', key: 'selected' } as const
+const OPEN = { plugin: 'rness', key: 'open' } as const
+const INTERACTIVE = { plugin: 'rness', key: 'interactive' } as const
+const snapshotNow = async ($: EngineInterface) =>
+  (await $.state.get(SNAPSHOT)).value ?? null
+const tabNow = async ($: EngineInterface) => (await $.state.get(TAB)).value ?? 0
+const selectedNow = async ($: EngineInterface) =>
+  (await $.state.get(SELECTED)).value ?? 0
+const openNow = async ($: EngineInterface) =>
+  (await $.state.get(OPEN)).value ?? null
+
 /**
  * Reads the snapshot from the pinned CLI and keeps it; the status line
  * follows, and so does the document open in the pane, read again. No
@@ -72,8 +100,8 @@ async function refresh($: EngineInterface): Promise<RnessSnapshot | null> {
   }
   await update($, snapshot, () => next)
   $.ui.status(next?.statusLine)
-  const opened = (await $.state.get({ plugin: 'rness', key: 'open' })).value
-  if (opened !== null && opened !== undefined) await show($, opened.path)
+  const opened = await openNow($)
+  if (opened !== null) await show($, opened.path)
   return next
 }
 
@@ -91,6 +119,33 @@ async function show($: EngineInterface, path: string): Promise<void> {
     text = null
   }
   await update($, open, () => ({ path, text }))
+}
+
+/** The ring onto the row at `path`; a site without the keys refuses, and that is fine. */
+const ringOn = ($: EngineInterface, path: string): void => {
+  void $.ui.focus({ requestId: PANE, key: `open-${path}` }).catch(() => {})
+}
+
+/**
+ * Shows tab `i`: its newest row selected, the pane at its top, the ring on
+ * that row — from a digit, a click, or Tab and Shift+Tab (`cycleTab`).
+ */
+async function showTab($: EngineInterface, i: number): Promise<void> {
+  const shown = await snapshotNow($)
+  await update($, tab, () => i)
+  await update($, selected, () => 0)
+  void $.ui.scroll({ in: PANE, to: 'start' }).catch(() => {})
+  const first = shown?.tabs[i]?.rows[0]
+  if (first !== undefined) ringOn($, first.path)
+}
+
+/** The next tab (`+1`) or the previous (`-1`), wrapping. */
+async function cycleTab($: EngineInterface, by: 1 | -1): Promise<void> {
+  const shown = await snapshotNow($)
+  const n = shown?.tabs.length ?? 0
+  if (n === 0) return
+  const at = await tabNow($)
+  await showTab($, (at + by + n) % n)
 }
 
 /** The row of the document at `path`, whichever tab lists it. */
@@ -202,23 +257,21 @@ export const register: Register = (on) => {
   // skill's tables answer it.
   on('command.run', { command: 'rness:status' }, async ($, e, next) => {
     // Nobody to see a pane (`claude -p`): the tables are the answer.
-    if (!(await $.state.get({ plugin: 'rness', key: 'interactive' })).value)
-      return next(e)
-    const shown =
-      (await $.state.get({ plugin: 'rness', key: 'snapshot' })).value ??
-      (await refresh($))
-    if (shown === null || shown === undefined) return next(e)
+    if (!(await $.state.get(INTERACTIVE)).value) return next(e)
+    const shown = (await snapshotNow($)) ?? (await refresh($))
+    if (shown === null) return next(e)
     const wanted = e.args.trim().toLowerCase()
     const index = shown.tabs.findIndex(
       (t) => t.name.toLowerCase() === wanted || t.label.toLowerCase() === wanted
     )
-    await update($, tab, (i) => (index === -1 ? i : index))
-    // The command asks for the list, whatever the pane showed before.
+    if (index !== -1) await update($, tab, () => index)
+    // The command asks for the list, from its first row, whatever the pane
+    // showed before.
+    await update($, selected, () => 0)
     await update($, open, () => null)
-    // The pane takes the keys (plan 0042): a digit or Tab then Enter shows a
-    // tab, Enter on a row opens its document, ↑/↓ scroll as in the
-    // full-screen `rness status`, Esc and `q` close. A pane binds no ←/→
-    // (Claude Code 2.1.289).
+    // The pane takes the keys (plans 0042, 0043): ↑/↓ select a row, Enter
+    // opens it, Tab and Shift+Tab change the tab, a digit too, Esc and `q`
+    // close. A pane binds no ←/→ (Claude Code 2.1.289).
     const opened = await $.ui.open({
       id: PANE,
       title: `${shown.workspace} · status`,
@@ -232,14 +285,60 @@ export const register: Register = (on) => {
     }
   })
 
-  // The row the ring lands on is asked into view: Tab walks the rows of a
-  // tab too long for the pane, while ↑/↓ scroll it. A scroll the engine
-  // refuses, or cannot place (a test), changes nothing.
+  // ↑/↓, PgUp/PgDn, Home/End are the pane's scroll keys (2.1.289): here they
+  // move the selection, and the window follows it, the selected row kept
+  // near the middle. A document open scrolls as the engine scrolls.
+  on(
+    'ui.scroll',
+    { component: 'Pane', requestId: PANE },
+    async ($, e, next) => {
+      if (e.origin.kind !== 'person' || e.by === 0) return next(e)
+      const shown = await snapshotNow($)
+      if (shown === null || (await openNow($)) !== null) return next(e)
+      const rows = shown.tabs[await tabNow($)]?.rows ?? []
+      if (rows.length === 0) return next(e)
+      const last = rows.length - 1
+      const was = clamp(await selectedNow($), 0, last)
+      // An arrow is a row, Home and End are `contentRows`, a page key `bodyRows`.
+      const step =
+        Math.abs(e.by) <= 1
+          ? e.by
+          : Math.abs(e.by) >= e.contentRows
+            ? Math.sign(e.by) * rows.length
+            : Math.sign(e.by) * Math.max(1, e.bodyRows - 1)
+      const to = clamp(was + step, 0, last)
+      await update($, selected, () => to)
+      ringOn($, rows[to]!.path)
+      const header =
+        e.contentRows - rows.length - padOf(e.bodyRows, rows.length)
+      const half = Math.floor((e.bodyRows - 1) / 2)
+      const offset = clamp(
+        header + to - half,
+        0,
+        Math.max(0, e.contentRows - e.bodyRows)
+      )
+      return next({ ...e, offset })
+    }
+  )
+
+  // Tab and Shift+Tab walk the ring: from the selected row they land on the
+  // `›` and `‹` beside it, drawn for that. The ring stays on the row and the
+  // tab changes, as Tab does in the full-screen `rness status`. A click on
+  // another row makes it the selection; the press that follows opens it.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
-    const ran = await next(e)
-    if (e.origin.kind === 'person' && e.element !== undefined)
-      void $.ui.scroll({ to: { key: e.element }, in: PANE }).catch(() => {})
-    return ran
+    if (e.origin.kind !== 'person' || e.element === undefined) return next(e)
+    if (e.element === 'tab-next' || e.element === 'tab-prev') {
+      await cycleTab($, e.element === 'tab-next' ? 1 : -1)
+      return {}
+    }
+    if (e.element.startsWith('open-')) {
+      const path = e.element.slice('open-'.length)
+      const shown = await snapshotNow($)
+      const rows = shown?.tabs[await tabNow($)]?.rows ?? []
+      const i = rows.findIndex((row) => row.path === path)
+      if (i !== -1) await update($, selected, () => i)
+    }
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -297,12 +396,12 @@ export const register: Register = (on) => {
       )
     }
 
-    const at = Math.min(await read($, tab), Math.max(0, shown.tabs.length - 1))
+    const at = clamp(await read($, tab), 0, Math.max(0, shown.tabs.length - 1))
     const current = shown.tabs[at]
+    const rows = current?.rows ?? []
+    const sel = clamp(await read($, selected), 0, Math.max(0, rows.length - 1))
     const width = e.props.bodyColumns ?? 80
-    // The ring starts on the newest document, for Enter to open it; on the
-    // tab's button when the tab is empty.
-    const first = current !== undefined && current.rows.length > 0
+    const pad = padOf(e.props.scroll?.bodyRows ?? 0, rows.length)
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" gap={1} flexWrap="wrap">
@@ -310,13 +409,14 @@ export const register: Register = (on) => {
             ...shown.tabs.map((t, i) => (
               <Button
                 key={`tab-${t.name}`}
-                // Where the body has nothing to scroll, ↑/↓ walk these buttons:
-                // only a press (Enter, a digit, a click) changes the tab.
                 label={`${i < 9 ? `${i + 1} ` : ''}${t.label} (${t.rows.length})`}
                 {...(i < 9 ? { hotkey: String(i + 1) } : {})}
                 variant={i === at ? 'primary' : 'secondary'}
-                {...(i === at && !first ? { autoFocus: true as const } : {})}
-                onPress={() => update($, tab, () => i)}
+                // The ring starts here only when the tab has no row.
+                {...(i === at && rows.length === 0
+                  ? { autoFocus: true as const }
+                  : {})}
+                onPress={() => void showTab($, i)}
               />
             )),
             <Button
@@ -330,35 +430,69 @@ export const register: Register = (on) => {
             ...(shown.pulse != null
               ? [<Link key="pulse" href={shown.pulse} label="Agent Pulse" />]
               : []),
+            <Text key="keys" dimColor>
+              ⇥ tab · ↑↓ row · ⏎ open
+            </Text>,
           ]}
         </Box>
-        {current === undefined || current.rows.length === 0 ? (
+        {rows.length === 0 ? (
           <Box key="empty">
             <Text dimColor>Nothing here yet.</Text>
           </Box>
         ) : (
-          // Every row: the engine scrolls the body (↑/↓, PgUp/PgDn, Home/End).
-          // Enter, or a click, on a row opens its document. Keyed by path: two
-          // documents of one date share an id.
-          current.rows.map((row, i) => {
+          // Every row, keyed by path (two documents of one date share an
+          // id): Enter or a click opens it. The selected row carries the
+          // ring and, beside it, `‹` and `›`: where Shift+Tab and Tab land.
+          rows.map((row, i) => {
             const status = row.status ?? '?'
+            const isSel = i === sel
+            const label = cut(
+              `${row.id} ${row.title}`,
+              width - status.length - (isSel ? 5 : 3)
+            )
             return (
               <Box key={`row-${row.path}`} flexDirection="row" gap={1}>
-                <Button
-                  key={`open-${row.path}`}
-                  plain
-                  label={cut(
-                    `${row.id} ${row.title}`,
-                    width - status.length - 1
-                  )}
-                  {...(i === 0 ? { autoFocus: true as const } : {})}
-                  onPress={() => void show($, row.path)}
-                />
-                <Text color={COLORS[row.color]}>{status}</Text>
+                {[
+                  isSel ? (
+                    <Button
+                      key="tab-prev"
+                      plain
+                      dimColor
+                      label="‹"
+                      onPress={() => void cycleTab($, -1)}
+                    />
+                  ) : (
+                    <Text> </Text>
+                  ),
+                  <Button
+                    key={`open-${row.path}`}
+                    plain
+                    label={label}
+                    {...(isSel ? { autoFocus: true as const } : {})}
+                    onPress={() => void show($, row.path)}
+                  />,
+                  <Text color={COLORS[row.color]}>{status}</Text>,
+                  ...(isSel
+                    ? [
+                        <Button
+                          key="tab-next"
+                          plain
+                          dimColor
+                          label="›"
+                          onPress={() => void cycleTab($, 1)}
+                        />,
+                      ]
+                    : []),
+                ]}
               </Box>
             )
           })
         )}
+        {Array.from({ length: pad }, (_, i) => (
+          <Box key={`pad-${i}`}>
+            <Text> </Text>
+          </Box>
+        ))}
       </Box>
     )
   })

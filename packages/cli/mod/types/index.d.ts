@@ -38,6 +38,8 @@ declare module 'claude-code' {
       snapshot: RnessSnapshot | null
       /** The pane's tab, by its index in the snapshot. */
       tab: number
+      /** The selected row of that tab, by its index: ↑/↓ move it, Enter opens it. */
+      selected: number
       /** Whether someone watches the session: no pane for `claude -p`. */
       interactive: boolean
       /** The document open in the pane; null while the list shows. */

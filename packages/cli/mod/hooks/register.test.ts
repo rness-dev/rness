@@ -105,11 +105,13 @@ interface Panes {
   closed: string[]
 }
 
-/** What the engine answers beneath the plugins in a session; `status` collects the status line, `panes` the opens and closes. */
+/** What the engine answers beneath the plugins in a session; `status` collects the status line, `panes` the opens and closes, `scrolled` the scroll events as they reach the bottom, `focused` the focus events that do. */
 function engine(
   on: On,
   status: (string | undefined)[] = [],
-  panes: Panes = { opened: [], closed: [] }
+  panes: Panes = { opened: [], closed: [] },
+  scrolled: { offset: number; by: number }[] = [],
+  focused: (string | undefined)[] = []
 ) {
   on('session.start', async () => ({ cwd: '/w' }))
   on('prompt.submit', async (_$, e) => ({ text: e.text }))
@@ -125,8 +127,15 @@ function engine(
     panes.closed.push(e.id)
     return { value: undefined }
   })
-  // The ring moves where the chain leaves it.
-  on('ui.focus', async () => ({}))
+  // The ring moves where the chain leaves it; the window too.
+  on('ui.focus', async (_$, e) => {
+    focused.push(e.element)
+    return {}
+  })
+  on('ui.scroll', async (_$, e) => {
+    scrolled.push({ offset: e.offset, by: e.by })
+    return {}
+  })
   // The engine's own drawing: an empty Box where no plugin draws.
   on('ui.render', async () => ({
     type: 'Box' as const,
@@ -663,11 +672,216 @@ test('two documents of one date: each row opens its own', async ($, on) => {
   await clock.advance(0)
   await $.command.run({ command: 'rness:status', args: '' } as never)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await pane.findAll({ type: 'Button' })).toHaveLength(4)
+  // One tab, Close, two rows, and `‹` `›` on the selected one.
+  expect(await pane.findAll({ type: 'Button' })).toHaveLength(6)
   await pane.press({ key: 'open-marketing/2026-10-03-thread.md' })
   expect(reads.at(-1)).toMatch(/\/marketing\/2026-10-03-thread\.md$/)
   expect((await pane.find({ key: 'head' }))?.text).toMatch(/2026-10-03 Thread/)
   expect((await pane.findAll({ type: 'Markdown' }))[0]?.props['text']).toBe(
     '# Thread\n'
   )
+})
+
+/** The person's scroll key on the pane: ↑/↓ `by` ±1, a page key `bodyRows`, Home/End `contentRows`. */
+const scrollBy = ($: Engine, by: number, bodyRows = 10, contentRows = 60) =>
+  $.ui.scroll({
+    component: 'Pane',
+    requestId: 'rness',
+    offset: 0,
+    by,
+    bodyRows,
+    contentRows,
+    origin: { kind: 'person' },
+  } as never)
+
+/** Every element under `children`, arrays flattened, by its key. */
+function keysUnder(children: unknown[]): string[] {
+  return children.flatMap((child) => {
+    if (Array.isArray(child)) return keysUnder(child)
+    if (typeof child !== 'object' || child === null) return []
+    const el = child as { key?: string; props?: { key?: string } }
+    return [el.key ?? el.props?.key].filter((k): k is string => k !== undefined)
+  })
+}
+
+/** The row carrying `‹` and `›`, the selection: the Box holding `tab-next`. */
+async function selectedRow(pane: {
+  findAll: (q: {
+    type?: string
+    key?: string
+  }) => Promise<{ key: string | undefined; children: unknown[] }[]>
+}) {
+  const rows = await pane.findAll({ type: 'Box' })
+  return rows.find((box) => keysUnder(box.children).includes('tab-next'))?.key
+}
+
+test('↑/↓ move the selection, not the ring walk: the row with ‹ › and the autoFocus follow; the window keeps it in view', async ($, on) => {
+  const clock = mock.clock(on)
+  const scrolled: { offset: number; by: number }[] = []
+  engine(on, [], { opened: [], closed: [] }, scrolled)
+  const rows = Array.from({ length: 60 }, (_, i) => {
+    const id = String(i + 1).padStart(4, '0')
+    return {
+      id,
+      title: `Plan ${id}`,
+      status: 'Draft',
+      path: `plans/${id}.md`,
+      color: 'gray',
+      link: null,
+    }
+  })
+  cli(on, { ...SNAPSHOT, tabs: [{ name: 'plans', label: 'Plans', rows }] })
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: '' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await selectedRow(pane)).toBe('row-plans/0001.md')
+  await scrollBy($, 1, 10, 61)
+  expect(await selectedRow(pane)).toBe('row-plans/0002.md')
+  expect(
+    (await pane.find({ key: 'open-plans/0002.md' }))?.props['autoFocus']
+  ).toBe(true)
+  expect(
+    (await pane.find({ key: 'open-plans/0001.md' }))?.props['autoFocus']
+  ).toBeUndefined()
+  // Near the top, the window stays at the top: the tab bar shows.
+  expect(scrolled.at(-1)).toEqual({ offset: 0, by: 1 })
+  // A page down: `bodyRows` rows; the window follows, the row near the middle.
+  await scrollBy($, 10, 10, 61)
+  expect(await selectedRow(pane)).toBe('row-plans/0011.md')
+  expect(scrolled.at(-1)?.offset).toBe(1 + 10 - 4)
+  // End, then Home.
+  await scrollBy($, 61, 10, 61)
+  expect(await selectedRow(pane)).toBe('row-plans/0060.md')
+  expect(scrolled.at(-1)?.offset).toBe(61 - 10)
+  await scrollBy($, -61, 10, 61)
+  expect(await selectedRow(pane)).toBe('row-plans/0001.md')
+  expect(scrolled.at(-1)?.offset).toBe(0)
+  // ↑ at the first row stays there, and the window too.
+  await scrollBy($, -1, 10, 61)
+  expect(await selectedRow(pane)).toBe('row-plans/0001.md')
+})
+
+test('Enter opens the selected row: after ↓, the second document', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  const reads = files(on, '# First\n', '/.rness/plans/0001-a.md')
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await scrollBy($, 1, 10, 12)
+  await pane.press({ key: 'open-plans/0001-a.md' })
+  expect(reads.at(-1)).toMatch(/\/plans\/0001-a\.md$/)
+  expect((await pane.find({ key: 'head' }))?.text).toMatch(/0001 First/)
+})
+
+test('Tab changes the tab, the ring stays on the row: landing on › is the next tab, on ‹ the previous, wrapping; the selection starts over', async ($, on) => {
+  const clock = mock.clock(on)
+  const focused: (string | undefined)[] = []
+  engine(on, [], { opened: [], closed: [] }, [], focused)
+  cli(on, {
+    ...SNAPSHOT,
+    tabs: [
+      ...SNAPSHOT.tabs,
+      {
+        name: 'specs',
+        label: 'Specs',
+        rows: [
+          {
+            id: '0001',
+            title: 'A spec',
+            status: 'Draft',
+            path: 'specs/0001-a.md',
+            color: 'gray',
+            link: null,
+          },
+        ],
+      },
+    ],
+  })
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await scrollBy($, 1, 10, 12)
+  expect(await selectedRow(pane)).toBe('row-plans/0001-a.md')
+  const before = focused.length
+  await ring($, 'tab-next')
+  // Kept: the move never reached the engine.
+  expect(focused.length).toBe(before)
+  expect((await pane.find({ key: 'tab-specs' }))?.props['variant']).toBe(
+    'primary'
+  )
+  expect(await selectedRow(pane)).toBe('row-specs/0001-a.md')
+  await ring($, 'tab-next')
+  expect((await pane.find({ key: 'tab-adr' }))?.props['variant']).toBe(
+    'primary'
+  )
+  expect((await pane.find({ key: 'empty' }))?.text).toMatch(/Nothing/)
+  expect((await pane.find({ key: 'tab-adr' }))?.props['autoFocus']).toBe(true)
+  await ring($, 'tab-prev')
+  expect((await pane.find({ key: 'tab-specs' }))?.props['variant']).toBe(
+    'primary'
+  )
+  await ring($, 'tab-prev')
+  expect((await pane.find({ key: 'tab-plans' }))?.props['variant']).toBe(
+    'primary'
+  )
+  expect(await selectedRow(pane)).toBe('row-plans/0002-b.md')
+})
+
+test('a click on another row selects it, and the ring goes there', async ($, on) => {
+  const clock = mock.clock(on)
+  const focused: (string | undefined)[] = []
+  engine(on, [], { opened: [], closed: [] }, [], focused)
+  cli(on, SNAPSHOT)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ring($, 'open-plans/0001-a.md')
+  expect(focused.at(-1)).toBe('open-plans/0001-a.md')
+  expect(await selectedRow(pane)).toBe('row-plans/0001-a.md')
+})
+
+test('the body is always taller than the pane: blank lines under a short tab, none under a long one', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, SNAPSHOT)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const short = await $.ui.mount({
+    ...PANE,
+    surface: 'terminal',
+    props: { scroll: { bodyRows: 10, offset: 0 } } as never,
+  })
+  // 10 body rows, the tab bar and 2 rows: 8 blank lines make 11.
+  expect(await short.findAll({ key: 'pad-7' })).toHaveLength(1)
+  expect(await short.findAll({ key: 'pad-8' })).toHaveLength(0)
+  const tall = await $.ui.mount({
+    ...PANE,
+    surface: 'desktop',
+    props: { scroll: { bodyRows: 2, offset: 0 } } as never,
+  })
+  expect(await tall.findAll({ key: 'pad-0' })).toHaveLength(0)
+})
+
+test('a document open: the scroll keys scroll it, the selection stays', async ($, on) => {
+  const clock = mock.clock(on)
+  const scrolled: { offset: number; by: number }[] = []
+  engine(on, [], { opened: [], closed: [] }, scrolled)
+  cli(on, SNAPSHOT)
+  files(on, DOC)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'open-plans/0002-b.md' })
+  await scrollBy($, 1, 10, 40)
+  expect(scrolled.at(-1)).toEqual({ offset: 0, by: 1 })
+  await pane.press({ key: 'back' })
+  expect(await selectedRow(pane)).toBe('row-plans/0002-b.md')
 })

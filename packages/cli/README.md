@@ -184,15 +184,17 @@ the pinned copy, and computes nothing itself:
   gives it (yellow in progress, green done, red blocked, gray draft or
   abandoned, blue proposed, purple approved — the board's purple is the
   terminal's magenta); no model turn. The pane takes the keyboard as it
-  opens, the ring on the newest row: a tab's digit (written before its
-  name), or Tab then Enter, shows that tab; Tab and Shift+Tab walk the
-  rows; ↑/↓, `PgUp`/`PgDn`, `Home`/`End` scroll, as in the full-screen
-  `rness status`; Esc and `q` close it, and
-  so does Esc at an empty prompt once the prompt has the keys back. A pane
-  has no ←/→ in Claude Code 2.1.289. **Enter, or a click, on a row shows
-  the document** in the pane, read from `.rness/` without its front
-  matter, as the board's card shows it; `q` brings the list back, Esc
-  still closes. An edit of the document shows at the next refresh. **Agent
+  opens, on the newest row, with the keys of the full-screen view:
+  **↑/↓ select a row**, `PgUp`/`PgDn` a page away, `Home`/`End`
+  the ends, the window following the selection; **Tab and Shift+Tab
+  change the tab**, wrapping, and so does a tab's digit (written before
+  its name); **Enter, or a click, on a row shows the document**; Esc and
+  `q` close the pane, and so does Esc at an empty prompt once the prompt
+  has the keys back. The selected row is drawn between `‹` and `›`, which
+  a click presses too. A pane has no ←/→ in Claude Code 2.1.289. The
+  document is read from `.rness/` without its front matter, as the
+  board's card shows it; `q` brings the list back, Esc still closes. An
+  edit of the document shows at the next refresh. **Agent
   Pulse is a link** when the workspace declares a pulse: the board from the
   list, the document's item (the board filtered on its path) from the
   document. The terminal opens it as it opens any hyperlink (cmd+click on
@@ -692,10 +694,11 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 ## Unreleased
 
 - `/rness:status` in Claude Code: each row's status in Agent Pulse's colour;
-  Enter, or a click, on a row shows the document in the pane and `q` brings
-  the list back; Agent Pulse is a link — the board from the list, the
-  document's item from the document. `rness status --json` prints each
-  row's `color` and `link`, and the board as `pulse`.
+  ↑/↓ select a row, Tab and Shift+Tab change the tab; Enter, or a click, on
+  a row shows the document in the pane and `q` brings the list back; Agent
+  Pulse is a link — the board from the list, the document's item from the
+  document. `rness status --json` prints each row's `color` and `link`, and
+  the board as `pulse`.
 
 ## 0.19.0 — the plugin's mod; edits of generated files refused before they land
 
