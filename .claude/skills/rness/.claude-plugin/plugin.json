@@ -16,5 +16,6 @@
     "adr",
     "specification",
     "plan"
-  ]
+  ],
+  "types": "./types/index.d.ts"
 }
