@@ -146,10 +146,11 @@ async function sessionStart(
   const failure = await takeFailure()
   if (failure !== null) notes.push(`pulse not updated — ${failure}`)
   const warnings = noteLines(notes)
+  const compact = input['source'] === 'compact'
   // For the developer only: the model has nothing to do about it.
-  const tooOld = await takeModNotice(io.env)
+  const tooOld = compact ? null : await takeModNotice(io.env)
   const shown = [
-    ...(banner !== null && input['source'] !== 'compact' ? [banner] : []),
+    ...(banner !== null && !compact ? [banner] : []),
     ...warnings,
     ...(tooOld !== null ? [tooOld] : []),
   ]

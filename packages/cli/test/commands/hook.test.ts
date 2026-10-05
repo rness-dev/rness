@@ -538,6 +538,20 @@ test('a Claude Code too old for the mod: the line for the developer, after the b
   assert.doesNotMatch(second.systemMessage, /Claude Code/)
 })
 
+test('after a compaction, a Claude Code too old for the mod is not told: the next start tells it', async (t) => {
+  const root = await workspace(t)
+  await noneTold()
+  const env = { AI_AGENT: 'claude-code_2-1-240_harness' }
+  const compact = JSON.parse(
+    (await hook('session-start', { cwd: root, source: 'compact' }, env)).out
+  )
+  assert.equal(compact.systemMessage, undefined)
+  const start = JSON.parse(
+    (await hook('session-start', { cwd: root, source: 'startup' }, env)).out
+  )
+  assert.deepEqual(start.systemMessage.split('\n').slice(1), [TOO_OLD])
+})
+
 test('a Claude Code at or above the floor, or no AI_AGENT: no line', async (t) => {
   const root = await workspace(t)
   await noneTold()
