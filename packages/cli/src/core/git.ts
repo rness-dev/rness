@@ -220,6 +220,43 @@ export async function publish(
   await git(['push', '--quiet', '-u', 'origin', 'main'], dir, credentials)
 }
 
+/** The commit `HEAD` names in `dir`; null without a repository or a commit. */
+export async function headOf(dir: string): Promise<string | null> {
+  try {
+    return (
+      (await git(['rev-parse', '--verify', '--quiet', 'HEAD'], dir)).trim() ||
+      null
+    )
+  } catch {
+    return null
+  }
+}
+
+/** The branch checked out in `dir`; null when `HEAD` is detached, or without a repository. */
+export async function branchOf(dir: string): Promise<string | null> {
+  try {
+    return (
+      (await git(['symbolic-ref', '--quiet', '--short', 'HEAD'], dir)).trim() ||
+      null
+    )
+  } catch {
+    return null
+  }
+}
+
+/** The commits reachable from `to` and not from `from`, oldest first, abbreviated. */
+export async function commitsBetween(
+  dir: string,
+  from: string,
+  to = 'HEAD'
+): Promise<string[]> {
+  const range = `${positional(from, 'revision')}..${positional(to, 'revision')}`
+  return (await git(['rev-list', '--reverse', '--abbrev-commit', range], dir))
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+}
+
 /** The `origin` URL, or null when `dir` is not a clone with an origin. */
 export async function originUrl(dir: string): Promise<string | null> {
   try {

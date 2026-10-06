@@ -7,9 +7,12 @@ import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import {
+  branchOf,
   clone,
   commitAll,
+  commitsBetween,
   gitPath,
+  headOf,
   init,
   isClean,
   originUrl,
@@ -160,4 +163,30 @@ test('gitPath: a file of the git directory, absolute — its own for a linked wo
   const plain = join(base, 'plain')
   await mkdir(plain)
   assert.equal(await gitPath(plain, 'rness/opened'), null)
+})
+
+test('headOf, branchOf, commitsBetween: the commit, the branch, and what came after, oldest first', async (t) => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-head-')))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  assert.equal(await headOf(dir), null, 'no repository')
+  assert.equal(await branchOf(dir), null)
+  await writeFile(join(dir, 'a.md'), 'a\n')
+  await commitDir(dir, 'first')
+  const first = await headOf(dir)
+  assert.match(first ?? '', /^[0-9a-f]{40}$/)
+  assert.equal(await branchOf(dir), 'main')
+  await writeFile(join(dir, 'b.md'), 'b\n')
+  await commitDir(dir, 'second')
+  await writeFile(join(dir, 'c.md'), 'c\n')
+  await commitDir(dir, 'third')
+  const between = await commitsBetween(dir, first ?? '')
+  assert.equal(between.length, 2)
+  assert.ok(between.every((c) => /^[0-9a-f]{7,}$/.test(c)))
+  assert.equal(
+    (await headOf(dir))?.startsWith(between[1] ?? 'x'),
+    true,
+    'oldest first: the last is HEAD'
+  )
+  assert.deepEqual(await commitsBetween(dir, (await headOf(dir)) ?? ''), [])
+  await assert.rejects(() => commitsBetween(dir, '--all'), /suspicious/)
 })
