@@ -81,5 +81,5 @@ export async function takeModNotice(
   } catch {
     // Not recorded: the line comes again next session, which beats silence.
   }
-  return `rness: Claude Code ${version} shows no rness band, status line or pane; ${MOD_FLOOR} or later does — claude update`
+  return `rness: Claude Code ${version} shows no rness band, footer label or pane; ${MOD_FLOOR} or later does — claude update`
 }

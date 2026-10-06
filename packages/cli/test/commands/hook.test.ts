@@ -511,7 +511,7 @@ test('a failure recorded by an earlier mark is in the next session start, once',
 // --- a Claude Code too old for the mod (plan 0041) ---------------------------
 
 const TOO_OLD =
-  'rness: Claude Code 2.1.240 shows no rness band, status line or pane; 2.1.280 or later does — claude update'
+  'rness: Claude Code 2.1.240 shows no rness band, footer label or pane; 2.1.280 or later does — claude update'
 
 /** No version told yet: the file the hook records them in, removed. */
 const noneTold = () =>

@@ -22,7 +22,7 @@ const agent = (version: string, entrypoint?: string): NodeJS.ProcessEnv => ({
 })
 
 const line = (version: string): string =>
-  `rness: Claude Code ${version} shows no rness band, status line or pane; 2.1.280 or later does — claude update`
+  `rness: Claude Code ${version} shows no rness band, footer label or pane; 2.1.280 or later does — claude update`
 
 test('the version is read from AI_AGENT; anything else is no version', () => {
   assert.equal(
