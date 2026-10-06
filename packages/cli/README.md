@@ -695,7 +695,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.20.1 — the workspace's line in the prompt footer, without a warning sign; the mod never installs the pin
 
 - The workspace's line in Claude Code moves from the pinned status line to
   the prompt footer, among the session modes, dim and without a sign:

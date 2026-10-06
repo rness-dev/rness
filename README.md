@@ -105,7 +105,7 @@ Node 24 or later to develop (the published CLI runs on Node 22.17 or later, ADR 
 pnpm install
 pnpm lint && pnpm format:check                # eslint, prettier (CI runs both)
 pnpm typecheck && pnpm test && pnpm build     # every package
-pnpm check:versions [--tag v0.20.0]           # lockstep versions; with the tag before a release
+pnpm check:versions [--tag v0.20.1]           # lockstep versions; with the tag before a release
 pnpm lint:fix && pnpm format                  # apply the fixes
 RNESS_NO_DELEGATE=1 node packages/cli/src/bin/rness.ts --help     # run the CLI from source
 ```
