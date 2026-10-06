@@ -191,6 +191,38 @@ function buildProgram(state: RunState): Command {
         state.code = await pulseMarkCommand({ ...rest, paths: path ?? [] })
       }
     )
+  // The agent's journal (spec 0030 §4): loaded only when a note is written.
+  pulse
+    .command('note [text]')
+    .description(
+      'a note on the plan in progress: an approach, a deviation, a blocker, done (the text, or stdin)'
+    )
+    .option('--plan <path>', 'the plan, when several are in progress')
+    .option('--kind <kind>', 'approach, deviation, blocker or done')
+    .option(
+      '--session <session>',
+      'the session, when CLAUDE_CODE_SESSION_ID is not set'
+    )
+    .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(
+      async (
+        text: string | undefined,
+        opts: {
+          plan?: string
+          kind?: string
+          session?: string
+          cwd?: string
+          githubApi?: string
+        }
+      ) => {
+        const { pulseNoteCommand } = await import('./pulse/note.ts')
+        state.code = await pulseNoteCommand({
+          ...opts,
+          ...(text === undefined ? {} : { text }),
+        })
+      }
+    )
   // What the hooks run, detached: what each board declares (spec 0032 §4).
   pulse
     .command('run <event>', { hidden: true })

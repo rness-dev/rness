@@ -89,7 +89,7 @@ const NEEDS_SCOPE = 'the pulse needs the project scope: run rness login'
  * GitHub's own words, named as GitHub's unless they already say so. rness's
  * own errors (`the board has no field Agent`) keep their words.
  */
-async function fromGithub<T>(work: Promise<T>): Promise<T> {
+export async function fromGithub<T>(work: Promise<T>): Promise<T> {
   try {
     return await work
   } catch (e) {
@@ -99,7 +99,7 @@ async function fromGithub<T>(work: Promise<T>): Promise<T> {
   }
 }
 
-interface Context {
+export interface Context {
   root: string
   rnessDir: string
   manifest: Manifest
@@ -119,7 +119,10 @@ const providerOptions = (
 })
 
 /** The refusals every pulse command shares, in order; each throws one line. */
-async function context(opts: PulseOptions, wait?: RateWait): Promise<Context> {
+export async function context(
+  opts: PulseOptions,
+  wait?: RateWait
+): Promise<Context> {
   const ws = await findWorkspace(opts.cwd ?? process.cwd())
   const manifest = await loadManifest(ws.rnessDir)
   const provider = await openProvider(manifest, providerOptions(opts, wait))
@@ -153,7 +156,7 @@ async function missingAccess(provider: Provider): Promise<string | null> {
 }
 
 /** A declared project, opened: its name in `projects`, its declaration, its board. */
-interface Declared {
+export interface Declared {
   name: string
   declaration: BoardDeclaration
   board: Board
@@ -207,7 +210,7 @@ async function declarations(
 }
 
 /** Every declared board, opened; `sync` and `mark` need one. */
-async function declaredBoards(c: Context, ui?: Ui): Promise<Declared[]> {
+export async function declaredBoards(c: Context, ui?: Ui): Promise<Declared[]> {
   if (c.manifest.projects === null)
     throw new Error(
       c.manifest.refused === undefined
@@ -814,7 +817,7 @@ function markFields(d: BoardDeclaration): MarkFields | null {
 }
 
 /** Whether a board holds a path's collection: one that takes all holds any. */
-const holds = (d: Declared, path: string): boolean =>
+export const holds = (d: Declared, path: string): boolean =>
   takesAll(d) ||
   namedCollections(d.declaration).includes(collectionOfPath(path))
 

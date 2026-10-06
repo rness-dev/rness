@@ -172,8 +172,13 @@ export async function board(
     labels?: string[]
     /** The seed's project exists already: the first project made is a new one. */
     existing?: boolean
-    /** Repositories of acme besides .rness, by name: their Issues switch (on by default). */
-    repositories?: Record<string, { issues?: boolean }>
+    /**
+     * Repositories of acme besides .rness, by name: their Issues switch (on
+     * by default), and whether this login may write their issues.
+     */
+    repositories?: Record<string, { issues?: boolean; writable?: boolean }>
+    /** Whether GitHub links a sub-issue (default true). */
+    subIssues?: boolean
     /** Pull requests of acme's repositories (spec 0030 §6). */
     pullRequests?: {
       repository: string
@@ -402,6 +407,19 @@ export async function board(
       [
         'createIssue(',
         (v) => {
+          const into = String(v['repositoryId']).replace(/^R_/, '')
+          if (seed.repositories?.[into]?.writable === false)
+            return {
+              json: {
+                data: { createIssue: null },
+                errors: [
+                  {
+                    type: 'FORBIDDEN',
+                    message: 'Resource not accessible by integration',
+                  },
+                ],
+              },
+            }
           mutations.push({ op: 'createIssue', variables: v })
           const repositoryId = String(v['repositoryId'])
           const made = anIssue(nextNumber++, {
@@ -764,6 +782,13 @@ export async function board(
       [
         'addSubIssue(',
         (v) => {
+          if (seed.subIssues === false)
+            return {
+              json: {
+                data: { addSubIssue: null },
+                errors: [{ message: 'Sub issues may not be added across' }],
+              },
+            }
           mutations.push({ op: 'addSubIssue', variables: v })
           subIssues.push({
             parent: String(v['issueId']),
