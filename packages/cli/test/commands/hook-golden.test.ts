@@ -89,6 +89,17 @@ async function runSpawned(args: string[], cwd: string, githubApi: string) {
         paths: values('--path'),
         ...(args.includes('--end') ? { end: true } : {}),
       })
+    else if (args[1] === 'run')
+      await pulse.pulseRunCommand({
+        cwd,
+        githubApi,
+        event: args[2] ?? '',
+        session,
+        paths: values('--path'),
+        ...(values('--scope')[0] === undefined
+          ? {}
+          : { scope: values('--scope')[0] }),
+      })
     else throw new Error(`no such process in this test: ${args.join(' ')}`)
   } finally {
     c.restore()

@@ -3,6 +3,7 @@ import { isAbsolute, posix, relative, resolve, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
 import { BLOCK_FILES } from '../core/agent-targets.ts'
+import type { BoardDeclaration, HookEvent } from '../core/board-declaration.ts'
 import { takeModNotice } from '../core/claude-code.ts'
 import { COLLECTIONS } from '../core/context.ts'
 import { checkContract } from '../core/contract.ts'
@@ -16,10 +17,11 @@ import {
 } from '../core/edit-guard.ts'
 import { readOrNull } from '../core/fs.ts'
 import { loadManifest, parseManifest } from '../core/manifest.ts'
+import { declaredBoard } from '../core/preset-board.ts'
 import { safetyNet } from '../core/safety-net.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
-import { plansInProgress } from '../core/status.ts'
-import type { Workspace } from '../core/types.ts'
+import { documentsIn } from '../core/status.ts'
+import type { Manifest, Workspace } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { type Spawn, detached, takeFailure } from '../pulse/detached.ts'
 import { noteLines, scopeBanner } from './snapshot.ts'
@@ -80,31 +82,63 @@ function sessionOf(input: Input): string | null {
   ].join(' · ')
 }
 
-/** Whether the workspace declares a pulse; never throws. */
-async function hasPulse(ws: Workspace): Promise<boolean> {
-  try {
-    return (await loadManifest(ws.rnessDir)).projects !== null
-  } catch {
-    return false
-  }
+/** A board of `rness.json`, read whole (a number is its preset). */
+interface HookBoard {
+  name: string
+  declaration: BoardDeclaration
 }
 
+/** The boards `rness.json` declares; none when it cannot be read, and a board that cannot, left out. Never throws. */
+async function boardsOf(ws: Workspace): Promise<HookBoard[]> {
+  let manifest: Manifest
+  try {
+    manifest = await loadManifest(ws.rnessDir)
+  } catch {
+    return []
+  }
+  const boards: HookBoard[] = []
+  for (const [name, entry] of Object.entries(manifest.projects ?? {}))
+    try {
+      boards.push({
+        name,
+        declaration: await declaredBoard(name, entry, ws.rnessDir),
+      })
+    } catch {
+      // `validate` and the safety net say why.
+    }
+  return boards
+}
+
+/** Whether a board holds a document: one that takes all, any; else one of its collections'. */
+const holds = (board: BoardDeclaration, path: string): boolean =>
+  board.collections === 'all' ||
+  Object.hasOwn(board.collections, path.split('/')[0] ?? '')
+
 /**
- * Starts `pulse mark` detached when the workspace declares a pulse and the
- * input names a session. The hooks never fail the session over it.
+ * Starts `pulse run <event>` detached (spec 0032 §4), when the input names
+ * a session, some board declares an action at the event, and `rest` finds
+ * something for it to do. The hooks never fail the session over it.
  */
-async function markDetached(
+async function runDetached(
   ws: Workspace,
   input: Input,
   io: HookIo,
-  rest: (session: string) => string[] | null
+  event: HookEvent,
+  rest: (
+    session: string,
+    boards: readonly HookBoard[]
+  ) => Promise<string[] | null>
 ): Promise<void> {
   try {
     const session = sessionOf(input)
-    if (session === null || !(await hasPulse(ws))) return
-    const args = rest(session)
+    if (session === null) return
+    const boards = (await boardsOf(ws)).filter(
+      (b) => (b.declaration.hooks[event] ?? []).length > 0
+    )
+    if (boards.length === 0) return
+    const args = await rest(session, boards)
     if (args !== null)
-      (io.spawn ?? detached)(['pulse', 'mark', ...args], ws.root)
+      (io.spawn ?? detached)(['pulse', 'run', event, ...args], ws.root)
   } catch {
     // The pulse is a courtesy: nothing here may reach the session.
   }
@@ -134,11 +168,35 @@ async function sessionStart(
       `These documents are in ${at}: read one there, or with rness_read when the rness MCP server is connected.`,
     ]
     notes = await safetyNet(ws, manifest)
-    const paths = await plansInProgress(ws, manifest, scope)
-    await markDetached(ws, input, io, (session) =>
-      paths.length === 0
-        ? null
-        : ['--session', session, ...paths.flatMap((p) => ['--path', p])]
+    // Only when some board has documents of the scope to mark: no process
+    // started for nothing.
+    await runDetached(
+      ws,
+      input,
+      io,
+      'session-start',
+      async (session, boards) => {
+        for (const { declaration } of boards)
+          for (const a of declaration.hooks['session-start'] ?? [])
+            if (
+              a.action === 'mark-in-progress' &&
+              (
+                await documentsIn(
+                  ws,
+                  manifest,
+                  scope,
+                  a.collections,
+                  a.statuses
+                )
+              ).some((p) => holds(declaration, p))
+            )
+              return [
+                '--session',
+                session,
+                ...(scope === null ? [] : ['--scope', scope]),
+              ]
+        return null
+      }
     )
   } catch (e) {
     notes = [message(e)]
@@ -209,14 +267,18 @@ async function postToolUse(input: Input, io: HookIo): Promise<number> {
     problems = (await checkContract(ws.rnessDir)).filter((p) =>
       p.startsWith(`${rel}:`)
     )
-  // Marked after the check, broken or not: the agent is at work on it.
-  if (rel.endsWith('.md'))
-    await markDetached(ws, input, io, (session) => [
-      '--session',
-      session,
-      '--path',
-      rel,
-    ])
+  // Marked after the check, broken or not: the agent is at work on it — by
+  // a board that declares `mark` and holds its collection (spec 0032 §2).
+  if (rel.endsWith('.md') && rel.includes('/'))
+    await runDetached(ws, input, io, 'edit', async (session, boards) =>
+      boards.some(
+        (b) =>
+          (b.declaration.hooks.edit ?? []).some((a) => a.action === 'mark') &&
+          holds(b.declaration, rel)
+      )
+        ? ['--session', session, '--path', rel]
+        : null
+    )
   if (problems.length === 0) return 0
   io.error.write(
     [
@@ -360,8 +422,7 @@ function refuse(io: HookIo, lines: readonly string[]): number {
 async function sessionEnd(input: Input, io: HookIo): Promise<number> {
   try {
     const ws = await findWorkspace(cwdOf(input, io.env))
-    await markDetached(ws, input, io, (session) => [
-      '--end',
+    await runDetached(ws, input, io, 'session-end', async (session) => [
       '--session',
       session,
     ])

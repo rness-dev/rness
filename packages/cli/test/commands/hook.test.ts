@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { hookCommand } from '../../src/commands/hook.ts'
 import { configDir } from '../../src/core/auth.ts'
 import { OWN_COMMANDS } from '../../src/core/catch-up.ts'
+import { presetTemplate } from '../../src/core/presets.ts'
 import { recordFailure } from '../../src/pulse/detached.ts'
 import { VERSION } from '../../src/version.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
@@ -353,15 +354,15 @@ test('session start with a pulse: marks the plans in progress of the scope, deta
   assert.deepEqual(spawned, [
     {
       cwd: root,
+      // The run finds the documents itself, from the scope (spec 0032 §4).
       args: [
         'pulse',
-        'mark',
+        'run',
+        'session-start',
         '--session',
         'claude · 1a2b3c4d',
-        '--path',
-        'plans/web/0027-web.md',
-        '--path',
-        'plans/0026-cli-pulse.md',
+        '--scope',
+        'web',
       ],
     },
   ])
@@ -388,9 +389,10 @@ test('session start of a subagent: its type is in the session', async (t) => {
     {},
     spawned
   )
-  assert.deepEqual(spawned[0]?.args.slice(0, 4), [
+  assert.deepEqual(spawned[0]?.args.slice(0, 5), [
     'pulse',
-    'mark',
+    'run',
+    'session-start',
     '--session',
     'claude · reviewer · 1a2b3c4d',
   ])
@@ -434,7 +436,8 @@ test('post-tool-use marks the edited document, after the check; outside .rness, 
       cwd: root,
       args: [
         'pulse',
-        'mark',
+        'run',
+        'edit',
         '--session',
         'claude · 1a2b3c4d',
         '--path',
@@ -485,7 +488,7 @@ test('session end spawns the clearing mark, and says nothing', async (t) => {
   assert.deepEqual(spawned, [
     {
       cwd: root,
-      args: ['pulse', 'mark', '--end', '--session', 'claude · 1a2b3c4d'],
+      args: ['pulse', 'run', 'session-end', '--session', 'claude · 1a2b3c4d'],
     },
   ])
 })
@@ -813,4 +816,109 @@ test('pre-tool-use: straight quotes for the block’s curly ones are matched as 
   )
   assert.equal(r.code, 2)
   assert.match(r.err, /from \.rness\/standards\/web\/seo\.md\./)
+})
+
+// --- what a session does to a board, declared (spec 0032, plan 0046) --------
+
+/** A workspace whose rness.json declares `projects` as given. */
+async function declaredBoards(
+  t: TestContext,
+  projects: Record<string, unknown>,
+  files: Record<string, string> = {}
+) {
+  const root = await workspace(t, files)
+  const file = join(root, '.rness', 'rness.json')
+  const manifest = JSON.parse(readFileSync(file, 'utf8'))
+  await writeFile(file, JSON.stringify({ ...manifest, projects }))
+  return root
+}
+const pulseWith = (over: Record<string, unknown> = {}) => ({
+  number: 7,
+  ...presetTemplate('agent-pulse/1', { collection: 'pulse' }),
+  ...over,
+})
+const marketingWith = (over: Record<string, unknown> = {}) => ({
+  number: 8,
+  ...presetTemplate('collection/1', { collection: 'marketing' }),
+  ...over,
+})
+
+test('an edit spawns a run only for a board that declares mark and holds the document; outside every board, or rness.json, nothing', async (t) => {
+  const root = await declaredBoards(
+    t,
+    {
+      marketing: marketingWith({ hooks: { edit: ['mark'] } }),
+      pulse: pulseWith({ hooks: {} }),
+    },
+    {
+      'marketing/a.md': '---\nstatus: Idea\n---\n# A\n',
+      'specs/0001-a.md': spec('Approved'),
+    }
+  )
+  const spawned: Spawned[] = []
+  const editing = (rel: string) =>
+    hook(
+      'post-tool-use',
+      {
+        ...edit(join(root, '.rness', ...rel.split('/')), root),
+        session_id: ID,
+      },
+      {},
+      spawned
+    )
+  await editing('marketing/a.md')
+  assert.deepEqual(
+    spawned.map((s) => s.args.slice(0, 3)),
+    [['pulse', 'run', 'edit']]
+  )
+  spawned.length = 0
+  await editing('specs/0001-a.md')
+  await editing('rness.json')
+  await editing('standards/style.md')
+  assert.deepEqual(
+    spawned,
+    [],
+    'Agent Pulse declares no mark; no board holds the rest'
+  )
+})
+
+test('no hooks declared on any board: nothing spawned at any event', async (t) => {
+  const root = await declaredBoards(
+    t,
+    { pulse: pulseWith({ hooks: {} }) },
+    PULSE_FILES
+  )
+  const spawned: Spawned[] = []
+  await hook('session-start', { cwd: root, session_id: ID }, {}, spawned)
+  await hook(
+    'post-tool-use',
+    {
+      ...edit(join(root, '.rness', 'plans', '0026-cli-pulse.md'), root),
+      session_id: ID,
+    },
+    {},
+    spawned
+  )
+  await hook('session-end', { cwd: root, session_id: ID }, {}, spawned)
+  assert.deepEqual(spawned, [])
+})
+
+test('a board rness.json refuses runs nothing, and the session start names it', async (t) => {
+  const root = await declaredBoards(
+    t,
+    { pulse: pulseWith({ views: [] }) },
+    PULSE_FILES
+  )
+  const spawned: Spawned[] = []
+  const r = await hook(
+    'session-start',
+    { cwd: root, source: 'startup', session_id: ID },
+    {},
+    spawned
+  )
+  assert.deepEqual(spawned, [])
+  assert.match(
+    JSON.parse(r.out).systemMessage,
+    /"projects\.pulse\.views" must list at least one view/
+  )
 })
