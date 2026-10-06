@@ -695,6 +695,17 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## Unreleased
+
+- `upgrade` run by a workspace's pinned copy installed with pnpm no longer
+  ends on `mod directory not found next to the @rness/cli package`. After
+  its commit it lists the files to commit in the clones, and that list read
+  the plugin's mod from the folder of the copy running it, which the install
+  had just removed. The list now takes the paths alone. The upgrade itself
+  was complete: 0.20.0 to 0.20.1 printed the error after its commit. An
+  upgrade from 0.20.1 still prints it, since the copy that runs it is the
+  old one; `pnpm dlx @rness/cli upgrade` runs the new one.
+
 ## 0.20.1 — the workspace's line in the prompt footer, without a warning sign; the mod never installs the pin
 
 - The workspace's line in Claude Code moves from the pinned status line to
