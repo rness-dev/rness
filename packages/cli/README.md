@@ -857,9 +857,14 @@ BoardDeclaration>`; `BoardDeclaration` and `parseBoard` are exported.
   its commit it lists the files to commit in the clones, and that list read
   the plugin's mod from the folder of the copy running it, which the install
   had just removed. The list now takes the paths alone. The upgrade itself
-  was complete: 0.20.0 to 0.20.1 printed the error after its commit. An
-  upgrade from 0.20.1 still prints it, since the copy that runs it is the
-  old one; `pnpm dlx @rness/cli upgrade` runs the new one.
+  was complete: 0.20.0 to 0.20.1 printed the error after its commit.
+- An upgrade to 0.21.0 run by a 0.20 copy (`pnpm rness upgrade` from
+  `.rness/`) ends, after its commit, on `rness.json: "projects" must map
+names to distinct project numbers`: the old copy, finishing, cannot read
+  the boards the new version has just written. The upgrade is complete, and
+  `rness validate` passes. `npx @rness/cli@latest upgrade` runs the new
+  copy throughout; `pnpm dlx @rness/cli` takes the previous version for a
+  day after a release, pnpm refusing a version younger than 24 hours.
 
 ## 0.20.1 — the workspace's line in the prompt footer, without a warning sign; the mod never installs the pin
 
