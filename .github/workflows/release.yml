@@ -16,9 +16,8 @@ on:
         type: string
         required: true
 
-permissions:
-  contents: read
-
+# No workflow-level permissions: the one job sets its own, which a Publish
+# call can grant but not raise.
 jobs:
   release:
     runs-on: ubuntu-latest
