@@ -13,6 +13,7 @@ import {
   type PulseOptions,
   pulseCreateCommand,
   pulseMarkCommand,
+  pulseRunCommand,
   pulseSyncCommand,
 } from './commands/pulse.ts'
 import { type StatusOptions, statusCommand } from './commands/status.ts'
@@ -188,6 +189,37 @@ function buildProgram(state: RunState): Command {
       }) => {
         const { path, ...rest } = opts
         state.code = await pulseMarkCommand({ ...rest, paths: path ?? [] })
+      }
+    )
+  // What the hooks run, detached: what each board declares (spec 0032 §4).
+  pulse
+    .command('run <event>', { hidden: true })
+    .requiredOption('--session <id>')
+    .option(
+      '--path <path>',
+      'the document edited (repeatable)',
+      (value: string, previous: string[] = []) => [...previous, value]
+    )
+    .option('--scope <scope>', "the session's scope; absent, the root's")
+    .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(
+      async (
+        event: string,
+        opts: {
+          session: string
+          path?: string[]
+          scope?: string
+          cwd?: string
+          githubApi?: string
+        }
+      ) => {
+        const { path, ...rest } = opts
+        state.code = await pulseRunCommand({
+          ...rest,
+          event,
+          paths: path ?? [],
+        })
       }
     )
 

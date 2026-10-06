@@ -18,6 +18,7 @@ import { type TestContext, test } from 'node:test'
 import {
   pulseCreateCommand,
   pulseMarkCommand,
+  pulseRunCommand,
   pulseSyncCommand,
 } from '../../src/commands/pulse.ts'
 import { presetTemplate } from '../../src/core/presets.ts'
@@ -2461,5 +2462,195 @@ test("a board whose collection's README still declares: skipped by pulse sync, u
       'skipped marketing: marketing/README.md declares statuses, which rness.json declares now — rness sync moves it'
     ),
     r.out
+  )
+})
+
+// --- pulse run: what each board declares (spec 0032, plan 0046) --------------
+
+/** Agent Pulse with its marks in fields of other names, as a team may declare them. */
+const renamedBoard = () => {
+  const preset = pulseBoard()
+  const fields = { ...(preset['fields'] as Record<string, unknown>) }
+  delete fields['Agent']
+  delete fields['Working session']
+  return {
+    ...preset,
+    fields: {
+      ...fields,
+      Busy: { type: 'select', from: '$agent', options: ['working'] },
+      Who: { type: 'text', from: '$session' },
+    },
+    views: (preset['views'] as Record<string, unknown>[]).map((v) =>
+      Array.isArray(v['fields'])
+        ? {
+            ...v,
+            fields: (v['fields'] as string[]).map((f) =>
+              f === 'Working session' ? 'Who' : f
+            ),
+          }
+        : v
+    ),
+  }
+}
+
+test('pulse run: session start marks what mark-in-progress names, through the fields from $agent and $session whatever their names; session end clears them', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: [
+      ...seededFields(),
+      {
+        id: 'F_Busy',
+        databaseId: 40,
+        name: 'Busy',
+        options: [{ id: 'b1', name: 'working' }],
+      },
+      { id: 'F_Who', databaseId: 41, name: 'Who', options: null },
+    ],
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const cwd = await declaredWorkspace(t, { pulse: renamedBoard() })
+  const first = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(first.code, 0, first.err)
+  const session = 'claude · 1a2b3c4d'
+  assert.equal(
+    await pulseRunCommand({
+      cwd,
+      githubApi: g.base,
+      event: 'session-start',
+      session,
+      paths: [],
+    }),
+    0
+  )
+  assert.equal(await takeFailure(), null)
+  const plan = () => g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')
+  assert.equal(plan()?.values['Busy'], 'working')
+  assert.equal(plan()?.values['Who'], session)
+  assert.equal(plan()?.values['Agent'], undefined)
+  await pulseRunCommand({
+    cwd,
+    githubApi: g.base,
+    event: 'session-end',
+    session,
+    paths: [],
+  })
+  assert.equal(plan()?.values['Busy'], undefined)
+  assert.equal(plan()?.values['Who'], undefined)
+})
+
+test('pulse run: mark-in-progress names other collections and statuses; an edit marks what a board with mark holds', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const cwd = await declaredWorkspace(t, {
+    pulse: pulseBoard({
+      hooks: {
+        'session-start': [
+          {
+            action: 'mark-in-progress',
+            collections: ['adr'],
+            statuses: ['Accepted'],
+          },
+        ],
+        edit: ['mark'],
+      },
+    }),
+  })
+  await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  const on = (path: string) =>
+    g.items.find((i) => i.values['Path'] === path)?.values['Agent']
+  const session = 'claude · 1a2b3c4d'
+  await pulseRunCommand({
+    cwd,
+    githubApi: g.base,
+    event: 'session-start',
+    session,
+    paths: [],
+  })
+  assert.equal(on('adr/0001-a.md'), 'working')
+  assert.equal(on('plans/0002-b.md'), undefined, 'not In progress here')
+  await pulseRunCommand({
+    cwd,
+    githubApi: g.base,
+    event: 'edit',
+    session,
+    paths: ['plans/0002-b.md'],
+  })
+  assert.equal(on('plans/0002-b.md'), 'working')
+  assert.equal(await takeFailure(), null)
+})
+
+test('pulse run: a failure on one board leaves the other done, the recorded line naming the board and the action', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+    projects: [
+      {
+        number: 8,
+        fields: [
+          {
+            id: 'F_status_8',
+            databaseId: 81,
+            name: 'Status',
+            options: [{ id: 'm1', name: 'Idea' }],
+          },
+          { id: 'F_title_8', databaseId: 82, name: 'Title', options: null },
+          {
+            id: 'F_Path_8',
+            databaseId: 83,
+            name: 'Path',
+            options: null,
+          },
+        ],
+        views: ['All', 'Marketing', 'Working'],
+      },
+    ],
+  })
+  const files = { ...FILES, 'marketing/a.md': '---\nstatus: Idea\n---\n# A\n' }
+  const marketing = {
+    number: 8,
+    preset: 'collection/1',
+    ...presetTemplate('collection/1', { collection: 'marketing' }),
+    hooks: { edit: ['mark'] },
+  }
+  const cwd = await declaredWorkspace(
+    t,
+    { marketing, pulse: pulseBoard({ hooks: { edit: ['mark'] } }) },
+    files
+  )
+  await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  // The marketing board lost its Agent field on GitHub: its mark fails.
+  const p8 = g.project(8)
+  p8.fields = p8.fields.filter((f) => f.name !== 'Agent')
+  g.mutations.length = 0
+  await pulseRunCommand({
+    cwd,
+    githubApi: g.base,
+    event: 'edit',
+    session: 'claude · 1a2b3c4d',
+    paths: ['marketing/a.md', 'plans/0002-b.md'],
+  })
+  assert.equal(
+    g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')?.values[
+      'Agent'
+    ],
+    'working',
+    'Agent Pulse marked all the same'
+  )
+  assert.equal(
+    await takeFailure(),
+    'mark on Marketing failed: the board has no field Agent'
   )
 })

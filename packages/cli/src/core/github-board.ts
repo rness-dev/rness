@@ -15,7 +15,7 @@ import {
 import * as gi from './github-issues.ts'
 import * as gh from './github-projects.ts'
 import type { ApiOptions } from './github.ts'
-import type { Board, Provider } from './provider.ts'
+import type { Board, MarkFields, Provider } from './provider.ts'
 
 /** The pulse's board on a GitHub project: its layout (spec 0017 §3, kept by spec 0018 §6), its items issues of `.rness` (spec 0018 §2–§5). */
 
@@ -881,11 +881,18 @@ export class GitHubBoards implements Pick<
   async mark(
     board: Board,
     itemIds: readonly string[],
-    session: string | null
+    session: string | null,
+    fields: MarkFields = { agent: 'Agent', session: WORKING_SESSION }
   ): Promise<void> {
     for (const id of itemIds) {
-      await this.#set(board, id, 'Agent', session === null ? null : WORKING)
-      await this.#set(board, id, WORKING_SESSION, session)
+      await this.#set(
+        board,
+        id,
+        fields.agent,
+        session === null ? null : WORKING
+      )
+      if (fields.session !== null)
+        await this.#set(board, id, fields.session, session)
     }
   }
 

@@ -2,7 +2,11 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import type { BoardDeclaration } from '../core/board-declaration.ts'
+import {
+  type BoardAction,
+  type BoardDeclaration,
+  HOOK_EVENTS,
+} from '../core/board-declaration.ts'
 import { parseBoard } from '../core/board-declaration.ts'
 import {
   readmeDeclarations,
@@ -29,9 +33,9 @@ import {
 } from '../core/manifest.ts'
 import { declaredBoard, presetSource } from '../core/preset-board.ts'
 import { labelOf } from '../core/presets.ts'
-import type { Board, Provider } from '../core/provider.ts'
+import type { Board, MarkFields, Provider } from '../core/provider.ts'
 import { PROVIDERS, openProvider } from '../core/providers.ts'
-import { type StatusTab, statusTabs } from '../core/status.ts'
+import { type StatusTab, documentsIn, statusTabs } from '../core/status.ts'
 import { defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
@@ -96,6 +100,7 @@ async function fromGithub<T>(work: Promise<T>): Promise<T> {
 }
 
 interface Context {
+  root: string
   rnessDir: string
   manifest: Manifest
   org: string
@@ -120,7 +125,13 @@ async function context(opts: PulseOptions, wait?: RateWait): Promise<Context> {
   const provider = await openProvider(manifest, providerOptions(opts, wait))
   if (manifest.org === null)
     throw new Error('the pulse needs an organization: rness.json has no "org"')
-  return { rnessDir: ws.rnessDir, manifest, org: manifest.org, provider }
+  return {
+    root: ws.root,
+    rnessDir: ws.rnessDir,
+    manifest,
+    org: manifest.org,
+    provider,
+  }
 }
 
 /** Rate-limit waits said as they begin: a pause of minutes must not look like a hang (spec 0018 §4). */
@@ -773,10 +784,12 @@ interface MarkOptions {
 }
 
 /**
- * Hidden, for the hooks: marks the items of `paths` as worked on by `session`,
- * or — with `end` — clears that session's marks and syncs. It never prompts
- * and no one reads its output: a failure is recorded, for the next session
- * start to say (spec 0017 §5), and the exit is 0.
+ * Hidden, kept through 0.21.x for a session started before an upgrade:
+ * marks the items of `paths` as worked on by `session`, or — with `end` —
+ * clears that session's marks and syncs, on every declared board, as 0.20
+ * did. `rness pulse run` does what boards declare. It never prompts and no
+ * one reads its output: a failure is recorded, for the next session start
+ * to say (spec 0017 §5), and the exit is 0.
  */
 export async function pulseMarkCommand(opts: MarkOptions): Promise<number> {
   try {
@@ -787,57 +800,59 @@ export async function pulseMarkCommand(opts: MarkOptions): Promise<number> {
   }
 }
 
-async function mark(opts: MarkOptions): Promise<number> {
-  const c = await context(opts)
-  const declared = await declaredBoards(c)
-  const key = `${c.org}-${declared.map((d) => d.board.number).join('-')}`
-  const lock = opts.sleep === undefined ? {} : { sleep: opts.sleep }
+/** The fields a board's marks write: its select from `$agent`, its text from `$session`. */
+function markFields(d: BoardDeclaration): MarkFields | null {
+  const fields = Object.entries(d.fields)
+  const agent = fields.find(
+    ([, f]) => f.type === 'select' && f.from.includes('$agent')
+  )?.[0]
+  if (agent === undefined) return null
+  return {
+    agent,
+    session: fields.find(([, f]) => f.from.includes('$session'))?.[0] ?? null,
+  }
+}
+
+/** Whether a board holds a path's collection: one that takes all holds any. */
+const holds = (d: Declared, path: string): boolean =>
+  takesAll(d) ||
+  namedCollections(d.declaration).includes(collectionOfPath(path))
+
+/** The lock every write of these boards takes: one run at a time per workspace. */
+const lockKey = (c: Context, declared: readonly Declared[]): string =>
+  `${c.org}-${declared.map((d) => d.board.number).join('-')}`
+
+/**
+ * Marks, on each board, the items of the paths `wanted` gives it, for
+ * `session`. A document with no item yet, or whose status the board does
+ * not show yet, is synced first (plan 0027 Task 6, spec 0020 §2).
+ * `failed(d, e)` hears a board's own failure; one of all of them throws.
+ */
+async function markOn(
+  c: Context,
+  declared: readonly Declared[],
+  wanted: ReadonlyMap<Declared, ReadonlySet<string>>,
+  session: string,
+  lock: { sleep?: (ms: number) => Promise<void> },
+  failed: (d: Declared, e: unknown) => void = (_d, e) => {
+    throw e
+  }
+): Promise<void> {
+  const key = lockKey(c, declared)
   const syncEvery = () => syncAll(c, declared, plainUi, () => eachAdded)
-  // Marks need ids, `Path` and `Session`: every body, on every edit, is not
+  // Marks need ids, `Path` and the session: every body, on every edit, is not
   // theirs to download. A sync lists what it needs itself.
   const listed = (board: Board) =>
     fromGithub(c.provider.items(board, { bodies: false }))
-  if (opts.end === true) {
-    // A subagent's marks read `claude · <type> · <id>`: the session's end
-    // clears every mark ending in its id, whatever agent type precedes it,
-    // in every project (spec 0025 §3).
-    const id = opts.session.split(' · ').pop() ?? opts.session
-    for (const { board } of declared) {
-      const ids = (await listed(board))
-        .filter(
-          (i) => i.session === opts.session || i.session?.endsWith(` · ${id}`)
-        )
-        .map((i) => i.id)
-      await fromGithub(c.provider.mark(board, ids, null))
-    }
-    // The session's last sync waits its turn behind an edit's.
-    await oneSyncAtATime(key, syncEvery, { ...lock, wait: true })
-    return 0
-  }
-  // Only a path some declared project holds: Agent Pulse holds every other
-  // collection's; without it, a document of an undeclared collection has no
-  // board, and its edit costs no sync.
-  const held = (path: string): boolean =>
-    declared.some(
-      (d) =>
-        takesAll(d) ||
-        namedCollections(d.declaration).includes(collectionOfPath(path))
-    )
-  const wanted = new Set(opts.paths.filter(held))
-  // A document the agent has just written has no item until a sync gives it
-  // one (plan 0027 Task 6, a fix to spec 0017 §5); one whose status the edit
-  // changed shows the old one until a sync writes it (spec 0020 §2). Only a
-  // document of `rness status` can need one: another file of `.rness/`, or
-  // an edit that leaves the status alone, costs no sync.
   const documents = new Map(
     (await statusTabs(c.rnessDir)).flatMap((t) =>
       t.rows.map((r) => [r.path, r.status] as const)
     )
   )
-  let items = new Map<string, BoardItem[]>()
+  let items = new Map<Declared, BoardItem[]>()
   const listAll = async () => {
     items = new Map()
-    for (const { name, board } of declared) items.set(name, await listed(board))
+    for (const d of declared) items.set(d, await listed(d.board))
   }
   await listAll()
   const onBoard = new Map(
@@ -848,16 +863,176 @@ async function mark(opts: MarkOptions): Promise<number> {
   const stale = (path: string): boolean =>
     documents.has(path) &&
     (!onBoard.has(path) || onBoard.get(path) !== documents.get(path))
-  if ([...wanted].some(stale)) {
+  const all = new Set([...wanted.values()].flatMap((w) => [...w]))
+  if ([...all].some(stale)) {
     // Another hook's sync running gives it its item; the next edit marks it.
     if (await oneSyncAtATime(key, syncEvery, lock)) await listAll()
   }
-  for (const { name, board } of declared) {
-    const ids = (items.get(name) ?? [])
-      .filter((i) => i.path !== null && wanted.has(i.path))
-      .map((i) => i.id)
-    if (ids.length > 0)
-      await fromGithub(c.provider.mark(board, ids, opts.session))
+  for (const d of declared) {
+    const paths = wanted.get(d)
+    if (paths === undefined) continue
+    try {
+      const ids = (items.get(d) ?? [])
+        .filter((i) => i.path !== null && paths.has(i.path))
+        .map((i) => i.id)
+      if (ids.length > 0)
+        await fromGithub(
+          c.provider.mark(
+            d.board,
+            ids,
+            session,
+            markFields(d.declaration) ?? undefined
+          )
+        )
+    } catch (e) {
+      failed(d, e)
+    }
   }
+}
+
+/**
+ * Clears `session`'s marks on a board — a subagent's too, whose session
+ * reads `claude · <type> · <id>` (spec 0025 §3). A board without a field
+ * from `$session` cannot tell sessions apart: every mark of it goes.
+ */
+async function clearOn(
+  c: Context,
+  d: Declared,
+  session: string
+): Promise<void> {
+  const fields = markFields(d.declaration) ?? {
+    agent: 'Agent',
+    session: 'Working session',
+  }
+  const id = session.split(' · ').pop() ?? session
+  const ids = (await fromGithub(c.provider.items(d.board, { bodies: false })))
+    .filter((i) => {
+      const of =
+        fields.session === null
+          ? null
+          : (i.values[fields.session] ??
+            (fields.session === 'Working session' ? i.session : null))
+      return fields.session === null
+        ? i.values[fields.agent] !== undefined
+        : of === session || of?.endsWith(` · ${id}`) === true
+    })
+    .map((i) => i.id)
+  await fromGithub(c.provider.mark(d.board, ids, null, fields))
+}
+
+async function mark(opts: MarkOptions): Promise<number> {
+  const c = await context(opts)
+  const declared = await declaredBoards(c)
+  const lock = opts.sleep === undefined ? {} : { sleep: opts.sleep }
+  if (opts.end === true) {
+    for (const d of declared) await clearOn(c, d, opts.session)
+    // The session's last sync waits its turn behind an edit's.
+    await oneSyncAtATime(
+      lockKey(c, declared),
+      () => syncAll(c, declared, plainUi, () => eachAdded),
+      { ...lock, wait: true }
+    )
+    return 0
+  }
+  // Only a path some declared board holds: without one, a document of an
+  // undeclared collection has no board, and its edit costs no sync.
+  const wanted = new Map<Declared, Set<string>>()
+  for (const d of declared) {
+    const paths = opts.paths.filter((p) => holds(d, p))
+    if (paths.length > 0) wanted.set(d, new Set(paths))
+  }
+  if (wanted.size === 0) return 0
+  await markOn(c, declared, wanted, opts.session, lock)
   return 0
+}
+
+export interface RunOptions {
+  cwd?: string
+  githubApi?: string
+  /** `session-start`, `edit` or `session-end` (spec 0032 §2). */
+  event: string
+  session: string
+  /** `edit`: the document edited. */
+  paths: string[]
+  /** `session-start`: the session's scope; absent, the workspace's root. */
+  scope?: string
+  /** Internal (tests): how the lock's poll sleeps. */
+  sleep?: (ms: number) => Promise<void>
+}
+
+/**
+ * Hidden, for the hooks (spec 0032 §4): the actions each board declares at
+ * `event`, in the order of `projects`, under one lock per workspace. It
+ * never prompts; a failure is recorded, naming each board and action that
+ * failed, for the next session start to say. The exit is 0.
+ */
+export async function pulseRunCommand(opts: RunOptions): Promise<number> {
+  const failures: string[] = []
+  try {
+    await run(opts, failures)
+  } catch (e) {
+    failures.push(e instanceof Error ? e.message : String(e))
+  }
+  if (failures.length > 0) await recordFailure(failures.join('; '))
+  return 0
+}
+
+async function run(opts: RunOptions, failures: string[]): Promise<void> {
+  const event = HOOK_EVENTS.find((e) => e === opts.event)
+  if (event === undefined) throw new Error(`no such event: ${opts.event}`)
+  const c = await context(opts)
+  const declared = await declaredBoards(c)
+  const lock = opts.sleep === undefined ? {} : { sleep: opts.sleep }
+  const label = (d: Declared): string => d.declaration.title ?? labelOf(d.name)
+  const acting = (name: BoardAction['action']) =>
+    declared.filter((d) =>
+      (d.declaration.hooks[event] ?? []).some((a) => a.action === name)
+    )
+  if (event === 'session-end') {
+    const clearing = acting('clear-marks')
+    for (const d of clearing)
+      try {
+        await clearOn(c, d, opts.session)
+      } catch (e) {
+        failures.push(
+          `clear-marks on ${label(d)} failed: ${e instanceof Error ? e.message : String(e)}`
+        )
+      }
+    if (clearing.length === 0) return
+    // The session's last sync waits its turn behind an edit's.
+    await oneSyncAtATime(
+      lockKey(c, declared),
+      () => syncAll(c, declared, plainUi, () => eachAdded),
+      { ...lock, wait: true }
+    )
+    return
+  }
+  const wanted = new Map<Declared, Set<string>>()
+  const action = event === 'edit' ? 'mark' : 'mark-in-progress'
+  for (const d of acting(action)) {
+    let paths = opts.paths
+    if (event === 'session-start') {
+      const a = (d.declaration.hooks['session-start'] ?? []).find(
+        (x) => x.action === 'mark-in-progress'
+      )
+      paths =
+        a?.action === 'mark-in-progress'
+          ? await documentsIn(
+              { root: c.root, rnessDir: c.rnessDir },
+              c.manifest,
+              opts.scope ?? null,
+              a.collections,
+              a.statuses
+            )
+          : []
+    }
+    const held = paths.filter((p) => holds(d, p))
+    if (held.length > 0) wanted.set(d, new Set(held))
+  }
+  if (wanted.size === 0) return
+  await markOn(c, declared, wanted, opts.session, lock, (d, e) =>
+    failures.push(
+      `${action} on ${label(d)} failed: ${e instanceof Error ? e.message : String(e)}`
+    )
+  )
 }

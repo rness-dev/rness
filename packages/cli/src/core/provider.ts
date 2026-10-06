@@ -35,6 +35,12 @@ export type OrganizationAccess =
   'member' | 'not-member' | 'restricted' | 'unknown'
 
 /** The pulse's board on the provider (spec 0017 §2.3). */
+/** The fields a mark writes: the select from `$agent`, the text from `$session` (none: not written). */
+export interface MarkFields {
+  agent: string
+  session: string | null
+}
+
 export interface Board {
   org: string
   number: number
@@ -98,11 +104,16 @@ export interface Provider {
   items(board: Board, options?: { bodies?: boolean }): Promise<BoardItem[]>
   /** The item and issue number a create or a convert gave; null for any other step. */
   apply(board: Board, step: Step): Promise<Placed | null>
-  /** Marks items as being worked on by `session`; null clears the mark. */
+  /**
+   * Marks items as being worked on by `session`; null clears the mark.
+   * `fields`: the board's select from `$agent` and text from `$session`
+   * (spec 0031 §2.4); by default `Agent` and `Working session`.
+   */
   mark(
     board: Board,
     itemIds: readonly string[],
-    session: string | null
+    session: string | null,
+    fields?: MarkFields
   ): Promise<void>
   /**
    * A collection's project: its README and short description, each written

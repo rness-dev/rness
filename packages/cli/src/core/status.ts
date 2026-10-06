@@ -206,19 +206,47 @@ export async function plansInProgress(
   manifest: Manifest,
   scope: string | null
 ): Promise<string[]> {
+  return documentsIn(ws, manifest, scope, ['plans'], ['In progress'])
+}
+
+/**
+ * The documents of `collections` whose status is one of `statuses`, as
+ * `.rness/`-relative paths: of the scope for a collection of the contract
+ * (`adr`, `specs`, `plans`), which scopes apply to; every one for another
+ * directory, which no scope divides.
+ */
+export async function documentsIn(
+  ws: Workspace,
+  manifest: Manifest,
+  scope: string | null,
+  collections: readonly string[],
+  statuses: readonly string[]
+): Promise<string[]> {
   const context = await assembleContext({
     rnessDir: ws.rnessDir,
     manifest,
     scope,
   })
-  const plans = context.collections.find((c) => c.name === 'plans')
-  return (plans?.files ?? [])
-    .filter((f) => {
-      try {
-        return parseFrontMatter(f.body)?.['status'] === 'In progress'
-      } catch {
-        return false
-      }
-    })
-    .map((f) => `plans/${f.rel}`)
+  const paths: string[] = []
+  const contract = context.collections.map((c) => c.name as string)
+  for (const name of collections) {
+    const scoped = context.collections.find((c) => c.name === name)
+    if (scoped !== undefined) {
+      for (const f of scoped.files)
+        try {
+          const status = parseFrontMatter(f.body)?.['status']
+          if (typeof status === 'string' && statuses.includes(status))
+            paths.push(`${name}/${f.rel}`)
+        } catch {
+          // A front matter that does not parse is no status.
+        }
+      continue
+    }
+    if (contract.includes(name)) continue
+    const tab = (await statusTabs(ws.rnessDir)).find((t) => t.name === name)
+    for (const row of tab?.rows ?? [])
+      if (row.status !== null && statuses.includes(row.status))
+        paths.push(row.path)
+  }
+  return paths
 }

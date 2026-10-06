@@ -19,6 +19,7 @@ import {
 import type {
   Board,
   GitCredentials,
+  MarkFields,
   Organization,
   OrganizationAccess,
   Provider,
@@ -163,9 +164,10 @@ export class GitHubOAuthProvider implements Provider {
   async mark(
     board: Board,
     itemIds: readonly string[],
-    session: string | null
+    session: string | null,
+    fields?: MarkFields
   ): Promise<void> {
-    return this.#boards().mark(board, itemIds, session)
+    return this.#boards().mark(board, itemIds, session, fields)
   }
 
   async describe(
