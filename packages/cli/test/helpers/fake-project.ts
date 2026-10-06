@@ -192,8 +192,19 @@ export async function board(
     list: Required<FView>[] = viewList,
     of: FField[] = fields
   ) => {
-    const table = v.layout === 'TABLE_LAYOUT' || v.name === 'Working'
+    const table =
+      v.layout === 'TABLE_LAYOUT' || v.name === 'Working' || v.name === 'All'
     const own = of.find((f) => f.name === `${v.name} status`)
+    // A view seeded by its name alone is as rness makes it (spec 0031 §3).
+    const filter =
+      v.name === 'Working'
+        ? 'agent:working'
+        : v.name === 'All'
+          ? null
+          : `collection:"${v.name}"`
+    const shown = table
+      ? ['Title', 'Collection', 'Status', 'Working session']
+      : null
     list.push({
       id: v.id ?? `V_${next++}`,
       name: v.name,
@@ -204,8 +215,8 @@ export async function board(
             ? null
             : (own?.name ?? 'Status')
           : v.column,
-      filter: v.filter ?? null,
-      fields: v.fields ?? null,
+      filter: v.filter === undefined ? filter : v.filter,
+      fields: v.fields === undefined ? shown : v.fields,
     })
   }
   if (seed.views !== undefined)

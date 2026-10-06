@@ -2,19 +2,71 @@ import assert from 'node:assert/strict'
 import { type TestContext, test } from 'node:test'
 
 import { GitHubOAuthProvider } from '../../src/core/github-oauth-provider.ts'
-import type { Layout } from '../../src/pulse/layout.ts'
+import { presetTemplate } from '../../src/core/presets.ts'
+import type {
+  Layout,
+  LayoutField,
+  LayoutView,
+  OptionColor,
+} from '../../src/pulse/layout.ts'
 import { type FItem, anIssue, board } from '../helpers/fake-project.ts'
+
+/** Agent Pulse's colours, as rness ships them. */
+const COLORS = presetTemplate('agent-pulse/1', { collection: 'pulse' })[
+  'colors'
+] as Record<string, OptionColor>
+const SHOWN = ['Title', 'Collection', 'Status', 'Working session']
+/** The fields Agent Pulse declares, its collections the options of Collection. */
+const pulseFields = (
+  collections: string[],
+  statusFields: LayoutField[] = []
+): LayoutField[] => [
+  {
+    name: 'Collection',
+    type: 'select',
+    kind: 'collection',
+    options: collections,
+    reorder: false,
+  },
+  ...statusFields,
+  {
+    name: 'Agent',
+    type: 'select',
+    kind: 'declared',
+    options: ['working'],
+    reorder: false,
+  },
+  { name: 'Working session', type: 'text' },
+  { name: 'Session history', type: 'text' },
+]
+const ALL: LayoutView = {
+  name: 'All',
+  layout: 'table',
+  filter: null,
+  columns: null,
+  fields: SHOWN,
+}
+const WORKING: LayoutView = {
+  name: 'Working',
+  layout: 'table',
+  filter: 'agent:working',
+  columns: null,
+  fields: SHOWN,
+}
+const boardView = (name: string, columns = 'Status'): LayoutView => ({
+  name,
+  layout: 'board',
+  filter: `collection:"${name}"`,
+  columns,
+  fields: null,
+})
 
 const layout: Layout = {
   statuses: ['draft', 'accepted'],
-  fields: [],
-  types: ['ADR', 'Marketing'],
-  views: [
-    { name: 'ADR', type: 'ADR', field: null },
-    { name: 'Marketing', type: 'Marketing', field: null },
-  ],
-  declared: [],
+  fields: pulseFields(['ADR', 'Marketing']),
+  views: [ALL, boardView('ADR'), boardView('Marketing'), WORKING],
   labels: [],
+  colors: COLORS,
 }
 
 const BOARD = {
@@ -42,10 +94,10 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
   assert.deepEqual(added, [
     'option draft',
     'option accepted',
+    'field Path',
     'field Collection',
     'field Agent',
     'field Working session',
-    'field Path',
     'field Session history',
     'view All',
     'view ADR',
@@ -57,10 +109,10 @@ test('createBoard makes the project only; its first ensureLayout replaces the St
     [
       ['Status', ['draft', 'accepted']],
       ['Title', 'text'],
+      ['Path', 'text'],
       ['Collection', ['ADR', 'Marketing']],
       ['Agent', ['working']],
       ['Working session', 'text'],
-      ['Path', 'text'],
       ['Session history', 'text'],
     ]
   )
@@ -160,14 +212,17 @@ test('ensureLayout adds only what is missing, and removes nothing', async (t) =>
         name: 'Session history',
         options: null,
       },
+      { id: 'F_title', databaseId: 7, name: 'Title', options: null },
     ],
-    views: ['ADR', 'Working'],
+    views: ['All', 'ADR', 'Working'],
   })
   const added = await g.provider.ensureLayout(BOARD, layout)
   assert.deepEqual(added, [
     'option accepted',
     'option Marketing',
     'view Marketing',
+    // GitHub adds it last, after Working: said, not reordered.
+    'note views are not in the declared order: GitHub keeps them as they were made',
   ])
   assert.deepEqual(
     g.fields[0]!.options?.map((o) => o.name),
@@ -185,7 +240,10 @@ test('ensureLayout adds only what is missing, and removes nothing', async (t) =>
   assert.equal(g.restViews.length, 1)
 
   const again = await g.provider.ensureLayout(BOARD, layout)
-  assert.deepEqual(again, [])
+  assert.deepEqual(again, [
+    'note views are not in the declared order: GitHub keeps them as they were made',
+  ])
+  assert.equal(g.restViews.length, 1, 'nothing made twice')
 })
 
 test("items: rness's are drafts and issues of acme/.rness with a Path; anything else is the team's", async (t) => {
@@ -360,7 +418,7 @@ test('ensureLayout makes the label rness and links the board to acme/.rness, onc
     {
       name: 'rness',
       color: '5319e7',
-      description: 'A document of .rness, on Agent Pulse',
+      description: 'A document of .rness, on a board of rness',
     },
   ])
   assert.deepEqual(
@@ -385,10 +443,8 @@ const want = {
   title: '0001 — A',
   body: 'header',
   status: 'draft',
-  type: 'ADR',
   statusField: null,
-  sessions: null,
-  values: {},
+  values: { Collection: 'ADR', 'Session history': null },
   labels: [],
   unlabels: [],
 }
@@ -677,6 +733,7 @@ test('anonymous: every board method needs a login', async () => {
 
 const boardFields = (statuses: { id: string; name: string }[]) => [
   { id: 'F_status', databaseId: 1, name: 'Status', options: statuses },
+  { id: 'F_title', databaseId: 7, name: 'Title', options: null },
   {
     id: 'F_Collection',
     databaseId: 2,
@@ -704,7 +761,7 @@ test("ensureLayout reorders an out-of-order Status, keeping ids and options it d
       { id: 's9', name: 'obsolete' },
       { id: 's1', name: 'draft' },
     ]),
-    views: ['ADR', 'Marketing', 'Working'],
+    views: ['All', 'ADR', 'Marketing', 'Working'],
   })
   const lines = await g.provider.ensureLayout(BOARD, layout)
   assert.deepEqual(lines, ['ordered options'])
@@ -726,7 +783,7 @@ test('ensureLayout leaves Status alone when its options are in order', async (t)
       { id: 's2', name: 'accepted' },
       { id: 's9', name: 'obsolete' },
     ]),
-    views: ['ADR', 'Marketing', 'Working'],
+    views: ['All', 'ADR', 'Marketing', 'Working'],
   })
   assert.deepEqual(await g.provider.ensureLayout(BOARD, layout), [])
   assert.equal(g.mutations.filter((m) => m.op === 'setOptions').length, 0)
@@ -750,11 +807,10 @@ test('a new board: every option is sent with its colour', async (t) => {
   const created = await g.provider.createBoard('acme')
   await g.provider.ensureLayout(created, {
     statuses: ['Draft', 'Approved', 'In progress', 'Accepted', 'scheduled'],
-    types: ['ADR', 'Specs', 'Plans', 'Marketing'],
-    fields: [],
+    fields: pulseFields(['ADR', 'Specs', 'Plans', 'Marketing']),
     views: [],
-    declared: [],
     labels: [],
+    colors: COLORS,
   })
   assert.deepEqual(sentColours(g, 'setOptions'), [
     [
@@ -815,8 +871,9 @@ test('ensureLayout recolours gray options keeping ids, and leaves the colour of 
         name: 'Session history',
         options: null,
       },
+      { id: 'F_title', databaseId: 7, name: 'Title', options: null },
     ],
-    views: ['ADR', 'Marketing', 'Working'],
+    views: ['All', 'ADR', 'Marketing', 'Working'],
   })
   const lines = await g.provider.ensureLayout(BOARD, {
     ...layout,
@@ -870,12 +927,13 @@ test("a new board's first view becomes All: Title, Collection, Status, Session; 
   assert.equal(g.mutations.filter((m) => m.op === 'updateView').length, 1)
 })
 
-test('a new board without a first view: nothing is renamed', async (t) => {
+test('a new board without a first view: nothing is renamed, All is made', async (t) => {
   const g = await board(t, { defaultView: null })
   const created = await g.provider.createBoard('acme')
   const lines = await g.provider.ensureLayout(created, layout)
-  assert.ok(!lines.includes('view All'))
+  assert.ok(lines.includes('view All'))
   assert.equal(g.mutations.filter((m) => m.op === 'updateView').length, 0)
+  assert.equal((g.restViews[0] as { name: string }).name, 'All')
 })
 
 test('an existing board keeps its views: ensureLayout never renames a first view that is not View 1', async (t) => {
@@ -887,14 +945,21 @@ test('an existing board keeps its views: ensureLayout never renames a first view
 
 const own: Layout = {
   statuses: ['Proposed', 'Accepted'],
-  fields: [{ name: 'ADR status', statuses: ['Proposed', 'Accepted'] }],
-  types: ['ADR', 'Marketing'],
-  views: [
-    { name: 'ADR', type: 'ADR', field: 'ADR status' },
-    { name: 'Marketing', type: 'Marketing', field: null },
-  ],
-  declared: [],
+  fields: pulseFields(
+    ['ADR', 'Marketing'],
+    [
+      {
+        name: 'ADR status',
+        type: 'select',
+        kind: 'status',
+        options: ['Proposed', 'Accepted'],
+        reorder: true,
+      },
+    ]
+  ),
+  views: [ALL, boardView('ADR', 'ADR status'), boardView('Marketing'), WORKING],
   labels: [],
+  colors: COLORS,
 }
 
 test('a new board: a status field per collection, coloured, each board columned by its own; a statusless directory by Status', async (t) => {
@@ -941,14 +1006,20 @@ test('an existing board columned by Status is made again by its own field; one a
       },
     ],
     views: [
+      'All',
       { name: 'ADR', column: 'Status' },
       'Marketing',
       'Working',
-      { name: 'Roadmap', column: 'Status' },
+      // The team's: a filter of its own.
+      { name: 'Roadmap', column: 'Status', filter: 'label:launch' },
     ],
   })
+  const notes = [
+    'note view Roadmap is not declared: delete it on GitHub if unwanted',
+    'note views are not in the declared order: GitHub keeps them as they were made',
+  ]
   const lines = await g.provider.ensureLayout(BOARD, own)
-  assert.deepEqual(lines, ['view ADR remade — columns ADR status'])
+  assert.deepEqual(lines, ['view ADR remade — columns ADR status', ...notes])
   assert.deepEqual(
     g.mutations.map((m) => m.op),
     ['deleteView']
@@ -965,6 +1036,7 @@ test('an existing board columned by Status is made again by its own field; one a
   assert.deepEqual(
     g.viewList.map((v) => [v.name, v.column]),
     [
+      ['All', null],
       ['Marketing', 'Status'],
       ['Working', null],
       ['Roadmap', 'Status'],
@@ -973,9 +1045,50 @@ test('an existing board columned by Status is made again by its own field; one a
   )
   g.mutations.length = 0
   g.restViews.length = 0
-  assert.deepEqual(await g.provider.ensureLayout(BOARD, own), [])
+  assert.deepEqual(await g.provider.ensureLayout(BOARD, own), notes)
   assert.deepEqual(g.mutations, [])
   assert.equal(g.restViews.length, 0)
+})
+
+test('a declared view whose filter or fields changed is updated in place, its id kept; one whose layout changed is made again', async (t) => {
+  const g = await board(t, {
+    fields: boardFields([
+      { id: 's1', name: 'draft' },
+      { id: 's2', name: 'accepted' },
+    ]),
+    views: ['All', 'ADR', 'Marketing', { id: 'V_working', name: 'Working' }],
+  })
+  const changed: Layout = {
+    ...layout,
+    views: [
+      { ...ALL, layout: 'board', columns: 'Status', fields: null },
+      boardView('ADR'),
+      boardView('Marketing'),
+      {
+        ...WORKING,
+        filter: 'agent:working label:urgent',
+        fields: ['Title', 'Status'],
+      },
+    ],
+  }
+  const lines = await g.provider.ensureLayout(BOARD, changed)
+  assert.deepEqual(lines, [
+    'view All remade — columns Status',
+    'updated view Working',
+    'note views are not in the declared order: GitHub keeps them as they were made',
+  ])
+  const working = g.viewList.find((v) => v.name === 'Working')!
+  assert.equal(working.id, 'V_working', 'the same view')
+  assert.equal(working.filter, 'agent:working label:urgent')
+  assert.deepEqual(working.fields, ['Title', 'Status'])
+  assert.deepEqual(
+    g.mutations.map((m) => m.op),
+    ['deleteView', 'updateView']
+  )
+  g.mutations.length = 0
+  const again = await g.provider.ensureLayout(BOARD, changed)
+  assert.deepEqual(g.mutations, [])
+  assert.ok(again.every((l) => l.startsWith('note ')))
 })
 
 test('an existing board: View 1 becomes All when no All exists; an All, or another first view, is left alone', async (t) => {
@@ -1046,18 +1159,42 @@ const MARKETING = {
   url: 'https://github.com/orgs/acme/projects/8',
 }
 
+const kind = (options: string[]): LayoutField => ({
+  name: 'Kind',
+  type: 'select',
+  kind: 'declared',
+  options,
+  reorder: true,
+})
 const ownLayout: Layout = {
   statuses: ['Idea', 'Draft', 'Published'],
-  fields: [],
-  types: ['Marketing'],
-  views: [{ name: 'Marketing', type: 'Marketing', field: null }],
-  declared: [
-    { name: 'Publish date', type: 'date', options: [] },
-    { name: 'Reach', type: 'number', options: [] },
-    { name: 'Kind', type: 'select', options: ['post', 'action'] },
-    { name: 'Tone', type: 'select', options: [] },
+  fields: [
+    ...pulseFields(['Marketing']),
+    { name: 'Publish date', type: 'date' },
+    { name: 'Reach', type: 'number' },
+    kind(['post', 'action']),
+    {
+      name: 'Tone',
+      type: 'select',
+      kind: 'declared',
+      options: [],
+      reorder: true,
+    },
+  ],
+  views: [
+    ALL,
+    boardView('Marketing'),
+    {
+      name: 'Calendar',
+      layout: 'roadmap',
+      filter: 'collection:"Marketing"',
+      columns: null,
+      fields: null,
+    },
+    WORKING,
   ],
   labels: ['linkedin', 'hn'],
+  colors: COLORS,
 }
 
 /** Agent Pulse made, then the collection's project, laid out; mutations cleared. */
@@ -1122,10 +1259,11 @@ test("a collection's project laid out again: nothing made twice; a select gets t
   const { g } = await ownProject(t, { labels: ['linkedin'] })
   const again = await g.provider.ensureLayout(MARKETING, {
     ...ownLayout,
-    declared: [
-      { name: 'Publish date', type: 'date', options: [] },
-      { name: 'Reach', type: 'number', options: [] },
-      { name: 'Kind', type: 'select', options: ['post', 'launch', 'action'] },
+    fields: [
+      ...pulseFields(['Marketing']),
+      { name: 'Publish date', type: 'date' },
+      { name: 'Reach', type: 'number' },
+      kind(['post', 'launch', 'action']),
     ],
   })
   assert.deepEqual(again, ['option launch'])
@@ -1153,7 +1291,7 @@ test('a declared field of the name of one of another type: stops, naming it', as
   await assert.rejects(
     () => g.provider.ensureLayout(made, ownLayout),
     new Error(
-      "the project's field Kind is not a select field: rename it on the project, or in the collection's README"
+      "the project's field Kind is not a select field: rename it on the project, or in rness.json"
     )
   )
 })
@@ -1176,10 +1314,10 @@ const card = {
   title: '2026-09-30 — First post',
   body: 'header',
   status: 'Draft',
-  type: 'Marketing',
   statusField: null,
-  sessions: null,
   values: {
+    Collection: 'Marketing',
+    'Session history': null,
     'Publish date': '2026-10-01',
     Reach: '120',
     Kind: 'post',

@@ -176,9 +176,12 @@ const taken = (name: string): boolean =>
 
 /** The contract's statuses of a collection that has them; undefined: none. */
 export const contractOf = (collection: string): readonly string[] | undefined =>
-  (STATUSES as Readonly<Record<string, readonly string[] | undefined>>)[
-    collection
-  ]
+  // A directory named `constructor` is no member of the contract's table.
+  Object.hasOwn(STATUSES, collection)
+    ? (STATUSES as Readonly<Record<string, readonly string[] | undefined>>)[
+        collection
+      ]
+    : undefined
 
 function unknownKeys(
   value: Record<string, unknown>,

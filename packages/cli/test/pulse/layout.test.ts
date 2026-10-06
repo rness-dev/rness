@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { parseBoard } from '../../src/core/board-declaration.ts'
+import { presetTemplate } from '../../src/core/presets.ts'
 import type { StatusTab } from '../../src/core/status.ts'
-import type { CollectionShape } from '../../src/pulse/collection.ts'
-import { desiredOf, layoutOf, optionColor } from '../../src/pulse/layout.ts'
+import {
+  collectionsOf,
+  desiredOf,
+  layoutOf,
+  optionColor,
+} from '../../src/pulse/layout.ts'
 
 const row = (id: string, status: string | null, path: string) => ({
   id,
@@ -11,6 +17,7 @@ const row = (id: string, status: string | null, path: string) => ({
   status,
   path,
 })
+/** As `rness status` gives them: ADR, Specs and Plans always, then what it finds. */
 const tabs: StatusTab[] = [
   {
     name: 'adr',
@@ -28,264 +35,223 @@ const tabs: StatusTab[] = [
       row('0016', 'draft', 'specs/0016-y.md'),
     ],
   },
+  { name: 'plans', label: 'Plans', rows: [] },
   {
     name: 'marketing',
     label: 'Marketing',
-    rows: [row('2026-10-02', null, 'marketing/2026-10-02-post.md')],
+    rows: [row('2026-10-02', 'scheduled', 'marketing/2026-10-02-post.md')],
   },
 ]
 
-test('layoutOf: the contract statuses, then those found outside them, deduplicated, never ? or null', () => {
-  assert.deepEqual(layoutOf(tabs).statuses, [
+/** Agent Pulse as rness ships it (`agent-pulse/1`). */
+const PULSE = parseBoard('pulse', {
+  number: 4,
+  ...presetTemplate('agent-pulse/1', { collection: 'pulse' }),
+})
+const pulse = (t: readonly StatusTab[]) => {
+  const collections = collectionsOf(PULSE, t)
+  const want = desiredOf(PULSE, collections, 'acme')
+  return { collections, want, layout: layoutOf(PULSE, collections, want) }
+}
+
+test('Agent Pulse: Status takes the contract statuses in lifecycle order, then those found outside them, never ? or null', () => {
+  assert.deepEqual(pulse(tabs).layout.statuses, [
     'Draft',
     'Proposed',
+    'Ready',
     'Approved',
+    'In progress',
+    'Blocked',
     'Accepted',
     'Implemented',
+    'Completed',
     'Rejected',
     'Superseded',
+    'Abandoned',
     'accepted',
     'draft',
+    'scheduled',
   ])
 })
 
-test('layoutOf: types are the tab labels, one view per tab', () => {
-  const layout = layoutOf(tabs)
-  assert.deepEqual(layout.types, ['ADR', 'Specs', 'Marketing'])
+test('Agent Pulse: Collection takes the tab labels; one status field per collection; its views, a discovered collection after the declared ones', () => {
+  const { layout } = pulse(tabs)
+  assert.deepEqual(
+    layout.fields.map((f) => [
+      f.name,
+      f.type === 'select' ? f.options : f.type,
+    ]),
+    [
+      ['Collection', ['ADR', 'Specs', 'Plans', 'Marketing']],
+      [
+        'ADR status',
+        ['Proposed', 'Accepted', 'Rejected', 'Superseded', 'accepted'],
+      ],
+      [
+        'Specs status',
+        [
+          'Draft',
+          'Proposed',
+          'Approved',
+          'Implemented',
+          'Rejected',
+          'Superseded',
+          'accepted',
+          'draft',
+        ],
+      ],
+      [
+        'Plans status',
+        ['Draft', 'Ready', 'In progress', 'Blocked', 'Completed', 'Abandoned'],
+      ],
+      ['Marketing status', ['scheduled']],
+      ['Agent', ['working']],
+      ['Working session', 'text'],
+      ['Session history', 'text'],
+    ]
+  )
   assert.deepEqual(layout.views, [
-    { name: 'ADR', type: 'ADR', field: 'ADR status' },
-    { name: 'Specs', type: 'Specs', field: 'Specs status' },
-    { name: 'Marketing', type: 'Marketing', field: null },
+    {
+      name: 'All',
+      layout: 'table',
+      filter: null,
+      columns: null,
+      fields: ['Title', 'Collection', 'Status', 'Working session'],
+    },
+    {
+      name: 'ADR',
+      layout: 'board',
+      filter: 'collection:"ADR"',
+      columns: 'ADR status',
+      fields: null,
+    },
+    {
+      name: 'Specs',
+      layout: 'board',
+      filter: 'collection:"Specs"',
+      columns: 'Specs status',
+      fields: null,
+    },
+    {
+      name: 'Plans',
+      layout: 'board',
+      filter: 'collection:"Plans"',
+      columns: 'Plans status',
+      fields: null,
+    },
+    {
+      name: 'Marketing',
+      layout: 'board',
+      filter: 'collection:"Marketing"',
+      columns: 'Marketing status',
+      fields: null,
+    },
+    {
+      name: 'Working',
+      layout: 'table',
+      filter: 'agent:working',
+      columns: null,
+      fields: ['Title', 'Collection', 'Status', 'Working session'],
+    },
   ])
+  assert.deepEqual(layout.labels, [])
 })
 
-test('desiredOf: title, the first line of its body, status, type', () => {
-  const [first, second, , , third] = desiredOf(tabs, 'acme')
+test('Agent Pulse: a collection another board holds is left out, its view too', () => {
+  const collections = collectionsOf(PULSE, tabs, (c) => c === 'marketing')
+  const layout = layoutOf(PULSE, collections, [])
+  assert.deepEqual(
+    collections.map((c) => c.name),
+    ['adr', 'specs', 'plans']
+  )
+  assert.equal(
+    layout.views.some((v) => v.name === 'Marketing'),
+    false
+  )
+})
+
+test('desiredOf: title, the first line of its body, status, its collection and history; ? is no status', () => {
+  const [first, second] = pulse(tabs).want
   assert.deepEqual(first, {
     path: 'adr/0002-b.md',
     title: '0002 — Title 0002',
     body: '`adr/0002-b.md` · [on GitHub](https://github.com/acme/.rness/blob/main/adr/0002-b.md)',
     status: 'accepted',
     statusField: 'ADR status',
-    type: 'ADR',
-    sessions: null,
-    values: {},
+    values: { Collection: 'ADR', 'Session history': null },
     labels: [],
     unlabels: [],
   })
   assert.equal(second?.status, null, '? is no status')
-  assert.equal(third?.status, null)
-  assert.equal(third?.type, 'Marketing')
 })
 
-test('desiredOf: Session history is each session a document records, its agent first when known, joined; null when none', () => {
-  const [one] = desiredOf(
-    [
-      {
-        name: 'plans',
-        label: 'Plans',
-        rows: [
-          {
-            id: '0029',
-            title: 'P',
-            status: 'Completed',
-            path: 'plans/0029-p.md',
-            sessions: [{ id: 's1', agent: 'Claude Opus 5.5' }, { id: 's2' }],
-          },
-        ],
-      },
-    ],
-    'acme'
-  )
-  assert.equal(one?.sessions, 'Claude Opus 5.5 · s1, s2')
-})
-
-test('layoutOf: the contract statuses in lifecycle order, then the others in the order found', () => {
-  const t: StatusTab[] = [
-    {
-      name: 'adr',
-      label: 'ADR',
-      rows: [
-        row('2', 'Accepted', 'adr/2.md'),
-        row('1', 'Proposed', 'adr/1.md'),
-        row('0', 'Superseded', 'adr/0.md'),
-      ],
-    },
-    {
-      name: 'specs',
-      label: 'Specs',
-      rows: [
-        row('3', 'Approved', 'specs/3.md'),
-        row('4', 'Implemented', 'specs/4.md'),
-        row('5', 'Draft', 'specs/5.md'),
-      ],
-    },
+test('desiredOf: Session history is each session a document records, its agent first when known, joined', () => {
+  const [one] = pulse([
     {
       name: 'plans',
       label: 'Plans',
       rows: [
-        row('6', 'Ready', 'plans/6.md'),
-        row('7', 'Completed', 'plans/7.md'),
-        row('8', 'In progress', 'plans/8.md'),
+        {
+          id: '0029',
+          title: 'P',
+          status: 'Completed',
+          path: 'plans/0029-p.md',
+          sessions: [{ id: 's1', agent: 'Claude Opus 5.5' }, { id: 's2' }],
+        },
       ],
     },
-    {
-      name: 'marketing',
-      label: 'Marketing',
-      rows: [
-        row('a', 'scheduled', 'marketing/a.md'),
-        row('b', 'published', 'marketing/b.md'),
-        row('c', 'scheduled', 'marketing/c.md'),
-      ],
-    },
-  ]
-  assert.deepEqual(layoutOf(t).statuses, [
-    'Draft',
-    'Proposed',
-    'Ready',
-    'Approved',
-    'In progress',
-    'Blocked',
-    'Accepted',
-    'Implemented',
-    'Completed',
-    'Rejected',
-    'Superseded',
-    'Abandoned',
-    'scheduled',
-    'published',
-  ])
+  ]).want
+  assert.equal(one?.values['Session history'], 'Claude Opus 5.5 · s1, s2')
 })
 
-test('optionColor: the contract statuses, a discovered status by its tone, collections and the working marker', () => {
-  const status = (n: string) => optionColor('Status', n)
+test('optionColor: as declared, else a status by its tone, a collection pink, a declared option its own', () => {
+  const colors = PULSE.colors
+  const status = (n: string) => optionColor(colors, 'status', n)
   assert.deepEqual(
-    [
-      'Draft',
-      'Proposed',
-      'Ready',
-      'Approved',
-      'In progress',
-      'Blocked',
-      'Accepted',
-      'Implemented',
-      'Completed',
-      'Rejected',
-      'Superseded',
-      'Abandoned',
-    ].map(status),
-    [
-      'gray',
-      'blue',
-      'blue',
-      'purple',
-      'yellow',
-      'red',
-      'green',
-      'green',
-      'green',
-      'red',
-      'yellow',
-      'gray',
-    ]
+    ['Draft', 'Approved', 'In progress', 'Blocked', 'Completed'].map(status),
+    ['gray', 'purple', 'yellow', 'red', 'green']
   )
   assert.equal(status('published'), 'green')
   assert.equal(status('rejected'), 'gray')
   assert.equal(status('scheduled'), 'yellow')
   assert.deepEqual(
     ['ADR', 'Specs', 'Plans', 'Marketing'].map((n) =>
-      optionColor('Collection', n)
+      optionColor(colors, 'collection', n)
     ),
     ['purple', 'blue', 'orange', 'pink']
   )
-  assert.equal(optionColor('Agent', 'working'), 'green')
+  assert.equal(optionColor(colors, 'declared', 'working'), 'green')
+  assert.equal(optionColor(colors, 'declared', 'post'), null)
 })
 
-test('layoutOf: a contract collection has every status of its contract, the others found last; a directory only what it carries', () => {
+test('a directory whose documents carry no status: no status field, its board by Status', () => {
   const t: StatusTab[] = [
-    {
-      name: 'plans',
-      label: 'Plans',
-      rows: [
-        row('1', 'In progress', 'plans/1.md'),
-        row('2', 'Weird', 'plans/2.md'),
-      ],
-    },
-    { name: 'adr', label: 'ADR', rows: [] },
-    {
-      name: 'marketing',
-      label: 'Marketing',
-      rows: [row('a', 'scheduled', 'marketing/a.md')],
-    },
+    ...tabs.slice(0, 3),
     { name: 'notes', label: 'Notes', rows: [row('n', null, 'notes/n.md')] },
   ]
-  const layout = layoutOf(t)
-  assert.deepEqual(layout.fields, [
-    {
-      name: 'Plans status',
-      statuses: [
-        'Draft',
-        'Ready',
-        'In progress',
-        'Blocked',
-        'Completed',
-        'Abandoned',
-        'Weird',
-      ],
-    },
-    {
-      name: 'ADR status',
-      statuses: ['Proposed', 'Accepted', 'Rejected', 'Superseded'],
-    },
-    { name: 'Marketing status', statuses: ['scheduled'] },
-  ])
-  assert.deepEqual(layout.views, [
-    { name: 'Plans', type: 'Plans', field: 'Plans status' },
-    { name: 'ADR', type: 'ADR', field: 'ADR status' },
-    { name: 'Marketing', type: 'Marketing', field: 'Marketing status' },
-    { name: 'Notes', type: 'Notes', field: null },
-  ])
-  assert.deepEqual(layout.statuses, [
-    'Draft',
-    'Proposed',
-    'Ready',
-    'In progress',
-    'Blocked',
-    'Accepted',
-    'Completed',
-    'Rejected',
-    'Superseded',
-    'Abandoned',
-    'Weird',
-    'scheduled',
-  ])
-  assert.deepEqual(
-    desiredOf(t, 'acme').map((d) => d.statusField),
-    ['Plans status', 'Plans status', 'Marketing status', null]
+  const { layout, want } = pulse(t)
+  assert.equal(
+    layout.fields.some((f) => f.name === 'Notes status'),
+    false
   )
+  assert.equal(layout.views.find((v) => v.name === 'Notes')?.columns, 'Status')
+  assert.equal(want.at(-1)?.statusField, null)
 })
 
-test('layoutOf: a directory named like an Object.prototype member is a discovered one', () => {
-  const t: StatusTab[] = [
+test('a directory named like an Object.prototype member is a discovered one', () => {
+  const { layout } = pulse([
+    ...tabs.slice(0, 3),
     {
       name: 'constructor',
       label: 'Constructor',
       rows: [row('a', 'open', 'constructor/a.md')],
     },
-    { name: 'toString', label: 'ToString', rows: [] },
-  ]
-  const layout = layoutOf(t)
-  assert.deepEqual(layout.fields, [
-    { name: 'Constructor status', statuses: ['open'] },
   ])
-  assert.deepEqual(layout.statuses, ['open'])
-  assert.deepEqual(
-    layout.views.map((v) => v.field),
-    ['Constructor status', null]
-  )
+  assert.ok(layout.fields.some((f) => f.name === 'Constructor status'))
+  assert.ok(layout.views.some((v) => v.name === 'Constructor'))
 })
 
-// --- a collection's own project (spec 0025 §4) ----------------------------------
+// --- a collection's own board (spec 0025 §4, declared as spec 0031 §2.2) ------
 
 const marketing: StatusTab = {
   name: 'marketing',
@@ -296,26 +262,20 @@ const marketing: StatusTab = {
     row('2026-09-30', 'Paused', 'marketing/2026-09-30-loose.md'),
   ],
 }
-const shape: CollectionShape = {
-  readme: '# The launch\n',
-  description: 'The launch.',
-  statuses: ['Idea', 'Draft', 'Ready', 'Published'],
-  fields: [
-    {
-      name: 'Publish date',
-      type: 'date',
-      from: ['published_at', 'scheduled_at'],
-      options: [],
-    },
-    {
-      name: 'Kind',
-      type: 'select',
-      from: ['kind'],
-      options: ['post', 'action'],
-    },
-  ],
-  labels: { kind: 'directory' },
-}
+const TEMPLATE = presetTemplate('collection/1', { collection: 'marketing' })
+const MARKETING = parseBoard('marketing', {
+  number: 8,
+  ...TEMPLATE,
+  collections: {
+    marketing: { statuses: ['Idea', 'Draft', 'Ready', 'Published'] },
+  },
+  fields: {
+    ...(TEMPLATE['fields'] as Record<string, unknown>),
+    'Publish date': { type: 'date', from: ['published_at', 'scheduled_at'] },
+    Kind: { type: 'select', from: 'kind', options: ['post', 'action'] },
+  },
+  labels: 'directory',
+})
 const fronts = new Map<string, Record<string, unknown>>([
   [
     'marketing/linkedin/2026-09-30-first-post.md',
@@ -324,10 +284,20 @@ const fronts = new Map<string, Record<string, unknown>>([
   ['marketing/hn/2026-09-30-show-hn.md', { status: 'Idea', kind: 'launch' }],
   ['marketing/2026-09-30-loose.md', { status: 'Paused' }],
 ])
+const own = (directories: string[] = ['linkedin', 'hn']) => {
+  const collections = collectionsOf(MARKETING, [marketing])
+  const want = desiredOf(
+    MARKETING,
+    collections,
+    'acme',
+    fronts,
+    new Map([['marketing', directories]])
+  )
+  return { want, layout: layoutOf(MARKETING, collections, want) }
+}
 
-test('layoutOf, own project: the declared statuses in order, each there, then those found; no second status field; a board by Status', () => {
-  const want = desiredOf([marketing], 'acme', { shape, fronts })
-  const layout = layoutOf([marketing], { shape, want })
+test('own board: the declared statuses in order, each there, then those found; no second status field; a board by Status', () => {
+  const { layout } = own()
   assert.deepEqual(layout.statuses, [
     'Idea',
     'Draft',
@@ -335,48 +305,76 @@ test('layoutOf, own project: the declared statuses in order, each there, then th
     'Published',
     'Paused',
   ])
-  assert.deepEqual(layout.fields, [])
-  assert.deepEqual(layout.views, [
-    { name: 'Marketing', type: 'Marketing', field: null },
-  ])
+  assert.deepEqual(
+    layout.views.map((v) => [v.name, v.columns]),
+    [
+      ['All', null],
+      ['Marketing', 'Status'],
+      ['Working', null],
+    ]
+  )
 })
 
-test('layoutOf, own project: the declared fields, a select with its options then the values found', () => {
-  const want = desiredOf([marketing], 'acme', { shape, fronts })
-  assert.deepEqual(layoutOf([marketing], { shape, want }).declared, [
-    { name: 'Publish date', type: 'date', options: [] },
-    { name: 'Kind', type: 'select', options: ['post', 'action', 'launch'] },
-  ])
+test('own board: the declared fields, a select with its options then the values found', () => {
+  assert.deepEqual(
+    own().layout.fields.map((f) => [
+      f.name,
+      f.type === 'select' ? f.options : f.type,
+    ]),
+    [
+      ['Collection', ['Marketing']],
+      ['Agent', ['working']],
+      ['Working session', 'text'],
+      ['Session history', 'text'],
+      ['Publish date', 'date'],
+      ['Kind', ['post', 'action', 'launch']],
+    ]
+  )
 })
 
-test('layoutOf, Agent Pulse: nothing declared, whatever a collection says', () => {
-  assert.deepEqual(layoutOf(tabs).declared, [])
-  assert.deepEqual(layoutOf(tabs).labels, [])
-})
-
-test("desiredOf, own project: no second status field; the declared values; the labels, and the collection's others to take off", () => {
-  const [post, hn, loose] = desiredOf([marketing], 'acme', { shape, fronts })
+test("desiredOf, own board: no second status field; the declared values; the labels, and the collection's others to take off", () => {
+  const { want, layout } = own()
+  const [post, hn, loose] = want
   assert.equal(post?.statusField, null)
-  assert.deepEqual(post?.values, { 'Publish date': '2026-10-01', Kind: 'post' })
+  assert.deepEqual(post?.values, {
+    Collection: 'Marketing',
+    'Session history': null,
+    'Publish date': '2026-10-01',
+    Kind: 'post',
+  })
   assert.deepEqual(post?.labels, ['linkedin'])
   assert.deepEqual(post?.unlabels, ['hn'])
-  assert.deepEqual(hn?.values, { 'Publish date': null, Kind: 'launch' })
-  assert.deepEqual(hn?.labels, ['hn'])
+  assert.deepEqual(hn?.values, {
+    Collection: 'Marketing',
+    'Session history': null,
+    'Publish date': null,
+    Kind: 'launch',
+  })
   assert.deepEqual(hn?.unlabels, ['linkedin'])
   assert.deepEqual(loose?.labels, [])
   assert.deepEqual(loose?.unlabels, ['linkedin', 'hn'])
-  const want = desiredOf([marketing], 'acme', { shape, fronts })
-  assert.deepEqual(layoutOf([marketing], { shape, want }).labels, [
-    'linkedin',
-    'hn',
-  ])
+  assert.deepEqual(layout.labels, ['linkedin', 'hn'])
 })
 
-test('desiredOf, own project: a subdirectory with no document left still has its label taken off', () => {
-  const [post] = desiredOf([marketing], 'acme', {
-    shape,
-    fronts,
-    directories: ['linkedin', 'hn', 'reddit'],
-  })
+test('desiredOf, own board: a subdirectory with no document left still has its label taken off', () => {
+  const [post] = own(['linkedin', 'hn', 'reddit']).want
   assert.deepEqual(post?.unlabels, ['hn', 'reddit'])
+})
+
+test('a field may take the first of several sources: $status, then a front-matter key', () => {
+  const board = parseBoard('marketing', {
+    number: 8,
+    collections: { marketing: { statuses: 'found' } },
+    fields: { Phase: { type: 'text', from: ['phase', '$status'] } },
+    views: [{ name: 'Board', layout: 'board' }],
+  })
+  const collections = collectionsOf(board, [marketing])
+  const [post, hn] = desiredOf(
+    board,
+    collections,
+    'acme',
+    new Map([['marketing/hn/2026-09-30-show-hn.md', { phase: 'Scouting' }]])
+  )
+  assert.equal(post?.values['Phase'], 'Draft')
+  assert.equal(hn?.values['Phase'], 'Scouting')
 })

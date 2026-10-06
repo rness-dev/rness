@@ -2,8 +2,11 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import type { BoardDeclaration } from '../core/board-declaration.ts'
+import { parseBoard } from '../core/board-declaration.ts'
 import { collectMarkdown } from '../core/collect.ts'
 import type { CommandDeps } from '../core/deps.ts'
+import { stripFrontMatter } from '../core/frontmatter.ts'
 import { seenPaths } from '../core/git.ts'
 import {
   GitHubMessageError,
@@ -18,6 +21,8 @@ import {
   providerOf,
   writeManifest,
 } from '../core/manifest.ts'
+import { declaredBoard, presetSource } from '../core/preset-board.ts'
+import { labelOf } from '../core/presets.ts'
 import type { Board, Provider } from '../core/provider.ts'
 import { PROVIDERS, openProvider } from '../core/providers.ts'
 import { type StatusTab, statusTabs } from '../core/status.ts'
@@ -26,19 +31,18 @@ import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { issueBody } from '../pulse/body.ts'
-import {
-  type CollectionShape,
-  type StatusUpdate,
-  readShape,
-  readUpdates,
-} from '../pulse/collection.ts'
+import { type StatusUpdate, readUpdates } from '../pulse/collection.ts'
 import { oneSyncAtATime, recordFailure } from '../pulse/detached.ts'
 import {
+  type BoardCollection,
   type Desired,
   type Layout,
+  collectionsOf,
   desiredOf,
   layoutOf,
+  readsFrontMatter,
 } from '../pulse/layout.ts'
+import { onceSaid } from '../pulse/noted.ts'
 import { openedFile, readOpened, writeOpened } from '../pulse/opened.ts'
 import {
   type BoardItem,
@@ -131,33 +135,59 @@ async function missingAccess(provider: Provider): Promise<string | null> {
   return scopes?.includes(PROJECT_SCOPE) === true ? null : NEEDS_SCOPE
 }
 
-/** A declared project, opened: `pulse` for Agent Pulse, else its collection's name. */
+/** A declared project, opened: its name in `projects`, its declaration, its board. */
 interface Declared {
   name: string
+  declaration: BoardDeclaration
   board: Board
 }
 
+/** A board that takes every collection no other board holds: `"collections": "all"`. */
+const takesAll = (d: { declaration: BoardDeclaration }): boolean =>
+  d.declaration.collections === 'all'
+
+/** The collections a board holds by name; none for one that takes all. */
+const namedCollections = (d: BoardDeclaration): string[] =>
+  d.collections === 'all' ? [] : Object.keys(d.collections)
+
 /**
- * Every declared project, opened: the collections' own first, in the order of
- * `projects`, Agent Pulse last — a document moving leaves it only once its
- * own project holds it (spec 0025 §3). `sync` and `mark` need one.
+ * Every declared board, read whole (a number is its preset): those that
+ * name their collections first, in the order of `projects`, one that takes
+ * all last — a document moving leaves it only once its own board holds it
+ * (spec 0025 §3). A board `rness.json` refuses is said and skipped.
  */
-async function declaredBoards(c: Context): Promise<Declared[]> {
-  const projects = c.manifest.projects
-  if (projects === null)
-    throw new Error('no pulse declared — rness pulse create')
+async function declarations(
+  c: Context,
+  ui?: Ui
+): Promise<{ name: string; declaration: BoardDeclaration }[]> {
+  const projects = c.manifest.projects ?? {}
+  for (const r of c.manifest.refused ?? [])
+    ui?.line('skipped', `${r.name}: ${r.reason}`)
+  const all: { name: string; declaration: BoardDeclaration }[] = []
+  for (const [name, entry] of Object.entries(projects))
+    all.push({
+      name,
+      declaration: await declaredBoard(name, entry, c.rnessDir),
+    })
+  return all.sort((a, b) => Number(takesAll(a)) - Number(takesAll(b)))
+}
+
+/** Every declared board, opened; `sync` and `mark` need one. */
+async function declaredBoards(c: Context, ui?: Ui): Promise<Declared[]> {
+  if (c.manifest.projects === null)
+    throw new Error(
+      c.manifest.refused === undefined
+        ? 'no pulse declared — rness pulse create'
+        : `no board rness.json declares is valid: ${c.manifest.refused.map((r) => r.reason).join('; ')}`
+    )
   const missing = await missingAccess(c.provider)
   if (missing !== null) throw new Error(missing)
-  const names = Object.keys(projects).sort(
-    (a, b) => Number(a === PULSE) - Number(b === PULSE)
-  )
   const declared: Declared[] = []
-  for (const name of names) {
-    const number = projectNumber(projects[name]!)
-    const board = await fromGithub(c.provider.board(c.org, number))
+  for (const { name, declaration } of await declarations(c, ui)) {
+    const board = await fromGithub(c.provider.board(c.org, declaration.number))
     if (board === null)
-      throw new Error(`GitHub has no project ${number} in ${c.org}`)
-    declared.push({ name, board })
+      throw new Error(`GitHub has no project ${declaration.number} in ${c.org}`)
+    declared.push({ name, declaration, board })
   }
   return declared
 }
@@ -168,17 +198,16 @@ interface Scope {
   label: string
   want: Desired[]
   layout: Layout
-  /** On Agent Pulse, a path whose collection has a project of its own. */
+  /** A path on the board that another board holds, or none does: taken off, its issue kept. */
   elsewhere: (path: string) => boolean
   /** The paths whose opened issues this project's syncs record (spec 0018 §2). */
   mine: (path: string) => boolean
-  /** A collection's own project: its README's declarations and its updates. */
-  own: { shape: CollectionShape; updates: StatusUpdate[] } | null
+  /** Its README and short description, when declared. */
+  text: { readme: string | null; description: string | null } | null
+  updates: StatusUpdate[]
+  /** Said after its sync's count: one board that takes all is said bare, as before. */
+  on: string | undefined
 }
-
-/** A tab's label, as `rness status` makes it for a discovered directory. */
-const labelOf = (name: string): string =>
-  `${name.charAt(0).toUpperCase()}${name.slice(1)}`
 
 /** The subdirectories of a collection, but `updates/`: the labels `labels: directory` makes. */
 async function directoriesOf(dir: string): Promise<string[]> {
@@ -195,52 +224,77 @@ async function directoriesOf(dir: string): Promise<string[]> {
   }
 }
 
+/** A file of `.rness/`, its front matter removed; null when it is not there. */
+async function textOf(rnessDir: string, rel: string): Promise<string | null> {
+  try {
+    return stripFrontMatter(
+      await readFile(join(rnessDir, ...rel.split('/')), 'utf8')
+    )
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw e
+  }
+}
+
+/** The collection of a path of `.rness/`: its first directory. */
+const collectionOfPath = (path: string): string => path.split('/')[0] ?? ''
+
 async function scopeOf(
   c: Context,
   name: string,
+  declaration: BoardDeclaration,
   tabs: readonly StatusTab[],
   owners: readonly string[]
 ): Promise<Scope> {
-  const within = (collection: string) => (path: string) =>
-    path.startsWith(`${collection}/`)
-  if (name === PULSE) {
-    const shown = tabs.filter((t) => !owners.includes(t.name))
-    const elsewhere = (path: string) => owners.some((o) => within(o)(path))
-    return {
-      label: 'Agent Pulse',
-      want: desiredOf(shown, c.org),
-      layout: layoutOf(shown),
-      elsewhere,
-      mine: (path) => !elsewhere(path),
-      own: null,
-    }
-  }
-  // A collection with no document yet still has its project, empty.
-  const tab = tabs.find((t) => t.name === name) ?? {
-    name,
-    label: labelOf(name),
-    rows: [],
-  }
-  const dir = join(c.rnessDir, name)
-  const shape = await readShape(c.rnessDir, name)
-  const fronts = new Map(
-    (await collectMarkdown(dir)).map((item) => [
-      `${name}/${item.rel}`,
-      item.fields ?? {},
-    ])
+  const collections: BoardCollection[] = collectionsOf(
+    declaration,
+    tabs,
+    (dir) => owners.includes(dir)
   )
-  const want = desiredOf([tab], c.org, {
-    shape,
-    fronts,
-    directories: await directoriesOf(dir),
-  })
+  const held = (path: string): boolean =>
+    collections.some((col) => col.name === collectionOfPath(path))
+  // One that takes all holds what no other board holds; one that names its
+  // collections, those alone: a card of any other leaves it, its issue kept.
+  const elsewhere =
+    declaration.collections === 'all'
+      ? (path: string) => owners.includes(collectionOfPath(path))
+      : (path: string) =>
+          !namedCollections(declaration).includes(collectionOfPath(path))
+  const fronts = new Map<string, Record<string, unknown>>()
+  const directories = new Map<string, string[]>()
+  if (readsFrontMatter(declaration))
+    for (const col of collections) {
+      const dir = join(c.rnessDir, col.name)
+      for (const item of await collectMarkdown(dir))
+        fronts.set(`${col.name}/${item.rel}`, item.fields ?? {})
+      directories.set(col.name, await directoriesOf(dir))
+    }
+  const want = desiredOf(declaration, collections, c.org, fronts, directories)
+  const text =
+    declaration.readme === null && declaration.description === null
+      ? null
+      : {
+          readme:
+            declaration.readme === null
+              ? null
+              : await textOf(c.rnessDir, declaration.readme),
+          description: declaration.description,
+        }
   return {
-    label: tab.label,
+    label: declaration.title ?? labelOf(name),
     want,
-    layout: layoutOf([tab], { shape, want }),
-    elsewhere: () => false,
-    mine: within(name),
-    own: { shape, updates: await readUpdates(c.rnessDir, name) },
+    layout: layoutOf(declaration, collections, want),
+    elsewhere,
+    mine: (path) => held(path) || !elsewhere(path),
+    text,
+    updates:
+      declaration.updates === null
+        ? []
+        : await readUpdates(c.rnessDir, declaration.updates),
+    on:
+      declaration.collections === 'all'
+        ? undefined
+        : (declaration.title ?? labelOf(name)),
   }
 }
 
@@ -248,10 +302,14 @@ const plural = (n: number): string => `${n} item${n === 1 ? '' : 's'}`
 
 /** What the layout gained, as `sync` says it: `added view Plans`, a line each. */
 type SayLayout = (ui: Ui, added: readonly string[], project: string) => void
+/** What a layout line says, by its first word: `renamed …`, `updated …`, `deleted …`, `note …`, else added. */
+const VERBS = ['renamed', 'updated', 'deleted', 'note'] as const
 const eachAdded: SayLayout = (ui, added) => {
-  for (const a of added)
-    if (a.startsWith('renamed ')) ui.line('renamed', a.slice('renamed '.length))
-    else ui.line('added', a)
+  for (const a of added) {
+    const verb = VERBS.find((v) => a.startsWith(`${v} `))
+    if (verb === undefined) ui.line('added', a)
+    else ui.line(verb, a.slice(verb.length + 1))
+  }
 }
 /** As `create` says it: a line per kind, `created fields Collection, Agent`. */
 const createdByKind: SayLayout = (ui, added, project) => {
@@ -265,6 +323,7 @@ const createdByKind: SayLayout = (ui, added, project) => {
     if (a.startsWith('label ')) ui.line('created', a)
     else if (a.startsWith('link '))
       ui.line('linked', `${project} to ${a.slice('link '.length)}`)
+    else if (a.startsWith('note ')) ui.line('note', a.slice('note '.length))
   }
 }
 
@@ -378,9 +437,14 @@ async function syncBoard(
 ): Promise<void> {
   await fromGithub(c.provider.checkIssues(c.org))
   const { want } = scope
+  // A note — a field or view no longer declared — is said once per clone.
   sayLayout(
     ui,
-    await fromGithub(c.provider.ensureLayout(board, scope.layout)),
+    await onceSaid(
+      c.rnessDir,
+      board.number,
+      await fromGithub(c.provider.ensureLayout(board, scope.layout))
+    ),
     scope.label
   )
   const have = await fromGithub(c.provider.items(board))
@@ -477,30 +541,15 @@ async function syncBoard(
       { cause: e }
     )
   }
-  sayDone(
-    ui,
-    c.org,
-    want.length,
-    steps,
-    writes,
-    adopted,
-    scope.own === null ? undefined : scope.label
-  )
-  if (scope.own !== null) {
-    const { shape, updates } = scope.own
-    for (const what of await fromGithub(
-      c.provider.describe(board, {
-        readme: shape.readme,
-        description: shape.description,
-      })
-    ))
+  sayDone(ui, c.org, want.length, steps, writes, adopted, scope.on)
+  if (scope.text !== null)
+    for (const what of await fromGithub(c.provider.describe(board, scope.text)))
       ui.line('wrote', `${what} of ${scope.label}`)
-    for (const line of await fromGithub(
-      c.provider.postUpdates(board, updates)
-    )) {
-      const [verb, ...rest] = line.split(' ')
-      ui.line(verb ?? 'posted', rest.join(' '))
-    }
+  for (const line of await fromGithub(
+    c.provider.postUpdates(board, scope.updates)
+  )) {
+    const [verb, ...rest] = line.split(' ')
+    ui.line(verb ?? 'posted', rest.join(' '))
   }
 }
 
@@ -515,15 +564,19 @@ async function syncAll(
   sayLayout: (name: string) => SayLayout
 ): Promise<void> {
   const tabs = await statusTabs(c.rnessDir)
-  const owners = declared.map((d) => d.name).filter((n) => n !== PULSE)
-  for (const { name, board } of declared)
+  for (const d of declared) {
+    // The collections the other boards name: none of this board's.
+    const owners = declared
+      .filter((o) => o !== d)
+      .flatMap((o) => namedCollections(o.declaration))
     await syncBoard(
       c,
-      board,
+      d.board,
       ui,
-      sayLayout(name),
-      await scopeOf(c, name, tabs, owners)
+      sayLayout(d.name),
+      await scopeOf(c, d.name, d.declaration, tabs, owners)
     )
+  }
 }
 
 /** `rness pulse create`: the project, declared at once; then its layout and a first sync. */
@@ -544,6 +597,9 @@ export async function pulseCreateCommand(
       throw new Error(
         `already declared: ${boardUrl(c.org, projectNumber(declared))} — rness pulse sync`
       )
+    const refused = c.manifest.refused?.find((r) => r.name === name)
+    if (refused !== undefined)
+      throw new Error(`already declared, and refused: ${refused.reason}`)
     // A collection is a tab of `rness status`: a directory of `.rness/` whose
     // documents carry a status (spec 0025 §3).
     const tab =
@@ -602,18 +658,25 @@ export async function pulseCreateCommand(
       `${detected}, logged in as ${login}, scope ${PROJECT_SCOPE}`
     )
 
-    const board = await fromGithub(c.provider.createBoard(c.org, tab?.label))
+    // The board as its preset makes it here (spec 0031 §3, plan 0045),
+    // written whole: what rness.json says is the board.
+    const source = await presetSource(name, c.rnessDir, 1)
+    const title = typeof source['title'] === 'string' ? source['title'] : name
+    const board = await fromGithub(c.provider.createBoard(c.org, title))
     // Declared as soon as the project exists, before its layout: whatever
     // fails after this leaves a declared project that `rness pulse sync`
     // completes, not one nobody knows about (spec 0017 §3).
     const manifest = {
       ...c.manifest,
       provider: detected,
-      projects: { ...c.manifest.projects, [name]: board.number },
+      projects: {
+        ...c.manifest.projects,
+        [name]: parseBoard(name, { ...source, number: board.number }),
+      },
     }
     await writeManifest(c.rnessDir, manifest)
     c = { ...c, manifest }
-    ui.line('created', `${tab?.label ?? 'Agent Pulse'} — ${board.url}`)
+    ui.line('created', `${title} — ${board.url}`)
     try {
       await syncAll(c, await declaredBoards(c), ui, (n) =>
         n === name ? createdByKind : eachAdded
@@ -640,7 +703,7 @@ export async function pulseSyncCommand(
   try {
     const ui = deps.ui ?? (await makeUi(deps.terminal ?? defaultTerminal))
     const c = await context(opts, waitSaid(opts, ui))
-    await syncAll(c, await declaredBoards(c), ui, () => eachAdded)
+    await syncAll(c, await declaredBoards(c, ui), ui, () => eachAdded)
     return 0
   } catch (e) {
     return reportError(e)
@@ -703,7 +766,11 @@ async function mark(opts: MarkOptions): Promise<number> {
   // collection's; without it, a document of an undeclared collection has no
   // board, and its edit costs no sync.
   const held = (path: string): boolean =>
-    declared.some((d) => d.name === PULSE || path.startsWith(`${d.name}/`))
+    declared.some(
+      (d) =>
+        takesAll(d) ||
+        namedCollections(d.declaration).includes(collectionOfPath(path))
+    )
   const wanted = new Set(opts.paths.filter(held))
   // A document the agent has just written has no item until a sync gives it
   // one (plan 0027 Task 6, a fix to spec 0017 §5); one whose status the edit

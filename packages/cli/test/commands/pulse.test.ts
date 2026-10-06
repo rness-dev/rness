@@ -19,6 +19,7 @@ import {
   pulseMarkCommand,
   pulseSyncCommand,
 } from '../../src/commands/pulse.ts'
+import { presetTemplate } from '../../src/core/presets.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import { digestOf, headerOf, issueBody } from '../../src/pulse/body.ts'
 import { oneSyncAtATime, takeFailure } from '../../src/pulse/detached.ts'
@@ -136,8 +137,9 @@ const seededFields = (): FField[] => [
   { id: 'F_Session', databaseId: 4, name: 'Working session', options: null },
   { id: 'F_Path', databaseId: 5, name: 'Path', options: null },
   { id: 'F_Sessions', databaseId: 6, name: 'Session history', options: null },
+  { id: 'F_title', databaseId: 7, name: 'Title', options: null },
 ]
-const VIEWS = ['ADR', 'Specs', 'Plans', 'Working']
+const VIEWS = ['All', 'ADR', 'Specs', 'Plans', 'Working']
 /** rness's item: an issue of acme/.rness numbered after its id (`i2` → #2), with no body yet. */
 const item = (
   id: string,
@@ -163,6 +165,19 @@ const draft = (
   archived: false,
   values,
 })
+/** What rness.json declares, by board: its project number and the preset it was made from. */
+async function declaredIn(cwd: string) {
+  const projects = JSON.parse(
+    await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
+  ).projects as Record<string, number | { number: number; preset?: string }>
+  return Object.fromEntries(
+    Object.entries(projects).map(([name, p]) => [
+      name,
+      typeof p === 'number' ? p : `${p.number} ${p.preset ?? ''}`.trim(),
+    ])
+  )
+}
+
 /** Output lines, the column's padding folded. */
 const lines = (out: string): string[] =>
   out
@@ -461,7 +476,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
   // What ensureLayout added: Status is GitHub's own field, its options rness's.
   assert.match(
     lines[2]!,
-    /^created\s+fields Collection, ADR status, Specs status, Plans status, Agent, Working session, Path, Session history$/
+    /^created\s+fields Path, Collection, ADR status, Specs status, Plans status, Agent, Working session, Session history$/
   )
   assert.match(
     lines[3]!,
@@ -481,7 +496,8 @@ test('create: the project, then the layout it built and a first sync, and the ma
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   )
   assert.equal(manifest.provider, 'github')
-  assert.deepEqual(manifest.projects, { pulse: 7 })
+  assert.deepEqual(await declaredIn(cwd), { pulse: '7 agent-pulse/1' })
+  assert.equal(manifest.projects.pulse.title, 'Agent Pulse')
   assert.deepEqual(
     g.mutations
       .filter((m) => m.op === 'createIssue')
@@ -519,7 +535,8 @@ test('create: a view GitHub refuses once the project exists — declared all the
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   )
   assert.equal(manifest.provider, 'github')
-  assert.deepEqual(manifest.projects, { pulse: 7 })
+  assert.deepEqual(await declaredIn(cwd), { pulse: '7 agent-pulse/1' })
+  assert.equal(manifest.projects.pulse.title, 'Agent Pulse')
 
   refuseViews = false
   const synced = await run(() =>
@@ -569,11 +586,7 @@ test('create: a field GitHub refuses once the project exists — declared all th
   )
   assert.equal(r.code, 1)
   assert.equal(r.err.trim(), 'GitHub: Name has already been taken')
-  assert.deepEqual(
-    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'))
-      .projects,
-    { pulse: 7 }
-  )
+  assert.deepEqual(await declaredIn(cwd), { pulse: '7 agent-pulse/1' })
 })
 
 test('sync without a pulse: refused', async (t) => {
@@ -1317,9 +1330,14 @@ test('sync says what it added to the layout first', async (t) => {
     pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   const lines = r.out.trim().split('\n')
-  assert.match(lines[0]!, /^added\s+view Plans$/)
-  assert.match(lines[1]!, /^created\s+2 issues$/)
-  assert.match(lines[2]!, /^synced\s+2 items: 2 created$/)
+  assert.match(lines[0]!, /^added\s+view All$/)
+  assert.match(lines[1]!, /^added\s+view Plans$/)
+  assert.match(
+    lines[2]!,
+    /^note\s+views are not in the declared order: GitHub keeps them as they were made$/
+  )
+  assert.match(lines[3]!, /^created\s+2 issues$/)
+  assert.match(lines[4]!, /^synced\s+2 items: 2 created$/)
 })
 
 test('mark sets Agent and Session on the items of the paths; --end clears only that session, then syncs', async (t) => {
@@ -2032,11 +2050,10 @@ test('create marketing: its project made, declared and synced; its documents the
     )
   )
   assert.equal(r.code, 0, r.err)
-  assert.deepEqual(
-    JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'))
-      .projects,
-    { pulse: 7, marketing: 8 }
-  )
+  assert.deepEqual(await declaredIn(cwd), {
+    pulse: 7,
+    marketing: '8 collection/1',
+  })
   const p = g.project(8)
   assert.equal(p.title, 'Marketing')
   assert.deepEqual(
@@ -2193,4 +2210,195 @@ test('marks with only a collection declared: a document of another collection ha
   )
   assert.equal(await takeFailure(), null)
   assert.deepEqual(g.mutations, [])
+})
+
+// --- boards declared in rness.json (spec 0031, plan 0045) ---------------------
+
+/** Agent Pulse as rness ships it, on project 7, with `over` written over it. */
+const pulseBoard = (
+  over: Record<string, unknown> = {}
+): Record<string, unknown> => ({
+  number: 7,
+  preset: 'agent-pulse/1',
+  ...presetTemplate('agent-pulse/1', { collection: 'pulse' }),
+  ...over,
+})
+
+/** A workspace whose rness.json declares `projects` as given, `.rness` a repository. */
+async function declaredWorkspace(
+  t: TestContext,
+  projects: Record<string, unknown>,
+  files: Record<string, string> = FILES
+) {
+  const cwd = await makeWorkspace(t, { org: 'acme', files })
+  const file = join(cwd, '.rness', 'rness.json')
+  const manifest = JSON.parse(await readFile(file, 'utf8'))
+  await writeFile(file, JSON.stringify({ ...manifest, projects }, null, 2))
+  await commitDir(join(cwd, '.rness'))
+  return cwd
+}
+
+test('a team view and a field no longer declared are named once per clone; a view rness made and no longer declared is deleted', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: [
+      ...seededFields(),
+      { id: 'F_Reach', databaseId: 30, name: 'Reach', options: null },
+    ],
+    views: [
+      ...VIEWS,
+      { name: 'Roadmap', column: 'Status', filter: 'label:launch' },
+      'Marketing',
+    ],
+    other: asUser('repo, project'),
+  })
+  const cwd = await declaredWorkspace(t, { pulse: pulseBoard() })
+  const sync = () =>
+    run(() =>
+      pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    )
+  const first = await sync()
+  assert.equal(first.code, 0, first.err)
+  const said = lines(first.out)
+  for (const line of [
+    'note field Reach is no longer declared: delete it on GitHub if unwanted',
+    'deleted view Marketing',
+    'note view Roadmap is not declared: delete it on GitHub if unwanted',
+  ])
+    assert.ok(said.includes(line), `${line}\n${first.out}`)
+  assert.deepEqual(g.views, [...VIEWS, 'Roadmap'])
+  const again = await sync()
+  assert.equal(again.code, 0, again.err)
+  assert.deepEqual(
+    lines(again.out).filter((l) => /^(note|deleted) /.test(l)),
+    []
+  )
+})
+
+test('a collection taken off a board: its cards leave it, their issues open; declared again, the same issues come back', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const contract = (label: string) => ({
+    statuses: 'contract',
+    field: `${label} status`,
+  })
+  const without = pulseBoard({
+    collections: { adr: contract('ADR'), specs: contract('Specs') },
+    views: [
+      {
+        name: 'All',
+        layout: 'table',
+        fields: ['Title', 'Collection', 'Status', 'Working session'],
+      },
+      {
+        name: 'ADR',
+        layout: 'board',
+        collection: 'adr',
+        columns: 'ADR status',
+      },
+    ],
+  })
+  const all = await declaredWorkspace(t, { pulse: pulseBoard() })
+  const first = await run(() =>
+    pulseSyncCommand({ cwd: all, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(first.code, 0, first.err)
+  const plan = () => g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')
+  const number = plan()?.issue?.number
+  assert.ok(number !== undefined)
+
+  const narrowed = await declaredWorkspace(t, { pulse: without })
+  const off = await run(() =>
+    pulseSyncCommand({ cwd: narrowed, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(off.code, 0, off.err)
+  assert.equal(plan(), undefined, 'off the board')
+  assert.equal(g.issues.find((i) => i.number === number)?.state, 'OPEN')
+
+  const back = await run(() =>
+    pulseSyncCommand({ cwd: all, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(back.code, 0, back.err)
+  assert.equal(plan()?.issue?.number, number, 'the same issue, adopted')
+})
+
+test('a select from front matter on Agent Pulse: its options, then each card its value', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const preset = pulseBoard()
+  const cwd = await declaredWorkspace(
+    t,
+    {
+      pulse: {
+        ...preset,
+        fields: {
+          ...(preset['fields'] as Record<string, unknown>),
+          Owner: { type: 'select', from: 'owner', options: ['alice'] },
+        },
+      },
+    },
+    {
+      'adr/0001-a.md': '---\nstatus: Accepted\nowner: bob\n---\n\n# 0001 — A\n',
+      'plans/0002-b.md':
+        '---\nstatus: In progress\nowner: alice\n---\n\n# 0002 — B\n',
+    }
+  )
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(
+    g.fields.find((f) => f.name === 'Owner')?.options?.map((o) => o.name),
+    ['alice', 'bob']
+  )
+  const owner = (path: string) =>
+    g.items.find((i) => i.values['Path'] === path)?.values['Owner']
+  assert.equal(owner('adr/0001-a.md'), 'bob')
+  assert.equal(owner('plans/0002-b.md'), 'alice')
+})
+
+test('a colour changed in rness.json reaches GitHub at the next sync; every card keeps its value', async (t) => {
+  const { g, cwd } = await settled(t)
+  const file = join(cwd, '.rness', 'rness.json')
+  const manifest = JSON.parse(await readFile(file, 'utf8'))
+  const board = pulseBoard()
+  await writeFile(
+    file,
+    JSON.stringify({
+      ...manifest,
+      pulse: undefined,
+      projects: {
+        pulse: {
+          ...board,
+          colors: { ...(board['colors'] as object), Accepted: 'orange' },
+        },
+      },
+    })
+  )
+  // As 0.20.1 coloured it: GitHub gives every option a colour.
+  const colors = board['colors'] as Record<string, string>
+  for (const o of g.fields.find((f) => f.name === 'Status')?.options ?? [])
+    o.color = (colors[o.name] ?? 'gray').toUpperCase()
+  const before = g.items.map((i) => i.values['Status'])
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 0, r.err)
+  const accepted = g.fields
+    .find((f) => f.name === 'Status')
+    ?.options?.find((o) => o.name === 'Accepted')
+  assert.equal(accepted?.color, 'ORANGE')
+  assert.equal(accepted?.id, 's_Accepted', 'its id kept')
+  assert.deepEqual(
+    g.items.map((i) => i.values['Status']),
+    before
+  )
 })

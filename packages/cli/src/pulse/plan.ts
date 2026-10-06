@@ -84,9 +84,8 @@ function labelsDiffer(item: BoardItem, w: Desired): boolean {
 const differs = (item: BoardItem, w: Desired): boolean =>
   item.title !== w.title ||
   item.status !== w.status ||
-  (w.statusField !== null && item.collectionStatus !== w.status) ||
-  item.type !== w.type ||
-  item.sessions !== w.sessions ||
+  (w.statusField !== null &&
+    (item.values[w.statusField] ?? null) !== w.status) ||
   Object.entries(w.values).some(
     ([name, value]) => (item.values[name] ?? null) !== value
   ) ||

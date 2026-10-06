@@ -18,10 +18,8 @@ const want = (path: string, over: Partial<Desired> = {}): Desired => ({
   title: `T ${path}`,
   body: path,
   status: 'draft',
-  type: 'Specs',
   statusField: null,
-  sessions: null,
-  values: {},
+  values: { Collection: 'Specs' },
   labels: [],
   unlabels: [],
   ...over,
@@ -50,7 +48,7 @@ const have = (
   agent: null,
   session: null,
   sessions: null,
-  values: {},
+  values: { Collection: 'Specs' },
   ...over,
 })
 
@@ -65,11 +63,11 @@ test('an open, labelled issue whose fields match: unchanged', () => {
   ])
 })
 
-test('another title, status or type, or a card moved by hand: update', () => {
+test('another title, status or collection, or a card moved by hand: update', () => {
   for (const over of [
     { title: 'new' },
     { status: 'done' },
-    { type: 'ADR' },
+    { values: { Collection: 'ADR' } },
     { status: null },
   ]) {
     const w = want('a.md', over)
@@ -253,13 +251,18 @@ test('a draft a 0.12.0 CLI made on a migrated board: archived, the issue kept', 
   )
 })
 
-test('Sessions is compared: a document that records a new session updates its item', () => {
-  const w = want('a.md', { sessions: 's1, s2' })
-  assert.deepEqual(planSync([w], [have('i1', 'a.md', { sessions: 's1' })]), [
-    { kind: 'update', id: 'i1', want: w, reopen: false },
-  ])
+test('Session history is compared: a document that records a new session updates its item', () => {
+  const values = (sessions: string) => ({
+    Collection: 'Specs',
+    'Session history': sessions,
+  })
+  const w = want('a.md', { values: values('s1, s2') })
   assert.deepEqual(
-    planSync([w], [have('i1', 'a.md', { sessions: 's1, s2' })]),
+    planSync([w], [have('i1', 'a.md', { values: values('s1') })]),
+    [{ kind: 'update', id: 'i1', want: w, reopen: false }]
+  )
+  assert.deepEqual(
+    planSync([w], [have('i1', 'a.md', { values: values('s1, s2') })]),
     [{ kind: 'unchanged', id: 'i1' }]
   )
 })
@@ -270,7 +273,14 @@ test("a collection's own status field is compared when the collection has one", 
     { kind: 'update', id: 'i1', want: w, reopen: false },
   ])
   assert.deepEqual(
-    planSync([w], [have('i1', 'a.md', { collectionStatus: 'draft' })]),
+    planSync(
+      [w],
+      [
+        have('i1', 'a.md', {
+          values: { Collection: 'Specs', 'Specs status': 'draft' },
+        }),
+      ]
+    ),
     [{ kind: 'unchanged', id: 'i1' }]
   )
 })

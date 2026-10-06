@@ -1,5 +1,8 @@
+import type { BoardDeclaration } from '../core/board-declaration.ts'
 import { COLLECTIONS } from '../core/context.ts'
-import { PULSE, projectNumber, workspaceName } from '../core/manifest.ts'
+import { PULSE, workspaceName } from '../core/manifest.ts'
+import { declaredBoard } from '../core/preset-board.ts'
+import { currentPreset, presetTemplate } from '../core/presets.ts'
 import { safetyNet } from '../core/safety-net.ts'
 import {
   type StatusRow,
@@ -100,28 +103,86 @@ export interface StatusSnapshot {
   tabs: SnapshotTab[]
 }
 
-/** The pulse's board, when `rness.json` declares one and names the organization. */
-function pulseOf(manifest: Manifest): { org: string; project: number } | null {
-  const project = manifest.projects?.[PULSE]
-  return manifest.org === null || project === undefined
-    ? null
-    : { org: manifest.org, project: projectNumber(project) }
+/** A board of `projects`, read whole: its name and its declaration. */
+export interface SnapshotBoard {
+  name: string
+  declaration: BoardDeclaration
 }
 
-/** The tabs with each row's colour and item, as Agent Pulse has them. */
+/** The declared boards, read whole; one whose README cannot be read is left out. */
+async function boardsOf(
+  manifest: Manifest,
+  rnessDir: string
+): Promise<SnapshotBoard[]> {
+  const boards: SnapshotBoard[] = []
+  for (const [name, entry] of Object.entries(manifest.projects ?? {}))
+    try {
+      boards.push({
+        name,
+        declaration: await declaredBoard(name, entry, rnessDir),
+      })
+    } catch {
+      // `sync` and `validate` say why; the pane shows the rest.
+    }
+  return boards
+}
+
+/** The board that holds a collection: the one naming it, else one that takes all. */
+const holderOf = (
+  boards: readonly SnapshotBoard[],
+  collection: string
+): SnapshotBoard | undefined =>
+  boards.find(
+    (b) =>
+      b.declaration.collections !== 'all' &&
+      Object.hasOwn(b.declaration.collections, collection)
+  ) ?? boards.find((b) => b.declaration.collections === 'all')
+
+/** The colours of a status nobody declares: Agent Pulse's, as rness ships it. */
+const SHIPPED_COLORS = presetTemplate(currentPreset('agent-pulse'), {
+  collection: PULSE,
+})['colors'] as Record<string, OptionColor>
+
+/** The board of the pane's link: the one that takes all, else the first. */
+function pulseOf(
+  org: string | null,
+  boards: readonly SnapshotBoard[]
+): string | null {
+  const main =
+    boards.find((b) => b.declaration.collections === 'all') ?? boards[0]
+  return org === null || main === undefined
+    ? null
+    : boardUrl(org, main.declaration.number)
+}
+
+/**
+ * The tabs with each row's colour and item, from the board that holds its
+ * collection (spec 0031): its declared colour for the status, its item.
+ */
 export function snapshotTabs(
   tabs: readonly StatusTab[],
-  pulse: { org: string; project: number } | null
+  org: string | null,
+  boards: readonly SnapshotBoard[]
 ): SnapshotTab[] {
-  return tabs.map((tab) => ({
-    name: tab.name,
-    label: tab.label,
-    rows: tab.rows.map((row) => ({
-      ...row,
-      color: row.status === null ? 'red' : optionColor('Status', row.status),
-      link: pulse === null ? null : itemUrl(pulse.org, pulse.project, row.path),
-    })),
-  }))
+  return tabs.map((tab) => {
+    const holder = holderOf(boards, tab.name)
+    const colors = holder?.declaration.colors ?? SHIPPED_COLORS
+    return {
+      name: tab.name,
+      label: tab.label,
+      rows: tab.rows.map((row) => ({
+        ...row,
+        color:
+          row.status === null
+            ? 'red'
+            : (optionColor(colors, 'status', row.status) ?? 'gray'),
+        link:
+          org === null || holder === undefined
+            ? null
+            : itemUrl(org, holder.declaration.number, row.path),
+      })),
+    }
+  })
 }
 
 export async function statusSnapshot(
@@ -133,7 +194,7 @@ export async function statusSnapshot(
   const { banner } = await scopeBanner(ws, manifest, scope)
   const inProgress = await plansInProgress(ws, manifest, scope)
   const notes = await safetyNet(ws, manifest)
-  const pulse = pulseOf(manifest)
+  const boards = await boardsOf(manifest, ws.rnessDir)
   return {
     version: VERSION,
     workspace: workspaceName(manifest, ws.root),
@@ -142,7 +203,7 @@ export async function statusSnapshot(
     statusLine: statusLine(scope, inProgress, notes),
     inProgress,
     notes: noteLines(notes),
-    pulse: pulse === null ? null : boardUrl(pulse.org, pulse.project),
-    tabs: snapshotTabs(tabs, pulse),
+    pulse: pulseOf(manifest.org, boards),
+    tabs: snapshotTabs(tabs, manifest.org, boards),
   }
 }

@@ -161,7 +161,10 @@ function toField(raw: RawField): Field {
     databaseId,
     name: raw.name ?? '',
     dataType:
-      raw.dataType ?? (raw.options === undefined ? 'TEXT' : 'SINGLE_SELECT'),
+      raw.dataType ??
+      (raw.options === undefined || raw.options === null
+        ? 'TEXT'
+        : 'SINGLE_SELECT'),
     options: raw.options ?? null,
   }
 }
@@ -680,18 +683,16 @@ export async function createView(
   view: {
     name: string
     layout: 'board' | 'table' | 'roadmap'
-    filter: string
+    /** Null: none. */
+    filter: string | null
     groupBy?: number
     /** Fields' `databaseId`s, in column order; sent as `visible_fields`. */
     visibleFields?: number[]
   },
   o: ApiOptions
 ): Promise<void> {
-  const body: Record<string, unknown> = {
-    name: view.name,
-    layout: view.layout,
-    filter: view.filter,
-  }
+  const body: Record<string, unknown> = { name: view.name, layout: view.layout }
+  if (view.filter !== null) body['filter'] = view.filter
   if (view.groupBy !== undefined) {
     if (!Number.isInteger(view.groupBy))
       throw new Error(
@@ -719,6 +720,10 @@ export interface View {
   layout: string
   /** The name of the field a board's columns follow; null: none. */
   columnField: string | null
+  /** As it was given (read on rness-dev's Agent Pulse, 2026-10-06); null: none. */
+  filter: string | null
+  /** The fields it shows, by name, in the project's order, not the view's. */
+  fields: string[]
 }
 
 /** The views of a project, in order, through GraphQL: the REST docs list no endpoint for them. */
@@ -730,6 +735,8 @@ export async function views(projectId: string, o: ApiOptions): Promise<View[]> {
           id: string
           name: string
           layout: string
+          filter?: string | null
+          fields?: { nodes: { name?: string }[] } | null
           verticalGroupByFields: { nodes: { name?: string }[] } | null
         }[]
       }
@@ -744,6 +751,14 @@ export async function views(projectId: string, o: ApiOptions): Promise<View[]> {
                 id
                 name
                 layout
+                filter
+                fields(first: 50) {
+                  nodes {
+                    ... on ProjectV2FieldCommon {
+                      name
+                    }
+                  }
+                }
                 verticalGroupByFields(first: 1) {
                   nodes {
                     ... on ProjectV2FieldCommon {
@@ -765,6 +780,10 @@ export async function views(projectId: string, o: ApiOptions): Promise<View[]> {
     name: n.name,
     layout: n.layout,
     columnField: n.verticalGroupByFields?.nodes[0]?.name ?? null,
+    filter: n.filter === undefined || n.filter === '' ? null : n.filter,
+    fields: (n.fields?.nodes ?? []).flatMap((f) =>
+      f.name === undefined ? [] : [f.name]
+    ),
   }))
 }
 
@@ -783,35 +802,74 @@ export async function deleteView(viewId: string, o: ApiOptions): Promise<void> {
   )
 }
 
+/** GraphQL's names of the layouts the REST API calls board, table and roadmap. */
+export const LAYOUTS = {
+  board: 'BOARD_LAYOUT',
+  table: 'TABLE_LAYOUT',
+  roadmap: 'ROADMAP_LAYOUT',
+} as const
+
 /**
- * `updateProjectV2View` (GraphQL schema, read 2026-09-29): a new name and the
- * fields the view shows, by node id, in column order.
+ * `updateProjectV2View` (GraphQL schema, read 2026-10-06): a view changed in
+ * place, its id, sort and widths kept — its name, layout, filter, and the
+ * fields it shows by node id, in column order. Neither a board's columns
+ * nor a roadmap's date are in its input.
  */
+export async function updateView(
+  viewId: string,
+  change: {
+    name?: string
+    layout?: keyof typeof LAYOUTS
+    /** `''` clears it. */
+    filter?: string
+    visibleFieldIds?: string[]
+  },
+  o: ApiOptions
+): Promise<void> {
+  const vars: Record<string, unknown> = { viewId }
+  const declare: string[] = ['$viewId: ID!']
+  const input: string[] = ['viewId: $viewId']
+  if (change.name !== undefined) {
+    vars['name'] = change.name
+    declare.push('$name: String')
+    input.push('name: $name')
+  }
+  if (change.layout !== undefined) {
+    vars['layout'] = LAYOUTS[change.layout]
+    declare.push('$layout: ProjectV2ViewLayout')
+    input.push('layout: $layout')
+  }
+  if (change.filter !== undefined) {
+    vars['filter'] = change.filter
+    declare.push('$filter: String')
+    input.push('filter: $filter')
+  }
+  if (change.visibleFieldIds !== undefined) {
+    vars['visibleFieldIds'] = change.visibleFieldIds
+    declare.push('$visibleFieldIds: [ID!]')
+    input.push('configuration: { visibleFieldIds: $visibleFieldIds }')
+  }
+  await graphql(
+    `mutation (${declare.join(', ')}) {
+      updateProjectV2View(input: { ${input.join(', ')} }) {
+        projectV2View {
+          id
+        }
+      }
+    }`,
+    vars,
+    o
+  )
+}
+
+/** A view renamed, the fields it shows given: `updateView` with both. */
 export async function renameView(
   viewId: string,
   name: string,
   visibleFieldIds: string[],
   o: ApiOptions
 ): Promise<void> {
-  await graphql(
-    `
-      mutation ($viewId: ID!, $name: String!, $visibleFieldIds: [ID!]) {
-        updateProjectV2View(
-          input: {
-            viewId: $viewId
-            name: $name
-            configuration: { visibleFieldIds: $visibleFieldIds }
-          }
-        ) {
-          projectV2View {
-            id
-          }
-        }
-      }
-    `,
-    { viewId, name, visibleFieldIds },
-    o
-  )
+  await updateView(viewId, { name, visibleFieldIds }, o)
 }
 
 /** Takes an item off the project (`deleteProjectV2Item`); its issue stays as it is (spec 0025 §3). */

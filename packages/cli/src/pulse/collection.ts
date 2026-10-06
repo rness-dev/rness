@@ -230,15 +230,16 @@ export interface StatusUpdate {
   body: string
 }
 
-/** `<collection>/updates/*.md`, in the order of their names; a file without a health throws, naming it. */
+/** `dir/*.md` (`marketing/updates`), in the order of their names; a file without a health throws, naming it. */
 export async function readUpdates(
   rnessDir: string,
-  collection: string
+  dir: string
 ): Promise<StatusUpdate[]> {
+  const at = join(rnessDir, ...dir.split('/'))
   let names: string[]
   try {
     names = (
-      await readdir(join(rnessDir, collection, 'updates'), {
+      await readdir(at, {
         withFileTypes: true,
       })
     )
@@ -251,9 +252,8 @@ export async function readUpdates(
   }
   const updates: StatusUpdate[] = []
   for (const name of names) {
-    const path = `${collection}/updates/${name}`
-    const text =
-      (await readText(join(rnessDir, collection, 'updates', name))) ?? ''
+    const path = `${dir}/${name}`
+    const text = (await readText(join(at, name))) ?? ''
     let front: Fields | null
     try {
       front = parseFrontMatter(text)

@@ -501,7 +501,7 @@ test('createView surfaces a refused request', async (t) => {
   )
 })
 
-test('views lists the views of a project, with the field a board is columned by', async (t) => {
+test('views lists the views of a project: the field a board is columned by, the filter, the fields shown', async (t) => {
   const { o } = await serve(t, {
     views: () =>
       data({
@@ -512,12 +512,16 @@ test('views lists the views of a project, with the field a board is columned by'
                 id: 'V_1',
                 name: 'A',
                 layout: 'BOARD_LAYOUT',
+                filter: 'collection:"A"',
+                fields: { nodes: [{ name: 'Title' }, { name: 'Status' }] },
                 verticalGroupByFields: { nodes: [{ name: 'Status' }] },
               },
               {
                 id: 'V_2',
                 name: 'B',
                 layout: 'TABLE_LAYOUT',
+                filter: null,
+                fields: { nodes: [{}] },
                 verticalGroupByFields: { nodes: [] },
               },
             ],
@@ -526,7 +530,21 @@ test('views lists the views of a project, with the field a board is columned by'
       }),
   })
   assert.deepEqual(await views('P_1', o), [
-    { id: 'V_1', name: 'A', layout: 'BOARD_LAYOUT', columnField: 'Status' },
-    { id: 'V_2', name: 'B', layout: 'TABLE_LAYOUT', columnField: null },
+    {
+      id: 'V_1',
+      name: 'A',
+      layout: 'BOARD_LAYOUT',
+      columnField: 'Status',
+      filter: 'collection:"A"',
+      fields: ['Title', 'Status'],
+    },
+    {
+      id: 'V_2',
+      name: 'B',
+      layout: 'TABLE_LAYOUT',
+      columnField: null,
+      filter: null,
+      fields: [],
+    },
   ])
 })

@@ -1,10 +1,10 @@
 import type { StatusUpdate } from '../pulse/collection.ts'
-import type { Desired } from '../pulse/layout.ts'
+import type { Desired, LayoutView } from '../pulse/layout.ts'
 import {
   type Layout,
   type OptionColor,
+  collectionFilter,
   optionColor,
-  statusFieldName,
 } from '../pulse/layout.ts'
 import {
   type BoardItem,
@@ -22,6 +22,8 @@ import type { Board, Provider } from './provider.ts'
 export const PROJECT_TITLE = 'Agent Pulse'
 const WORKING = 'working'
 const WORKING_VIEW = 'Working'
+/** The engine's field: where an item belongs, `adr/0001-a.md` (spec 0031 §1). */
+const PATH_FIELD = 'Path'
 /** The repository whose issues are the board's items (spec 0018 §2). */
 const MEMORY = '.rness'
 /** The label every one of them carries: `-label:rness` leaves them out of the Issues tab. */
@@ -39,7 +41,7 @@ const FORMERLY: Readonly<Record<string, string>> = {
 const valueOf = (values: Record<string, string>, name: string): string | null =>
   values[name] ?? values[FORMERLY[name] ?? ''] ?? null
 const LABEL_COLOR = '5319e7'
-const LABEL_DESCRIPTION = 'A document of .rness, on Agent Pulse'
+const LABEL_DESCRIPTION = 'A document of .rness, on a board of rness'
 /** A label a collection's README declares for its documents (spec 0025 §4). */
 const OWN_LABEL_COLOR = 'ededed'
 const OWN_LABEL_DESCRIPTION =
@@ -55,6 +57,41 @@ const DATA_TYPE = {
   number: 'NUMBER',
   select: 'SINGLE_SELECT',
 } as const
+/** GitHub's type as `rness.json` names it, for a refusal. */
+const READABLE_TYPE: Readonly<Record<string, string>> = {
+  TEXT: 'text',
+  DATE: 'date',
+  NUMBER: 'number',
+  SINGLE_SELECT: 'select',
+}
+/** GitHub's own fields, which a project lists with the others. */
+const GITHUB_FIELDS = new Set(
+  [
+    'Title',
+    'Assignees',
+    'Labels',
+    'Linked pull requests',
+    'Milestone',
+    'Repository',
+    'Reviewers',
+    'Type',
+    'Parent issue',
+    'Sub-issues progress',
+    'Tracks',
+    'Tracked by',
+  ].map((n) => n.toLowerCase())
+)
+/**
+ * A view rness made in a release before it was declared: a collection's
+ * (its name in its filter), the `Working` table, `All`, a `Calendar`. Not
+ * declared any more, it goes; any other view is the team's (spec 0031 §4).
+ */
+const rnessOwn = (v: gh.View): boolean =>
+  (v.filter !== null &&
+    v.filter === collectionFilter(COLLECTION_FIELD, v.name)) ||
+  (v.name === WORKING_VIEW && v.filter === WORKING_FILTER) ||
+  (v.name === ALL_VIEW && v.filter === null && v.layout === 'TABLE_LAYOUT') ||
+  (v.name === CALENDAR_VIEW && v.layout === 'ROADMAP_LAYOUT')
 /** GitHub's label names ignore case: `Rness` is the label `rness`. */
 const labelled = (labels: readonly string[]): boolean =>
   labels.some((l) => l.toLowerCase() === LABEL.toLowerCase())
@@ -73,14 +110,6 @@ export const STATUS_FIELD = 'Status'
 const ALL_VIEW = 'All'
 const DEFAULT_VIEW = 'View 1'
 export const COLLECTION_FIELD = 'Collection'
-
-/** GitHub's built-in title field, which `fields()` returns like the others. */
-function titleField(fields: readonly gh.Field[]): gh.Field {
-  const field = fields.find((f) => f.name === 'Title')
-  if (field === undefined)
-    throw new Error('the GitHub project has no Title field')
-  return field
-}
 
 /**
  * SPIKE-DEPENDENT CHOICE 1 of 2: the board's Status
@@ -120,8 +149,8 @@ interface Cache {
   open?: gi.OpenIssue[]
 }
 
-/** The single-select fields rness colours. */
-type OptionKind = 'Status' | 'Collection' | 'Agent'
+/** How a single-select's options are coloured (`optionColor`). */
+type OptionKind = 'status' | 'collection' | 'declared'
 
 const namesOf = (field: gh.Field): string[] =>
   (field.options ?? []).map((o) => o.name)
@@ -227,24 +256,27 @@ export class GitHubBoards implements Pick<
     const added: string[] = []
 
     const enumOf = (c: OptionColor): string => c.toUpperCase()
+    const colorOf = (kind: OptionKind, name: string): string | null => {
+      const c = optionColor(layout.colors, kind, name)
+      return c === null ? null : enumOf(c)
+    }
     const inputs = (
       existing: gh.Field['options'],
       kind: OptionKind,
       wanted: readonly string[],
       names: readonly string[]
     ): gh.OptionInput[] =>
-      names.map((name) => ({
-        name,
+      names.map((name) => {
+        const had = existing?.find((o) => o.name === name)?.color
         // An option rness does not know keeps the colour it has.
-        color: wanted.includes(name)
-          ? enumOf(optionColor(kind, name))
-          : (existing?.find((o) => o.name === name)?.color ?? 'GRAY'),
-      }))
+        const color = wanted.includes(name) ? colorOf(kind, name) : null
+        return { name, color: color ?? had ?? 'GRAY' }
+      })
     const withOptions = async (
       field: gh.Field,
       kind: OptionKind,
       wanted: readonly string[],
-      reorder = false
+      reorder: boolean
     ): Promise<gh.Field> => {
       const now = namesOf(field)
       const missing = wanted.filter((n) => !now.includes(n))
@@ -252,12 +284,10 @@ export class GitHubBoards implements Pick<
       const grown = [...now, ...missing]
       const next = reorder ? orderedFirst(wanted, grown) : grown
       const ordered = !next.every((n, i) => n === now[i])
-      const recoloured = (field.options ?? []).some(
-        (o) =>
-          wanted.includes(o.name) &&
-          o.color !== undefined &&
-          o.color !== enumOf(optionColor(kind, o.name))
-      )
+      const recoloured = (field.options ?? []).some((o) => {
+        const color = wanted.includes(o.name) ? colorOf(kind, o.name) : null
+        return color !== null && o.color !== undefined && o.color !== color
+      })
       if (!ordered && !recoloured) return field
       added.push(...missing.map((n) => `option ${n}`))
       if (missing.length === 0 && ordered) added.push('ordered options')
@@ -270,14 +300,24 @@ export class GitHubBoards implements Pick<
         this.#o
       )
     }
+    const typed = (name: string, type: string): gh.Field | undefined => {
+      const field = fields.find((f) => f.name === name)
+      if (field !== undefined && field.dataType !== type)
+        throw new Error(
+          `the project's field ${name} is not a ${READABLE_TYPE[type] ?? type} field: rename it on the project, or in rness.json`
+        )
+      return field
+    }
     const single = async (
       name: string,
       kind: OptionKind,
       wanted: readonly string[],
-      reorder = false
-    ): Promise<gh.Field> => {
-      const field = fields.find((f) => f.name === name)
+      reorder: boolean
+    ): Promise<gh.Field | null> => {
+      const field = typed(name, 'SINGLE_SELECT')
       if (field !== undefined) return withOptions(field, kind, wanted, reorder)
+      // GitHub takes no single-select field without options: none yet, none made.
+      if (wanted.length === 0) return null
       added.push(`field ${name}`)
       return gh.createField(
         cache.projectId,
@@ -286,18 +326,21 @@ export class GitHubBoards implements Pick<
         this.#o
       )
     }
-    const text = async (name: string): Promise<gh.Field> => {
-      const field = fields.find((f) => f.name === name)
+    const plain = async (
+      name: string,
+      type: 'text' | 'date' | 'number'
+    ): Promise<gh.Field> => {
+      const field = typed(name, DATA_TYPE[type])
       if (field !== undefined) return field
       // A field 0.15 named otherwise is renamed, not made again: its values
       // and the views showing it stay.
       const was = fields.find((f) => f.name === FORMERLY[name])
-      if (was !== undefined) {
+      if (type === 'text' && was !== undefined) {
         added.push(`renamed field ${was.name} → ${name}`)
         return gh.renameField(was.id, name, this.#o)
       }
       added.push(`field ${name}`)
-      return gh.createField(cache.projectId, name, 'TEXT', this.#o)
+      return gh.createField(cache.projectId, name, DATA_TYPE[type], this.#o)
     }
 
     // A new project's Status carries GitHub's default options: replaced, not
@@ -308,160 +351,175 @@ export class GitHubBoards implements Pick<
     const status = fresh
       ? await gh.setOptions(
           statusField(fields),
-          inputs(null, 'Status', layout.statuses, layout.statuses),
+          inputs(null, 'status', layout.statuses, layout.statuses),
           this.#o
         )
-      : await withOptions(statusField(fields), 'Status', layout.statuses, true)
-    const collection = await single(
-      COLLECTION_FIELD,
-      'Collection',
-      layout.types
-    )
-    // One status field per collection: its board shows its own steps only.
-    const own = new Map<string, gh.Field>()
-    for (const f of layout.fields)
-      own.set(f.name, await single(f.name, 'Status', f.statuses, true))
-    const agent = await single('Agent', 'Agent', [WORKING])
-    const session = await text(WORKING_SESSION)
-    const path = await text('Path')
-    const sessions = await text(SESSION_HISTORY)
-    // A collection's own fields (spec 0025 §4); none on Agent Pulse.
-    const declared: gh.Field[] = []
-    for (const d of layout.declared) {
-      const type = DATA_TYPE[d.type]
-      const field = fields.find((f) => f.name === d.name)
-      if (field !== undefined && field.dataType !== type)
-        throw new Error(
-          `the project's field ${d.name} is not a ${d.type} field: rename it on the project, or in the collection's README`
-        )
-      if (d.type !== 'select') {
-        if (field !== undefined) declared.push(field)
-        else {
-          added.push(`field ${d.name}`)
-          declared.push(
-            await gh.createField(
-              cache.projectId,
-              d.name,
-              DATA_TYPE[d.type],
-              this.#o
-            )
-          )
-        }
-        continue
-      }
-      // GitHub takes no single-select field without options: none yet, none made.
-      if (field === undefined && d.options.length === 0) continue
-      const options = (names: readonly string[]): gh.OptionInput[] =>
-        names.map((name) => ({
-          name,
-          color: field?.options?.find((o) => o.name === name)?.color ?? 'GRAY',
-        }))
-      if (field === undefined) {
-        added.push(`field ${d.name}`)
-        declared.push(
-          await gh.createField(
-            cache.projectId,
-            d.name,
-            { options: options(d.options) },
-            this.#o
-          )
-        )
-        continue
-      }
-      const now = namesOf(field)
-      const next = orderedFirst(d.options, [
-        ...now,
-        ...d.options.filter((n) => !now.includes(n)),
-      ])
-      if (next.every((n, i) => n === now[i]) && next.length === now.length)
-        declared.push(field)
-      else {
-        added.push(
-          ...d.options.filter((n) => !now.includes(n)).map((n) => `option ${n}`)
-        )
-        declared.push(await gh.setOptions(field, options(next), this.#o))
-      }
+      : await withOptions(statusField(fields), 'status', layout.statuses, true)
+    // The engine's: where each item belongs (spec 0031 §1).
+    const path = await plain(PATH_FIELD, 'text')
+    const made: gh.Field[] = []
+    for (const f of layout.fields) {
+      const field =
+        f.type === 'select'
+          ? await single(f.name, f.kind, f.options, f.reorder)
+          : await plain(f.name, f.type)
+      if (field !== null) made.push(field)
     }
+    const all = [status, path, ...made]
+    // A field no longer declared stays on the project, no longer written.
+    const declared = new Set([
+      ...layout.fields.map((f) => f.name),
+      ...Object.values(FORMERLY),
+    ])
+    for (const f of fields)
+      if (
+        f.name !== STATUS_FIELD &&
+        f.name !== PATH_FIELD &&
+        !GITHUB_FIELDS.has(f.name.toLowerCase()) &&
+        !declared.has(f.name)
+      )
+        added.push(
+          `note field ${f.name} is no longer declared: delete it on GitHub if unwanted`
+        )
 
+    const byName = (name: string): gh.Field | undefined =>
+      all.find((f) => f.name === name) ?? fields.find((f) => f.name === name)
+    // A field not made yet (a select with no option) is shown once it is.
+    const shown = (names: readonly string[] | null) =>
+      names === null
+        ? null
+        : names.flatMap((n) => {
+            const f = byName(n)
+            return f === undefined ? [] : [f]
+          })
     const current = await gh.views(cache.projectId, this.#o)
-    // GitHub's first view (`View 1`) becomes `All`; any other first view is
-    // the team's, and so is an `All` that exists.
+    // The views by name as GitHub orders them once this is done: a view made
+    // goes last, as GitHub adds it.
+    const after = current.map((v) => v.name)
+    const gone = (name: string) => after.splice(after.indexOf(name), 1)
+    // GitHub's first view (`View 1`) becomes the first declared one when it
+    // is a table that is not there yet; any other first view is the team's.
     const first = current[0]
+    const lead = layout.views[0]
+    let renamed: string | null = null
     if (
       first !== undefined &&
+      lead !== undefined &&
       first.name === DEFAULT_VIEW &&
-      !current.some((v) => v.name === ALL_VIEW)
+      lead.layout === 'table' &&
+      !current.some((v) => v.name === lead.name)
     ) {
-      added.push(`view ${ALL_VIEW}`)
-      await gh.renameView(
+      added.push(`view ${lead.name}`)
+      const visible = shown(lead.fields)
+      await gh.updateView(
         first.id,
-        ALL_VIEW,
-        [titleField(fields), collection, status, session].map((f) => f.id),
+        {
+          name: lead.name,
+          ...(lead.filter === null ? {} : { filter: lead.filter }),
+          ...(visible === null
+            ? {}
+            : { visibleFieldIds: visible.map((f) => f.id) }),
+        },
         this.#o
       )
+      renamed = first.id
+      after[0] = lead.name
     }
-
-    for (const view of layout.views) {
-      const column = view.field === null ? status : own.get(view.field)!
-      const there = current.find((v) => v.name === view.name)
-      if (there !== undefined) {
-        if (
-          there.layout === 'BOARD_LAYOUT' &&
-          there.columnField === column.name
-        )
-          continue
-        // GitHub cannot change what a board's columns follow: the board is made again.
-        await gh.deleteView(there.id, this.#o)
-        added.push(`view ${view.name} remade — columns ${column.name}`)
-      } else added.push(`view ${view.name}`)
+    const create = async (view: LayoutView): Promise<void> => {
+      const column = view.columns === null ? null : byName(view.columns)
+      if (view.columns !== null && column === undefined)
+        throw new Error(`the project has no field ${view.columns} to column by`)
       await gh.createView(
         board.org,
         board.number,
         {
           name: view.name,
-          layout: 'board',
-          filter: viewFilter(view.type),
-          groupBy: column.databaseId,
+          layout: view.layout,
+          filter: view.filter,
+          ...(column === null || column === undefined
+            ? {}
+            : { groupBy: column.databaseId }),
+          ...(view.fields === null
+            ? {}
+            : {
+                visibleFields: (shown(view.fields) ?? []).map(
+                  (f) => f.databaseId
+                ),
+              }),
         },
         this.#o
       )
     }
-    if (
-      layout.declared.some((d) => d.type === 'date') &&
-      !current.some((v) => v.name === CALENDAR_VIEW)
-    ) {
-      added.push(`view ${CALENDAR_VIEW}`)
-      await gh.createView(
-        board.org,
-        board.number,
-        {
-          name: CALENDAR_VIEW,
-          layout: 'roadmap',
-          filter: viewFilter(layout.types[0] ?? ''),
-        },
-        this.#o
-      )
+    for (const view of layout.views) {
+      if (renamed !== null && view === lead) continue
+      const there = current.find((v) => v.name === view.name)
+      if (there === undefined) {
+        added.push(`view ${view.name}`)
+        await create(view)
+        after.push(view.name)
+        continue
+      }
+      // GitHub changes neither a board's columns nor a roadmap's date in
+      // place: a view whose layout or columns differ is made again.
+      if (
+        there.layout !== gh.LAYOUTS[view.layout] ||
+        (view.layout === 'board' && there.columnField !== view.columns)
+      ) {
+        await gh.deleteView(there.id, this.#o)
+        added.push(
+          `view ${view.name} remade${
+            view.layout === 'board' ? ` — columns ${view.columns}` : ''
+          }`
+        )
+        await create(view)
+        gone(view.name)
+        after.push(view.name)
+        continue
+      }
+      // GitHub returns a filter as it was given, and the fields shown in
+      // the project's order: compared as a set (read 2026-10-06).
+      const filter = there.filter !== view.filter
+      const visible = shown(view.fields)
+      const fieldsDiffer =
+        visible !== null &&
+        (visible.length !== there.fields.length ||
+          visible.some((f) => !there.fields.includes(f.name)))
+      if (filter || fieldsDiffer) {
+        added.push(`updated view ${view.name}`)
+        await gh.updateView(
+          there.id,
+          {
+            ...(filter ? { filter: view.filter ?? '' } : {}),
+            ...(fieldsDiffer && visible !== null
+              ? { visibleFieldIds: visible.map((f) => f.id) }
+              : {}),
+          },
+          this.#o
+        )
+      }
     }
-    if (!current.some((v) => v.name === WORKING_VIEW)) {
-      added.push(`view ${WORKING_VIEW}`)
-      await gh.createView(
-        board.org,
-        board.number,
-        {
-          name: WORKING_VIEW,
-          layout: 'table',
-          filter: WORKING_FILTER,
-          // Who works is the point of the table: title, then what and who.
-          visibleFields: [
-            titleField(fields).databaseId,
-            collection.databaseId,
-            status.databaseId,
-            session.databaseId,
-          ],
-        },
-        this.#o
-      )
+    // A view no longer declared: rness's own goes, the team's stays, named.
+    const wanted = new Set(layout.views.map((v) => v.name))
+    for (const v of current) {
+      if (v.id === renamed || wanted.has(v.name)) continue
+      if (rnessOwn(v)) {
+        await gh.deleteView(v.id, this.#o)
+        added.push(`deleted view ${v.name}`)
+        gone(v.name)
+      } else
+        added.push(
+          `note view ${v.name} is not declared: delete it on GitHub if unwanted`
+        )
     }
+    const order = after.filter((n) => wanted.has(n))
+    const declaredOrder = layout.views
+      .map((v) => v.name)
+      .filter((n) => order.includes(n))
+    if (order.some((n, i) => n !== declaredOrder[i]))
+      added.push(
+        'note views are not in the declared order: GitHub keeps them as they were made'
+      )
+
     // The items' repository (spec 0018 §2): its label, and the board linked
     // to it — read first, so an unchanged board costs no write.
     const memory = await this.#memory(board.org)
@@ -484,14 +542,8 @@ export class GitHubBoards implements Pick<
       added.push(`link ${repository}`)
     }
     cache.fields = [
-      status,
-      collection,
-      ...own.values(),
-      agent,
-      session,
-      path,
-      sessions,
-      ...declared,
+      ...all,
+      ...fields.filter((f) => !all.some((a) => a.id === f.id)),
     ]
     return added
   }
@@ -557,7 +609,7 @@ export class GitHubBoards implements Pick<
           title: r.title,
           status: r.values[STATUS_FIELD] ?? null,
           collectionStatus:
-            r.values[statusFieldName(r.values[COLLECTION_FIELD] ?? '')] ?? null,
+            r.values[`${r.values[COLLECTION_FIELD] ?? ''} status`] ?? null,
           type: r.values[COLLECTION_FIELD] ?? null,
           agent: r.values['Agent'] ?? null,
           session: valueOf(r.values, WORKING_SESSION),
@@ -781,18 +833,22 @@ export class GitHubBoards implements Pick<
   async #values(board: Board, id: string, want: Desired): Promise<void> {
     const values = (await this.#known(board, id)).values
     const fields = await this.#fields(board)
+    // A select with no option yet has no field yet: nothing to write.
+    const declared = Object.entries(want.values).filter(([name]) =>
+      fields.some((f) => f.name === name || FORMERLY[name] === f.name)
+    )
+    const [where, rest] = [
+      declared.filter(([name]) => name === COLLECTION_FIELD),
+      declared.filter(([name]) => name !== COLLECTION_FIELD),
+    ]
     const wanted: [string, string | null][] = [
-      ['Path', want.path],
-      [COLLECTION_FIELD, want.type],
+      [PATH_FIELD, want.path],
+      ...where,
       [STATUS_FIELD, want.status],
       ...(want.statusField === null
         ? []
         : ([[want.statusField, want.status]] as [string, string | null][])),
-      [SESSION_HISTORY, want.sessions],
-      // A select with no option yet has no field yet: nothing to write.
-      ...Object.entries(want.values).filter(([name]) =>
-        fields.some((f) => f.name === name)
-      ),
+      ...rest,
     ]
     for (const [name, value] of wanted)
       if (valueOf(values, name) !== value)

@@ -224,7 +224,7 @@ First week.
 `,
     'marketing/2026-09-30-card.md': '---\nstatus: Idea\n---\n',
   })
-  assert.deepEqual(await readUpdates(dir, 'marketing'), [
+  assert.deepEqual(await readUpdates(dir, 'marketing/updates'), [
     {
       path: 'marketing/updates/2026-10-05.md',
       health: 'on-track',
@@ -244,12 +244,12 @@ First week.
 
 test('readUpdates: none without updates/; a file without health stops with its path', async (t) => {
   const none = await rness(t, { 'marketing/a.md': '---\nstatus: Idea\n---\n' })
-  assert.deepEqual(await readUpdates(none, 'marketing'), [])
+  assert.deepEqual(await readUpdates(none, 'marketing/updates'), [])
   const bad = await rness(t, {
     'marketing/updates/2026-10-05.md': '---\nstatus: on-track\n---\nText\n',
   })
   await assert.rejects(
-    () => readUpdates(bad, 'marketing'),
+    () => readUpdates(bad, 'marketing/updates'),
     new Error(
       'marketing/updates/2026-10-05.md: "health" must be one of on-track, at-risk, off-track, complete, inactive'
     )
