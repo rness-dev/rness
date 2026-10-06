@@ -1,12 +1,11 @@
 import { relative, resolve, sep } from 'node:path'
 
 import {
-  type Context,
-  type Declared,
-  context,
-  declaredBoards,
-  fromGithub,
-} from '../commands/pulse.ts'
+  notePosted,
+  notesPosted,
+  recordNotice,
+} from '../board/journal-state.ts'
+import { blobUrl, issueUrl } from '../board/urls.ts'
 import type { BoardAction } from '../core/board-declaration.ts'
 import { parseFrontMatter } from '../core/frontmatter.ts'
 import { branchOf, headOf } from '../core/git.ts'
@@ -15,8 +14,13 @@ import type { JournalIssue } from '../core/github-journal.ts'
 import { cloneHolding } from '../core/repos.ts'
 import { resolveScope } from '../core/scope.ts'
 import { plansInProgress, statusTabs } from '../core/status.ts'
-import { notePosted, notesPosted, recordNotice } from './journal-state.ts'
-import { blobUrl, issueUrl } from './urls.ts'
+import {
+  type Context,
+  type Declared,
+  context,
+  declaredBoards,
+  fromGithub,
+} from './board.ts'
 
 /**
  * `rness pulse note` and `rness_note` (spec 0030 §4, §5): a short note of
@@ -314,7 +318,7 @@ export async function postNote(input: NoteInput): Promise<Posted> {
 }
 
 /** `rness pulse note`: the text from the argument, or stdin when it is absent or `-`. */
-export async function pulseNoteCommand(opts: {
+export async function noteCommand(opts: {
   text?: string
   kind?: string
   plan?: string

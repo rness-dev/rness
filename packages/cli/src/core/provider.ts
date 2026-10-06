@@ -1,6 +1,6 @@
-import type { StatusUpdate } from '../pulse/collection.ts'
-import type { Layout } from '../pulse/layout.ts'
-import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
+import type { StatusUpdate } from '../board/collection.ts'
+import type { Layout } from '../board/layout.ts'
+import type { BoardItem, Placed, Step } from '../board/plan.ts'
 import type { JournalIssue } from './github-journal.ts'
 import type { CreateRepositoryResult, RepositoryListing } from './github.ts'
 

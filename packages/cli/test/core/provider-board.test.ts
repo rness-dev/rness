@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { type TestContext, test } from 'node:test'
 
-import { GitHubOAuthProvider } from '../../src/core/github-oauth-provider.ts'
-import { presetTemplate } from '../../src/core/presets.ts'
 import type {
   Layout,
   LayoutField,
   LayoutView,
   OptionColor,
-} from '../../src/pulse/layout.ts'
+} from '../../src/board/layout.ts'
+import { GitHubOAuthProvider } from '../../src/core/github-oauth-provider.ts'
+import { presetTemplate } from '../../src/core/presets.ts'
 import { type FItem, anIssue, board } from '../helpers/fake-project.ts'
 
 /** Agent Pulse's colours, as rness ships them. */

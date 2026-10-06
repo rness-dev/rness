@@ -391,7 +391,7 @@ function noteTool(cwd: string, githubApi?: string): McpTool {
     },
     call: (args) =>
       guard(async () => {
-        const { postNote } = await import('../pulse/note.ts')
+        const { postNote } = await import('../commands/note.ts')
         const given = (key: string): string | undefined => {
           const value = args[key]
           return typeof value === 'string' ? value : undefined

@@ -7,7 +7,7 @@ import {
   digestOf,
   headerOf,
   issueBody,
-} from '../../src/pulse/body.ts'
+} from '../../src/board/body.ts'
 
 const BLOB = 'https://github.com/acme/.rness/blob/main'
 const ISSUES = 'https://github.com/acme/.rness/issues'

@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { readShape } from '../pulse/collection.ts'
+import { readShape } from '../board/collection.ts'
 import { type BoardDeclaration, parseBoard } from './board-declaration.ts'
 import { PULSE, loadManifest } from './manifest.ts'
 import { currentPreset, presetTemplate } from './presets.ts'

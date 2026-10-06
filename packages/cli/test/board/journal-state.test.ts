@@ -12,7 +12,7 @@ import {
   notesPosted,
   recordStart,
   startOf,
-} from '../../src/pulse/journal-state.ts'
+} from '../../src/board/journal-state.ts'
 import { commitDir, git } from '../helpers/git.ts'
 
 async function repository(t: TestContext): Promise<string> {

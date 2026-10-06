@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
-import { readOpened, writeOpened } from '../../src/pulse/opened.ts'
+import { readOpened, writeOpened } from '../../src/board/opened.ts'
 
 async function dir(t: TestContext) {
   const d = await realpath(await mkdtemp(join(tmpdir(), 'rness-opened-')))

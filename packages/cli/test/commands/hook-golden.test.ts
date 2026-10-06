@@ -6,8 +6,8 @@ import { Readable, Writable } from 'node:stream'
 import { type TestContext, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import * as pulse from '../../src/commands/board.ts'
 import { hookCommand } from '../../src/commands/hook.ts'
-import * as pulse from '../../src/commands/pulse.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
@@ -90,7 +90,7 @@ async function runSpawned(args: string[], cwd: string, githubApi: string) {
         ...(args.includes('--end') ? { end: true } : {}),
       })
     else if (args[1] === 'run')
-      await pulse.pulseRunCommand({
+      await pulse.boardRunCommand({
         cwd,
         githubApi,
         event: args[2] ?? '',

@@ -6,9 +6,9 @@ import { type TestContext, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import {
+  boardPushCommand,
   pulseCreateCommand,
-  pulseSyncCommand,
-} from '../../src/commands/pulse.ts'
+} from '../../src/commands/board.ts'
 import { syncCommand } from '../../src/commands/sync.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
 import { capture } from '../helpers/capture.ts'
@@ -231,7 +231,7 @@ test('golden: Agent Pulse as 0.20.1 makes it, and a second sync writes nothing',
   await golden('agent-pulse', snapshot(g.project(7), g.issues))
   g.mutations.length = 0
   await quiet(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.deepEqual(g.mutations, [])
 })
@@ -263,7 +263,7 @@ test("golden: a collection's own project as 0.20.1 makes it, and a second sync w
   await golden('marketing', snapshot(g.project(8), g.issues))
   g.mutations.length = 0
   await quiet(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.deepEqual(g.mutations, [])
 })
@@ -292,7 +292,7 @@ test('golden: boards 0.20.1 made, declared by number, synced: nothing written', 
   // The issues' bodies are the documents': the first sync writes them, the
   // fixture keeps no body. Then nothing.
   await quiet(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.deepEqual(
     g.mutations.filter((m) => m.op !== 'updateIssue'),
@@ -305,7 +305,7 @@ test('golden: boards 0.20.1 made, declared by number, synced: nothing written', 
   })
   g.mutations.length = 0
   await quiet(() =>
-    pulseSyncCommand({ cwd: both, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd: both, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.deepEqual(
     g.mutations.filter((m) => m.op !== 'updateIssue'),
@@ -350,7 +350,7 @@ test('golden: rness sync writes the boards 0.20.1 declared by number whole, the 
     '# The launch\n\nStrategy.\n'
   )
   await quiet(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.deepEqual(
     g.mutations.filter((m) => m.op !== 'updateIssue'),

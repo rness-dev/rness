@@ -9,7 +9,7 @@ import {
   readShape,
   readUpdates,
   valuesOf,
-} from '../../src/pulse/collection.ts'
+} from '../../src/board/collection.ts'
 
 async function rness(
   t: TestContext,

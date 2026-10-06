@@ -1,3 +1,5 @@
+import { type OptionColor, optionColor } from '../board/layout.ts'
+import { boardUrl, itemUrl } from '../board/urls.ts'
 import type { BoardDeclaration } from '../core/board-declaration.ts'
 import { COLLECTIONS } from '../core/context.ts'
 import { PULSE, workspaceName } from '../core/manifest.ts'
@@ -12,8 +14,6 @@ import {
 import { count } from '../core/style.ts'
 import type { CollectionName, Manifest, Workspace } from '../core/types.ts'
 import { scopeSummary } from '../mcp/tools.ts'
-import { type OptionColor, optionColor } from '../pulse/layout.ts'
-import { boardUrl, itemUrl } from '../pulse/urls.ts'
 import { VERSION } from '../version.ts'
 
 /**

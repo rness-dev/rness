@@ -2,6 +2,32 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { issueBody } from '../board/body.ts'
+import { type StatusUpdate, readUpdates } from '../board/collection.ts'
+import { oneSyncAtATime, recordFailure } from '../board/detached.ts'
+import {
+  type BoardCollection,
+  type Desired,
+  type Layout,
+  collectionsOf,
+  desiredOf,
+  layoutOf,
+  readsFrontMatter,
+} from '../board/layout.ts'
+import { onceSaid } from '../board/noted.ts'
+import { openedFile, readOpened, writeOpened } from '../board/opened.ts'
+import {
+  type BoardItem,
+  type BodyStep,
+  type Placed,
+  type Step,
+  issuedAfter,
+  planBodies,
+  planSync,
+  stillOpened,
+  unwantedPaths,
+} from '../board/plan.ts'
+import { boardUrl } from '../board/urls.ts'
 import {
   type BoardAction,
   type BoardDeclaration,
@@ -40,36 +66,10 @@ import { defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
-import { issueBody } from '../pulse/body.ts'
-import { type StatusUpdate, readUpdates } from '../pulse/collection.ts'
-import { oneSyncAtATime, recordFailure } from '../pulse/detached.ts'
-import {
-  type BoardCollection,
-  type Desired,
-  type Layout,
-  collectionsOf,
-  desiredOf,
-  layoutOf,
-  readsFrontMatter,
-} from '../pulse/layout.ts'
-import { onceSaid } from '../pulse/noted.ts'
-import { openedFile, readOpened, writeOpened } from '../pulse/opened.ts'
-import {
-  type BoardItem,
-  type BodyStep,
-  type Placed,
-  type Step,
-  issuedAfter,
-  planBodies,
-  planSync,
-  stillOpened,
-  unwantedPaths,
-} from '../pulse/plan.ts'
-import { boardUrl } from '../pulse/urls.ts'
 import { reportError } from '../report.ts'
 import { loginCommand } from './login.ts'
 
-export interface PulseOptions {
+export interface BoardOptions {
   yes?: boolean
   /** `pulse create <collection>`: the collection's own project (spec 0025 §3). */
   collection?: string
@@ -107,11 +107,11 @@ export interface Context {
   provider: Provider
 }
 
-const apiOf = (opts: PulseOptions): { apiBase?: string } =>
+const apiOf = (opts: BoardOptions): { apiBase?: string } =>
   opts.githubApi === undefined ? {} : { apiBase: opts.githubApi }
 
 const providerOptions = (
-  opts: PulseOptions,
+  opts: BoardOptions,
   wait?: RateWait
 ): { apiBase?: string; wait?: RateWait } => ({
   ...apiOf(opts),
@@ -120,7 +120,7 @@ const providerOptions = (
 
 /** The refusals every pulse command shares, in order; each throws one line. */
 export async function context(
-  opts: PulseOptions,
+  opts: BoardOptions,
   wait?: RateWait
 ): Promise<Context> {
   const ws = await findWorkspace(opts.cwd ?? process.cwd())
@@ -138,7 +138,7 @@ export async function context(
 }
 
 /** Rate-limit waits said as they begin: a pause of minutes must not look like a hang (spec 0018 §4). */
-const waitSaid = (opts: PulseOptions, ui: Ui): RateWait =>
+const waitSaid = (opts: BoardOptions, ui: Ui): RateWait =>
   rateWait(async (ms) => {
     ui.line('waiting', `${Math.round(ms / 1000)} s — GitHub's rate limit`)
     await (opts.sleep ?? ((n: number) => delay(n)))(ms)
@@ -634,7 +634,7 @@ async function syncAll(
 
 /** `rness pulse create`: the project, declared at once; then its layout and a first sync. */
 export async function pulseCreateCommand(
-  opts: PulseOptions,
+  opts: BoardOptions,
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
   try {
@@ -762,8 +762,8 @@ export async function pulseCreateCommand(
 }
 
 /** `rness pulse sync`: the board follows the documents. */
-export async function pulseSyncCommand(
-  opts: PulseOptions,
+export async function boardPushCommand(
+  opts: BoardOptions,
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
   try {
@@ -971,7 +971,7 @@ export interface RunOptions {
  * never prompts; a failure is recorded, naming each board and action that
  * failed, for the next session start to say. The exit is 0.
  */
-export async function pulseRunCommand(opts: RunOptions): Promise<number> {
+export async function boardRunCommand(opts: RunOptions): Promise<number> {
   const failures: string[] = []
   try {
     await run(opts, failures)
@@ -996,7 +996,7 @@ async function run(opts: RunOptions, failures: string[]): Promise<void> {
   if (event === 'session-end') {
     for (const d of acting('journal-summary'))
       try {
-        const { postSummary } = await import('../pulse/summary.ts')
+        const { postSummary } = await import('../board/summary.ts')
         await postSummary({
           c,
           board: d,

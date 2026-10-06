@@ -2,6 +2,8 @@ import { realpath } from 'node:fs/promises'
 import { isAbsolute, posix, relative, resolve, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
+import { type Spawn, detached, takeFailure } from '../board/detached.ts'
+import { recordStart, takeNotices } from '../board/journal-state.ts'
 import { BLOCK_FILES } from '../core/agent-targets.ts'
 import type { BoardDeclaration, HookEvent } from '../core/board-declaration.ts'
 import { takeModNotice } from '../core/claude-code.ts'
@@ -24,8 +26,6 @@ import { resolveScope, scopeChain } from '../core/scope.ts'
 import { documentsIn, plansInProgress } from '../core/status.ts'
 import type { Manifest, Workspace } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
-import { type Spawn, detached, takeFailure } from '../pulse/detached.ts'
-import { recordStart, takeNotices } from '../pulse/journal-state.ts'
 import { noteLines, scopeBanner } from './snapshot.ts'
 
 /**

@@ -15,16 +15,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
+import { digestOf, headerOf, issueBody } from '../../src/board/body.ts'
+import { oneSyncAtATime, takeFailure } from '../../src/board/detached.ts'
 import {
+  boardPushCommand,
+  boardRunCommand,
   pulseCreateCommand,
   pulseMarkCommand,
-  pulseRunCommand,
-  pulseSyncCommand,
-} from '../../src/commands/pulse.ts'
+} from '../../src/commands/board.ts'
 import { presetTemplate } from '../../src/core/presets.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
-import { digestOf, headerOf, issueBody } from '../../src/pulse/body.ts'
-import { oneSyncAtATime, takeFailure } from '../../src/pulse/detached.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
 import {
@@ -206,7 +206,7 @@ async function settled(
   })
   const sync = () =>
     run(() =>
-      pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+      boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
     )
   const first = await sync()
   assert.equal(first.code, 0, first.err)
@@ -239,7 +239,7 @@ test('create with a pulse declared: refused, sync is the way', async (t) => {
 test('a written provider that is not available is refused first', async (t) => {
   await machine(t)
   const cwd = await makeWorkspace(t, { provider: 'gitlab', org: 'acme' })
-  const r = await run(() => pulseSyncCommand({ cwd }, { terminal: NO_TTY }))
+  const r = await run(() => boardPushCommand({ cwd }, { terminal: NO_TTY }))
   assert.equal(r.code, 1)
   assert.match(r.err, /provider "gitlab" is not supported/)
 })
@@ -542,7 +542,7 @@ test('create: a view GitHub refuses once the project exists — declared all the
 
   refuseViews = false
   const synced = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(synced.err, '')
   assert.equal(synced.code, 0)
@@ -594,7 +594,7 @@ test('create: a field GitHub refuses once the project exists — declared all th
 test('sync without a pulse: refused', async (t) => {
   await machine(t)
   const cwd = await makeWorkspace(t, { org: 'acme' })
-  const r = await run(() => pulseSyncCommand({ cwd }, { terminal: NO_TTY }))
+  const r = await run(() => boardPushCommand({ cwd }, { terminal: NO_TTY }))
   assert.equal(r.code, 1)
   assert.equal(r.err.trim(), 'no pulse declared — rness pulse create')
 })
@@ -612,7 +612,7 @@ test('a new document: its issue (labelled, the first line as body), added to the
     files: FILES,
   })
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.err, '')
   assert.deepEqual(lines(r.out), [
@@ -875,7 +875,7 @@ test("the first sync with 0.13.0: 0.12.0's drafts converted in place, labelled, 
   })
   const sync = () =>
     run(() =>
-      pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+      boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
     )
   const first = await sync()
   assert.equal(first.err, '')
@@ -968,7 +968,7 @@ test("the team's items are left alone: a draft without Path, another repository'
     files: FILES,
   })
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.err, '')
   assert.deepEqual(lines(r.out), [
@@ -994,7 +994,7 @@ test('a body links another document to its issue, both new in the same sync: two
     },
   })
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 0, r.err)
   const [a, b] = [g.issues[0]!, g.issues[1]!]
@@ -1026,7 +1026,7 @@ test('Issues off on .rness: sync refused before any write', async (t) => {
     files: FILES,
   })
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 1)
   assert.equal(
@@ -1109,7 +1109,7 @@ test('a secondary rate limit is waited on as GitHub says, and said', async (t) =
   })
   const slept: number[] = []
   const r = await run(() =>
-    pulseSyncCommand(
+    boardPushCommand(
       {
         cwd,
         githubApi: g.base,
@@ -1146,7 +1146,7 @@ test('a rate limit past the 10 minutes stops the sync with what is left; the nex
   const slept: number[] = []
   const sync = () =>
     run(() =>
-      pulseSyncCommand(
+      boardPushCommand(
         {
           cwd,
           githubApi: g.base,
@@ -1188,7 +1188,7 @@ async function declared(
   const slept: number[] = []
   const sync = () =>
     run(() =>
-      pulseSyncCommand(
+      boardPushCommand(
         {
           cwd,
           githubApi: g.base,
@@ -1329,7 +1329,7 @@ test('sync says what it added to the layout first', async (t) => {
     files: FILES,
   })
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   const lines = r.out.trim().split('\n')
   assert.match(lines[0]!, /^added\s+view All$/)
@@ -1688,7 +1688,7 @@ test('a board made by 0.14.0 gains Sessions at its first 0.15.0 sync, which writ
     },
   })
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /^added\s+field Session history$/m)
@@ -1823,7 +1823,7 @@ async function withThirdDocument(
     files: { ...FILES, 'specs/0003-c.md': doc('Draft', '0003 — C') },
   })
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   const onPath = g.items.filter((i) => i.values['Path'] === 'specs/0003-c.md')
   return { g, r, onPath }
@@ -1921,7 +1921,7 @@ test('a 0.15 board: sync renames Session and Sessions in place, values and ids k
     files: FILES,
   })
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /^renamed\s+field Session → Working session$/m)
@@ -1943,7 +1943,7 @@ test('a 0.15 board: sync renames Session and Sessions in place, values and ids k
     'once each'
   )
   const again = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.doesNotMatch(again.out, /renamed/)
 })
@@ -2103,7 +2103,7 @@ test('sync after create marketing: nothing to write on either project', async (t
   assert.equal(first.code, 0, first.err)
   g.mutations.length = 0
   const again = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(again.code, 0, again.err)
   assert.deepEqual(g.mutations, [])
@@ -2257,7 +2257,7 @@ test('a team view and a field no longer declared are named once per clone; a vie
   const cwd = await declaredWorkspace(t, { pulse: pulseBoard() })
   const sync = () =>
     run(() =>
-      pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+      boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
     )
   const first = await sync()
   assert.equal(first.code, 0, first.err)
@@ -2306,7 +2306,7 @@ test('a collection taken off a board: its cards leave it, their issues open; dec
   })
   const all = await declaredWorkspace(t, { pulse: pulseBoard() })
   const first = await run(() =>
-    pulseSyncCommand({ cwd: all, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd: all, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(first.code, 0, first.err)
   const plan = () => g.items.find((i) => i.values['Path'] === 'plans/0002-b.md')
@@ -2315,14 +2315,14 @@ test('a collection taken off a board: its cards leave it, their issues open; dec
 
   const narrowed = await declaredWorkspace(t, { pulse: without })
   const off = await run(() =>
-    pulseSyncCommand({ cwd: narrowed, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd: narrowed, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(off.code, 0, off.err)
   assert.equal(plan(), undefined, 'off the board')
   assert.equal(g.issues.find((i) => i.number === number)?.state, 'OPEN')
 
   const back = await run(() =>
-    pulseSyncCommand({ cwd: all, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd: all, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(back.code, 0, back.err)
   assert.equal(plan()?.issue?.number, number, 'the same issue, adopted')
@@ -2354,7 +2354,7 @@ test('a select from front matter on Agent Pulse: its options, then each card its
     }
   )
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 0, r.err)
   assert.deepEqual(
@@ -2391,7 +2391,7 @@ test('a colour changed in rness.json reaches GitHub at the next sync; every card
     o.color = (colors[o.name] ?? 'gray').toUpperCase()
   const before = g.items.map((i) => i.values['Status'])
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 0, r.err)
   const accepted = g.fields
@@ -2421,7 +2421,7 @@ test("a collection's README that is a link out of .rness: the sync stops on it, 
   await writeFile(secret, 'ghp_a-developer-token\n')
   await symlink(secret, join(cwd, '.rness', 'marketing', 'README.md'))
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 1)
   assert.match(r.err, /marketing\/README\.md leads out of \.rness/)
@@ -2454,7 +2454,7 @@ test("a board whose collection's README still declares: skipped by pulse sync, u
     }
   )
   const r = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(r.code, 0, r.err)
   assert.ok(
@@ -2511,12 +2511,12 @@ test('pulse run: session start marks what mark-in-progress names, through the fi
   })
   const cwd = await declaredWorkspace(t, { pulse: renamedBoard() })
   const first = await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.equal(first.code, 0, first.err)
   const session = 'claude · 1a2b3c4d'
   assert.equal(
-    await pulseRunCommand({
+    await boardRunCommand({
       cwd,
       githubApi: g.base,
       event: 'session-start',
@@ -2530,7 +2530,7 @@ test('pulse run: session start marks what mark-in-progress names, through the fi
   assert.equal(plan()?.values['Busy'], 'working')
   assert.equal(plan()?.values['Who'], session)
   assert.equal(plan()?.values['Agent'], undefined)
-  await pulseRunCommand({
+  await boardRunCommand({
     cwd,
     githubApi: g.base,
     event: 'session-end',
@@ -2563,12 +2563,12 @@ test('pulse run: mark-in-progress names other collections and statuses; an edit 
     }),
   })
   await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   const on = (path: string) =>
     g.items.find((i) => i.values['Path'] === path)?.values['Agent']
   const session = 'claude · 1a2b3c4d'
-  await pulseRunCommand({
+  await boardRunCommand({
     cwd,
     githubApi: g.base,
     event: 'session-start',
@@ -2577,7 +2577,7 @@ test('pulse run: mark-in-progress names other collections and statuses; an edit 
   })
   assert.equal(on('adr/0001-a.md'), 'working')
   assert.equal(on('plans/0002-b.md'), undefined, 'not In progress here')
-  await pulseRunCommand({
+  await boardRunCommand({
     cwd,
     githubApi: g.base,
     event: 'edit',
@@ -2629,13 +2629,13 @@ test('pulse run: a failure on one board leaves the other done, the recorded line
     files
   )
   await run(() =>
-    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   // The marketing board lost its Agent field on GitHub: its mark fails.
   const p8 = g.project(8)
   p8.fields = p8.fields.filter((f) => f.name !== 'Agent')
   g.mutations.length = 0
-  await pulseRunCommand({
+  await boardRunCommand({
     cwd,
     githubApi: g.base,
     event: 'edit',

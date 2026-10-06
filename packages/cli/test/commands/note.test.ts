@@ -4,19 +4,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
-import {
-  pulseCreateCommand,
-  pulseRunCommand,
-} from '../../src/commands/pulse.ts'
-import type { Terminal } from '../../src/core/terminal.ts'
-import { serverTools } from '../../src/mcp/tools.ts'
-import { takeFailure } from '../../src/pulse/detached.ts'
+import { takeFailure } from '../../src/board/detached.ts'
 import {
   recordStart,
   startOf,
   takeNotices,
-} from '../../src/pulse/journal-state.ts'
-import { pulseNoteCommand, sessionFrom } from '../../src/pulse/note.ts'
+} from '../../src/board/journal-state.ts'
+import {
+  boardRunCommand,
+  pulseCreateCommand,
+} from '../../src/commands/board.ts'
+import { noteCommand, sessionFrom } from '../../src/commands/note.ts'
+import type { Terminal } from '../../src/core/terminal.ts'
+import { serverTools } from '../../src/mcp/tools.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
 import { board } from '../helpers/fake-project.ts'
@@ -148,7 +148,7 @@ async function note(
 ) {
   const c = capture()
   try {
-    const code = await pulseNoteCommand({
+    const code = await noteCommand({
       cwd,
       githubApi: g.base,
       session: SESSION,
@@ -387,7 +387,7 @@ test("rness_note: the same note through the MCP server, its session given; the i
 async function sessionEnd(g: { base: string }, root: string) {
   const c = capture()
   try {
-    return await pulseRunCommand({
+    return await boardRunCommand({
       cwd: root,
       githubApi: g.base,
       event: 'session-end',

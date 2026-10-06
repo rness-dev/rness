@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 
-import { type Context, type Declared, fromGithub } from '../commands/pulse.ts'
+import { type Context, type Declared, fromGithub } from '../commands/board.ts'
+import { githubRepo, journalOf, planIssue } from '../commands/note.ts'
 import { branchOf, commitsBetween } from '../core/git.ts'
 import { plansInProgress } from '../core/status.ts'
 import {
@@ -10,7 +11,6 @@ import {
   issuesNoted,
   startOf,
 } from './journal-state.ts'
-import { githubRepo, journalOf, planIssue } from './note.ts'
 
 /**
  * The session-end summary (spec 0030 §6): the commits since the session's

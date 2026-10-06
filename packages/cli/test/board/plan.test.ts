@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { issueBody } from '../../src/pulse/body.ts'
-import type { Desired } from '../../src/pulse/layout.ts'
+import { issueBody } from '../../src/board/body.ts'
+import type { Desired } from '../../src/board/layout.ts'
 import {
   type BoardItem,
   type ItemIssue,
@@ -11,7 +11,7 @@ import {
   planSync,
   stillOpened,
   unwantedPaths,
-} from '../../src/pulse/plan.ts'
+} from '../../src/board/plan.ts'
 
 const want = (path: string, over: Partial<Desired> = {}): Desired => ({
   path,

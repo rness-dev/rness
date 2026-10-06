@@ -1,17 +1,17 @@
-import type { StatusUpdate } from '../pulse/collection.ts'
-import type { Desired, LayoutView } from '../pulse/layout.ts'
+import type { StatusUpdate } from '../board/collection.ts'
+import type { Desired, LayoutView } from '../board/layout.ts'
 import {
   type Layout,
   type OptionColor,
   collectionFilter,
   optionColor,
-} from '../pulse/layout.ts'
+} from '../board/layout.ts'
 import {
   type BoardItem,
   type Placed,
   type Step,
   firstLine,
-} from '../pulse/plan.ts'
+} from '../board/plan.ts'
 import * as gi from './github-issues.ts'
 import * as gh from './github-projects.ts'
 import type { ApiOptions } from './github.ts'

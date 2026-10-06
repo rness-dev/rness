@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { parseBoard } from '../../src/core/board-declaration.ts'
-import { presetTemplate } from '../../src/core/presets.ts'
-import type { StatusTab } from '../../src/core/status.ts'
 import {
   collectionsOf,
   desiredOf,
   layoutOf,
   optionColor,
-} from '../../src/pulse/layout.ts'
+} from '../../src/board/layout.ts'
+import { parseBoard } from '../../src/core/board-declaration.ts'
+import { presetTemplate } from '../../src/core/presets.ts'
+import type { StatusTab } from '../../src/core/status.ts'
 
 const row = (id: string, status: string | null, path: string) => ({
   id,

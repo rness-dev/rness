@@ -1,6 +1,13 @@
 import { Command, CommanderError, Option } from 'commander'
 
 import { type AddOptions, addCommand } from './commands/add.ts'
+import {
+  type BoardOptions,
+  boardPushCommand,
+  boardRunCommand,
+  pulseCreateCommand,
+  pulseMarkCommand,
+} from './commands/board.ts'
 import { type ContextOptions, contextCommand } from './commands/context.ts'
 import { type CreateOptions, createCommand } from './commands/create.ts'
 import { docNewCommand } from './commands/doc.ts'
@@ -9,13 +16,6 @@ import { hookCommand } from './commands/hook.ts'
 import { type LoginOptions, loginCommand } from './commands/login.ts'
 import { logoutCommand } from './commands/logout.ts'
 import { type McpOptions, mcpCommand } from './commands/mcp.ts'
-import {
-  type PulseOptions,
-  pulseCreateCommand,
-  pulseMarkCommand,
-  pulseRunCommand,
-  pulseSyncCommand,
-} from './commands/pulse.ts'
 import { type StatusOptions, statusCommand } from './commands/status.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
@@ -152,7 +152,7 @@ function buildProgram(state: RunState): Command {
     .option('-y, --yes', 'do not ask for confirmation')
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(async (collection: string | undefined, opts: PulseOptions) => {
+    .action(async (collection: string | undefined, opts: BoardOptions) => {
       state.code = await pulseCreateCommand(
         collection === undefined ? opts : { ...opts, collection }
       )
@@ -164,8 +164,8 @@ function buildProgram(state: RunState): Command {
     )
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(async (opts: PulseOptions) => {
-      state.code = await pulseSyncCommand(opts)
+    .action(async (opts: BoardOptions) => {
+      state.code = await boardPushCommand(opts)
     })
   // What the hooks run, detached (spec 0017 §5).
   pulse
@@ -216,8 +216,8 @@ function buildProgram(state: RunState): Command {
           githubApi?: string
         }
       ) => {
-        const { pulseNoteCommand } = await import('./pulse/note.ts')
-        state.code = await pulseNoteCommand({
+        const { noteCommand } = await import('./commands/note.ts')
+        state.code = await noteCommand({
           ...opts,
           ...(text === undefined ? {} : { text }),
         })
@@ -249,7 +249,7 @@ function buildProgram(state: RunState): Command {
         }
       ) => {
         const { path, ...rest } = opts
-        state.code = await pulseRunCommand({
+        state.code = await boardRunCommand({
           ...rest,
           event,
           paths: path ?? [],
