@@ -76,7 +76,7 @@ export interface SnapshotRow extends StatusRow {
   color: OptionColor
   /**
    * The document's item on Agent Pulse: the board filtered on its `Path`.
-   * Null while the workspace declares no pulse.
+   * Null while the workspace declares no board.
    */
   link: string | null
 }

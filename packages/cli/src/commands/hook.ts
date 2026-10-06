@@ -39,7 +39,7 @@ export interface HookIo {
   output: Writable
   error: Writable
   env: NodeJS.ProcessEnv
-  /** Runs `rness <args>` detached (the pulse); tests record instead. */
+  /** Runs `rness <args>` detached (the boards); tests record instead. */
   spawn?: Spawn
 }
 
@@ -96,7 +96,7 @@ const holds = (board: BoardDeclaration, path: string): boolean =>
   Object.hasOwn(board.collections, path.split('/')[0] ?? '')
 
 /**
- * Starts `pulse run <event>` detached (spec 0032 §4), when the input names
+ * Starts `board run <event>` detached (spec 0032 §4), when the input names
  * a session, some board declares an action at the event, and `rest` finds
  * something for it to do. The hooks never fail the session over it.
  */
@@ -119,9 +119,9 @@ async function runDetached(
     if (boards.length === 0) return
     const args = await rest(session, boards)
     if (args !== null)
-      (io.spawn ?? detached)(['pulse', 'run', event, ...args], ws.root)
+      (io.spawn ?? detached)(['board', 'run', event, ...args], ws.root)
   } catch {
-    // The pulse is a courtesy: nothing here may reach the session.
+    // The board is a courtesy: nothing here may reach the session.
   }
 }
 
@@ -151,7 +151,7 @@ async function journalStart(
         )
         if (session !== null && clone !== null && summarised)
           await recordStart(clone.dir, session)
-        // `rness pulse note` reads the session from the Bash tool's
+        // `rness note` reads the session from the Bash tool's
         // environment; `rness_note` cannot, so it is spelt for it.
         const tool =
           session === null
@@ -163,7 +163,7 @@ async function journalStart(
             : `${plans.join(' or ')} (pass --plan)`
         return [
           [
-            `Journal: post a note with \`rness pulse note\` (or ${tool}) when you choose an approach, deviate from plan ${which}, are blocked, and when done.`,
+            `Journal: post a note with \`rness note\` (or ${tool}) when you choose an approach, deviate from plan ${which}, are blocked, and when done.`,
             `At most ${a.limit}: decisions and their reasons, not steps.`,
             ...(a.to === 'repo'
               ? [
@@ -238,7 +238,7 @@ async function sessionStart(
     notes = [message(e)]
   }
   const failure = await takeFailure()
-  if (failure !== null) notes.push(`pulse not updated — ${failure}`)
+  if (failure !== null) notes.push(`board not updated — ${failure}`)
   notes.push(...(await takeNotices()))
   const warnings = noteLines(notes)
   const compact = input['source'] === 'compact'

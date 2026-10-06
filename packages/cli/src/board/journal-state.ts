@@ -7,10 +7,10 @@ import { gitPath, headOf } from '../core/git.ts'
 /**
  * What the agent journal keeps on this machine (spec 0030 §4, §3.4): the
  * notes each session posted on each plan, in the `.rness` clone's git
- * directory (`rness/journal`, never pushed), as the issues the pulse opened
+ * directory (`rness/journal`, never pushed), as the issues the boards opened
  * are; each session's start, in the git directory of the clone it works
  * in (`rness/sessions/<id>`), for its summary; and the fallbacks the next
- * session start says once, beside the pulse's failures in rness's
+ * session start says once, beside the boards' failures in rness's
  * configuration directory.
  */
 

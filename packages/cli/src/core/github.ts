@@ -70,7 +70,7 @@ interface Page {
 
 /**
  * GitHub's own words, relayed as they came: the `message` of a refusal, a
- * GraphQL error. The pulse names them as GitHub's; rness's own errors are
+ * GraphQL error. The boards name them as GitHub's; rness's own errors are
  * plain `Error`s and keep their words.
  */
 export class GitHubMessageError extends Error {}

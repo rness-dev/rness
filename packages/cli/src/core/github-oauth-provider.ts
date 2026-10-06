@@ -130,7 +130,7 @@ export class GitHubOAuthProvider implements Provider {
 
   #boards(): GitHubBoards {
     if (this.#token === null)
-      throw new Error('the pulse needs a GitHub login: run rness login')
+      throw new Error('boards need a GitHub login: run rness login')
     this.#boardClient ??= new GitHubBoards(this.#api(this.#token.token))
     return this.#boardClient
   }

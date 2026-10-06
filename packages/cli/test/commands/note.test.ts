@@ -10,10 +10,7 @@ import {
   startOf,
   takeNotices,
 } from '../../src/board/journal-state.ts'
-import {
-  boardRunCommand,
-  pulseCreateCommand,
-} from '../../src/commands/board.ts'
+import { boardPushCommand, boardRunCommand } from '../../src/commands/board.ts'
 import { noteCommand, sessionFrom } from '../../src/commands/note.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
 import { serverTools } from '../../src/mcp/tools.ts'
@@ -102,13 +99,14 @@ async function journaled(
     provider: 'github',
     repos: { api: { url: opts.url ?? 'git@github.com:acme/api.git' } },
     scopes: { api: { path: 'org/api' } },
+    boards: { pulse: 'agent-pulse' },
     files: opts.files ?? FILES,
     dirs: ['org/api'],
   })
   const c = capture()
   try {
     assert.equal(
-      await pulseCreateCommand(
+      await boardPushCommand(
         { cwd: root, yes: true, githubApi: g.base },
         { terminal: NO_TTY }
       ),
@@ -383,7 +381,7 @@ test("rness_note: the same note through the MCP server, its session given; the i
 
 // --- the session-end summary (spec 0030 §6) ---------------------------------
 
-/** `pulse run session-end`, as the hook spawns it for a session in `api`. */
+/** `board run session-end`, as the hook spawns it for a session in `api`. */
 async function sessionEnd(g: { base: string }, root: string) {
   const c = capture()
   try {

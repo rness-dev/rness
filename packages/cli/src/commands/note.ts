@@ -23,7 +23,7 @@ import {
 } from './board.ts'
 
 /**
- * `rness pulse note` and `rness_note` (spec 0030 §4, §5): a short note of
+ * `rness note` and `rness_note` (spec 0030 §4, §5): a short note of
  * the agent's on the plan it implements — on the plan's issue in `.rness`,
  * or on an implementation issue in the repository the session works in, a
  * sub-issue of the plan's (§3). Loaded through `import()` only.
@@ -180,7 +180,7 @@ export async function planIssue(
       ? null
       : await fromGithub(c.provider.issueOf(c.org, '.rness', number))
   if (found === null)
-    throw new NoteRefused(`${plan} has no issue yet: rness pulse sync`)
+    throw new NoteRefused(`${plan} has no issue yet: rness board push`)
   return {
     id: found.id,
     number: found.number,
@@ -317,7 +317,7 @@ export async function postNote(input: NoteInput): Promise<Posted> {
   }
 }
 
-/** `rness pulse note`: the text from the argument, or stdin when it is absent or `-`. */
+/** `rness note`: the text from the argument, or stdin when it is absent or `-`. */
 export async function noteCommand(opts: {
   text?: string
   kind?: string

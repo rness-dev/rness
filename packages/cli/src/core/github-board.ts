@@ -17,7 +17,7 @@ import * as gh from './github-projects.ts'
 import type { ApiOptions } from './github.ts'
 import type { Board, MarkFields, Provider } from './provider.ts'
 
-/** The pulse's board on a GitHub project: its layout (spec 0017 §3, kept by spec 0018 §6), its items issues of `.rness` (spec 0018 §2–§5). */
+/** A board on a GitHub project: its layout (spec 0017 §3, kept by spec 0018 §6), its items issues of `.rness` (spec 0018 §2–§5). */
 
 export const PROJECT_TITLE = 'Agent Pulse'
 const WORKING = 'working'
@@ -215,7 +215,7 @@ export class GitHubBoards implements Pick<
     const found = await gi.repository(org, MEMORY, LABEL, this.#o)
     if (found === null)
       throw new Error(
-        `the pulse needs ${org}/${MEMORY} on GitHub: it is not there, or this login cannot see it`
+        `boards need ${org}/${MEMORY} on GitHub: it is not there, or this login cannot see it`
       )
     this.#memories.set(org, found)
     return found
@@ -224,7 +224,7 @@ export class GitHubBoards implements Pick<
   async checkIssues(org: string): Promise<void> {
     if (!(await this.#memory(org)).issues)
       throw new Error(
-        `the pulse needs Issues on ${org}/${MEMORY}: turn them on in its Settings`
+        `boards need Issues on ${org}/${MEMORY}: turn them on in its Settings`
       )
   }
 
@@ -873,7 +873,7 @@ export class GitHubBoards implements Pick<
     const id = (await this.#memory(board.org)).labelId
     if (id === null)
       throw new Error(
-        `${board.org}/${MEMORY} has no label ${LABEL}: run rness pulse sync`
+        `${board.org}/${MEMORY} has no label ${LABEL}: run rness board push`
       )
     return id
   }

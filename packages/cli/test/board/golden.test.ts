@@ -5,10 +5,7 @@ import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import {
-  boardPushCommand,
-  pulseCreateCommand,
-} from '../../src/commands/board.ts'
+import { boardPushCommand } from '../../src/commands/board.ts'
 import { syncCommand } from '../../src/commands/sync.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
 import { capture } from '../helpers/capture.ts'
@@ -221,9 +218,13 @@ test('golden: Agent Pulse as 0.20.1 makes it, and a second sync writes nothing',
     other: asUser,
     memory: { label: false, linked: false },
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: PULSE_FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: PULSE_FILES,
+  })
   await quiet(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -251,12 +252,12 @@ test("golden: a collection's own project as 0.20.1 makes it, and a second sync w
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    boards: { pulse: 7 },
+    boards: { pulse: 7, marketing: 'collection' },
     files: MARKETING_FILES,
   })
   await quiet(() =>
-    pulseCreateCommand(
-      { cwd, githubApi: g.base, collection: 'marketing' },
+    boardPushCommand(
+      { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
   )
@@ -313,7 +314,7 @@ test('golden: boards 0.20.1 made, declared by number, synced: nothing written', 
   )
 })
 
-test('golden: rness sync writes the boards 0.20.1 declared by number whole, the README cleaned; a pulse sync then writes nothing', async (t) => {
+test('golden: rness sync writes the boards 0.20.1 declared by number whole, the README cleaned; a push then writes nothing', async (t) => {
   await machine(t)
   const read = async (name: string) =>
     JSON.parse(

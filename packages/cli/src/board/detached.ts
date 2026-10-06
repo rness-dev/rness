@@ -7,7 +7,7 @@ import { configDir } from '../core/auth.ts'
 
 /**
  * Runs `rness <args>` detached, from `cwd`: the hooks return at once and the
- * pulse's GitHub calls finish on their own (spec 0017 §5).
+ * boards' GitHub calls finish on their own (spec 0017 §5).
  */
 export type Spawn = (args: string[], cwd: string) => void
 
@@ -29,9 +29,11 @@ export const detached: Spawn = (args, cwd) => {
   child.unref()
 }
 
-const failureFile = (): string => join(configDir(), 'pulse.json')
+const failureFile = (): string => join(configDir(), 'board.json')
+/** Where 0.21 and before recorded it: still read, once (plan 0048). */
+const formerFailureFile = (): string => join(configDir(), 'pulse.json')
 
-/** What a detached `pulse mark` could not do, for the next session start. */
+/** What a detached `board run` could not do, for the next session start. */
 export async function recordFailure(reason: string): Promise<void> {
   try {
     await mkdir(configDir(), { recursive: true, mode: 0o700 })
@@ -44,11 +46,17 @@ export async function recordFailure(reason: string): Promise<void> {
   }
 }
 
-/** The recorded failure's reason, once: reading it deletes it. */
+/** The recorded failure's reason, once: reading it deletes it; a former record is read when there is no other. */
 export async function takeFailure(): Promise<string | null> {
+  return (
+    (await takeFrom(failureFile())) ?? (await takeFrom(formerFailureFile()))
+  )
+}
+
+async function takeFrom(file: string): Promise<string | null> {
   try {
-    const data: unknown = JSON.parse(await readFile(failureFile(), 'utf8'))
-    await rm(failureFile(), { force: true })
+    const data: unknown = JSON.parse(await readFile(file, 'utf8'))
+    await rm(file, { force: true })
     const reason =
       data !== null && typeof data === 'object'
         ? (data as Record<string, unknown>)['reason']
@@ -60,7 +68,7 @@ export async function takeFailure(): Promise<string | null> {
 }
 
 /** A lock older than this is a crashed process's: a sync waits 10 minutes at most on GitHub. */
-const PULSE_LOCK_STALE_MS = 15 * 60_000
+const LOCK_STALE_MS = 15 * 60_000
 
 /**
  * The hooks' syncs of one board, one at a time: two at once would each give
@@ -74,7 +82,7 @@ export async function oneSyncAtATime(
   options: { wait?: boolean; sleep?: (ms: number) => Promise<void> } = {}
 ): Promise<boolean> {
   await mkdir(configDir(), { recursive: true, mode: 0o700 })
-  const file = join(configDir(), `pulse-${key}.lock`)
+  const file = join(configDir(), `board-${key}.lock`)
   for (;;) {
     try {
       const handle = await open(file, 'wx')
@@ -86,7 +94,7 @@ export async function oneSyncAtATime(
         (s) => Date.now() - s.mtimeMs,
         () => 0
       )
-      if (age > PULSE_LOCK_STALE_MS) await rm(file, { force: true })
+      if (age > LOCK_STALE_MS) await rm(file, { force: true })
       else if (options.wait !== true) return false
       else await (options.sleep ?? ((ms: number) => delay(ms)))(1_000)
     }

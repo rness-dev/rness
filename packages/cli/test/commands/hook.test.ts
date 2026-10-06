@@ -358,7 +358,7 @@ test('session start with a pulse: marks the plans in progress of the scope, deta
       cwd: root,
       // The run finds the documents itself, from the scope (spec 0032 §4).
       args: [
-        'pulse',
+        'board',
         'run',
         'session-start',
         '--session',
@@ -392,7 +392,7 @@ test('session start of a subagent: its type is in the session', async (t) => {
     spawned
   )
   assert.deepEqual(spawned[0]?.args.slice(0, 5), [
-    'pulse',
+    'board',
     'run',
     'session-start',
     '--session',
@@ -437,7 +437,7 @@ test('post-tool-use marks the edited document, after the check; outside .rness, 
     {
       cwd: root,
       args: [
-        'pulse',
+        'board',
         'run',
         'edit',
         '--session',
@@ -490,26 +490,44 @@ test('session end spawns the clearing mark, and says nothing', async (t) => {
   assert.deepEqual(spawned, [
     {
       cwd: root,
-      args: ['pulse', 'run', 'session-end', '--session', 'claude · 1a2b3c4d'],
+      args: ['board', 'run', 'session-end', '--session', 'claude · 1a2b3c4d'],
     },
   ])
 })
 
-test('a failure recorded by an earlier mark is in the next session start, once', async (t) => {
+test('a failure 0.21 recorded in pulse.json is in the next session start, once, then gone (plan 0048)', async (t) => {
   const root = await workspace(t)
+  await mkdir(configDir(), { recursive: true })
   const reason = 'the pulse needs the project scope: run rness login'
+  writeFileSync(
+    join(configDir(), 'pulse.json'),
+    `${JSON.stringify({ at: '2026-10-06T00:00:00.000Z', reason })}\n`
+  )
+  const first = JSON.parse((await hook('session-start', { cwd: root })).out)
+  assert.ok(
+    first.systemMessage
+      .split('\n')
+      .includes(`rness: board not updated — ${reason}`)
+  )
+  const second = JSON.parse((await hook('session-start', { cwd: root })).out)
+  assert.doesNotMatch(second.systemMessage, /board not updated/)
+})
+
+test('a failure recorded by an earlier run is in the next session start, once', async (t) => {
+  const root = await workspace(t)
+  const reason = 'boards need the project scope: run rness login'
   await recordFailure(reason)
-  const line = `rness: pulse not updated — ${reason}`
+  const line = `rness: board not updated — ${reason}`
   const first = JSON.parse((await hook('session-start', { cwd: root })).out)
   assert.ok(first.systemMessage.split('\n').includes(line))
   assert.ok(
     first.hookSpecificOutput.additionalContext.split('\n').includes(line)
   )
   const second = JSON.parse((await hook('session-start', { cwd: root })).out)
-  assert.doesNotMatch(second.systemMessage, /pulse not updated/)
+  assert.doesNotMatch(second.systemMessage, /board not updated/)
   assert.doesNotMatch(
     second.hookSpecificOutput.additionalContext,
-    /pulse not updated/
+    /board not updated/
   )
 })
 
@@ -871,7 +889,7 @@ test('an edit spawns a run only for a board that declares mark and holds the doc
   await editing('marketing/a.md')
   assert.deepEqual(
     spawned.map((s) => s.args.slice(0, 3)),
-    [['pulse', 'run', 'edit']]
+    [['board', 'run', 'edit']]
   )
   spawned.length = 0
   await editing('specs/0001-a.md')
@@ -960,7 +978,7 @@ test('journal "repo": the model is told how to write it, with its session and it
   const context = contextOf(r)
   assert.ok(
     context.includes(
-      'Journal: post a note with `rness pulse note` (or rness_note, its session "claude · 1a2b3c4d") when you choose an approach, deviate from plan plans/web/0027-web.md, are blocked, and when done. At most 3: decisions and their reasons, not steps. The first note prints the issue to reference; the pull request that completes this plan here carries `Closes <issue>`, an earlier one `Refs <issue>`.'
+      'Journal: post a note with `rness note` (or rness_note, its session "claude · 1a2b3c4d") when you choose an approach, deviate from plan plans/web/0027-web.md, are blocked, and when done. At most 3: decisions and their reasons, not steps. The first note prints the issue to reference; the pull request that completes this plan here carries `Closes <issue>`, an earlier one `Refs <issue>`.'
     ),
     context
   )
@@ -987,7 +1005,7 @@ test('journal "plan": the same, without the pull request sentence; no plan in pr
       session_id: ID,
     })
   )
-  assert.match(context, /Journal: post a note with `rness pulse note`/)
+  assert.match(context, /Journal: post a note with `rness note`/)
   assert.match(
     context,
     /deviate from plan plans\/0026-a\.md or plans\/0029-b\.md \(pass --plan\)/
@@ -1077,7 +1095,7 @@ test('session end with a summary declared: the run told the scope and the clone 
     spawned.map((s) => s.args),
     [
       [
-        'pulse',
+        'board',
         'run',
         'session-end',
         '--session',
@@ -1087,7 +1105,7 @@ test('session end with a summary declared: the run told the scope and the clone 
         '--clone',
         'web',
       ],
-      ['pulse', 'run', 'session-end', '--session', 'claude · 1a2b3c4d'],
+      ['board', 'run', 'session-end', '--session', 'claude · 1a2b3c4d'],
     ]
   )
 })

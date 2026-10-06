@@ -6,8 +6,8 @@
 const GITHUB_CLIENT_ID = 'Ov23liv1ia2UWeWttsOK'
 const GITHUB_WEB = 'https://github.com'
 export const SCOPES = 'repo read:org'
-/** The extra scope the pulse needs to read a GitHub Project. */
-export const PULSE_SCOPE = 'project'
+/** The extra scope boards need to read a GitHub Project. */
+export const BOARD_SCOPE = 'project'
 
 export function clientId(): string {
   return process.env['RNESS_GITHUB_CLIENT_ID'] ?? GITHUB_CLIENT_ID

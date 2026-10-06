@@ -3,8 +3,8 @@ import { realpath } from 'node:fs/promises'
 import { envToken, readAuth, resolveToken, writeAuth } from '../core/auth.ts'
 import { canOpenBrowser, openInBrowser } from '../core/browser.ts'
 import {
+  BOARD_SCOPE,
   LoginError,
-  PULSE_SCOPE,
   type PollDeps,
   SCOPES,
   pollForToken,
@@ -26,7 +26,7 @@ export interface LoginOptions {
   setupGit?: boolean
   /** Internal (tests): GitHub REST API base. */
   githubApi?: string
-  /** Ask for the `project` scope even where no pulse is declared (`pulse create`). */
+  /** Ask for the `project` scope even where no board is declared (`board push` creating one). */
   project?: boolean
 }
 
@@ -117,7 +117,7 @@ export async function loginCommand(
     const lacksProject =
       needsProject &&
       resolved?.source === 'login' &&
-      !splitScopes(stored?.tokens.scopes ?? '').includes(PULSE_SCOPE)
+      !splitScopes(stored?.tokens.scopes ?? '').includes(BOARD_SCOPE)
     if (stored !== null && resolved !== null && !lacksProject) {
       ui.line(
         'logged in',
@@ -130,7 +130,7 @@ export async function loginCommand(
 
     if (lacksProject) ui.line('login', 'logging in again for the project scope')
     const code = await requestDeviceCode(
-      needsProject ? `${SCOPES} ${PULSE_SCOPE}` : SCOPES
+      needsProject ? `${SCOPES} ${BOARD_SCOPE}` : SCOPES
     )
     if (ui.session)
       ui.line(

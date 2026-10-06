@@ -6,7 +6,7 @@ import { Readable, Writable } from 'node:stream'
 import { type TestContext, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import * as pulse from '../../src/commands/board.ts'
+import * as boardCommand from '../../src/commands/board.ts'
 import { hookCommand } from '../../src/commands/hook.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
 import { capture } from '../helpers/capture.ts'
@@ -74,23 +74,15 @@ async function hook(event: string, input: unknown): Promise<string[][]> {
   return spawned
 }
 
-/** A process a hook starts (`pulse mark …`, `pulse run …`), run in this one. */
+/** A process a hook starts (`board run …`), run in this one. */
 async function runSpawned(args: string[], cwd: string, githubApi: string) {
   const values = (flag: string) =>
     args.flatMap((a, i) => (a === flag ? [args[i + 1] ?? ''] : []))
   const session = values('--session')[0] ?? ''
   const c = capture()
   try {
-    if (args[1] === 'mark')
-      await pulse.pulseMarkCommand({
-        cwd,
-        githubApi,
-        session,
-        paths: values('--path'),
-        ...(args.includes('--end') ? { end: true } : {}),
-      })
-    else if (args[1] === 'run')
-      await pulse.boardRunCommand({
+    if (args[0] === 'board' && args[1] === 'run')
+      await boardCommand.boardRunCommand({
         cwd,
         githubApi,
         event: args[2] ?? '',
@@ -112,11 +104,15 @@ test('golden: a session writes on Agent Pulse what 0.20.1 writes — its start, 
     other: asUser,
     memory: { label: false, linked: false },
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const c = capture()
   try {
     assert.equal(
-      await pulse.pulseCreateCommand(
+      await boardCommand.boardPushCommand(
         { cwd, yes: true, githubApi: g.base },
         { terminal: NO_TTY }
       ),

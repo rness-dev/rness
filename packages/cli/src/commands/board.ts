@@ -27,13 +27,13 @@ import {
   stillOpened,
   unwantedPaths,
 } from '../board/plan.ts'
-import { boardUrl } from '../board/urls.ts'
 import {
   type BoardAction,
   type BoardDeclaration,
   HOOK_EVENTS,
+  parseBoard,
+  presetFor,
 } from '../core/board-declaration.ts'
-import { parseBoard } from '../core/board-declaration.ts'
 import {
   readmeDeclarations,
   withoutDeclarations,
@@ -53,7 +53,6 @@ import {
 import {
   PULSE,
   loadManifest,
-  projectNumber,
   providerOf,
   writeManifest,
 } from '../core/manifest.ts'
@@ -62,7 +61,7 @@ import { labelOf } from '../core/presets.ts'
 import type { Board, MarkFields, Provider } from '../core/provider.ts'
 import { PROVIDERS, openProvider } from '../core/providers.ts'
 import { type StatusTab, documentsIn, statusTabs } from '../core/status.ts'
-import { defaultTerminal } from '../core/terminal.ts'
+import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
@@ -70,9 +69,10 @@ import { reportError } from '../report.ts'
 import { loginCommand } from './login.ts'
 
 export interface BoardOptions {
+  /** Create the boards not created yet without asking (spec 0033 §4). */
   yes?: boolean
-  /** `pulse create <collection>`: the collection's own project (spec 0025 §3). */
-  collection?: string
+  /** Internal: the creation already answered — `rness pulse create` was typed. */
+  confirmed?: boolean
   /** Internal (tests): directory to resolve from; default `process.cwd()`. */
   cwd?: string
   /** Internal (tests): GitHub API base. */
@@ -82,8 +82,8 @@ export interface BoardOptions {
 }
 
 const PROJECT_SCOPE = 'project'
-const NEEDS_LOGIN = 'the pulse needs a GitHub login: run rness login'
-const NEEDS_SCOPE = 'the pulse needs the project scope: run rness login'
+const NEEDS_LOGIN = 'boards need a GitHub login: run rness login'
+const NEEDS_SCOPE = 'boards need the project scope: run rness login'
 
 /**
  * GitHub's own words, named as GitHub's unless they already say so. rness's
@@ -118,7 +118,7 @@ const providerOptions = (
   ...(wait === undefined ? {} : { wait }),
 })
 
-/** The refusals every pulse command shares, in order; each throws one line. */
+/** The refusals every board command shares, in order; each throws one line. */
 export async function context(
   opts: BoardOptions,
   wait?: RateWait
@@ -127,7 +127,7 @@ export async function context(
   const manifest = await loadManifest(ws.rnessDir)
   const provider = await openProvider(manifest, providerOptions(opts, wait))
   if (manifest.org === null)
-    throw new Error('the pulse needs an organization: rness.json has no "org"')
+    throw new Error('boards need an organization: rness.json has no "org"')
   return {
     root: ws.root,
     rnessDir: ws.rnessDir,
@@ -145,7 +145,7 @@ const waitSaid = (opts: BoardOptions, ui: Ui): RateWait =>
   })
 
 /**
- * What the login lacks for the pulse — a login, or the project scope — or
+ * What the login lacks for boards — a login, or the project scope — or
  * null. Throws when GitHub cannot be asked: an offline machine or a rejected
  * token is never told that a scope is missing.
  */
@@ -175,28 +175,39 @@ const takesAll = (d: { declaration: BoardDeclaration }): boolean =>
 const namedCollections = (d: BoardDeclaration): string[] =>
   d.collections === 'all' ? [] : Object.keys(d.collections)
 
+/** A board of `boards` the provider does not have yet: `board push` creates it (spec 0033 §4). */
+interface NotCreated {
+  name: string
+  entry: string | BoardDeclaration
+  declaration: BoardDeclaration
+}
+
 /**
- * Every declared board, read whole (a number is its preset): those that
- * name their collections first, in the order of `boards`, one that takes
- * all last — a document moving leaves it only once its own board holds it
- * (spec 0025 §3). A board `rness.json` refuses is said and skipped.
+ * Every declared board, read whole (a number or a preset's name is its
+ * preset): those the provider has — those that name their collections
+ * first, in the order of `boards`, one that takes all last, so a document
+ * moving leaves it only once its own board holds it (spec 0025 §3) — and
+ * those it does not have yet. A board `rness.json` refuses is said and
+ * skipped.
  */
 async function declarations(
   c: Context,
   ui?: Ui
-): Promise<{ name: string; declaration: Created }[]> {
+): Promise<{
+  created: { name: string; declaration: Created }[]
+  notCreated: NotCreated[]
+}> {
   const boards = c.manifest.boards ?? {}
   for (const r of c.manifest.refused ?? [])
     ui?.line('skipped', `${r.name}: ${r.reason}`)
   const all: { name: string; declaration: Created }[] = []
+  const notCreated: NotCreated[] = []
   for (const [name, entry] of Object.entries(boards)) {
     const declaration = await declaredBoard(name, entry, c.rnessDir)
-    // Not on the provider yet: `board push` creates it (spec 0033 §4).
-    if (!isCreated(declaration)) continue
     // A README that still declares what rness.json declares now (spec 0031
     // §6): this board waits until `rness sync` moves it.
     const still: string[] = []
-    if (typeof entry !== 'number')
+    if (typeof entry === 'object')
       for (const collection of namedCollections(declaration)) {
         const keys = Object.keys(
           await readmeDeclarations(c.rnessDir, collection)
@@ -211,23 +222,37 @@ async function declarations(
       )
       continue
     }
-    all.push({ name, declaration })
+    if (isCreated(declaration)) all.push({ name, declaration })
+    else if (typeof entry !== 'number')
+      notCreated.push({ name, entry, declaration })
   }
-  return all.sort((a, b) => Number(takesAll(a)) - Number(takesAll(b)))
+  return {
+    created: all.sort((a, b) => Number(takesAll(a)) - Number(takesAll(b))),
+    notCreated,
+  }
 }
 
-/** Every declared board, opened; `sync` and `mark` need one. */
+/** What `boards` holds, said when there is nothing to push. */
+function noBoard(c: Context): Error {
+  return new Error(
+    c.manifest.refused === undefined
+      ? 'no board declared — declare one in .rness/rness.json, as "boards": { "pulse": "agent-pulse" }, then rness board push'
+      : `no board rness.json declares is valid: ${c.manifest.refused.map((r) => r.reason).join('; ')}`
+  )
+}
+
+/**
+ * Every declared board the provider has, opened; `push` and `run` need
+ * one. A board not created yet is left out: `push` creates it first.
+ */
 export async function declaredBoards(c: Context, ui?: Ui): Promise<Declared[]> {
-  if (c.manifest.boards === null)
-    throw new Error(
-      c.manifest.refused === undefined
-        ? 'no pulse declared — rness pulse create'
-        : `no board rness.json declares is valid: ${c.manifest.refused.map((r) => r.reason).join('; ')}`
-    )
+  if (c.manifest.boards === null) throw noBoard(c)
+  const { created } = await declarations(c, ui)
+  if (created.length === 0) return []
   const missing = await missingAccess(c.provider)
   if (missing !== null) throw new Error(missing)
   const declared: Declared[] = []
-  for (const { name, declaration } of await declarations(c, ui)) {
+  for (const { name, declaration } of created) {
     const board = await fromGithub(c.provider.board(c.org, declaration.number))
     if (board === null)
       throw new Error(`GitHub has no project ${declaration.number} in ${c.org}`)
@@ -597,7 +622,7 @@ async function syncBoard(
     if (!(e instanceof RateLimitError)) throw e
     const total = changes + writes.length
     throw new Error(
-      `${e.message}: ${total - made} of ${total} changes not made — the next rness pulse sync makes them`,
+      `${e.message}: ${total - made} of ${total} changes not made — the next rness board push makes them`,
       { cause: e }
     )
   }
@@ -639,8 +664,139 @@ async function syncAll(
   }
 }
 
-/** `rness pulse create`: the project, declared at once; then its layout and a first sync. */
-export async function pulseCreateCommand(
+/**
+ * Whether a board may be created under that name: `pulse`, or a collection
+ * of `.rness/` — a directory whose documents carry a status (spec 0025 §3,
+ * 0033 §4). Throws naming it, before the provider is asked anything.
+ */
+export async function checkBoardName(
+  rnessDir: string,
+  name: string
+): Promise<void> {
+  if (name === PULSE) return
+  const tabs = await statusTabs(rnessDir)
+  if (!tabs.some((t) => t.name === name))
+    throw new Error(
+      `"boards.${name}": ${name} is no collection of .rness: none of its documents carries a status`
+    )
+}
+
+/** The title a board not created yet gets on the provider: as declared, else its preset's. */
+const titleOf = (b: NotCreated): string =>
+  b.declaration.title ?? labelOf(b.name)
+
+/**
+ * The boards not created yet, created (spec 0033 §4): asked once, unless
+ * `--yes` or `rness pulse create` answered; the login and `.rness`'s Issues
+ * checked; each project made, its number written into `rness.json` before
+ * anything else can fail; a collection's README declarations moved. Says
+ * which were made and which were left: off a terminal, or declined.
+ */
+async function createBoards(
+  c: Context,
+  boards: readonly NotCreated[],
+  opts: BoardOptions,
+  terminal: Terminal,
+  ui: Ui,
+  wait: RateWait
+): Promise<{ c: Context; made: string[]; left: string[] }> {
+  for (const b of boards) await checkBoardName(c.rnessDir, b.name)
+  // A written provider was already refused by `context`; a detected one is
+  // what this writes, so it is refused here, before GitHub is asked
+  // anything (spec 0017 §2.2).
+  const detected = providerOf(c.manifest)
+  if (!PROVIDERS[detected].available)
+    throw new Error(
+      `boards need a GitHub organization, and this workspace's repositories look like ${detected} (detected): write "provider": "github" in rness.json if the organization is on GitHub`
+    )
+  const names = boards.map((b) => b.name)
+  if (opts.confirmed !== true && opts.yes !== true) {
+    if (!terminal.isTty()) return { c, made: [], left: names }
+    const p = await terminal.prompts()
+    const ok = await p.confirm({
+      message: `Create ${boards.map((b) => `${titleOf(b)} (${b.name})`).join(', ')} on GitHub, in ${c.org}?`,
+    })
+    if (p.isCancel(ok) || ok !== true) return { c, made: [], left: names }
+  }
+  const missing = await missingAccess(c.provider)
+  if (missing !== null) {
+    if (opts.yes === true || !terminal.isTty()) throw new Error(missing)
+    const p = await terminal.prompts()
+    const ok = await p.confirm({
+      message:
+        missing === NEEDS_LOGIN
+          ? 'Boards need a GitHub login with the project scope. Log in now?'
+          : 'Boards need the project scope of your GitHub login. Log in again to grant it?',
+    })
+    if (p.isCancel(ok) || ok !== true) throw new Error(missing)
+    const code = await loginCommand(
+      {
+        project: true,
+        // The git question is `rness login`'s own, not the board's to ask.
+        setupGit: false,
+        ...(opts.githubApi === undefined ? {} : { githubApi: opts.githubApi }),
+      },
+      { terminal, ui, ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }) }
+    )
+    if (code !== 0) throw new Error(missing)
+    c = {
+      ...c,
+      provider: await openProvider(c.manifest, providerOptions(opts, wait)),
+    }
+    const still = await missingAccess(c.provider)
+    if (still !== null) throw new Error(still)
+  }
+  // Before anything is written: the items are issues of .rness (spec 0018 §2).
+  await fromGithub(c.provider.checkIssues(c.org))
+  const login = (await c.provider.identity())?.login ?? 'unknown'
+  ui.line(
+    'checked',
+    `${detected}, logged in as ${login}, scope ${PROJECT_SCOPE}`
+  )
+  const made: string[] = []
+  for (const b of boards) {
+    // A preset's name is written whole from that preset (spec 0031 §3, plan
+    // 0045), what a collection's README declared in it (spec 0031 §6); a
+    // declaration, as the team wrote it.
+    const source =
+      typeof b.entry === 'string'
+        ? await presetSource(b.name, c.rnessDir, null, b.entry)
+        : b.declaration.source
+    const readme =
+      typeof b.entry === 'string' && b.name !== PULSE
+        ? await readmeText(c.rnessDir, b.name)
+        : null
+    const title = titleOf(b)
+    const board = await fromGithub(c.provider.createBoard(c.org, title))
+    // Declared as soon as the project exists, before its layout: whatever
+    // fails after this leaves a declared project that the next push
+    // completes, not one nobody knows about (spec 0017 §3).
+    const manifest: Manifest = {
+      ...c.manifest,
+      provider: detected,
+      boards: {
+        ...c.manifest.boards,
+        [b.name]: parseBoard(b.name, { number: board.number, ...source }),
+      },
+    }
+    await writeManifest(c.rnessDir, manifest)
+    if (readme !== null) {
+      const cleaned = withoutDeclarations(readme)
+      if (cleaned !== readme)
+        await writeFileAtomic(join(c.rnessDir, b.name, 'README.md'), cleaned)
+    }
+    c = { ...c, manifest }
+    made.push(b.name)
+    ui.line('created', `${title} — ${board.url}`)
+  }
+  return { c, made, left: [] }
+}
+
+/**
+ * `rness board push`: every board follows the documents of `.rness/`; one
+ * not created yet is created first (spec 0033 §4).
+ */
+export async function boardPushCommand(
   opts: BoardOptions,
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
@@ -649,166 +805,39 @@ export async function pulseCreateCommand(
     const ui = deps.ui ?? (await makeUi(terminal))
     const wait = waitSaid(opts, ui)
     let c = await context(opts, wait)
-    const name = opts.collection ?? PULSE
-    const declared = c.manifest.boards?.[name]
-    if (opts.collection === PULSE)
-      throw new Error('"pulse" names Agent Pulse: rness pulse create')
-    if (declared !== undefined) {
-      const number = projectNumber(declared)
-      throw new Error(
-        `already declared: ${number === null ? 'not created yet' : boardUrl(c.org, number)} — rness pulse sync`
-      )
-    }
-    const refused = c.manifest.refused?.find((r) => r.name === name)
-    if (refused !== undefined)
-      throw new Error(`already declared, and refused: ${refused.reason}`)
-    // A collection is a tab of `rness status`: a directory of `.rness/` whose
-    // documents carry a status (spec 0025 §3).
-    const tab =
-      opts.collection === undefined
-        ? null
-        : ((await statusTabs(c.rnessDir)).find(
-            (t) => t.name === opts.collection
-          ) ?? null)
-    if (opts.collection !== undefined && tab === null)
-      throw new Error(
-        `${opts.collection} is no collection of .rness: none of its documents carries a status`
-      )
-    // A written provider was already refused by `context`; a detected one is
-    // what create writes, so it is refused here, before GitHub is asked
-    // anything (spec 0017 §2.2).
-    const detected = providerOf(c.manifest)
-    if (!PROVIDERS[detected].available)
-      throw new Error(
-        `the pulse needs a GitHub organization, and this workspace's repositories look like ${detected} (detected): write "provider": "github" in rness.json if the organization is on GitHub`
-      )
-    const missing = await missingAccess(c.provider)
-    if (missing !== null) {
-      if (opts.yes === true || !terminal.isTty()) throw new Error(missing)
-      const p = await terminal.prompts()
-      const ok = await p.confirm({
-        message:
-          missing === NEEDS_LOGIN
-            ? 'The pulse needs a GitHub login with the project scope. Log in now?'
-            : 'The pulse needs the project scope of your GitHub login. Log in again to grant it?',
-      })
-      if (p.isCancel(ok) || ok !== true) throw new Error(missing)
-      const code = await loginCommand(
-        {
-          project: true,
-          // The git question is `rness login`'s own, not the pulse's to ask.
-          setupGit: false,
-          ...(opts.githubApi === undefined
-            ? {}
-            : { githubApi: opts.githubApi }),
-        },
-        { terminal, ui, ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }) }
-      )
-      if (code !== 0) return code
-      c = {
-        ...c,
-        provider: await openProvider(c.manifest, providerOptions(opts, wait)),
-      }
-      const still = await missingAccess(c.provider)
-      if (still !== null) throw new Error(still)
-    }
-    // Before anything is written: the items are issues of .rness (spec 0018 §2).
-    await fromGithub(c.provider.checkIssues(c.org))
-    const login = (await c.provider.identity())?.login ?? 'unknown'
-    ui.line(
-      'checked',
-      `${detected}, logged in as ${login}, scope ${PROJECT_SCOPE}`
-    )
-
-    // The board as its preset makes it here (spec 0031 §3, plan 0045),
-    // written whole: what rness.json says is the board. What a collection's
-    // README declared is in it now, and leaves the README (spec 0031 §6).
-    const source = await presetSource(name, c.rnessDir, 1)
-    const readme =
-      opts.collection === undefined
-        ? null
-        : await readmeText(c.rnessDir, opts.collection)
-    const title = typeof source['title'] === 'string' ? source['title'] : name
-    const board = await fromGithub(c.provider.createBoard(c.org, title))
-    // Declared as soon as the project exists, before its layout: whatever
-    // fails after this leaves a declared project that `rness pulse sync`
-    // completes, not one nobody knows about (spec 0017 §3).
-    const manifest = {
-      ...c.manifest,
-      provider: detected,
-      boards: {
-        ...c.manifest.boards,
-        [name]: parseBoard(name, { ...source, number: board.number }),
-      },
-    }
-    await writeManifest(c.rnessDir, manifest)
-    if (readme !== null && opts.collection !== undefined) {
-      const cleaned = withoutDeclarations(readme)
-      if (cleaned !== readme)
-        await writeFileAtomic(
-          join(c.rnessDir, opts.collection, 'README.md'),
-          cleaned
-        )
-    }
-    c = { ...c, manifest }
-    ui.line('created', `${title} — ${board.url}`)
+    if (c.manifest.boards === null) throw noBoard(c)
+    const { notCreated } = await declarations(c, ui)
+    let made: string[] = []
+    let left: string[] = []
+    if (notCreated.length > 0)
+      ({ c, made, left } = await createBoards(
+        c,
+        notCreated,
+        opts,
+        terminal,
+        ui,
+        wait
+      ))
     try {
-      await syncAll(c, await declaredBoards(c), ui, (n) =>
-        n === name ? createdByKind : eachAdded
+      // The lines of `declarations` were said above: not twice.
+      const declared = await declaredBoards(c)
+      await syncAll(c, declared, ui, (n) =>
+        made.includes(n) ? createdByKind : eachAdded
       )
     } finally {
-      ui.line(
-        'declared',
-        `${name} in .rness/rness.json — commit it: git -C .rness commit -am "chore: rness pulse${
-          opts.collection === undefined ? '' : ` ${opts.collection}`
-        }"`
-      )
+      if (made.length > 0)
+        ui.line(
+          'declared',
+          `${made.join(', ')} in .rness/rness.json — commit it: git -C .rness commit -am "chore: board ${made.join(', ')}"`
+        )
     }
+    if (left.length > 0)
+      throw new Error(
+        `not created: ${left.join(', ')} — rness board push in a terminal, or with --yes, creates ${left.length === 1 ? 'it' : 'them'}`
+      )
     return 0
   } catch (e) {
     return reportError(e)
-  }
-}
-
-/** `rness pulse sync`: the board follows the documents. */
-export async function boardPushCommand(
-  opts: BoardOptions,
-  deps: Partial<CommandDeps> = {}
-): Promise<number> {
-  try {
-    const ui = deps.ui ?? (await makeUi(deps.terminal ?? defaultTerminal))
-    const c = await context(opts, waitSaid(opts, ui))
-    await syncAll(c, await declaredBoards(c, ui), ui, () => eachAdded)
-    return 0
-  } catch (e) {
-    return reportError(e)
-  }
-}
-
-interface MarkOptions {
-  cwd?: string
-  githubApi?: string
-  session: string
-  paths: string[]
-  end?: boolean
-  /** Internal (tests): how the lock's poll sleeps. */
-  sleep?: (ms: number) => Promise<void>
-}
-
-/**
- * Hidden, kept through 0.21.x for a session started before an upgrade:
- * marks the items of `paths` as worked on by `session`, or — with `end` —
- * clears that session's marks and syncs, on every declared board, as 0.20
- * did. `rness pulse run` does what boards declare. It never prompts and no
- * one reads its output: a failure is recorded, for the next session start
- * to say (spec 0017 §5), and the exit is 0.
- */
-export async function pulseMarkCommand(opts: MarkOptions): Promise<number> {
-  try {
-    return await mark(opts)
-  } catch (e) {
-    await recordFailure(e instanceof Error ? e.message : String(e))
-    return 0
   }
 }
 
@@ -932,32 +961,6 @@ async function clearOn(
   await fromGithub(c.provider.mark(d.board, ids, null, fields))
 }
 
-async function mark(opts: MarkOptions): Promise<number> {
-  const c = await context(opts)
-  const declared = await declaredBoards(c)
-  const lock = opts.sleep === undefined ? {} : { sleep: opts.sleep }
-  if (opts.end === true) {
-    for (const d of declared) await clearOn(c, d, opts.session)
-    // The session's last sync waits its turn behind an edit's.
-    await oneSyncAtATime(
-      lockKey(c, declared),
-      () => syncAll(c, declared, plainUi, () => eachAdded),
-      { ...lock, wait: true }
-    )
-    return 0
-  }
-  // Only a path some declared board holds: without one, a document of an
-  // undeclared collection has no board, and its edit costs no sync.
-  const wanted = new Map<Declared, Set<string>>()
-  for (const d of declared) {
-    const paths = opts.paths.filter((p) => holds(d, p))
-    if (paths.length > 0) wanted.set(d, new Set(paths))
-  }
-  if (wanted.size === 0) return 0
-  await markOn(c, declared, wanted, opts.session, lock)
-  return 0
-}
-
 export interface RunOptions {
   cwd?: string
   githubApi?: string
@@ -1064,4 +1067,40 @@ async function run(opts: RunOptions, failures: string[]): Promise<void> {
       `${action} on ${label(d)} failed: ${e instanceof Error ? e.message : String(e)}`
     )
   )
+}
+
+/**
+ * `rness pulse create [collection]`, a former command (spec 0033 §2): the
+ * board declared by its preset's name when `boards` does not name it yet,
+ * then pushed, its creation answered by the command typed.
+ */
+export async function pulseCreateCommand(
+  collection: string | undefined,
+  opts: BoardOptions,
+  deps: Partial<CommandDeps> = {}
+): Promise<number> {
+  try {
+    const name = collection ?? PULSE
+    const ws = await findWorkspace(opts.cwd ?? process.cwd())
+    const manifest = await loadManifest(ws.rnessDir)
+    if (manifest.org === null)
+      throw new Error('boards need an organization: rness.json has no "org"')
+    const refused = manifest.refused?.find((r) => r.name === name)
+    if (refused !== undefined)
+      throw new Error(`already declared, and refused: ${refused.reason}`)
+    let said = 'rness pulse create is now rness board push'
+    if (manifest.boards?.[name] === undefined) {
+      await checkBoardName(ws.rnessDir, name)
+      const preset = presetFor(name)
+      await writeManifest(ws.rnessDir, {
+        ...manifest,
+        boards: { ...manifest.boards, [name]: preset },
+      })
+      said = `boards are declared in rness.json now: added "${name}": "${preset}", then rness board push`
+    }
+    process.stderr.write(`${said}\n`)
+    return await boardPushCommand({ ...opts, confirmed: true }, deps)
+  } catch (e) {
+    return reportError(e)
+  }
 }

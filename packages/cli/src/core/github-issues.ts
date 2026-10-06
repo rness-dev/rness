@@ -2,8 +2,8 @@ import { graphql, graphqlFound } from './github-projects.ts'
 import { type ApiOptions, postJson } from './github.ts'
 
 /**
- * A repository's issues over GitHub's API: what the pulse's items are made
- * of (spec 0018 §2). No pulse logic; errors carry GitHub's own message.
+ * A repository's issues over GitHub's API: what a board's items are made
+ * of (spec 0018 §2). No board logic; errors carry GitHub's own message.
  */
 
 export interface Repository {
@@ -52,7 +52,7 @@ export interface OpenIssue {
 /**
  * The open issues of `owner/name` that carry `label`, 100 a page. The
  * repository's issues, unlike a project's items, show an issue as soon as it
- * is created: the pulse looks here before creating one (spec 0020 §7).
+ * is created: a push looks here before creating one (spec 0020 §7).
  */
 export async function openIssues(
   owner: string,

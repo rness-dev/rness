@@ -35,7 +35,7 @@ export interface Organization {
 export type OrganizationAccess =
   'member' | 'not-member' | 'restricted' | 'unknown'
 
-/** The pulse's board on the provider (spec 0017 §2.3). */
+/** A board on the provider (spec 0017 §2.3). */
 /** The fields a mark writes: the select from `$agent`, the text from `$session` (none: not written). */
 export interface MarkFields {
   agent: string
@@ -86,13 +86,13 @@ export interface Provider {
   board(org: string, number: number): Promise<Board | null>
   /**
    * Refuses, before any write, a workspace whose organization's `.rness`
-   * cannot hold the pulse's issues (spec 0018 §2). The caller asks before
+   * cannot hold the boards' issues (spec 0018 §2). The caller asks before
    * `createBoard`, and before `ensureLayout`, which writes.
    */
   checkIssues(org: string): Promise<void>
   /**
    * Adds the fields, options and views `layout` needs; makes the label of
-   * the pulse's issues and links the board to `.rness`. Returns what it
+   * the boards' issues and links the board to `.rness`. Returns what it
    * added (`field X`, `option X`, `view X`, `label X`, `link X`); removes
    * nothing, except the provider's default statuses on a board
    * `createBoard` just made.

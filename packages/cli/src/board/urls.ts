@@ -1,5 +1,5 @@
 /**
- * Where the pulse lives on GitHub (spec 0017 §2, 0018 §3): the board, one
+ * Where the boards live on GitHub (spec 0017 §2, 0018 §3): the board, one
  * item of it, a document and an issue of `.rness`. Strings only: nothing
  * here reaches GitHub.
  */

@@ -353,7 +353,7 @@ export function mcpTools(cwd: string): McpTool[] {
   ]
 }
 
-/** The kinds of a note, as `rness pulse note --kind` takes them. */
+/** The kinds of a note, as `rness note --kind` takes them. */
 const NOTE_KINDS = ['approach', 'deviation', 'blocker', 'done']
 
 /** `rness_note`: the agent's journal, the server's one tool that writes. */

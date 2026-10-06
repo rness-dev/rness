@@ -21,7 +21,6 @@ import {
   boardPushCommand,
   boardRunCommand,
   pulseCreateCommand,
-  pulseMarkCommand,
 } from '../../src/commands/board.ts'
 import { presetTemplate } from '../../src/core/presets.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
@@ -171,13 +170,50 @@ const draft = (
 async function declaredIn(cwd: string) {
   const boards = JSON.parse(
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
-  ).boards as Record<string, number | { number: number; preset?: string }>
+  ).boards as Record<
+    string,
+    number | string | { number: number; preset?: string }
+  >
   return Object.fromEntries(
     Object.entries(boards).map(([name, p]) => [
       name,
-      typeof p === 'number' ? p : `${p.number} ${p.preset ?? ''}`.trim(),
+      typeof p === 'object' ? `${p.number} ${p.preset ?? ''}`.trim() : p,
     ])
   )
+}
+
+/**
+ * What a hook starts for the marks (spec 0032 §4): `board run edit` with
+ * the paths edited, or, with `end`, `board run session-end`; Agent Pulse's
+ * preset declares `mark` and `clear-marks`.
+ */
+const markAs = (o: {
+  cwd: string
+  githubApi: string
+  session: string
+  paths: string[]
+  end?: boolean
+  sleep?: (ms: number) => Promise<void>
+}) => {
+  const { end, ...rest } = o
+  return boardRunCommand({
+    ...rest,
+    event: end === true ? 'session-end' : 'edit',
+  })
+}
+
+/** A board declared in rness.json as a team writes it, then `board push --yes`. */
+async function declareAndPush(
+  cwd: string,
+  githubApi: string,
+  name: string,
+  value: unknown
+) {
+  const file = join(cwd, '.rness', 'rness.json')
+  const m = JSON.parse(await readFile(file, 'utf8'))
+  m.boards = { ...m.boards, [name]: value }
+  await writeFile(file, JSON.stringify(m, null, 2))
+  return boardPushCommand({ cwd, githubApi, yes: true }, { terminal: NO_TTY })
 }
 
 /** Output lines, the column's padding folded. */
@@ -214,26 +250,39 @@ async function settled(
   return { g, cwd, sync }
 }
 
-test('create in a blank workspace: no organization, refused', async (t) => {
+test('push in a blank workspace: no organization, refused', async (t) => {
   await machine(t)
-  const cwd = await makeWorkspace(t, {})
-  const r = await run(() => pulseCreateCommand({ cwd }, { terminal: NO_TTY }))
+  const cwd = await makeWorkspace(t, { boards: { pulse: 'agent-pulse' } })
+  const r = await run(() => boardPushCommand({ cwd }, { terminal: NO_TTY }))
   assert.equal(r.code, 1)
   assert.equal(
     r.err.trim(),
-    'the pulse needs an organization: rness.json has no "org"'
+    'boards need an organization: rness.json has no "org"'
   )
 })
 
-test('create with a pulse declared: refused, sync is the way', async (t) => {
+test('a board not created yet, named after no collection: refused before GitHub is asked anything', async (t) => {
   await machine(t)
-  const cwd = await makeWorkspace(t, { org: 'acme', pulse: { project: 7 } })
-  const r = await run(() => pulseCreateCommand({ cwd }, { terminal: NO_TTY }))
-  assert.equal(r.code, 1)
-  assert.equal(
-    r.err.trim(),
-    'already declared: https://github.com/orgs/acme/projects/7 — rness pulse sync'
-  )
+  const g = await board(t, { other: asUser('repo, project') })
+  for (const name of ['standards', 'nowhere']) {
+    const cwd = await makeWorkspace(t, {
+      org: 'acme',
+      boards: { [name]: 'collection' },
+      files: FILES,
+    })
+    const r = await run(() =>
+      boardPushCommand(
+        { cwd, yes: true, githubApi: g.base },
+        { terminal: NO_TTY }
+      )
+    )
+    assert.equal(r.code, 1)
+    assert.equal(
+      r.err.trim(),
+      `"boards.${name}": ${name} is no collection of .rness: none of its documents carries a status`
+    )
+  }
+  assert.deepEqual(g.requests, [])
 })
 
 test('a written provider that is not available is refused first', async (t) => {
@@ -244,17 +293,18 @@ test('a written provider that is not available is refused first', async (t) => {
   assert.match(r.err, /provider "gitlab" is not supported/)
 })
 
-test('create where the repositories look like an unavailable provider: refused before GitHub is asked anything', async (t) => {
+test('a board to create where the repositories look like an unavailable provider: refused before GitHub is asked anything', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo, read:org, project') })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
+    boards: { pulse: 'agent-pulse' },
     repos: { api: { url: 'https://gitlab.com/acme/api.git' } },
     files: FILES,
   })
   const before = await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   const r = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -263,7 +313,7 @@ test('create where the repositories look like an unavailable provider: refused b
   assert.equal(r.out, '')
   assert.equal(
     r.err.trim(),
-    'the pulse needs a GitHub organization, and this workspace\'s repositories look like gitlab (detected): write "provider": "github" in rness.json if the organization is on GitHub'
+    'boards need a GitHub organization, and this workspace\'s repositories look like gitlab (detected): write "provider": "github" in rness.json if the organization is on GitHub'
   )
   assert.deepEqual(g.requests, [], 'no GitHub call at all')
   assert.equal(
@@ -273,16 +323,17 @@ test('create where the repositories look like an unavailable provider: refused b
   )
 })
 
-test('create where the repositories are on GitHub writes the detected provider', async (t) => {
+test('a board created where the repositories are on GitHub writes the detected provider', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo, read:org, project') })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
+    boards: { pulse: 'agent-pulse' },
     repos: { api: { url: 'git@github.com:acme/api.git' } },
     files: FILES,
   })
   const r = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -299,25 +350,30 @@ test('create where the repositories are on GitHub writes the detected provider',
 test('scopes without project: refused; -y does not log in', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo, read:org') })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const r = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
   )
   assert.equal(r.code, 1)
-  assert.equal(
-    r.err.trim(),
-    'the pulse needs the project scope: run rness login'
-  )
+  assert.equal(r.err.trim(), 'boards need the project scope: run rness login')
   assert.equal(g.mutations.length, 0)
 })
 
-test('in a terminal, create offers the login; declined, it is refused', async (t) => {
+test('in a terminal, push asks once to create, then offers the login; declined, it is refused', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo') })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const asked: string[] = []
   const terminal: Terminal = {
     isTty: () => true,
@@ -325,24 +381,25 @@ test('in a terminal, create offers the login; declined, it is refused', async (t
       ({
         async confirm(o: { message: string }) {
           asked.push(o.message)
-          return false
+          // Yes to the creation, no to the login.
+          return asked.length === 1
         },
         isCancel: () => false,
       }) as unknown as Prompts,
   }
   const r = await run(() =>
-    pulseCreateCommand({ cwd, githubApi: g.base }, { terminal })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal })
   )
   assert.equal(r.code, 1)
-  assert.equal(asked.length, 1)
-  assert.match(asked[0]!, /project scope/)
-  assert.equal(
-    r.err.trim(),
-    'the pulse needs the project scope: run rness login'
-  )
+  assert.deepEqual(asked.slice(0, 1), [
+    'Create Agent Pulse (pulse) on GitHub, in acme?',
+  ])
+  assert.equal(asked.length, 2)
+  assert.match(asked[1]!, /project scope/)
+  assert.equal(r.err.trim(), 'boards need the project scope: run rness login')
 })
 
-test('the login create offers asks nothing about git', async (t) => {
+test('the login push offers asks nothing about git', async (t) => {
   await machine(t, null)
   const g = await board(t, {
     other: (r) => {
@@ -375,7 +432,11 @@ test('the login create offers asks nothing about git', async (t) => {
     RNESS_GITHUB_CLIENT_ID: 'client-test',
     SSH_CONNECTION: 'test',
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const asked: string[] = []
   const terminal: Terminal = {
     isTty: () => true,
@@ -389,11 +450,12 @@ test('the login create offers asks nothing about git', async (t) => {
       }) as unknown as Prompts,
   }
   const r = await run(() =>
-    pulseCreateCommand({ cwd, githubApi: g.base }, { terminal })
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal })
   )
   assert.equal(r.code, 0, r.err)
-  assert.equal(asked.length, 1, `asked: ${asked.join(' | ')}`)
-  assert.match(asked[0]!, /project scope/)
+  assert.equal(asked.length, 2, `asked: ${asked.join(' | ')}`)
+  assert.equal(asked[0], 'Create Agent Pulse (pulse) on GitHub, in acme?')
+  assert.match(asked[1]!, /project scope/)
 })
 
 test("GitHub's refusal comes as GitHub: <message>, without a stack", async (t) => {
@@ -410,9 +472,13 @@ test("GitHub's refusal comes as GitHub: <message>, without a stack", async (t) =
           }
         : undefined),
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const r = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -420,10 +486,11 @@ test("GitHub's refusal comes as GitHub: <message>, without a stack", async (t) =
   assert.equal(r.code, 1)
   assert.equal(r.err.trim(), 'GitHub: octo cannot create projects in acme')
   assert.doesNotMatch(r.err, /\n\s+at /)
-  assert.equal(
+  assert.deepEqual(
     JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'))
       .boards,
-    undefined
+    { pulse: 'agent-pulse' },
+    'still not created'
   )
 })
 
@@ -439,9 +506,13 @@ test('an organization that restricts OAuth apps: its 403 message, as it comes', 
         ? { status: 403, json: { message } }
         : undefined),
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const r = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -451,15 +522,19 @@ test('an organization that restricts OAuth apps: its 403 message, as it comes', 
   assert.doesNotMatch(r.err, /\n\s+at |add repositories/)
 })
 
-test('create: the project, then the layout it built and a first sync, and the manifest declares the pulse', async (t) => {
+test('push creates a board declared by its preset: the project, then the layout it built and a first sync; the board written whole with its number', async (t) => {
   await machine(t)
   const g = await board(t, {
     other: asUser('repo, read:org, project'),
     memory: { label: false, linked: false },
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const r = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -491,7 +566,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
   assert.match(lines[8]!, /^synced\s+2 items: 2 created$/)
   assert.match(
     lines[9]!,
-    /^declared\s+pulse in \.rness\/rness\.json — commit it: git -C \.rness commit -am "chore: rness pulse"$/
+    /^declared\s+pulse in \.rness\/rness\.json — commit it: git -C \.rness commit -am "chore: board pulse"$/
   )
   assert.equal(lines.length, 10)
   const manifest = JSON.parse(
@@ -508,7 +583,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
   )
 })
 
-test('create: a view GitHub refuses once the project exists — declared all the same, and sync completes the layout', async (t) => {
+test('a view GitHub refuses once the project exists — its number written all the same, and the next push completes the layout', async (t) => {
   await machine(t)
   let refuseViews = true
   const g = await board(t, {
@@ -518,9 +593,13 @@ test('create: a view GitHub refuses once the project exists — declared all the
         ? { status: 422, json: { message: 'Validation Failed' } }
         : undefined),
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const created = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -568,7 +647,7 @@ test('create: a view GitHub refuses once the project exists — declared all the
   )
 })
 
-test('create: a field GitHub refuses once the project exists — declared all the same', async (t) => {
+test('a field GitHub refuses once the project exists — its number written all the same', async (t) => {
   await machine(t)
   const g = await board(t, {
     other: (r) =>
@@ -579,9 +658,13 @@ test('create: a field GitHub refuses once the project exists — declared all th
         ? { json: { errors: [{ message: 'Name has already been taken' }] } }
         : undefined),
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const r = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -591,12 +674,114 @@ test('create: a field GitHub refuses once the project exists — declared all th
   assert.deepEqual(await declaredIn(cwd), { pulse: '7 agent-pulse/1' })
 })
 
-test('sync without a pulse: refused', async (t) => {
+test('push without a board: refused, naming how to declare one', async (t) => {
   await machine(t)
   const cwd = await makeWorkspace(t, { org: 'acme' })
   const r = await run(() => boardPushCommand({ cwd }, { terminal: NO_TTY }))
   assert.equal(r.code, 1)
-  assert.equal(r.err.trim(), 'no pulse declared — rness pulse create')
+  assert.equal(
+    r.err.trim(),
+    'no board declared — declare one in .rness/rness.json, as "boards": { "pulse": "agent-pulse" }, then rness board push'
+  )
+})
+
+test('off a terminal without --yes, nothing is created: the boards created are pushed, the others named, exit 1', async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 7, marketing: 'collection' },
+    files: { ...FILES, 'marketing/a.md': doc('Idea', 'A post') },
+  })
+  const r = await run(() =>
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 1)
+  assert.equal(
+    r.err.trim(),
+    'not created: marketing — rness board push in a terminal, or with --yes, creates it'
+  )
+  // Agent Pulse holds marketing's document until its own board exists.
+  assert.match(r.out, /^synced\s+3 items/m)
+  assert.equal(g.mutations.filter((m) => m.op === 'createProject').length, 0)
+  assert.deepEqual(await declaredIn(cwd), { pulse: 7, marketing: 'collection' })
+})
+
+test('declined in a terminal, nothing is created; a second push with --yes creates it, a third creates nothing', async (t) => {
+  await machine(t)
+  const g = await board(t, { other: asUser('repo, project') })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
+  const asked: string[] = []
+  const terminal: Terminal = {
+    isTty: () => true,
+    prompts: async () =>
+      ({
+        async confirm(o: { message: string }) {
+          asked.push(o.message)
+          return false
+        },
+        isCancel: () => false,
+      }) as unknown as Prompts,
+  }
+  const declined = await run(() =>
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal })
+  )
+  assert.equal(declined.code, 1)
+  assert.deepEqual(asked, ['Create Agent Pulse (pulse) on GitHub, in acme?'])
+  assert.equal(
+    declined.err.trim(),
+    'not created: pulse — rness board push in a terminal, or with --yes, creates it'
+  )
+  assert.deepEqual(g.requests, [], 'GitHub not asked')
+  const made = await run(() =>
+    boardPushCommand(
+      { cwd, yes: true, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(made.code, 0, made.err)
+  assert.deepEqual(await declaredIn(cwd), { pulse: '7 agent-pulse/1' })
+  g.mutations.length = 0
+  const again = await run(() =>
+    boardPushCommand({ cwd, githubApi: g.base }, { terminal })
+  )
+  assert.equal(again.code, 0, again.err)
+  assert.equal(asked.length, 1, 'nothing asked: nothing to create')
+  assert.deepEqual(g.mutations, [])
+})
+
+test('a board declared whole without its number: push adds the number, nothing else', async (t) => {
+  await machine(t)
+  const g = await board(t, { other: asUser('repo, project') })
+  const declared = {
+    title: 'Agent Pulse',
+    collections: 'all',
+    fields: {
+      Collection: { type: 'select', from: '$collection' },
+    },
+    views: [{ name: 'All', layout: 'table' }],
+  }
+  const cwd = await declaredWorkspace(t, { pulse: declared })
+  const r = await run(() =>
+    boardPushCommand(
+      { cwd, yes: true, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 0, r.err)
+  const written = JSON.parse(
+    await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
+  ).boards.pulse
+  assert.deepEqual(written, { number: 7, ...declared })
+  assert.deepEqual(Object.keys(written)[0], 'number')
 })
 
 test('a new document: its issue (labelled, the first line as body), added to the board, its fields, then its body — in that order', async (t) => {
@@ -1031,23 +1216,27 @@ test('Issues off on .rness: sync refused before any write', async (t) => {
   assert.equal(r.code, 1)
   assert.equal(
     r.err.trim(),
-    'the pulse needs Issues on acme/.rness: turn them on in its Settings'
+    'boards need Issues on acme/.rness: turn them on in its Settings'
   )
   assert.deepEqual(g.mutations, [])
   assert.deepEqual(g.restViews, [])
   assert.deepEqual(g.restLabels, [])
 })
 
-test('Issues off on .rness: create refused before the project is made', async (t) => {
+test('Issues off on .rness: a board to create refused before the project is made', async (t) => {
   await machine(t)
   const g = await board(t, {
     memory: { issues: false },
     other: asUser('repo, read:org, project'),
   })
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const before = await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   const r = await run(() =>
-    pulseCreateCommand(
+    boardPushCommand(
       { cwd, yes: true, githubApi: g.base },
       { terminal: NO_TTY }
     )
@@ -1056,7 +1245,7 @@ test('Issues off on .rness: create refused before the project is made', async (t
   assert.equal(r.out, '')
   assert.equal(
     r.err.trim(),
-    'the pulse needs Issues on acme/.rness: turn them on in its Settings'
+    'boards need Issues on acme/.rness: turn them on in its Settings'
   )
   assert.deepEqual(g.mutations, [])
   assert.equal(
@@ -1161,7 +1350,7 @@ test('a rate limit past the 10 minutes stops the sync with what is left; the nex
   assert.equal(stopped.code, 1)
   assert.equal(
     stopped.err.trim(),
-    "GitHub's rate limit outlasted the 10 minutes rness waits: 2 of 2 changes not made — the next rness pulse sync makes them"
+    "GitHub's rate limit outlasted the 10 minutes rness waits: 2 of 2 changes not made — the next rness board push makes them"
   )
   assert.deepEqual(slept, [])
   limit = false
@@ -1210,7 +1399,7 @@ test('a rate limit after the first issue: the stop says 1 of 2; the next sync ma
   assert.equal(stopped.code, 1)
   assert.equal(
     stopped.err.trim(),
-    "GitHub's rate limit outlasted the 10 minutes rness waits: 1 of 2 changes not made — the next rness pulse sync makes them"
+    "GitHub's rate limit outlasted the 10 minutes rness waits: 1 of 2 changes not made — the next rness board push makes them"
   )
   assert.equal(g.issues.length, 1)
   g.mutations.length = 0
@@ -1389,7 +1578,7 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
       .map((m) => [m.op, m.variables['itemId'], m.variables['fieldId']])
 
   const marked = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · s3',
@@ -1404,7 +1593,7 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
 
   g.mutations.length = 0
   const ended = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · s1',
@@ -1420,7 +1609,7 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
   assert.match(ended.out, /^synced\s+2 items: /m)
 })
 
-/** What `pulse mark` recorded for the next session start, once. */
+/** What `board run` recorded for the next session start, once. */
 async function recordedBy(
   t: TestContext,
   githubApi: string
@@ -1431,7 +1620,7 @@ async function recordedBy(
     files: FILES,
   })
   const r = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi,
       session: 'claude · s1',
@@ -1439,17 +1628,17 @@ async function recordedBy(
     })
   )
   assert.equal(r.code, 0)
-  assert.equal(r.out + r.err, '', 'no one reads a detached mark')
+  assert.equal(r.out + r.err, '', 'no one reads a detached run')
   const reason = await takeFailure()
   assert.equal(await takeFailure(), null, 'said once')
   return reason
 }
 
-test('mark without a login records that the pulse needs one, and exits 0', async (t) => {
+test('mark without a login records that boards need one, and exits 0', async (t) => {
   await machine(t, null)
   assert.equal(
     await recordedBy(t, 'http://127.0.0.1:1'),
-    'the pulse needs a GitHub login: run rness login'
+    'boards need a GitHub login: run rness login'
   )
 })
 
@@ -1458,7 +1647,7 @@ test('mark with a login that lacks the project scope records the scope', async (
   const g = await board(t, { other: asUser('repo, read:org') })
   assert.equal(
     await recordedBy(t, g.base),
-    'the pulse needs the project scope: run rness login'
+    'boards need the project scope: run rness login'
   )
 })
 
@@ -1494,9 +1683,13 @@ test('mark whose token GitHub rejects records the rejection, not the scope', asy
   assert.equal(await recordedBy(t, g.base), 'GitHub rejected the token (401)')
 })
 
-test('create offline: GitHub cannot be reached, and no login is offered', async (t) => {
+test('a board to create offline: GitHub cannot be reached, and no login is offered', async (t) => {
   await machine(t)
-  const cwd = await makeWorkspace(t, { org: 'acme', files: FILES })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
   const asked: string[] = []
   const terminal: Terminal = {
     isTty: () => true,
@@ -1504,18 +1697,16 @@ test('create offline: GitHub cannot be reached, and no login is offered', async 
       ({
         async confirm(o: { message: string }) {
           asked.push(o.message)
-          return false
+          return true
         },
         isCancel: () => false,
       }) as unknown as Prompts,
   }
   const githubApi = await offline()
-  const r = await run(() =>
-    pulseCreateCommand({ cwd, githubApi }, { terminal })
-  )
+  const r = await run(() => boardPushCommand({ cwd, githubApi }, { terminal }))
   assert.equal(r.code, 1)
   assert.match(r.err.trim(), /^cannot reach GitHub: \S/)
-  assert.deepEqual(asked, [])
+  assert.deepEqual(asked, ['Create Agent Pulse (pulse) on GitHub, in acme?'])
 })
 
 test("rness's own errors keep their words: only GitHub's are named GitHub's", async (t) => {
@@ -1533,7 +1724,7 @@ test("rness's own errors keep their words: only GitHub's are named GitHub's", as
     files: FILES,
   })
   const r = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · s1',
@@ -1541,7 +1732,10 @@ test("rness's own errors keep their words: only GitHub's are named GitHub's", as
     })
   )
   assert.equal(r.code, 0)
-  assert.equal(await takeFailure(), 'the board has no field Agent')
+  assert.equal(
+    await takeFailure(),
+    'mark on Agent Pulse failed: the board has no field Agent'
+  )
 })
 
 test('--end clears the session and its subagents (same id, any agent type), not another session', async (t) => {
@@ -1567,7 +1761,7 @@ test('--end clears the session and its subagents (same id, any agent type), not 
     files: FILES,
   })
   const r = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · 1a2b3c4d',
@@ -1609,7 +1803,7 @@ test('mark: a document just written has no item yet — it gets its issue, then 
   const { g, cwd } = await settled(t)
   await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 — C'))
   const r = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · s1',
@@ -1630,7 +1824,7 @@ test('mark: a document already on the board costs no sync, and its listing reads
   const before = listings(g)
   assert.match(listingQueries(g)[0]!, /\bbody\b/, "sync's listing reads them")
   const r = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · s1',
@@ -1651,7 +1845,7 @@ test('mark: an edit that changes a status syncs, and the card moves within the s
   await writeDoc(cwd, 'adr/0001-a.md', doc('Superseded', '0001 — A'))
   const before = listings(g)
   const r = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · s1',
@@ -1718,7 +1912,7 @@ test('Sessions: a sync writes the sessions a document records, and a session end
     'written once, then unchanged'
   )
   const ended = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · s1',
@@ -1735,7 +1929,7 @@ test('mark: a file of .rness that is no document of rness status costs no sync a
   await writeDoc(cwd, 'README.md', '# Memory\n')
   const before = listings(g)
   const r = await run(() =>
-    pulseMarkCommand({
+    markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · s1',
@@ -1754,7 +1948,7 @@ test("mark: while a hook's sync runs, an edit of a new document makes no second 
   const ran = await oneSyncAtATime('acme-7', async () => {
     code = (
       await run(() =>
-        pulseMarkCommand({
+        markAs({
           cwd,
           githubApi: g.base,
           session: 'claude · s1',
@@ -1779,7 +1973,7 @@ test("--end waits for a hook's running sync, then syncs", async (t) => {
   await oneSyncAtATime('acme-7', async () => {
     out = (
       await run(() =>
-        pulseMarkCommand({
+        markAs({
           cwd,
           githubApi: g.base,
           session: 'claude · s1',
@@ -1792,7 +1986,7 @@ test("--end waits for a hook's running sync, then syncs", async (t) => {
               join(
                 process.env['XDG_CONFIG_HOME']!,
                 'rness',
-                'pulse-acme-7.lock'
+                'board-acme-7.lock'
               ),
               { force: true }
             )
@@ -1963,7 +2157,7 @@ test('a 0.15 board before its first 0.16 sync: a mark sets, and a session end cl
   })
   const mark = (end: boolean) =>
     run(() =>
-      pulseMarkCommand({
+      markAs({
         cwd,
         githubApi: g.base,
         session: 'claude · s1',
@@ -2043,13 +2237,10 @@ async function beforeMarketing(t: TestContext) {
   return { g, cwd }
 }
 
-test('create marketing: its project made, declared and synced; its documents there with their declared fields and labels; the card leaves Agent Pulse, its issue kept', async (t) => {
+test('marketing declared by its preset: its project made, its number written, synced; its documents there with their declared fields and labels; the card leaves Agent Pulse, its issue kept', async (t) => {
   const { g, cwd } = await beforeMarketing(t)
   const r = await run(() =>
-    pulseCreateCommand(
-      { cwd, githubApi: g.base, collection: 'marketing' },
-      { terminal: NO_TTY }
-    )
+    declareAndPush(cwd, g.base, 'marketing', 'collection')
   )
   assert.equal(r.code, 0, r.err)
   assert.deepEqual(await declaredIn(cwd), {
@@ -2087,18 +2278,15 @@ test('create marketing: its project made, declared and synced; its documents the
   for (const line of [
     'created Marketing — https://github.com/orgs/acme/projects/8',
     "moved 1 item to their collection's project",
-    `declared marketing in .rness/rness.json — commit it: git -C .rness commit -am "chore: rness pulse marketing"`,
+    `declared marketing in .rness/rness.json — commit it: git -C .rness commit -am "chore: board marketing"`,
   ])
     assert.ok(out.includes(line), `${line}\n${r.out}`)
 })
 
-test('sync after create marketing: nothing to write on either project', async (t) => {
+test('push after marketing is created: nothing to write on either board', async (t) => {
   const { g, cwd } = await beforeMarketing(t)
   const first = await run(() =>
-    pulseCreateCommand(
-      { cwd, githubApi: g.base, collection: 'marketing' },
-      { terminal: NO_TTY }
-    )
+    declareAndPush(cwd, g.base, 'marketing', 'collection')
   )
   assert.equal(first.code, 0, first.err)
   g.mutations.length = 0
@@ -2113,59 +2301,70 @@ test('sync after create marketing: nothing to write on either project', async (t
   ])
 })
 
-test('create <collection>: pulse, a declared one, or a directory with no documents, refused before GitHub is written', async (t) => {
+test('rness pulse create marketing: declared by its preset, then pushed without asking, said on stderr', async (t) => {
   const { g, cwd } = await beforeMarketing(t)
-  for (const [collection, message] of [
-    ['pulse', '"pulse" names Agent Pulse: rness pulse create'],
-    [
-      'standards',
-      'standards is no collection of .rness: none of its documents carries a status',
-    ],
-    [
-      'nowhere',
-      'nowhere is no collection of .rness: none of its documents carries a status',
-    ],
-  ] as const) {
+  const r = await run(() =>
+    pulseCreateCommand(
+      'marketing',
+      { cwd, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.equal(
+    r.err.trim(),
+    'boards are declared in rness.json now: added "marketing": "collection", then rness board push'
+  )
+  assert.deepEqual(await declaredIn(cwd), {
+    pulse: 7,
+    marketing: '8 collection/1',
+  })
+  g.mutations.length = 0
+  const again = await run(() =>
+    pulseCreateCommand(
+      'marketing',
+      { cwd, githubApi: g.base },
+      { terminal: NO_TTY }
+    )
+  )
+  assert.equal(again.code, 0, again.err)
+  assert.equal(again.err.trim(), 'rness pulse create is now rness board push')
+  assert.deepEqual(g.mutations, [])
+})
+
+test('rness pulse create <collection>: a directory with no documents, refused before rness.json or GitHub is written', async (t) => {
+  const { g, cwd } = await beforeMarketing(t)
+  const before = await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
+  for (const collection of ['standards', 'nowhere']) {
     const r = await run(() =>
       pulseCreateCommand(
-        { cwd, githubApi: g.base, collection },
+        collection,
+        { cwd, githubApi: g.base },
         { terminal: NO_TTY }
       )
     )
     assert.equal(r.code, 1)
-    assert.equal(r.err.trim(), message)
-  }
-  const declared = await makeWorkspace(t, {
-    org: 'acme',
-    boards: { pulse: 7, marketing: 8 },
-    files: MARKETING_FILES,
-  })
-  const r = await run(() =>
-    pulseCreateCommand(
-      { cwd: declared, githubApi: g.base, collection: 'marketing' },
-      { terminal: NO_TTY }
+    assert.equal(
+      r.err.trim(),
+      `"boards.${collection}": ${collection} is no collection of .rness: none of its documents carries a status`
     )
-  )
-  assert.equal(r.code, 1)
+  }
   assert.equal(
-    r.err.trim(),
-    'already declared: https://github.com/orgs/acme/projects/8 — rness pulse sync'
+    await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'),
+    before
   )
   assert.deepEqual(g.mutations, [])
 })
 
-test('marks: a document marked in the project holding it; the session end clears its marks everywhere', async (t) => {
+test('marks: on the boards that declare mark, as a hook runs them (spec 0032); the session end clears them', async (t) => {
   const { g, cwd } = await beforeMarketing(t)
   const made = await run(() =>
-    pulseCreateCommand(
-      { cwd, githubApi: g.base, collection: 'marketing' },
-      { terminal: NO_TTY }
-    )
+    declareAndPush(cwd, g.base, 'marketing', 'collection')
   )
   assert.equal(made.code, 0, made.err)
   const session = 'claude · 284bf03e'
   assert.equal(
-    await pulseMarkCommand({
+    await markAs({
       cwd,
       githubApi: g.base,
       session,
@@ -2176,11 +2375,12 @@ test('marks: a document marked in the project holding it; the session end clears
   assert.equal(await takeFailure(), null)
   const on = (number: number, path: string) =>
     g.project(number).items.find((i) => i.values['Path'] === path)?.values
-  assert.equal(on(8, POST)?.['Agent'], 'working')
-  assert.equal(on(8, POST)?.['Working session'], session)
+  // The collection preset declares no hooks: its cards are not marked.
+  assert.equal(on(8, POST)?.['Agent'], undefined)
   assert.equal(on(7, 'adr/0001-a.md')?.['Agent'], 'working')
+  assert.equal(on(7, 'adr/0001-a.md')?.['Working session'], session)
   assert.equal(
-    await pulseMarkCommand({
+    await markAs({
       cwd,
       githubApi: g.base,
       session,
@@ -2202,7 +2402,7 @@ test('marks with only a collection declared: a document of another collection ha
     files: MARKETING_FILES,
   })
   assert.equal(
-    await pulseMarkCommand({
+    await markAs({
       cwd,
       githubApi: g.base,
       session: 'claude · 284bf03e',

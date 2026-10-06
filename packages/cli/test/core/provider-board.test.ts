@@ -390,8 +390,7 @@ test('checkIssues: Issues on .rness pass; off, the refusal, and nothing is writt
   await on.provider.checkIssues('acme')
   const off = await board(t, { memory: { issues: false } })
   await assert.rejects(off.provider.checkIssues('acme'), {
-    message:
-      'the pulse needs Issues on acme/.rness: turn them on in its Settings',
+    message: 'boards need Issues on acme/.rness: turn them on in its Settings',
   })
   assert.deepEqual(off.mutations, [])
   assert.ok(
@@ -405,7 +404,7 @@ test('checkIssues: no .rness GitHub shows this login is said so', async (t) => {
   const g = await board(t, { memory: { exists: false } })
   await assert.rejects(g.provider.checkIssues('acme'), {
     message:
-      'the pulse needs acme/.rness on GitHub: it is not there, or this login cannot see it',
+      'boards need acme/.rness on GitHub: it is not there, or this login cannot see it',
   })
 })
 
@@ -718,7 +717,7 @@ test('mark sets Agent and Session, or clears both', async (t) => {
 
 test('anonymous: every board method needs a login', async () => {
   const provider = new GitHubOAuthProvider({ token: null })
-  const refused = { message: 'the pulse needs a GitHub login: run rness login' }
+  const refused = { message: 'boards need a GitHub login: run rness login' }
   await assert.rejects(provider.checkIssues('acme'), refused)
   await assert.rejects(provider.createBoard('acme'), refused)
   await assert.rejects(provider.board('acme', 7), refused)

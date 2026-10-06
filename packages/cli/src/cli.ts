@@ -6,7 +6,6 @@ import {
   boardPushCommand,
   boardRunCommand,
   pulseCreateCommand,
-  pulseMarkCommand,
 } from './commands/board.ts'
 import { type ContextOptions, contextCommand } from './commands/context.ts'
 import { type CreateOptions, createCommand } from './commands/create.ts'
@@ -27,6 +26,84 @@ import { VERSION } from './version.ts'
 
 interface RunState {
   code: number
+}
+
+/** A former command run as its new one: said once, on stderr (spec 0033 §2). */
+function formerly(was: string, now: string): void {
+  process.stderr.write(`${was} is now ${now}\n`)
+}
+
+/** `note`, the agent's journal (spec 0030 §4): loaded only when a note is written. */
+function noteCommandOf(parent: Command, state: RunState, former?: string) {
+  parent
+    .command('note [text]')
+    .description(
+      'A note on the plan in progress: an approach, a deviation, a blocker, done (the text, or stdin)'
+    )
+    .option('--plan <path>', 'the plan, when several are in progress')
+    .option('--kind <kind>', 'approach, deviation, blocker or done')
+    .option(
+      '--session <session>',
+      'the session, when CLAUDE_CODE_SESSION_ID is not set'
+    )
+    .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(
+      async (
+        text: string | undefined,
+        opts: {
+          plan?: string
+          kind?: string
+          session?: string
+          cwd?: string
+          githubApi?: string
+        }
+      ) => {
+        if (former !== undefined) formerly(former, 'rness note')
+        const { noteCommand } = await import('./commands/note.ts')
+        state.code = await noteCommand({
+          ...opts,
+          ...(text === undefined ? {} : { text }),
+        })
+      }
+    )
+}
+
+/** `run`, what the hooks start detached: what each board declares (spec 0032 §4). */
+function runCommand(parent: Command, state: RunState, former?: string) {
+  parent
+    .command('run <event>', { hidden: true })
+    .requiredOption('--session <id>')
+    .option(
+      '--path <path>',
+      'the document edited (repeatable)',
+      (value: string, previous: string[] = []) => [...previous, value]
+    )
+    .option('--scope <scope>', "the session's scope; absent, the root's")
+    .option('--clone <name>', 'the clone the session worked in')
+    .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(
+      async (
+        event: string,
+        opts: {
+          session: string
+          path?: string[]
+          scope?: string
+          clone?: string
+          cwd?: string
+          githubApi?: string
+        }
+      ) => {
+        if (former !== undefined) formerly(former, 'rness board run')
+        const { path, ...rest } = opts
+        state.code = await boardRunCommand({
+          ...rest,
+          event,
+          paths: path ?? [],
+        })
+      }
+    )
 }
 
 function buildProgram(state: RunState): Command {
@@ -137,125 +214,55 @@ function buildProgram(state: RunState): Command {
       state.code = await syncCommand(opts)
     })
 
-  const pulse = program
-    .command('pulse')
-    .description("Show the agent's work on the organization's board")
-  pulse
-    .command('create')
+  const board = program
+    .command('board')
     .description(
-      "Create the organization's Agent Pulse board, or a collection's own project, and sync"
+      'The boards of rness.json: the documents of .rness/ on the provider'
     )
-    .argument(
-      '[collection]',
-      'a directory of .rness/ whose documents get a project of their own'
-    )
-    .option('-y, --yes', 'do not ask for confirmation')
-    .addOption(new Option('--github-api <base>').hideHelp())
-    .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(async (collection: string | undefined, opts: BoardOptions) => {
-      state.code = await pulseCreateCommand(
-        collection === undefined ? opts : { ...opts, collection }
-      )
-    })
-  pulse
-    .command('sync')
+  board
+    .command('push')
     .description(
-      'Bring every declared project up to date with the documents of .rness/'
+      'Create the boards rness.json declares and the provider lacks, then bring every board up to date with .rness/'
     )
+    .option('-y, --yes', 'create the boards not created yet without asking')
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: BoardOptions) => {
       state.code = await boardPushCommand(opts)
     })
-  // What the hooks run, detached (spec 0017 §5).
+  runCommand(board, state)
+  noteCommandOf(program, state)
+
+  // The former `rness pulse` (spec 0033 §2): hidden, each command run as its
+  // new one, said once on stderr.
+  const pulse = program.command('pulse', { hidden: true })
   pulse
-    .command('mark', { hidden: true })
-    .requiredOption('--session <id>')
-    .option(
-      '--path <path>',
-      'a document of .rness/ (repeatable)',
-      (value: string, previous: string[] = []) => [...previous, value]
-    )
-    .option('--end', 'clear the marks of the session, then sync')
+    .command('create')
+    .argument('[collection]')
+    .option('-y, --yes')
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(
-      async (opts: {
-        session: string
-        path?: string[]
-        end?: boolean
-        cwd?: string
-        githubApi?: string
-      }) => {
-        const { path, ...rest } = opts
-        state.code = await pulseMarkCommand({ ...rest, paths: path ?? [] })
-      }
-    )
-  // The agent's journal (spec 0030 §4): loaded only when a note is written.
+    .action(async (collection: string | undefined, opts: BoardOptions) => {
+      state.code = await pulseCreateCommand(collection, opts)
+    })
   pulse
-    .command('note [text]')
-    .description(
-      'a note on the plan in progress: an approach, a deviation, a blocker, done (the text, or stdin)'
-    )
-    .option('--plan <path>', 'the plan, when several are in progress')
-    .option('--kind <kind>', 'approach, deviation, blocker or done')
-    .option(
-      '--session <session>',
-      'the session, when CLAUDE_CODE_SESSION_ID is not set'
-    )
+    .command('sync')
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(
-      async (
-        text: string | undefined,
-        opts: {
-          plan?: string
-          kind?: string
-          session?: string
-          cwd?: string
-          githubApi?: string
-        }
-      ) => {
-        const { noteCommand } = await import('./commands/note.ts')
-        state.code = await noteCommand({
-          ...opts,
-          ...(text === undefined ? {} : { text }),
-        })
-      }
-    )
-  // What the hooks run, detached: what each board declares (spec 0032 §4).
+    .action(async (opts: BoardOptions) => {
+      formerly('rness pulse sync', 'rness board push')
+      state.code = await boardPushCommand(opts)
+    })
+  noteCommandOf(pulse, state, 'rness pulse note')
+  runCommand(pulse, state, 'rness pulse run')
+  // Ended with 0.21.x (plan 0048): a 0.20 hook's detached child exits 0.
   pulse
-    .command('run <event>', { hidden: true })
-    .requiredOption('--session <id>')
-    .option(
-      '--path <path>',
-      'the document edited (repeatable)',
-      (value: string, previous: string[] = []) => [...previous, value]
-    )
-    .option('--scope <scope>', "the session's scope; absent, the root's")
-    .option('--clone <name>', 'the clone the session worked in')
-    .addOption(new Option('--github-api <base>').hideHelp())
-    .addOption(new Option('--cwd <dir>').hideHelp())
-    .action(
-      async (
-        event: string,
-        opts: {
-          session: string
-          path?: string[]
-          scope?: string
-          clone?: string
-          cwd?: string
-          githubApi?: string
-        }
-      ) => {
-        const { path, ...rest } = opts
-        state.code = await boardRunCommand({
-          ...rest,
-          event,
-          paths: path ?? [],
-        })
-      }
-    )
+    .command('mark')
+    .allowUnknownOption()
+    .allowExcessArguments()
+    .action(() => {
+      state.code = 0
+    })
 
   program
     .command('mcp')
