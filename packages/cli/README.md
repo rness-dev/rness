@@ -65,7 +65,7 @@ when dropped, red `?` when missing.
   `yellow` for `In progress`; `red` without a status) and its item there
   (`link`, the board filtered on its path; null without a pulse) — the
   board (`pulse`), and what a Claude Code session shows of the workspace,
-  worded by the CLI — the session-start banner, the status line entry, the
+  worded by the CLI — the session-start banner, the footer's label, the
   scope's plans `In progress` and the notes of the safety net (see
   "Hooks"). The plugin's mod reads it (see
   "The mod").
@@ -176,9 +176,11 @@ the pinned copy, and computes nothing itself:
   installed copy does not match, problems `validate` would report): those
   notes. The banner is not repeated there; the session-start line says it
   once, in the transcript.
-- **The status line**: `<scope> · <n> in progress`, with `⚠ <n>` when
-  there are notes. Claude Code draws it after the plugin's name:
-  `⚠ rness: web · 1 in progress` (2.1.289).
+- **A label in the prompt footer**, among the session modes (`focus`,
+  `memory paused`), dim: `rness · <scope> · <n> in progress`, with `⚠ <n>`
+  when there are notes. Not the pinned status line a plugin can set:
+  Claude Code draws every pinned line after a `⚠` in its warning colour
+  (2.1.291), the wrong sign for a line that informs.
 - **`/rness:status [tab]` as a pane** beside the conversation, a tab per
   collection, a row per document, its status in the colour Agent Pulse
   gives it (yellow in progress, green done, red blocked, gray draft or
@@ -211,7 +213,7 @@ Claude Code that has mods: run by 2.1.280 and later, ignored without an
 error by 2.1.240 and 2.1.199, where the skills work as before (verified on
 2026-10-04). An older Claude Code is told so once per version and machine,
 in the session-start line: `rness: Claude Code 2.1.240 shows no rness band,
-status line or pane; 2.1.280 or later does — claude update`. The version
+footer label or pane; 2.1.280 or later does — claude update`. The version
 comes from `AI_AGENT`, which Claude Code sets (2.1.240 does); one that does
 not set it, or not in that form, is told nothing. The versions told are kept
 in `claude-code.json` beside the login (`~/.config/rness/` by default). Not in
@@ -690,6 +692,17 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## Unreleased
+
+- The workspace's line in Claude Code moves from the pinned status line to
+  the prompt footer, among the session modes, dim and without a sign:
+  `rness · web · 1 in progress`, `⚠ <n>` at its end when notes need action.
+  Claude Code draws every pinned line a plugin sets after a `⚠` in its
+  warning colour, the wrong sign for a line that informs. `rness status
+--json`'s `statusLine` carries the leading `rness` again. VS Code and
+  mobile surfaces, which draw no session modes, show no line; the
+  `/rness:status` pane stays.
 
 ## 0.20.0 — the status pane opens a document; ↑/↓ select, Tab changes the tab; Agent Pulse's colours and links
 
