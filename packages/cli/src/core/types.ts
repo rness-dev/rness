@@ -1,3 +1,5 @@
+import type { BoardDeclaration } from './board-declaration.ts'
+
 export type Fields = Record<string, unknown>
 
 export interface MarkdownItem {
@@ -29,11 +31,22 @@ export interface ScopeEntry {
 export type ProviderName = 'github' | 'gitlab' | 'atlassian'
 
 /**
- * The GitHub Projects the pulse writes, by name (spec 0025 §2): `pulse` is
- * Agent Pulse, any other name a directory of `.rness/` with a project of its
- * own. In the order `rness.json` gives them.
+ * The GitHub Projects the pulse writes, by name (spec 0025 §2), in the order
+ * `rness.json` gives them: each a board declared whole (spec 0031 §2.2), or
+ * the project number alone of a board made before 0.21.0 — `pulse` is then
+ * Agent Pulse, any other name a directory of `.rness/` — read as its preset
+ * until `sync` writes it whole.
  */
-export type Projects = Record<string, number>
+export type Projects = Record<string, number | BoardDeclaration>
+
+/** A board `rness.json` declares and rness refuses: set aside, the rest read (spec 0031 §4). */
+export interface RefusedBoard {
+  name: string
+  /** The refusal, its full key first: `"projects.marketing.views" must …`. */
+  reason: string
+  /** The entry as written, kept when the file is written back. */
+  source: unknown
+}
 
 export interface Manifest {
   contract: 1
@@ -44,6 +57,8 @@ export interface Manifest {
   agents: string[] | null
   /** Null when none is declared. */
   projects: Projects | null
+  /** The boards refused, absent when there are none. */
+  refused?: RefusedBoard[]
   repos: Record<string, RepoEntry>
   scopes: Record<string, ScopeEntry>
 }

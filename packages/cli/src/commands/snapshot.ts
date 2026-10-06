@@ -1,5 +1,5 @@
 import { COLLECTIONS } from '../core/context.ts'
-import { PULSE, workspaceName } from '../core/manifest.ts'
+import { PULSE, projectNumber, workspaceName } from '../core/manifest.ts'
 import { safetyNet } from '../core/safety-net.ts'
 import {
   type StatusRow,
@@ -105,7 +105,7 @@ function pulseOf(manifest: Manifest): { org: string; project: number } | null {
   const project = manifest.projects?.[PULSE]
   return manifest.org === null || project === undefined
     ? null
-    : { org: manifest.org, project }
+    : { org: manifest.org, project: projectNumber(project) }
 }
 
 /** The tabs with each row's colour and item, as Agent Pulse has them. */

@@ -1,12 +1,14 @@
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
+import { BoardRefused, parseBoard } from './board-declaration.ts'
 import { writeFileAtomic } from './fs.ts'
 import { repoUrl } from './remote.ts'
 import type {
   Manifest,
   Projects,
   ProviderName,
+  RefusedBoard,
   RepoEntry,
   ScopeEntry,
 } from './types.ts'
@@ -179,40 +181,73 @@ function readPulse(value: unknown): Projects | null {
   return { [PULSE]: value.project }
 }
 
+/** A board's project number, whatever its form in `projects`. */
+export const projectNumber = (entry: Projects[string]): number =>
+  typeof entry === 'number' ? entry : entry.number
+
 /** The name of Agent Pulse in `projects`; any other names a directory of `.rness/`. */
 export const PULSE = 'pulse'
 /** A name `projects` takes: a directory name, never hidden or a path. */
 const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-/** `projects`, when present: names to distinct positive project numbers (spec 0025 §2). */
-function readProjects(value: unknown): Projects | null {
-  if (value === undefined) return null
+const isProjectNumber = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isInteger(n) && n >= 1
+
+/**
+ * `projects`, when present: names to boards — a number (a board made before
+ * 0.21.0) or one declared whole (spec 0031 §2) — on distinct projects. A
+ * declaration refused is set aside with its reason; the rest is read.
+ */
+function readProjects(value: unknown): {
+  projects: Projects | null
+  refused: RefusedBoard[]
+} {
+  if (value === undefined) return { projects: null, refused: [] }
   const entries = isRecord(value) ? Object.entries(value) : []
-  const numbers = entries.map(([, n]) => n)
+  const numbers = entries.map(([, n]) =>
+    isRecord(n) && isProjectNumber(n['number']) ? n['number'] : n
+  )
   if (
     entries.length === 0 ||
     !entries.every(
       ([name, n]) =>
-        PROJECT_NAME.test(name) &&
-        typeof n === 'number' &&
-        Number.isInteger(n) &&
-        n >= 1
+        PROJECT_NAME.test(name) && (isProjectNumber(n) || isRecord(n))
     ) ||
     new Set(numbers).size !== numbers.length
   )
     fail(
       `"projects" must map names to distinct project numbers, as { "pulse": 4, "marketing": 5 } (got ${JSON.stringify(value)})`
     )
-  return Object.fromEntries(entries) as Projects
+  const projects: Projects = {}
+  const refused: RefusedBoard[] = []
+  for (const [name, entry] of entries) {
+    if (isProjectNumber(entry)) {
+      projects[name] = entry
+      continue
+    }
+    try {
+      projects[name] = parseBoard(name, entry)
+    } catch (e) {
+      if (!(e instanceof BoardRefused)) throw e
+      refused.push({ name, reason: e.message, source: entry })
+    }
+  }
+  return {
+    projects: Object.keys(projects).length === 0 ? null : projects,
+    refused,
+  }
 }
 
 /** `projects`, else the former `pulse` read as `projects.pulse`; both at once refused. */
-function readProjectsOrPulse(data: Record<string, unknown>): Projects | null {
+function readProjectsOrPulse(data: Record<string, unknown>): {
+  projects: Projects | null
+  refused: RefusedBoard[]
+} {
   if (data.pulse !== undefined && data.projects !== undefined)
     fail('"pulse" and "projects" at once: keep "projects" only')
   return data.projects !== undefined
     ? readProjects(data.projects)
-    : readPulse(data.pulse)
+    : { projects: readPulse(data.pulse), refused: [] }
 }
 
 /** The key, else the first repository URL's host (github.com → github), else github. */
@@ -289,15 +324,47 @@ export function parseManifest(raw: string): Manifest {
   for (const key of Object.keys(data)) {
     if (!KEYS.includes(key)) fail(`unknown key ${JSON.stringify(key)}`)
   }
+  const { projects, refused } = readProjectsOrPulse(data)
   return {
     contract: 1,
     provider: readProvider(data.provider),
     org: readOrg(data.org),
     agents: readAgents(data.agents),
-    projects: readProjectsOrPulse(data),
+    projects,
+    ...(refused.length === 0 ? {} : { refused }),
     repos: readRepos(data.repos),
     scopes: readScopes(data.scopes),
   }
+}
+
+/** A value of `projects` as written: a number, or a board's JSON indented under its key. */
+const projectEntry = (name: string, value: unknown): string =>
+  `    ${JSON.stringify(name)}: ${JSON.stringify(value, null, 2).replaceAll('\n', '\n    ')}`
+
+/**
+ * `projects` as written: on one line while every board is a number, as
+ * before 0.21.0; else each entry on its own lines, a refused board kept as
+ * it was written.
+ */
+function projectsLines(manifest: Manifest): string[] {
+  const entries: (readonly [string, unknown])[] = [
+    ...Object.entries(manifest.projects ?? {}).map(
+      ([name, p]) => [name, typeof p === 'number' ? p : p.source] as const
+    ),
+    ...(manifest.refused ?? []).map((r) => [r.name, r.source] as const),
+  ]
+  if (entries.length === 0) return []
+  if (entries.every(([, v]) => typeof v === 'number'))
+    return [
+      `  "projects": { ${entries
+        .map(([name, n]) => `${JSON.stringify(name)}: ${String(n)}`)
+        .join(', ')} },`,
+    ]
+  return [
+    '  "projects": {',
+    entries.map(([name, v]) => projectEntry(name, v)).join(',\n'),
+    '  },',
+  ]
 }
 
 /** Serialise in the contract's key order; atomic write. */
@@ -325,12 +392,7 @@ export async function writeManifest(
     lines.push(
       `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`
     )
-  if (manifest.projects !== null)
-    lines.push(
-      `  "projects": { ${Object.entries(manifest.projects)
-        .map(([name, n]) => `${JSON.stringify(name)}: ${n}`)
-        .join(', ')} },`
-    )
+  lines.push(...projectsLines(manifest))
   lines.push(
     '  "repos": {',
     repos.join(',\n'),

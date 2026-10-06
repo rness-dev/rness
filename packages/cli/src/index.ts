@@ -44,6 +44,8 @@ export {
 export { checkContract, STATUSES } from './core/contract.ts'
 export { scaffoldDir, SCAFFOLD_FILES } from './core/scaffold.ts'
 export type * from './core/types.ts'
+export type * from './core/board-declaration.ts'
+export { parseBoard, BoardRefused } from './core/board-declaration.ts'
 export { syncCommand, type SyncOptions } from './commands/sync.ts'
 export { loginCommand, type LoginOptions } from './commands/login.ts'
 export { logoutCommand } from './commands/logout.ts'

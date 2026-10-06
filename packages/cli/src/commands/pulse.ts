@@ -14,6 +14,7 @@ import {
 import {
   PULSE,
   loadManifest,
+  projectNumber,
   providerOf,
   writeManifest,
 } from '../core/manifest.ts'
@@ -152,7 +153,7 @@ async function declaredBoards(c: Context): Promise<Declared[]> {
   )
   const declared: Declared[] = []
   for (const name of names) {
-    const number = projects[name]!
+    const number = projectNumber(projects[name]!)
     const board = await fromGithub(c.provider.board(c.org, number))
     if (board === null)
       throw new Error(`GitHub has no project ${number} in ${c.org}`)
@@ -541,7 +542,7 @@ export async function pulseCreateCommand(
       throw new Error('"pulse" names Agent Pulse: rness pulse create')
     if (declared !== undefined)
       throw new Error(
-        `already declared: ${boardUrl(c.org, declared)} — rness pulse sync`
+        `already declared: ${boardUrl(c.org, projectNumber(declared))} — rness pulse sync`
       )
     // A collection is a tab of `rness status`: a directory of `.rness/` whose
     // documents carry a status (spec 0025 §3).

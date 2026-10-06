@@ -480,6 +480,117 @@ test('writeManifest writes provider after contract and projects after agents', a
   assert.equal(text.includes('projects'), false)
 })
 
+/** A board declared whole (spec 0031 §2.2), as small as one can be. */
+const BOARD = {
+  number: 5,
+  collections: { marketing: { statuses: 'found' } },
+  views: [{ name: 'Board', layout: 'board' }],
+}
+
+test('projects: a board declared whole is read as one, its source kept; a number stays a number', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    projects: { pulse: 4, marketing: BOARD },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const { projects, refused } = await loadManifest(d)
+  assert.equal(projects?.['pulse'], 4)
+  const board = projects?.['marketing']
+  assert.ok(typeof board === 'object')
+  assert.equal(board.number, 5)
+  assert.deepEqual(board.source, BOARD)
+  assert.equal(refused, undefined)
+})
+
+test('projects: a board refused is set aside with its reason, the others and the rest of rness.json read', async (t) => {
+  const bad = { ...BOARD, number: 6, views: [] }
+  const d = await fixture({
+    contract: 1,
+    org: 'acme',
+    projects: { pulse: 4, marketing: bad, research: { ...BOARD, number: 7 } },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const m = await loadManifest(d)
+  assert.equal(m.org, 'acme')
+  assert.deepEqual(Object.keys(m.projects ?? {}), ['pulse', 'research'])
+  assert.deepEqual(m.refused, [
+    {
+      name: 'marketing',
+      reason: '"projects.marketing.views" must list at least one view',
+      source: bad,
+    },
+  ])
+})
+
+test('projects: two boards on one project number are refused, whatever their form', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    projects: { pulse: 5, marketing: BOARD },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  await assert.rejects(
+    () => loadManifest(d),
+    /^Error: rness\.json: "projects" must map names to distinct project numbers/
+  )
+})
+
+test('writeManifest: a board declared whole on several lines, numbers as they are, a refused board kept; read back the same', async (t) => {
+  const bad = { ...BOARD, number: 6, views: [] }
+  const d = await fixture({
+    contract: 1,
+    projects: { pulse: 4, marketing: BOARD, research: bad },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const read = await loadManifest(d)
+  await writeManifest(d, read)
+  assert.equal(
+    await readFile(join(d, 'rness.json'), 'utf8'),
+    `{
+  "contract": 1,
+  "projects": {
+    "pulse": 4,
+    "marketing": {
+      "number": 5,
+      "collections": {
+        "marketing": {
+          "statuses": "found"
+        }
+      },
+      "views": [
+        {
+          "name": "Board",
+          "layout": "board"
+        }
+      ]
+    },
+    "research": {
+      "number": 6,
+      "collections": {
+        "marketing": {
+          "statuses": "found"
+        }
+      },
+      "views": []
+    }
+  },
+  "repos": {
+  },
+  "scopes": {
+  }
+}
+`
+  )
+  assert.deepEqual(await loadManifest(d), read)
+})
+
 test('a manifest read with the former pulse is written back with projects', async (t) => {
   const d = await fixture({
     contract: 1,
