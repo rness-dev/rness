@@ -1,0 +1,174 @@
+{
+  "title": "Marketing",
+  "readme": "# The launch\n\nStrategy.",
+  "shortDescription": "The launch, from 1 October.",
+  "linked": true,
+  "statusUpdates": [
+    {
+      "body": "First week.\n\n<!-- rness: marketing/updates/2026-10-05.md -->",
+      "status": "ON_TRACK",
+      "startDate": "2026-10-01",
+      "targetDate": null
+    }
+  ],
+  "fields": [
+    {
+      "name": "Agent",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "working",
+          "color": "GREEN"
+        }
+      ]
+    },
+    {
+      "name": "Collection",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Marketing",
+          "color": "PINK"
+        }
+      ]
+    },
+    {
+      "name": "Kind",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "post",
+          "color": "GRAY"
+        },
+        {
+          "name": "launch",
+          "color": "GRAY"
+        }
+      ]
+    },
+    {
+      "name": "Path",
+      "dataType": "TEXT",
+      "options": null
+    },
+    {
+      "name": "Publish date",
+      "dataType": "DATE",
+      "options": null
+    },
+    {
+      "name": "Reach",
+      "dataType": "NUMBER",
+      "options": null
+    },
+    {
+      "name": "Session history",
+      "dataType": "TEXT",
+      "options": null
+    },
+    {
+      "name": "Status",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Idea",
+          "color": "YELLOW"
+        },
+        {
+          "name": "Draft",
+          "color": "GRAY"
+        },
+        {
+          "name": "Published",
+          "color": "GREEN"
+        }
+      ]
+    },
+    {
+      "name": "Title",
+      "dataType": "TEXT",
+      "options": null
+    },
+    {
+      "name": "Working session",
+      "dataType": "TEXT",
+      "options": null
+    }
+  ],
+  "views": [
+    {
+      "name": "All",
+      "layout": "TABLE_LAYOUT",
+      "column": null,
+      "filter": null,
+      "fields": [
+        "Collection",
+        "Status",
+        "Title",
+        "Working session"
+      ]
+    },
+    {
+      "name": "Marketing",
+      "layout": "BOARD_LAYOUT",
+      "column": "Status",
+      "filter": "collection:\"Marketing\"",
+      "fields": null
+    },
+    {
+      "name": "Calendar",
+      "layout": "ROADMAP_LAYOUT",
+      "column": null,
+      "filter": "collection:\"Marketing\"",
+      "fields": null
+    },
+    {
+      "name": "Working",
+      "layout": "TABLE_LAYOUT",
+      "column": null,
+      "filter": "agent:working",
+      "fields": [
+        "Collection",
+        "Status",
+        "Title",
+        "Working session"
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "values": {
+        "Path": "marketing/hn/2026-09-30-hn.md",
+        "Collection": "Marketing",
+        "Status": "Idea",
+        "Kind": "launch"
+      },
+      "issue": {
+        "title": "2026-09-30 — Show HN",
+        "state": "OPEN",
+        "labels": [
+          "hn",
+          "rness"
+        ]
+      }
+    },
+    {
+      "values": {
+        "Path": "marketing/linkedin/2026-09-30-post.md",
+        "Collection": "Marketing",
+        "Status": "Draft",
+        "Publish date": "2026-10-01",
+        "Kind": "post",
+        "Reach": "120"
+      },
+      "issue": {
+        "title": "2026-09-30 — First post",
+        "state": "OPEN",
+        "labels": [
+          "linkedin",
+          "rness"
+        ]
+      }
+    }
+  ]
+}

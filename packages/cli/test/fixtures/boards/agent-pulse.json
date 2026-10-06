@@ -1,0 +1,343 @@
+{
+  "title": "Agent Pulse",
+  "readme": "",
+  "shortDescription": "",
+  "linked": true,
+  "statusUpdates": [],
+  "fields": [
+    {
+      "name": "ADR status",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Proposed",
+          "color": "BLUE"
+        },
+        {
+          "name": "Accepted",
+          "color": "GREEN"
+        },
+        {
+          "name": "Rejected",
+          "color": "RED"
+        },
+        {
+          "name": "Superseded",
+          "color": "YELLOW"
+        }
+      ]
+    },
+    {
+      "name": "Agent",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "working",
+          "color": "GREEN"
+        }
+      ]
+    },
+    {
+      "name": "Collection",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "ADR",
+          "color": "PURPLE"
+        },
+        {
+          "name": "Specs",
+          "color": "BLUE"
+        },
+        {
+          "name": "Plans",
+          "color": "ORANGE"
+        },
+        {
+          "name": "Research",
+          "color": "PINK"
+        }
+      ]
+    },
+    {
+      "name": "Path",
+      "dataType": "TEXT",
+      "options": null
+    },
+    {
+      "name": "Plans status",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Draft",
+          "color": "GRAY"
+        },
+        {
+          "name": "Ready",
+          "color": "BLUE"
+        },
+        {
+          "name": "In progress",
+          "color": "YELLOW"
+        },
+        {
+          "name": "Blocked",
+          "color": "RED"
+        },
+        {
+          "name": "Completed",
+          "color": "GREEN"
+        },
+        {
+          "name": "Abandoned",
+          "color": "GRAY"
+        }
+      ]
+    },
+    {
+      "name": "Research status",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Exploring",
+          "color": "YELLOW"
+        }
+      ]
+    },
+    {
+      "name": "Session history",
+      "dataType": "TEXT",
+      "options": null
+    },
+    {
+      "name": "Specs status",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Draft",
+          "color": "GRAY"
+        },
+        {
+          "name": "Proposed",
+          "color": "BLUE"
+        },
+        {
+          "name": "Approved",
+          "color": "PURPLE"
+        },
+        {
+          "name": "Implemented",
+          "color": "GREEN"
+        },
+        {
+          "name": "Rejected",
+          "color": "RED"
+        },
+        {
+          "name": "Superseded",
+          "color": "YELLOW"
+        }
+      ]
+    },
+    {
+      "name": "Status",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Draft",
+          "color": "GRAY"
+        },
+        {
+          "name": "Proposed",
+          "color": "BLUE"
+        },
+        {
+          "name": "Ready",
+          "color": "BLUE"
+        },
+        {
+          "name": "Approved",
+          "color": "PURPLE"
+        },
+        {
+          "name": "In progress",
+          "color": "YELLOW"
+        },
+        {
+          "name": "Blocked",
+          "color": "RED"
+        },
+        {
+          "name": "Accepted",
+          "color": "GREEN"
+        },
+        {
+          "name": "Implemented",
+          "color": "GREEN"
+        },
+        {
+          "name": "Completed",
+          "color": "GREEN"
+        },
+        {
+          "name": "Rejected",
+          "color": "RED"
+        },
+        {
+          "name": "Superseded",
+          "color": "YELLOW"
+        },
+        {
+          "name": "Abandoned",
+          "color": "GRAY"
+        },
+        {
+          "name": "Exploring",
+          "color": "YELLOW"
+        }
+      ]
+    },
+    {
+      "name": "Title",
+      "dataType": "TEXT",
+      "options": null
+    },
+    {
+      "name": "Working session",
+      "dataType": "TEXT",
+      "options": null
+    }
+  ],
+  "views": [
+    {
+      "name": "All",
+      "layout": "TABLE_LAYOUT",
+      "column": null,
+      "filter": null,
+      "fields": [
+        "Collection",
+        "Status",
+        "Title",
+        "Working session"
+      ]
+    },
+    {
+      "name": "ADR",
+      "layout": "BOARD_LAYOUT",
+      "column": "ADR status",
+      "filter": "collection:\"ADR\"",
+      "fields": null
+    },
+    {
+      "name": "Specs",
+      "layout": "BOARD_LAYOUT",
+      "column": "Specs status",
+      "filter": "collection:\"Specs\"",
+      "fields": null
+    },
+    {
+      "name": "Plans",
+      "layout": "BOARD_LAYOUT",
+      "column": "Plans status",
+      "filter": "collection:\"Plans\"",
+      "fields": null
+    },
+    {
+      "name": "Research",
+      "layout": "BOARD_LAYOUT",
+      "column": "Research status",
+      "filter": "collection:\"Research\"",
+      "fields": null
+    },
+    {
+      "name": "Working",
+      "layout": "TABLE_LAYOUT",
+      "column": null,
+      "filter": "agent:working",
+      "fields": [
+        "Collection",
+        "Status",
+        "Title",
+        "Working session"
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "values": {
+        "Path": "adr/0001-org.md",
+        "Collection": "ADR",
+        "Status": "Accepted",
+        "ADR status": "Accepted"
+      },
+      "issue": {
+        "title": "0001 — A workspace is an org",
+        "state": "OPEN",
+        "labels": [
+          "rness"
+        ]
+      }
+    },
+    {
+      "values": {
+        "Path": "plans/0001-x.md",
+        "Collection": "Plans",
+        "Status": "In progress",
+        "Plans status": "In progress",
+        "Session history": "Claude Opus 5.5 · 1a2b3c4d"
+      },
+      "issue": {
+        "title": "0001 — Do it",
+        "state": "OPEN",
+        "labels": [
+          "rness"
+        ]
+      }
+    },
+    {
+      "values": {
+        "Path": "research/0001-r.md",
+        "Collection": "Research",
+        "Status": "Exploring",
+        "Research status": "Exploring"
+      },
+      "issue": {
+        "title": "0001 — A question",
+        "state": "OPEN",
+        "labels": [
+          "rness"
+        ]
+      }
+    },
+    {
+      "values": {
+        "Path": "specs/0001-a.md",
+        "Collection": "Specs",
+        "Status": "Draft",
+        "Specs status": "Draft"
+      },
+      "issue": {
+        "title": "0001 — First",
+        "state": "OPEN",
+        "labels": [
+          "rness"
+        ]
+      }
+    },
+    {
+      "values": {
+        "Path": "specs/0002-b.md",
+        "Collection": "Specs",
+        "Status": "Approved",
+        "Specs status": "Approved"
+      },
+      "issue": {
+        "title": "0002 — Second",
+        "state": "OPEN",
+        "labels": [
+          "rness"
+        ]
+      }
+    }
+  ]
+}

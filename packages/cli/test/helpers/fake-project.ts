@@ -26,6 +26,10 @@ export interface FView {
   layout?: 'BOARD_LAYOUT' | 'TABLE_LAYOUT' | 'ROADMAP_LAYOUT'
   /** The field a board's columns follow, by name. */
   column?: string | null
+  /** The view's filter, as GitHub returns it: as it was given (read 2026-10-06). */
+  filter?: string | null
+  /** The fields it shows, by name; null: GitHub's default ones. */
+  fields?: string[] | null
 }
 /** An issue of a repository: `acme/.rness` unless said otherwise. */
 export interface FIssue {
@@ -94,6 +98,15 @@ export interface FProjectSeed {
   shortDescription?: string
   statusUpdates?: FStatusUpdate[]
 }
+
+/** The fields GitHub shows in a view made without any (read 2026-10-06). */
+const GITHUB_DEFAULT_VIEW_FIELDS = [
+  'Title',
+  'Assignees',
+  'Status',
+  'Linked pull requests',
+  'Sub-issues progress',
+]
 
 const defaultFields = (at: number): FField[] => [
   {
@@ -191,6 +204,8 @@ export async function board(
             ? null
             : (own?.name ?? 'Status')
           : v.column,
+      filter: v.filter ?? null,
+      fields: v.fields ?? null,
     })
   }
   if (seed.views !== undefined)
@@ -201,6 +216,8 @@ export async function board(
       name: seed.defaultView?.name ?? 'View 1',
       layout: 'TABLE_LAYOUT',
       column: null,
+      filter: null,
+      fields: null,
     })
   const items: FItem[] = seed.items ?? []
   const memory: FMemory = {
@@ -248,6 +265,8 @@ export async function board(
         name: 'View 1',
         layout: 'TABLE_LAYOUT',
         column: null,
+        filter: null,
+        fields: null,
       })
     const project: FProject = {
       id: p.id ?? `P_${at}`,
@@ -714,7 +733,18 @@ export async function board(
           mutations.push({ op: 'updateView', variables: v, query: q })
           const found = viewAnywhere(v['viewId'])
           const renamed = found?.list[found.at]
-          if (renamed !== undefined) renamed.name = String(v['name'])
+          const owner = projects.find((p) => p.viewList === found?.list)
+          if (renamed !== undefined) {
+            if (typeof v['name'] === 'string') renamed.name = v['name']
+            if (typeof v['filter'] === 'string') renamed.filter = v['filter']
+            if (typeof v['layout'] === 'string')
+              renamed.layout = v['layout'] as Required<FView>['layout']
+            const shown = v['visibleFieldIds'] as string[] | undefined
+            if (shown !== undefined)
+              renamed.fields = shown.map(
+                (id) => owner?.fields.find((f) => f.id === id)?.name ?? id
+              )
+          }
           return data({
             updateProjectV2View: { projectV2View: { id: v['viewId'] } },
           })
@@ -739,6 +769,14 @@ export async function board(
                   id: x.id,
                   name: x.name,
                   layout: x.layout,
+                  filter: x.filter,
+                  // GitHub lists a view's fields in the project's field
+                  // order, not the order they were given (read 2026-10-06).
+                  fields: {
+                    nodes: (x.fields ?? GITHUB_DEFAULT_VIEW_FIELDS).map(
+                      (name) => ({ name })
+                    ),
+                  },
                   verticalGroupByFields: {
                     nodes: x.column === null ? [] : [{ name: x.column }],
                   },
@@ -861,7 +899,9 @@ export async function board(
       const body = r.body as {
         name: string
         layout: string
+        filter?: string
         vertical_group_by?: number[]
+        visible_fields?: number[]
       }
       addView(
         {
@@ -876,6 +916,18 @@ export async function board(
             project.fields.find(
               (f) => f.databaseId === body.vertical_group_by?.[0]
             )?.name ?? null,
+          filter:
+            body.filter === undefined || body.filter === ''
+              ? null
+              : body.filter,
+          fields:
+            body.visible_fields === undefined
+              ? null
+              : body.visible_fields.map(
+                  (id) =>
+                    project.fields.find((f) => f.databaseId === id)?.name ??
+                    String(id)
+                ),
         },
         project.viewList,
         project.fields
