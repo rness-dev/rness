@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { BoardDeclaration } from '../core/board-declaration.ts'
 import { parseBoard } from '../core/board-declaration.ts'
 import { collectMarkdown } from '../core/collect.ts'
+import { containedPath } from '../core/contained.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { stripFrontMatter } from '../core/frontmatter.ts'
 import { seenPaths } from '../core/git.ts'
@@ -224,11 +225,11 @@ async function directoriesOf(dir: string): Promise<string[]> {
   }
 }
 
-/** A file of `.rness/`, its front matter removed; null when it is not there. */
+/** A file of `.rness/`, its front matter removed; null when it is not there; one leading out of `.rness`, refused. */
 async function textOf(rnessDir: string, rel: string): Promise<string | null> {
   try {
     return stripFrontMatter(
-      await readFile(join(rnessDir, ...rel.split('/')), 'utf8')
+      await readFile(await containedPath(rnessDir, rel), 'utf8')
     )
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null

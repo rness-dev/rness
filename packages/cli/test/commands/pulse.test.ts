@@ -6,6 +6,7 @@ import {
   realpath,
   rename,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -2400,5 +2401,31 @@ test('a colour changed in rness.json reaches GitHub at the next sync; every card
   assert.deepEqual(
     g.items.map((i) => i.values['Status']),
     before
+  )
+})
+
+test("a collection's README that is a link out of .rness: the sync stops on it, nothing of the file published", async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { pulse: 7, marketing: 8 },
+    files: { ...FILES, 'marketing/a.md': '---\nstatus: Idea\n---\n# A\n' },
+  })
+  const secret = join(cwd, 'secret.txt')
+  await writeFile(secret, 'ghp_a-developer-token\n')
+  await symlink(secret, join(cwd, '.rness', 'marketing', 'README.md'))
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 1)
+  assert.match(r.err, /marketing\/README\.md leads out of \.rness/)
+  assert.ok(
+    g.projects.every((p) => !p.readme.includes('ghp_')),
+    'nothing published'
   )
 })

@@ -1,3 +1,4 @@
+import { RNESS_PATH } from './contained.ts'
 import { STATUSES } from './contract.ts'
 import { isPresetRevision, labelOf } from './presets.ts'
 
@@ -493,13 +494,24 @@ export function parseBoard(name: string, value: unknown): BoardDeclaration {
     views.push(view)
   }
 
+  // rness.json is the organization's: a path out of .rness would publish a
+  // developer's file on GitHub at their next sync.
+  const within = (key: string): string | null => {
+    const path = optionalText(value, key, at)
+    if (path !== null && !RNESS_PATH.test(path))
+      throw new BoardRefused(
+        `${at}.${key}`,
+        `must be a path within .rness, as ${key === 'readme' ? 'marketing/README.md' : 'marketing/updates'}`
+      )
+    return path
+  }
   return {
     number,
     preset: (preset as string | undefined) ?? null,
     title: optionalText(value, 'title', at),
     description: optionalText(value, 'description', at),
-    readme: optionalText(value, 'readme', at),
-    updates: optionalText(value, 'updates', at),
+    readme: within('readme'),
+    updates: within('updates'),
     collections,
     colors,
     fields,

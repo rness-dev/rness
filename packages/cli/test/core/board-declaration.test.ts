@@ -296,3 +296,21 @@ test('labels', () => {
     '"projects.marketing.labels" must be directory or a front-matter key'
   )
 })
+
+test("readme and updates: a path within .rness, never out of it — rness.json is the organization's, the file a developer's", () => {
+  for (const [key, example] of [
+    ['readme', 'marketing/README.md'],
+    ['updates', 'marketing/updates'],
+  ] as const)
+    for (const path of [
+      '../../.ssh/id_rsa',
+      '/etc/passwd',
+      'marketing/../../.ssh/id_rsa',
+      '.git/config',
+      '~/.ssh/id_rsa',
+    ])
+      refused(
+        with_({ [key]: path }),
+        `"projects.marketing.${key}" must be a path within .rness, as ${example}`
+      )
+})

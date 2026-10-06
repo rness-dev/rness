@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { containedPath } from '../core/contained.ts'
 import { parseFrontMatter, stripFrontMatter } from '../core/frontmatter.ts'
 import type { Fields } from '../core/types.ts'
 
@@ -235,9 +236,12 @@ export async function readUpdates(
   rnessDir: string,
   dir: string
 ): Promise<StatusUpdate[]> {
-  const at = join(rnessDir, ...dir.split('/'))
+  let at: string
   let names: string[]
   try {
+    // rness.json names it: a directory out of .rness is refused, and a file
+    // there that is a link is no file (`isFile`), never followed out.
+    at = await containedPath(rnessDir, dir)
     names = (
       await readdir(at, {
         withFileTypes: true,
