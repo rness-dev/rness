@@ -848,7 +848,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased — `board`, not `pulse`: `rness board push`, `rness note`, `boards` in rness.json
+## 0.22.0 — `board`, not `pulse`: `rness board push`, `rness note`, `boards` in rness.json
 
 - One word for the view, whatever the provider (spec 0033, see "Boards"):
   `rness board push` replaces `rness pulse sync`, `rness note` replaces
