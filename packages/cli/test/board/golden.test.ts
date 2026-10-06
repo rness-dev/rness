@@ -251,7 +251,7 @@ test("golden: a collection's own project as 0.20.1 makes it, and a second sync w
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 7 },
+    boards: { pulse: 7 },
     files: MARKETING_FILES,
   })
   await quiet(() =>
@@ -286,7 +286,7 @@ test('golden: boards 0.20.1 made, declared by number, synced: nothing written', 
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 7 },
+    boards: { pulse: 7 },
     files: PULSE_FILES,
   })
   // The issues' bodies are the documents': the first sync writes them, the
@@ -300,7 +300,7 @@ test('golden: boards 0.20.1 made, declared by number, synced: nothing written', 
   )
   const both = await makeWorkspace(t, {
     org: 'acme',
-    projects: { marketing: 8 },
+    boards: { marketing: 8 },
     files: MARKETING_FILES,
   })
   g.mutations.length = 0
@@ -332,17 +332,17 @@ test('golden: rness sync writes the boards 0.20.1 declared by number whole, the 
   const files = { ...PULSE_FILES, ...MARKETING_FILES }
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 7, marketing: 8 },
+    boards: { pulse: 7, marketing: 8 },
     files,
   })
   await quiet(() => syncCommand({ cwd, yes: true }, { terminal: NO_TTY }))
   const manifest = JSON.parse(
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
   )
-  assert.equal(manifest.projects.pulse.preset, 'agent-pulse/1')
-  assert.equal(manifest.projects.marketing.preset, 'collection/1')
+  assert.equal(manifest.boards.pulse.preset, 'agent-pulse/1')
+  assert.equal(manifest.boards.marketing.preset, 'collection/1')
   assert.equal(
-    manifest.projects.marketing.description,
+    manifest.boards.marketing.description,
     'The launch, from 1 October.'
   )
   assert.equal(

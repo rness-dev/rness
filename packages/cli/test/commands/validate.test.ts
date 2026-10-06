@@ -468,7 +468,7 @@ const declared = (number: number, over: Record<string, unknown> = {}) => ({
 
 async function validateBoards(
   t: Parameters<typeof makeWorkspace>[0],
-  projects: Record<string, unknown>,
+  boards: Record<string, unknown>,
   files: Record<string, string> = {
     'marketing/a.md': '---\nstatus: Idea\n---\n# A\n',
   }
@@ -476,7 +476,7 @@ async function validateBoards(
   const cwd = await makeWorkspace(t, { org: 'acme', files })
   const file = join(cwd, '.rness', 'rness.json')
   const manifest = JSON.parse(await readFile(file, 'utf8'))
-  await writeFile(file, JSON.stringify({ ...manifest, projects }))
+  await writeFile(file, JSON.stringify({ ...manifest, boards }))
   const c = capture()
   const code = await run(['validate', '--cwd', cwd])
   c.restore()
@@ -491,10 +491,7 @@ test('boards: valid as declared, context ok', async (t) => {
 test('boards: a refused board is a problem, by its full key', async (t) => {
   const r = await validateBoards(t, { marketing: declared(5, { views: [] }) })
   assert.equal(r.code, 1)
-  assert.match(
-    r.err,
-    /"projects\.marketing\.views" must list at least one view/
-  )
+  assert.match(r.err, /"boards\.marketing\.views" must list at least one view/)
 })
 
 test('boards: a collection that is no directory of .rness, or one never a collection', async (t) => {
@@ -505,7 +502,7 @@ test('boards: a collection that is no directory of .rness, or one never a collec
   })
   assert.match(
     none.err,
-    /"projects\.marketing\.collections\.research" names no directory of \.rness/
+    /"boards\.marketing\.collections\.research" names no directory of \.rness/
   )
   const never = await validateBoards(t, {
     marketing: declared(5, {
@@ -514,7 +511,7 @@ test('boards: a collection that is no directory of .rness, or one never a collec
   })
   assert.match(
     never.err,
-    /"projects\.marketing\.collections\.standards" is no collection/
+    /"boards\.marketing\.collections\.standards" is no collection/
   )
 })
 
@@ -525,7 +522,7 @@ test('boards: a collection on two boards; two boards that take all', async (t) =
   })
   assert.match(
     two.err,
-    /"projects\.launch\.collections\.marketing" is on marketing too: a collection is on one board at most/
+    /"boards\.launch\.collections\.marketing" is on marketing too: a collection is on one board at most/
   )
   const all = await validateBoards(t, {
     a: declared(5, { collections: 'all' }),
@@ -533,8 +530,39 @@ test('boards: a collection on two boards; two boards that take all', async (t) =
   })
   assert.match(
     all.err,
-    /"projects\.a" and "projects\.b" each take every collection/
+    /"boards\.a" and "boards\.b" each take every collection/
   )
+})
+
+test('boards: a preset not created yet, named after a collection or pulse; else a problem (spec 0033 §4)', async (t) => {
+  const ok = await validateBoards(t, {
+    pulse: 'agent-pulse',
+    marketing: 'collection',
+  })
+  assert.equal(ok.code, 0, ok.err)
+  const none = await validateBoards(t, { roadmap: 'collection' })
+  assert.equal(none.code, 1)
+  assert.match(
+    none.err,
+    /"boards\.roadmap" names no collection of \.rness: a collection's board is named after its directory/
+  )
+  const refused = await validateBoards(t, { marketing: 'agent-pulse' })
+  assert.match(
+    refused.err,
+    /"boards\.marketing" names agent-pulse: a collection's board is made from collection/
+  )
+})
+
+test('boards: the former projects is still valid (spec 0033 §3)', async (t) => {
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { pulse: 4 },
+    files: { 'marketing/a.md': '---\nstatus: Idea\n---\n# A\n' },
+  })
+  const c = capture()
+  const code = await run(['validate', '--cwd', cwd])
+  c.restore()
+  assert.equal(code, 0, c.err())
 })
 
 test('boards: a readme or updates not there', async (t) => {
@@ -546,11 +574,11 @@ test('boards: a readme or updates not there', async (t) => {
   })
   assert.match(
     r.err,
-    /"projects\.marketing\.readme" names marketing\/README\.md, which is not there/
+    /"boards\.marketing\.readme" names marketing\/README\.md, which is not there/
   )
   assert.match(
     r.err,
-    /"projects\.marketing\.updates" names marketing\/updates, which is not there/
+    /"boards\.marketing\.updates" names marketing\/updates, which is not there/
   )
 })
 

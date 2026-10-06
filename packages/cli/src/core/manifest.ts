@@ -1,12 +1,18 @@
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-import { BoardRefused, parseBoard } from './board-declaration.ts'
+import {
+  BoardRefused,
+  PULSE,
+  parseBoard,
+  readPresetEntry,
+} from './board-declaration.ts'
 import { writeFileAtomic } from './fs.ts'
 import { repoUrl } from './remote.ts'
 import type {
+  BoardEntry,
+  Boards,
   Manifest,
-  Projects,
   ProviderName,
   RefusedBoard,
   RepoEntry,
@@ -86,8 +92,10 @@ const KEYS = [
   'provider',
   'org',
   'agents',
-  'pulse',
+  'boards',
+  // Former names of `boards`, still read: `sync` renames them (spec 0033 §3).
   'projects',
+  'pulse',
   'repos',
   'scopes',
 ]
@@ -166,8 +174,7 @@ function readProvider(value: unknown): ProviderName | null {
 }
 
 /** The former `pulse`, 0.12 to 0.16: Agent Pulse alone, by number. */
-function readPulse(value: unknown): Projects | null {
-  if (value === undefined) return null
+function readPulse(value: unknown): Boards {
   if (
     !isRecord(value) ||
     Object.keys(value).length !== 1 ||
@@ -181,73 +188,93 @@ function readPulse(value: unknown): Projects | null {
   return { [PULSE]: value.project }
 }
 
-/** A board's project number, whatever its form in `projects`. */
-export const projectNumber = (entry: Projects[string]): number =>
-  typeof entry === 'number' ? entry : entry.number
+/** A board's project number, whatever its form in `boards`; null until `board push` creates it. */
+export const projectNumber = (entry: BoardEntry): number | null =>
+  typeof entry === 'number'
+    ? entry
+    : typeof entry === 'string'
+      ? null
+      : entry.number
 
-/** The name of Agent Pulse in `projects`; any other names a directory of `.rness/`. */
-export const PULSE = 'pulse'
-/** A name `projects` takes: a directory name, never hidden or a path. */
-const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+export { PULSE }
+/** A name `boards` takes: a directory name, never hidden or a path. */
+const BOARD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 const isProjectNumber = (n: unknown): n is number =>
   typeof n === 'number' && Number.isInteger(n) && n >= 1
 
 /**
- * `projects`, when present: names to boards — a number (a board made before
- * 0.21.0) or one declared whole (spec 0031 §2) — on distinct projects. A
- * declaration refused is set aside with its reason; the rest is read.
+ * `boards`, when present: names to boards — one declared whole (spec 0031
+ * §2), a preset not created yet (spec 0033 §4), or a number (a board made
+ * before 0.21.0) — the projects of those created distinct. A board refused
+ * is set aside with its reason; the rest is read.
  */
-function readProjects(value: unknown): {
-  projects: Projects | null
+function readBoardEntries(value: unknown): {
+  boards: Boards | null
   refused: RefusedBoard[]
 } {
-  if (value === undefined) return { projects: null, refused: [] }
   const entries = isRecord(value) ? Object.entries(value) : []
-  const numbers = entries.map(([, n]) =>
-    isRecord(n) && isProjectNumber(n['number']) ? n['number'] : n
+  const numbers = entries.flatMap(([, n]) =>
+    isRecord(n) ? (isProjectNumber(n['number']) ? [n['number']] : []) : [n]
   )
   if (
     entries.length === 0 ||
     !entries.every(
       ([name, n]) =>
-        PROJECT_NAME.test(name) && (isProjectNumber(n) || isRecord(n))
+        BOARD_NAME.test(name) &&
+        (isProjectNumber(n) || typeof n === 'string' || isRecord(n))
     ) ||
     new Set(numbers).size !== numbers.length
   )
     fail(
-      `"projects" must map names to distinct project numbers, as { "pulse": 4, "marketing": 5 } (got ${JSON.stringify(value)})`
+      `"boards" must map names to boards on distinct projects, as { "pulse": "agent-pulse", "marketing": 5 } (got ${JSON.stringify(value)})`
     )
-  const projects: Projects = {}
+  const boards: Boards = {}
   const refused: RefusedBoard[] = []
   for (const [name, entry] of entries) {
     if (isProjectNumber(entry)) {
-      projects[name] = entry
+      boards[name] = entry
       continue
     }
     try {
-      projects[name] = parseBoard(name, entry)
+      boards[name] =
+        typeof entry === 'string'
+          ? readPresetEntry(name, entry)
+          : parseBoard(name, entry)
     } catch (e) {
       if (!(e instanceof BoardRefused)) throw e
       refused.push({ name, reason: e.message, source: entry })
     }
   }
   return {
-    projects: Object.keys(projects).length === 0 ? null : projects,
+    boards: Object.keys(boards).length === 0 ? null : boards,
     refused,
   }
 }
 
-/** `projects`, else the former `pulse` read as `projects.pulse`; both at once refused. */
-function readProjectsOrPulse(data: Record<string, unknown>): {
-  projects: Projects | null
+/** The keys that have held the boards, newest first (spec 0033 §3). */
+const HOLDERS = ['boards', 'projects', 'pulse'] as const
+
+/**
+ * `boards`, else the former `projects` read as `boards`, else the former
+ * `pulse` read as `boards.pulse`; more than one of them refused.
+ */
+function readBoardsOrFormer(data: Record<string, unknown>): {
+  boards: Boards | null
   refused: RefusedBoard[]
+  formerKey?: 'projects' | 'pulse'
 } {
-  if (data.pulse !== undefined && data.projects !== undefined)
-    fail('"pulse" and "projects" at once: keep "projects" only')
-  return data.projects !== undefined
-    ? readProjects(data.projects)
-    : { projects: readPulse(data.pulse), refused: [] }
+  const present = HOLDERS.filter((k) => data[k] !== undefined)
+  if (present.length > 1)
+    fail(
+      `${present.map((k) => JSON.stringify(k)).join(' and ')} at once: keep "boards" only`
+    )
+  const key = present[0]
+  if (key === undefined) return { boards: null, refused: [] }
+  if (key === 'pulse')
+    return { boards: readPulse(data.pulse), refused: [], formerKey: key }
+  const read = readBoardEntries(data[key])
+  return key === 'boards' ? read : { ...read, formerKey: key }
 }
 
 /** The key, else the first repository URL's host (github.com → github), else github. */
@@ -324,45 +351,50 @@ export function parseManifest(raw: string): Manifest {
   for (const key of Object.keys(data)) {
     if (!KEYS.includes(key)) fail(`unknown key ${JSON.stringify(key)}`)
   }
-  const { projects, refused } = readProjectsOrPulse(data)
+  const { boards, refused, formerKey } = readBoardsOrFormer(data)
   return {
     contract: 1,
     provider: readProvider(data.provider),
     org: readOrg(data.org),
     agents: readAgents(data.agents),
-    projects,
+    boards,
     ...(refused.length === 0 ? {} : { refused }),
+    ...(formerKey === undefined ? {} : { formerKey }),
     repos: readRepos(data.repos),
     scopes: readScopes(data.scopes),
   }
 }
 
-/** A value of `projects` as written: a number, or a board's JSON indented under its key. */
-const projectEntry = (name: string, value: unknown): string =>
+/** A value of `boards` as written: a number, a preset, or a board's JSON indented under its key. */
+const boardEntry = (name: string, value: unknown): string =>
   `    ${JSON.stringify(name)}: ${JSON.stringify(value, null, 2).replaceAll('\n', '\n    ')}`
 
+const isScalar = (v: unknown): boolean =>
+  typeof v === 'number' || typeof v === 'string'
+
 /**
- * `projects` as written: on one line while every board is a number, as
- * before 0.21.0; else each entry on its own lines, a refused board kept as
- * it was written.
+ * `boards` as written, whatever key it was read from: on one line while
+ * every board is a number or a preset; else each entry on its own lines, a
+ * refused board kept as it was written.
  */
-function projectsLines(manifest: Manifest): string[] {
+function boardsLines(manifest: Manifest): string[] {
   const entries: (readonly [string, unknown])[] = [
-    ...Object.entries(manifest.projects ?? {}).map(
-      ([name, p]) => [name, typeof p === 'number' ? p : p.source] as const
+    ...Object.entries(manifest.boards ?? {}).map(
+      ([name, b]) =>
+        [name, isScalar(b) ? b : (b as { source: unknown }).source] as const
     ),
     ...(manifest.refused ?? []).map((r) => [r.name, r.source] as const),
   ]
   if (entries.length === 0) return []
-  if (entries.every(([, v]) => typeof v === 'number'))
+  if (entries.every(([, v]) => isScalar(v)))
     return [
-      `  "projects": { ${entries
-        .map(([name, n]) => `${JSON.stringify(name)}: ${String(n)}`)
+      `  "boards": { ${entries
+        .map(([name, v]) => `${JSON.stringify(name)}: ${JSON.stringify(v)}`)
         .join(', ')} },`,
     ]
   return [
-    '  "projects": {',
-    entries.map(([name, v]) => projectEntry(name, v)).join(',\n'),
+    '  "boards": {',
+    entries.map(([name, v]) => boardEntry(name, v)).join(',\n'),
     '  },',
   ]
 }
@@ -392,7 +424,7 @@ export async function writeManifest(
     lines.push(
       `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`
     )
-  lines.push(...projectsLines(manifest))
+  lines.push(...boardsLines(manifest))
   lines.push(
     '  "repos": {',
     repos.join(',\n'),

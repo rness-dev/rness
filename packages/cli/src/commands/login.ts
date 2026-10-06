@@ -106,7 +106,7 @@ export async function loginCommand(
       ui.error(unsupportedProviderMessage(manifest.provider))
       return 1
     }
-    const needsProject = opts.project === true || manifest?.projects != null
+    const needsProject = opts.project === true || manifest?.boards != null
     const bin =
       deps.bin ?? (await realpath(process.argv[1] ?? '').catch(() => ''))
     const env = envToken()

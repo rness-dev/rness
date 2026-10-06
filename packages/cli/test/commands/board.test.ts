@@ -169,11 +169,11 @@ const draft = (
 })
 /** What rness.json declares, by board: its project number and the preset it was made from. */
 async function declaredIn(cwd: string) {
-  const projects = JSON.parse(
+  const boards = JSON.parse(
     await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
-  ).projects as Record<string, number | { number: number; preset?: string }>
+  ).boards as Record<string, number | { number: number; preset?: string }>
   return Object.fromEntries(
-    Object.entries(projects).map(([name, p]) => [
+    Object.entries(boards).map(([name, p]) => [
       name,
       typeof p === 'number' ? p : `${p.number} ${p.preset ?? ''}`.trim(),
     ])
@@ -422,7 +422,7 @@ test("GitHub's refusal comes as GitHub: <message>, without a stack", async (t) =
   assert.doesNotMatch(r.err, /\n\s+at /)
   assert.equal(
     JSON.parse(await readFile(join(cwd, '.rness', 'rness.json'), 'utf8'))
-      .projects,
+      .boards,
     undefined
   )
 })
@@ -499,7 +499,7 @@ test('create: the project, then the layout it built and a first sync, and the ma
   )
   assert.equal(manifest.provider, 'github')
   assert.deepEqual(await declaredIn(cwd), { pulse: '7 agent-pulse/1' })
-  assert.equal(manifest.projects.pulse.title, 'Agent Pulse')
+  assert.equal(manifest.boards.pulse.title, 'Agent Pulse')
   assert.deepEqual(
     g.mutations
       .filter((m) => m.op === 'createIssue')
@@ -538,7 +538,7 @@ test('create: a view GitHub refuses once the project exists — declared all the
   )
   assert.equal(manifest.provider, 'github')
   assert.deepEqual(await declaredIn(cwd), { pulse: '7 agent-pulse/1' })
-  assert.equal(manifest.projects.pulse.title, 'Agent Pulse')
+  assert.equal(manifest.boards.pulse.title, 'Agent Pulse')
 
   refuseViews = false
   const synced = await run(() =>
@@ -2037,7 +2037,7 @@ async function beforeMarketing(t: TestContext) {
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 7 },
+    boards: { pulse: 7 },
     files: MARKETING_FILES,
   })
   return { g, cwd }
@@ -2137,7 +2137,7 @@ test('create <collection>: pulse, a declared one, or a directory with no documen
   }
   const declared = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 7, marketing: 8 },
+    boards: { pulse: 7, marketing: 8 },
     files: MARKETING_FILES,
   })
   const r = await run(() =>
@@ -2198,7 +2198,7 @@ test('marks with only a collection declared: a document of another collection ha
   const g = await board(t, { other: asUser('repo, project') })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    projects: { marketing: 7 },
+    boards: { marketing: 7 },
     files: MARKETING_FILES,
   })
   assert.equal(
@@ -2226,16 +2226,16 @@ const pulseBoard = (
   ...over,
 })
 
-/** A workspace whose rness.json declares `projects` as given, `.rness` a repository. */
+/** A workspace whose rness.json declares `boards` as given, `.rness` a repository. */
 async function declaredWorkspace(
   t: TestContext,
-  projects: Record<string, unknown>,
+  boards: Record<string, unknown>,
   files: Record<string, string> = FILES
 ) {
   const cwd = await makeWorkspace(t, { org: 'acme', files })
   const file = join(cwd, '.rness', 'rness.json')
   const manifest = JSON.parse(await readFile(file, 'utf8'))
-  await writeFile(file, JSON.stringify({ ...manifest, projects }, null, 2))
+  await writeFile(file, JSON.stringify({ ...manifest, boards }, null, 2))
   await commitDir(join(cwd, '.rness'))
   return cwd
 }
@@ -2377,7 +2377,7 @@ test('a colour changed in rness.json reaches GitHub at the next sync; every card
     JSON.stringify({
       ...manifest,
       pulse: undefined,
-      projects: {
+      boards: {
         pulse: {
           ...board,
           colors: { ...(board['colors'] as object), Accepted: 'orange' },
@@ -2414,7 +2414,7 @@ test("a collection's README that is a link out of .rness: the sync stops on it, 
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 7, marketing: 8 },
+    boards: { pulse: 7, marketing: 8 },
     files: { ...FILES, 'marketing/a.md': '---\nstatus: Idea\n---\n# A\n' },
   })
   const secret = join(cwd, 'secret.txt')

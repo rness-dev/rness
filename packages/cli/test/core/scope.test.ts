@@ -9,7 +9,7 @@ const manifest: Manifest = {
   provider: null,
   org: null,
   agents: null,
-  projects: null,
+  boards: null,
   repos: {},
   scopes: {
     web: { path: 'org/platform/apps/web', extends: ['platform'] },

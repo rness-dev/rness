@@ -202,7 +202,7 @@ test('--json at the workspace root: the banner, the status line, the tabs', asyn
 test('--json: each row in Agent Pulse’s colour; with a pulse, the board and each row’s item on it', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 4, marketing: 7 },
+    boards: { pulse: 4, marketing: 7 },
     files: {
       'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
       'specs/0003-c.md': doc('Reviewing', '0003 — Third'),
@@ -235,7 +235,7 @@ test('--json: each row in Agent Pulse’s colour; with a pulse, the board and ea
 test("--json: a collection on its own board takes that board's colour and item; the others Agent Pulse's", async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 4 },
+    boards: { pulse: 4 },
     files: {
       'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
       'marketing/2026-10-01-post.md': doc('Idea', 'A post'),
@@ -247,7 +247,7 @@ test("--json: a collection on its own board takes that board's colour and item; 
     file,
     JSON.stringify({
       ...manifest,
-      projects: {
+      boards: {
         pulse: 4,
         marketing: {
           number: 8,
@@ -276,7 +276,7 @@ test("--json: a collection on its own board takes that board's colour and item; 
 
 test('--json without an organization: no pulse, no item, even with a project declared', async (t) => {
   const root = await makeWorkspace(t, {
-    projects: { pulse: 4 },
+    boards: { pulse: 4 },
     files: { 'plans/0001-a.md': doc('Draft', '0001 — First') },
   })
   const { json } = await snapshot(['--cwd', root])

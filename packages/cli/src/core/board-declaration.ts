@@ -1,6 +1,6 @@
 import { RNESS_PATH } from './contained.ts'
 import { STATUSES } from './contract.ts'
-import { isPresetRevision, labelOf } from './presets.ts'
+import { isPresetRevision, labelOf, presetNameOf } from './presets.ts'
 
 /**
  * A board as `rness.json` declares it (spec 0031 §2.2): what a GitHub
@@ -118,7 +118,8 @@ const MARKING: readonly ActionName[] = [
 export type BoardHooks = Partial<Record<HookEvent, BoardAction[]>>
 
 export interface BoardDeclaration {
-  number: number
+  /** The project on the provider; null until `board push` creates it (spec 0033 §4). */
+  number: number | null
   /** The preset and revision it was made from, `agent-pulse/1`; null: none. */
   preset: string | null
   title: string | null
@@ -566,25 +567,64 @@ function readHooks(
   return hooks
 }
 
+/** The name of Agent Pulse in `boards`; any other names a directory of `.rness/`. */
+export const PULSE = 'pulse'
+
+/** The preset a board of that name is made from: Agent Pulse for `pulse`, else a collection's. */
+export const presetFor = (name: string): 'agent-pulse' | 'collection' =>
+  name === PULSE ? 'agent-pulse' : 'collection'
+
+const PRESET_NAME = /^[a-z][a-z0-9-]*(?:\/[1-9][0-9]*)?$/
+
 /**
- * One entry of `projects` that is an object: the board, read whole, or
- * {@link BoardRefused}. `knows` says which preset revisions there are: this
- * rness's, unless a caller brings its own.
+ * One entry of `boards` that is a string: a preset not created yet, by name
+ * or revision (spec 0033 §4) — `agent-pulse` for `pulse`, `collection` for
+ * any other name. The string as written, or {@link BoardRefused}.
+ */
+export function readPresetEntry(
+  name: string,
+  value: string,
+  knows: (ref: string) => boolean = isPresetRevision
+): string {
+  const at = `boards.${name}`
+  const preset = presetFor(name)
+  if (!PRESET_NAME.test(value))
+    throw new BoardRefused(at, `must name a preset, as "${preset}"`)
+  if (presetNameOf(value) !== preset)
+    throw new BoardRefused(
+      at,
+      name === PULSE
+        ? `names ${value}: ${PULSE} is made from ${preset}`
+        : `names ${value}: a collection's board is made from ${preset}`
+    )
+  if (value.includes('/') && !knows(value))
+    throw new BoardRefused(at, `names ${value}, which this rness does not have`)
+  return value
+}
+
+/**
+ * One entry of `boards` that is an object: the board, read whole, or
+ * {@link BoardRefused}; without `number` until `board push` creates it.
+ * `knows` says which preset revisions there are: this rness's, unless a
+ * caller brings its own.
  */
 export function parseBoard(
   name: string,
   value: unknown,
   knows: (ref: string) => boolean = isPresetRevision
 ): BoardDeclaration {
-  const at = `projects.${name}`
+  const at = `boards.${name}`
   if (!isRecord(value))
     throw new BoardRefused(
       at,
-      'must be an object, as { "number": 5, "collections": …, "views": … }'
+      'must be an object, as { "collections": …, "views": … }'
     )
   unknownKeys(value, BOARD_KEYS, at, 'a board')
-  const number = value['number']
-  if (typeof number !== 'number' || !Number.isInteger(number) || number < 1)
+  const number = value['number'] ?? null
+  if (
+    number !== null &&
+    (typeof number !== 'number' || !Number.isInteger(number) || number < 1)
+  )
     throw new BoardRefused(`${at}.number`, 'must be a project number')
   const preset = value['preset']
   if (

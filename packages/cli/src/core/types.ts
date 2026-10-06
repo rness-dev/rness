@@ -31,18 +31,21 @@ export interface ScopeEntry {
 export type ProviderName = 'github' | 'gitlab' | 'atlassian'
 
 /**
- * The GitHub Projects the pulse writes, by name (spec 0025 §2), in the order
- * `rness.json` gives them: each a board declared whole (spec 0031 §2.2), or
- * the project number alone of a board made before 0.21.0 — `pulse` is then
- * Agent Pulse, any other name a directory of `.rness/` — read as its preset
- * until `sync` writes it whole.
+ * A board of `boards`, by name (spec 0025 §2, 0033 §3), in the order
+ * `rness.json` gives them: one declared whole (spec 0031 §2.2), its
+ * `number` absent until `board push` creates it; a preset not created yet,
+ * by name (`agent-pulse`, `collection/1`; spec 0033 §4); or the project
+ * number alone of a board made before 0.21.0 — `pulse` is then Agent Pulse,
+ * any other name a directory of `.rness/` — read as its preset until `sync`
+ * writes it whole.
  */
-export type Projects = Record<string, number | BoardDeclaration>
+export type BoardEntry = number | string | BoardDeclaration
+export type Boards = Record<string, BoardEntry>
 
 /** A board `rness.json` declares and rness refuses: set aside, the rest read (spec 0031 §4). */
 export interface RefusedBoard {
   name: string
-  /** The refusal, its full key first: `"projects.marketing.views" must …`. */
+  /** The refusal, its full key first: `"boards.marketing.views" must …`. */
   reason: string
   /** The entry as written, kept when the file is written back. */
   source: unknown
@@ -56,7 +59,9 @@ export interface Manifest {
   /** The team's agents (spec 0011 §3.1); null when never asked, [] for none. */
   agents: string[] | null
   /** Null when none is declared. */
-  projects: Projects | null
+  boards: Boards | null
+  /** The key the boards were read from, when it is a former one: `sync` renames it `boards`. */
+  formerKey?: 'projects' | 'pulse'
   /** The boards refused, absent when there are none. */
   refused?: RefusedBoard[]
   repos: Record<string, RepoEntry>

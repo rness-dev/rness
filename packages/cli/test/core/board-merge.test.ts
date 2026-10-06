@@ -25,7 +25,7 @@ test('a value the team never changed takes the new revision; one it changed is k
   )
   assert.deepEqual(board['colors'], { Blocked: 'purple', Draft: 'blue' })
   assert.deepEqual(kept, [
-    'projects.pulse.colors.Draft: kept blue, agent-pulse/2 gives yellow',
+    'boards.pulse.colors.Draft: kept blue, agent-pulse/2 gives yellow',
   ])
 })
 
@@ -54,7 +54,7 @@ test('a key the revision adds is added; one it removes goes when the team never 
   )
   assert.deepEqual(kept.board['colors'], { Blocked: 'red', Draft: 'blue' })
   assert.deepEqual(kept.kept, [
-    'projects.pulse.colors.Draft: kept blue, agent-pulse/2 removes it',
+    'boards.pulse.colors.Draft: kept blue, agent-pulse/2 removes it',
   ])
 })
 
@@ -81,7 +81,7 @@ test("views merge by name: one added is added, one removed goes when untouched, 
     { name: 'Calendar', layout: 'roadmap', date: 'Due' },
   ])
   assert.deepEqual(kept, [
-    'projects.pulse.views.All.fields: kept ["Title","Status","Owner"], agent-pulse/2 gives ["Title","Status","Labels"]',
+    'boards.pulse.views.All.fields: kept ["Title","Status","Owner"], agent-pulse/2 gives ["Title","Status","Labels"]',
   ])
 })
 

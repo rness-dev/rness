@@ -103,7 +103,7 @@ export interface StatusSnapshot {
   tabs: SnapshotTab[]
 }
 
-/** A board of `projects`, read whole: its name and its declaration. */
+/** A board of `boards`, read whole: its name and its declaration. */
 export interface SnapshotBoard {
   name: string
   declaration: BoardDeclaration
@@ -115,7 +115,7 @@ async function boardsOf(
   rnessDir: string
 ): Promise<SnapshotBoard[]> {
   const boards: SnapshotBoard[] = []
-  for (const [name, entry] of Object.entries(manifest.projects ?? {}))
+  for (const [name, entry] of Object.entries(manifest.boards ?? {}))
     try {
       boards.push({
         name,
@@ -143,14 +143,18 @@ const SHIPPED_COLORS = presetTemplate(currentPreset('agent-pulse'), {
   collection: PULSE,
 })['colors'] as Record<string, OptionColor>
 
-/** The board of the pane's link: the one that takes all, else the first. */
+/**
+ * The board of the pane's link: the one that takes all, else the first,
+ * among those the provider has; a board not created yet has no link.
+ */
 function pulseOf(
   org: string | null,
   boards: readonly SnapshotBoard[]
 ): string | null {
+  const created = boards.filter((b) => b.declaration.number !== null)
   const main =
-    boards.find((b) => b.declaration.collections === 'all') ?? boards[0]
-  return org === null || main === undefined
+    created.find((b) => b.declaration.collections === 'all') ?? created[0]
+  return org === null || main?.declaration.number == null
     ? null
     : boardUrl(org, main.declaration.number)
 }
@@ -177,7 +181,7 @@ export function snapshotTabs(
             ? 'red'
             : (optionColor(colors, 'status', row.status) ?? 'gray'),
         link:
-          org === null || holder === undefined
+          org === null || holder?.declaration.number == null
             ? null
             : itemUrl(org, holder.declaration.number, row.path),
       })),

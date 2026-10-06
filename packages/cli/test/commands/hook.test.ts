@@ -822,16 +822,16 @@ test('pre-tool-use: straight quotes for the block’s curly ones are matched as 
 
 // --- what a session does to a board, declared (spec 0032, plan 0046) --------
 
-/** A workspace whose rness.json declares `projects` as given. */
+/** A workspace whose rness.json declares `boards` as given. */
 async function declaredBoards(
   t: TestContext,
-  projects: Record<string, unknown>,
+  boards: Record<string, unknown>,
   files: Record<string, string> = {}
 ) {
   const root = await workspace(t, files)
   const file = join(root, '.rness', 'rness.json')
   const manifest = JSON.parse(readFileSync(file, 'utf8'))
-  await writeFile(file, JSON.stringify({ ...manifest, projects }))
+  await writeFile(file, JSON.stringify({ ...manifest, boards }))
   return root
 }
 const pulseWith = (over: Record<string, unknown> = {}) => ({
@@ -921,7 +921,7 @@ test('a board rness.json refuses runs nothing, and the session start names it', 
   assert.deepEqual(spawned, [])
   assert.match(
     JSON.parse(r.out).systemMessage,
-    /"projects\.pulse\.views" must list at least one view/
+    /"boards\.pulse\.views" must list at least one view/
   )
 })
 

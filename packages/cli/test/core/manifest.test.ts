@@ -10,6 +10,7 @@ import {
   isWorkspaceClone,
   loadManifest,
   parseRepoSpec,
+  projectNumber,
   providerOf,
   workspaceName,
   writeManifest,
@@ -197,7 +198,7 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
     provider: null,
     org: null,
     agents: null,
-    projects: null,
+    boards: null,
     repos: { web: { url: 'https://github.com/acme/web.git' } },
     scopes: {
       web: { path: 'org/web', extends: [] },
@@ -224,7 +225,7 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
     provider: null,
     org: 'acme',
     agents: null,
-    projects: null,
+    boards: null,
     repos: {},
     scopes: {},
   })
@@ -237,7 +238,7 @@ test('writeManifest keeps the key order and omits empty extends and a null org',
     provider: null,
     org: 'acme',
     agents: null,
-    projects: null,
+    boards: null,
     repos: {},
     scopes: {},
   })
@@ -287,7 +288,7 @@ test('writeManifest puts agents after org, and writes [] too', async (t) => {
     provider: null,
     org: 'acme',
     agents: ['claude'],
-    projects: null,
+    boards: null,
     repos: {},
     scopes: {},
   })
@@ -300,7 +301,7 @@ test('writeManifest puts agents after org, and writes [] too', async (t) => {
     provider: null,
     org: null,
     agents: [],
-    projects: null,
+    boards: null,
     repos: {},
     scopes: {},
   })
@@ -336,8 +337,14 @@ test('provider: one of the three names, absent is null, anything else is an erro
   }
 })
 
-test('projects: a name to a project number; absent is null', async (t) => {
-  for (const [projects, expected] of [
+/** A board declared whole, without its number: not created yet (spec 0033 §4). */
+const UNNUMBERED = {
+  collections: { marketing: { statuses: 'found' } },
+  views: [{ name: 'Board', layout: 'board' }],
+}
+
+test('boards: a name to a project number or a preset; absent is null', async (t) => {
+  for (const [boards, expected] of [
     [undefined, null],
     [{ pulse: 4 }, { pulse: 4 }],
     [
@@ -345,30 +352,31 @@ test('projects: a name to a project number; absent is null', async (t) => {
       { pulse: 4, marketing: 5 },
     ],
     [{ marketing: 5 }, { marketing: 5 }],
+    [{ pulse: 'agent-pulse' }, { pulse: 'agent-pulse' }],
+    [
+      { pulse: 'agent-pulse/1', marketing: 'collection' },
+      { pulse: 'agent-pulse/1', marketing: 'collection' },
+    ],
   ] as const) {
-    const d = await fixture({ contract: 1, projects, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 1, boards, repos: {}, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
-    assert.deepEqual((await loadManifest(d)).projects, expected)
+    assert.deepEqual((await loadManifest(d)).boards, expected)
   }
 })
 
-test('projects keeps the order it is written in', async (t) => {
+test('boards keeps the order it is written in', async (t) => {
   const d = await fixture({
     contract: 1,
-    projects: { marketing: 5, pulse: 4, roadmap: 6 },
+    boards: { marketing: 5, pulse: 4, roadmap: 6 },
     repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  const projects = (await loadManifest(d)).projects
-  assert.deepEqual(Object.keys(projects ?? {}), [
-    'marketing',
-    'pulse',
-    'roadmap',
-  ])
+  const boards = (await loadManifest(d)).boards
+  assert.deepEqual(Object.keys(boards ?? {}), ['marketing', 'pulse', 'roadmap'])
 })
 
-test('the former pulse: { "project": n } reads as projects.pulse (spec 0025 §2)', async (t) => {
+test('the former pulse: { "project": n } reads as boards.pulse (spec 0025 §2), its key said', async (t) => {
   const d = await fixture({
     contract: 1,
     pulse: { project: 3 },
@@ -376,11 +384,34 @@ test('the former pulse: { "project": n } reads as projects.pulse (spec 0025 §2)
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  assert.deepEqual((await loadManifest(d)).projects, { pulse: 3 })
+  const m = await loadManifest(d)
+  assert.deepEqual(m.boards, { pulse: 3 })
+  assert.equal(m.formerKey, 'pulse')
 })
 
-test('projects: anything but names to distinct positive integers is an error', async (t) => {
-  for (const projects of [
+test('the former projects reads as boards (spec 0033 §3), its key said; boards says none', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    projects: { pulse: 4, marketing: 'collection' },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const m = await loadManifest(d)
+  assert.deepEqual(m.boards, { pulse: 4, marketing: 'collection' })
+  assert.equal(m.formerKey, 'projects')
+  const e = await fixture({
+    contract: 1,
+    boards: { pulse: 4 },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(e), { recursive: true, force: true }))
+  assert.equal((await loadManifest(e)).formerKey, undefined)
+})
+
+test('boards: anything but names to boards on distinct projects is an error', async (t) => {
+  for (const boards of [
     3,
     null,
     [],
@@ -388,22 +419,74 @@ test('projects: anything but names to distinct positive integers is an error', a
     { pulse: 0 },
     { pulse: -1 },
     { pulse: 1.5 },
-    { pulse: '3' },
+    { pulse: true },
     { pulse: 4, marketing: 4 },
     { '../x': 5 },
     { '.hidden': 5 },
     { 'a b': 5 },
     { '': 5 },
   ]) {
-    const d = await fixture({ contract: 1, projects, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 1, boards, repos: {}, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     await assert.rejects(
       () => loadManifest(d),
       new Error(
-        `rness.json: "projects" must map names to distinct project numbers, as { "pulse": 4, "marketing": 5 } (got ${JSON.stringify(projects)})`
+        `rness.json: "boards" must map names to boards on distinct projects, as { "pulse": "agent-pulse", "marketing": 5 } (got ${JSON.stringify(boards)})`
       )
     )
   }
+})
+
+test('boards: a preset not of its name, or not of this rness, is refused, the others read (spec 0033 §4)', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    boards: {
+      pulse: 'collection',
+      marketing: 'agent-pulse',
+      research: 'collection/9',
+      roadmap: '3',
+      specs: 'collection/1',
+    },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const m = await loadManifest(d)
+  assert.deepEqual(m.boards, { specs: 'collection/1' })
+  assert.deepEqual(
+    m.refused?.map((r) => [r.reason, r.source]),
+    [
+      [
+        '"boards.pulse" names collection: pulse is made from agent-pulse',
+        'collection',
+      ],
+      [
+        '"boards.marketing" names agent-pulse: a collection\'s board is made from collection',
+        'agent-pulse',
+      ],
+      [
+        '"boards.research" names collection/9, which this rness does not have',
+        'collection/9',
+      ],
+      ['"boards.roadmap" must name a preset, as "collection"', '3'],
+    ]
+  )
+})
+
+test('boards: a board declared without its number is not created yet; the numbers of the others stay distinct', async (t) => {
+  const d = await fixture({
+    contract: 1,
+    boards: { pulse: 5, marketing: UNNUMBERED, research: UNNUMBERED },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const board = (await loadManifest(d)).boards?.['marketing']
+  assert.ok(typeof board === 'object')
+  assert.equal(board.number, null)
+  assert.equal(projectNumber(board), null)
+  assert.equal(projectNumber('collection'), null)
+  assert.equal(projectNumber(5), 5)
 })
 
 test('the former pulse: anything but { "project": <positive integer> } is an error', async (t) => {
@@ -428,24 +511,31 @@ test('the former pulse: anything but { "project": <positive integer> } is an err
   }
 })
 
-test('pulse and projects at once are refused', async (t) => {
-  const d = await fixture({
-    contract: 1,
-    pulse: { project: 3 },
-    projects: { pulse: 3 },
-    repos: {},
-    scopes: {},
-  })
-  t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  await assert.rejects(
-    () => loadManifest(d),
-    new Error(
-      'rness.json: "pulse" and "projects" at once: keep "projects" only'
+test('more than one of boards, projects and pulse at once is refused, naming them', async (t) => {
+  for (const [keys, message] of [
+    [
+      { projects: { pulse: 3 }, pulse: { project: 3 } },
+      '"projects" and "pulse" at once',
+    ],
+    [
+      { boards: { pulse: 3 }, projects: { pulse: 3 } },
+      '"boards" and "projects" at once',
+    ],
+    [
+      { boards: { pulse: 3 }, projects: { pulse: 3 }, pulse: { project: 3 } },
+      '"boards" and "projects" and "pulse" at once',
+    ],
+  ] as const) {
+    const d = await fixture({ contract: 1, ...keys, repos: {}, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      new Error(`rness.json: ${message}: keep "boards" only`)
     )
-  )
+  }
 })
 
-test('writeManifest writes provider after contract and projects after agents', async (t) => {
+test('writeManifest writes provider after contract and boards after agents', async (t) => {
   const d = await fixture({ contract: 1, repos: {}, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const manifest: Manifest = {
@@ -453,7 +543,7 @@ test('writeManifest writes provider after contract and projects after agents', a
     provider: 'github',
     org: 'acme',
     agents: ['claude'],
-    projects: { pulse: 3, marketing: 5 },
+    boards: { pulse: 3, marketing: 5 },
     repos: {},
     scopes: {},
   }
@@ -465,7 +555,7 @@ test('writeManifest writes provider after contract and projects after agents', a
   "provider": "github",
   "org": "acme",
   "agents": ["claude"],
-  "projects": { "pulse": 3, "marketing": 5 },
+  "boards": { "pulse": 3, "marketing": 5 },
   "repos": {
   },
   "scopes": {
@@ -474,10 +564,10 @@ test('writeManifest writes provider after contract and projects after agents', a
 `
   )
   assert.deepEqual(await loadManifest(d), manifest)
-  await writeManifest(d, { ...manifest, provider: null, projects: null })
+  await writeManifest(d, { ...manifest, provider: null, boards: null })
   const text = await readFile(join(d, 'rness.json'), 'utf8')
   assert.equal(text.includes('provider'), false)
-  assert.equal(text.includes('projects'), false)
+  assert.equal(text.includes('boards'), false)
 })
 
 /** A board declared whole (spec 0031 §2.2), as small as one can be. */
@@ -487,56 +577,56 @@ const BOARD = {
   views: [{ name: 'Board', layout: 'board' }],
 }
 
-test('projects: a board declared whole is read as one, its source kept; a number stays a number', async (t) => {
+test('boards: a board declared whole is read as one, its source kept; a number stays a number', async (t) => {
   const d = await fixture({
     contract: 1,
-    projects: { pulse: 4, marketing: BOARD },
+    boards: { pulse: 4, marketing: BOARD },
     repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  const { projects, refused } = await loadManifest(d)
-  assert.equal(projects?.['pulse'], 4)
-  const board = projects?.['marketing']
+  const { boards, refused } = await loadManifest(d)
+  assert.equal(boards?.['pulse'], 4)
+  const board = boards?.['marketing']
   assert.ok(typeof board === 'object')
   assert.equal(board.number, 5)
   assert.deepEqual(board.source, BOARD)
   assert.equal(refused, undefined)
 })
 
-test('projects: a board refused is set aside with its reason, the others and the rest of rness.json read', async (t) => {
+test('boards: a board refused is set aside with its reason, the others and the rest of rness.json read', async (t) => {
   const bad = { ...BOARD, number: 6, views: [] }
   const d = await fixture({
     contract: 1,
     org: 'acme',
-    projects: { pulse: 4, marketing: bad, research: { ...BOARD, number: 7 } },
+    boards: { pulse: 4, marketing: bad, research: { ...BOARD, number: 7 } },
     repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const m = await loadManifest(d)
   assert.equal(m.org, 'acme')
-  assert.deepEqual(Object.keys(m.projects ?? {}), ['pulse', 'research'])
+  assert.deepEqual(Object.keys(m.boards ?? {}), ['pulse', 'research'])
   assert.deepEqual(m.refused, [
     {
       name: 'marketing',
-      reason: '"projects.marketing.views" must list at least one view',
+      reason: '"boards.marketing.views" must list at least one view',
       source: bad,
     },
   ])
 })
 
-test('projects: two boards on one project number are refused, whatever their form', async (t) => {
+test('boards: two boards on one project number are refused, whatever their form', async (t) => {
   const d = await fixture({
     contract: 1,
-    projects: { pulse: 5, marketing: BOARD },
+    boards: { pulse: 5, marketing: BOARD },
     repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   await assert.rejects(
     () => loadManifest(d),
-    /^Error: rness\.json: "projects" must map names to distinct project numbers/
+    /^Error: rness\.json: "boards" must map names to boards on distinct projects/
   )
 })
 
@@ -544,7 +634,7 @@ test('writeManifest: a board declared whole on several lines, numbers as they ar
   const bad = { ...BOARD, number: 6, views: [] }
   const d = await fixture({
     contract: 1,
-    projects: { pulse: 4, marketing: BOARD, research: bad },
+    boards: { pulse: 4, marketing: BOARD, research: bad },
     repos: {},
     scopes: {},
   })
@@ -555,7 +645,7 @@ test('writeManifest: a board declared whole on several lines, numbers as they ar
     await readFile(join(d, 'rness.json'), 'utf8'),
     `{
   "contract": 1,
-  "projects": {
+  "boards": {
     "pulse": 4,
     "marketing": {
       "number": 5,
@@ -591,7 +681,7 @@ test('writeManifest: a board declared whole on several lines, numbers as they ar
   assert.deepEqual(await loadManifest(d), read)
 })
 
-test('a manifest read with the former pulse is written back with projects', async (t) => {
+test('a manifest read with the former pulse or projects is written back with boards', async (t) => {
   const d = await fixture({
     contract: 1,
     org: 'acme',
@@ -602,8 +692,22 @@ test('a manifest read with the former pulse is written back with projects', asyn
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   await writeManifest(d, await loadManifest(d))
   const text = await readFile(join(d, 'rness.json'), 'utf8')
-  assert.equal(text.includes('"projects": { "pulse": 3 },'), true)
+  assert.equal(text.includes('"boards": { "pulse": 3 },'), true)
   assert.equal(text.includes('"pulse": {'), false)
+  const e = await fixture({
+    contract: 1,
+    projects: { pulse: 3, marketing: 'collection' },
+    repos: {},
+    scopes: {},
+  })
+  t.after(() => rm(dirname(e), { recursive: true, force: true }))
+  await writeManifest(e, await loadManifest(e))
+  const written = await readFile(join(e, 'rness.json'), 'utf8')
+  assert.equal(
+    written.includes('"boards": { "pulse": 3, "marketing": "collection" },'),
+    true
+  )
+  assert.equal(written.includes('projects'), false)
 })
 
 test('providerOf: the key wins, else the first repository host, else github', () => {
@@ -612,7 +716,7 @@ test('providerOf: the key wins, else the first repository host, else github', ()
     provider: null,
     org: null,
     agents: null,
-    projects: null,
+    boards: null,
     repos: {},
     scopes: {},
   }

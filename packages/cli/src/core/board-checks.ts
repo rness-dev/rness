@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { contractOf } from './board-declaration.ts'
+import { PULSE, contractOf } from './board-declaration.ts'
 import { readmeDeclarations } from './board-migration.ts'
 import { containedPath } from './contained.ts'
 import type { Manifest } from './types.ts'
@@ -22,7 +22,8 @@ async function isDirectory(path: string): Promise<boolean> {
  * a board `rness.json` refused; a collection that is no directory of
  * `.rness/`, or one never a collection; a collection on two boards; a
  * `readme` or `updates` not there or out of `.rness`; a README that still
- * declares what `rness.json` declares now. One line each.
+ * declares what `rness.json` declares now; a preset not created yet named
+ * after no collection (spec 0033 §4). One line each.
  */
 export async function checkBoards(
   rnessDir: string,
@@ -31,9 +32,22 @@ export async function checkBoards(
   const problems = (manifest.refused ?? []).map((r) => r.reason)
   const holders = new Map<string, string>()
   const all: string[] = []
-  for (const [name, entry] of Object.entries(manifest.projects ?? {})) {
+  const isCollection = async (dir: string): Promise<boolean> =>
+    !NEVER.has(dir) &&
+    (contractOf(dir) !== undefined || (await isDirectory(join(rnessDir, dir))))
+  for (const [name, entry] of Object.entries(manifest.boards ?? {})) {
     if (typeof entry === 'number') continue
-    const at = `projects.${name}`
+    const at = `boards.${name}`
+    if (typeof entry === 'string') {
+      // A preset's name: Agent Pulse takes all, a collection's board its own.
+      if (name === PULSE) all.push(name)
+      else if (!(await isCollection(name)))
+        problems.push(
+          `"${at}" names no collection of .rness: a collection's board is named after its directory`
+        )
+      else holders.set(name, name)
+      continue
+    }
     if (entry.collections === 'all') all.push(name)
     else
       for (const collection of Object.keys(entry.collections)) {
@@ -76,7 +90,7 @@ export async function checkBoards(
   }
   if (all.length > 1)
     problems.push(
-      `${all.map((n) => `"projects.${n}"`).join(' and ')} each take every collection ("all"): a collection is on one board at most`
+      `${all.map((n) => `"boards.${n}"`).join(' and ')} each take every collection ("all"): a collection is on one board at most`
     )
   return problems
 }

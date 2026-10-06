@@ -24,7 +24,7 @@ test('the scaffold manifest is a valid empty workspace', async () => {
     provider: null,
     org: null,
     agents: null,
-    projects: null,
+    boards: null,
     repos: {},
     scopes: {},
   })

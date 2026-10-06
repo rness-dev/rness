@@ -117,7 +117,7 @@ export async function createBlank(input: {
       provider: null,
       org: null,
       agents,
-      projects: null,
+      boards: null,
       repos: {},
       scopes: {},
     },

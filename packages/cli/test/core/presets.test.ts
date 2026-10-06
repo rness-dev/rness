@@ -130,7 +130,7 @@ test('a board naming a revision this rness does not have is refused', () => {
       }),
     {
       message:
-        '"projects.pulse.preset" names agent-pulse/9, which this rness does not have',
+        '"boards.pulse.preset" names agent-pulse/9, which this rness does not have',
     }
   )
 })

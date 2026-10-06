@@ -761,7 +761,7 @@ export async function createCommand(
       provider: chosenProvider,
       org,
       agents: null,
-      projects: null,
+      boards: null,
       repos: {},
       scopes: {},
     }

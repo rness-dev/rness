@@ -280,7 +280,7 @@ export async function syncCommand(
     if (!check && opts.scope === undefined) {
       const boards = await migrateBoards(ws.rnessDir, manifest)
       if (boards.changed) {
-        manifest.projects = boards.projects
+        manifest.boards = boards.boards
         await writeManifest(ws.rnessDir, manifest)
         for (const [rel, text] of boards.readmes)
           await writeFileAtomic(join(ws.rnessDir, ...rel.split('/')), text)

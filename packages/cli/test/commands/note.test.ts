@@ -119,8 +119,8 @@ async function journaled(
   }
   const file = join(root, '.rness', 'rness.json')
   const manifest = JSON.parse(await readFile(file, 'utf8'))
-  manifest.projects.pulse.hooks = {
-    ...manifest.projects.pulse.hooks,
+  manifest.boards.pulse.hooks = {
+    ...manifest.boards.pulse.hooks,
     'session-start': [
       'mark-in-progress',
       {

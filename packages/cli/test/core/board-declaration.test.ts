@@ -90,56 +90,59 @@ test('defaults: a collection labelled after its directory; "all"; a front-matter
   })
 })
 
-test('the board and its number', () => {
+test('the board and its number; without one, not created yet (spec 0033 §4)', () => {
   refused(
     7,
-    '"projects.marketing" must be an object, as { "number": 5, "collections": …, "views": … }'
+    '"boards.marketing" must be an object, as { "collections": …, "views": … }'
   )
+  const { number: _, ...unnumbered } = MARKETING
+  assert.equal(parseBoard('marketing', unnumbered).number, null)
+  assert.equal(parseBoard('marketing', MARKETING).number, MARKETING.number)
   refused(
     with_({ number: 0 }),
-    '"projects.marketing.number" must be a project number'
+    '"boards.marketing.number" must be a project number'
   )
   refused(
     with_({ number: 'five' }),
-    '"projects.marketing.number" must be a project number'
+    '"boards.marketing.number" must be a project number'
   )
   refused(
     with_({ preset: 'agent pulse' }),
-    '"projects.marketing.preset" must name a preset and its revision, as agent-pulse/1'
+    '"boards.marketing.preset" must name a preset and its revision, as agent-pulse/1'
   )
 })
 
 test('an unknown key, at any level, named in full', () => {
   refused(
     with_({ sort: 'Title' }),
-    '"projects.marketing.sort" is not a key of a board'
+    '"boards.marketing.sort" is not a key of a board'
   )
   refused(
     with_({
       collections: { marketing: { label: 'M', statuses: 'found', color: 1 } },
     }),
-    '"projects.marketing.collections.marketing.color" is not a key of a collection'
+    '"boards.marketing.collections.marketing.color" is not a key of a collection'
   )
   refused(
     with_({
       fields: { Reach: { type: 'number', from: 'reach', unit: 'k' } },
     }),
-    '"projects.marketing.fields.Reach.unit" is not a key of a field'
+    '"boards.marketing.fields.Reach.unit" is not a key of a field'
   )
   refused(
     with_({ views: [{ name: 'B', layout: 'board', sort: 'Title' }] }),
-    '"projects.marketing.views[0].sort" is not a key of a view'
+    '"boards.marketing.views[0].sort" is not a key of a view'
   )
 })
 
 test('collections', () => {
   refused(
     with_({ collections: {} }),
-    '"projects.marketing.collections" must name at least one collection, or be "all"'
+    '"boards.marketing.collections" must name at least one collection, or be "all"'
   )
   refused(
     with_({ collections: { marketing: { statuses: 'contract' } } }),
-    '"projects.marketing.collections.marketing.statuses" is "contract" only for adr, specs and plans'
+    '"boards.marketing.collections.marketing.statuses" is "contract" only for adr, specs and plans'
   )
   refused(
     with_({
@@ -150,15 +153,15 @@ test('collections', () => {
       },
       views: [{ name: 'Plans', layout: 'board' }],
     }),
-    '"projects.marketing.collections.plans.statuses" must hold every status of the contract: Abandoned is missing'
+    '"boards.marketing.collections.plans.statuses" must hold every status of the contract: Abandoned is missing'
   )
   refused(
     with_({ collections: { marketing: { statuses: 'some' } } }),
-    '"projects.marketing.collections.marketing.statuses" must be "contract", "found" or a list of statuses'
+    '"boards.marketing.collections.marketing.statuses" must be "contract", "found" or a list of statuses'
   )
   refused(
     with_({ collections: { '.git': { statuses: 'found' } } }),
-    '"projects.marketing.collections..git" must name a directory of .rness'
+    '"boards.marketing.collections..git" must name a directory of .rness'
   )
   // Reordered, every status there: taken.
   const b = parseBoard(
@@ -190,29 +193,29 @@ test('fields', () => {
   for (const name of ['Path', 'Status', 'Title', 'Sub-issues progress'])
     refused(
       with_({ fields: { [name]: { type: 'text', from: 'x' } } }),
-      `"projects.marketing.fields.${name}" is a field of rness or of GitHub: name it otherwise`
+      `"boards.marketing.fields.${name}" is a field of rness or of GitHub: name it otherwise`
     )
   refused(
     with_({ fields: { Owner: { type: 'person', from: 'owner' } } }),
-    '"projects.marketing.fields.Owner.type" must be one of text, date, select, number'
+    '"boards.marketing.fields.Owner.type" must be one of text, date, select, number'
   )
   refused(
     with_({ fields: { Owner: { type: 'text', from: '$owner' } } }),
-    '"projects.marketing.fields.Owner.from" names $owner, which rness does not know: $collection, $status, $agent, $session, $sessions or $id'
+    '"boards.marketing.fields.Owner.from" names $owner, which rness does not know: $collection, $status, $agent, $session, $sessions or $id'
   )
   refused(
     with_({ fields: { Owner: { type: 'text' } } }),
-    '"projects.marketing.fields.Owner.from" must be a front-matter key, a $ source, or a list of them'
+    '"boards.marketing.fields.Owner.from" must be a front-matter key, a $ source, or a list of them'
   )
   refused(
     with_({
       fields: { Agent: { type: 'select', from: '$agent', options: ['busy'] } },
     }),
-    '"projects.marketing.fields.Agent" is a select from $agent: it needs the option working'
+    '"boards.marketing.fields.Agent" is a select from $agent: it needs the option working'
   )
   refused(
     with_({ fields: { Agent: { type: 'text', from: '$agent' } } }),
-    '"projects.marketing.fields.Agent" is a select from $agent: it needs the option working'
+    '"boards.marketing.fields.Agent" is a select from $agent: it needs the option working'
   )
   refused(
     with_({
@@ -220,14 +223,14 @@ test('fields', () => {
         marketing: { statuses: 'found', field: 'Kind' },
       },
     }),
-    '"projects.marketing.collections.marketing.field" names Kind, which fields declares too'
+    '"boards.marketing.collections.marketing.field" names Kind, which fields declares too'
   )
 })
 
 test('views', () => {
   refused(
     with_({ views: [] }),
-    '"projects.marketing.views" must list at least one view'
+    '"boards.marketing.views" must list at least one view'
   )
   refused(
     with_({
@@ -236,64 +239,64 @@ test('views', () => {
         { name: 'B', layout: 'table' },
       ],
     }),
-    '"projects.marketing.views[1].name" is B again: a view\'s name is unique on its board'
+    '"boards.marketing.views[1].name" is B again: a view\'s name is unique on its board'
   )
   refused(
     with_({ views: [{ name: 'B', layout: 'list' }] }),
-    '"projects.marketing.views[0].layout" must be board, table or roadmap'
+    '"boards.marketing.views[0].layout" must be board, table or roadmap'
   )
   refused(
     with_({ views: [{ name: 'T', layout: 'table', columns: 'Status' }] }),
-    '"projects.marketing.views[0].columns" is a key of a board view only'
+    '"boards.marketing.views[0].columns" is a key of a board view only'
   )
   refused(
     with_({ views: [{ name: 'B', layout: 'board', date: 'Publish date' }] }),
-    '"projects.marketing.views[0].date" is a key of a roadmap view only'
+    '"boards.marketing.views[0].date" is a key of a roadmap view only'
   )
   refused(
     with_({ views: [{ name: 'B', layout: 'board', fields: ['Title'] }] }),
-    '"projects.marketing.views[0].fields" is a key of a table view only'
+    '"boards.marketing.views[0].fields" is a key of a table view only'
   )
   refused(
     with_({ views: [{ name: 'B', layout: 'board', columns: 'Reach' }] }),
-    '"projects.marketing.views[0].columns" must name a single-select field: Status, a collection\'s field or a declared select'
+    '"boards.marketing.views[0].columns" must name a single-select field: Status, a collection\'s field or a declared select'
   )
   refused(
     with_({ views: [{ name: 'T', layout: 'table', fields: ['Owner'] }] }),
-    '"projects.marketing.views[0].fields" names Owner, which is no field of this board'
+    '"boards.marketing.views[0].fields" names Owner, which is no field of this board'
   )
   refused(
     with_({ views: [{ name: 'C', layout: 'roadmap' }] }),
-    '"projects.marketing.views[0].date" must name a date field'
+    '"boards.marketing.views[0].date" must name a date field'
   )
   refused(
     with_({ views: [{ name: 'C', layout: 'roadmap', date: 'Kind' }] }),
-    '"projects.marketing.views[0].date" must name a date field'
+    '"boards.marketing.views[0].date" must name a date field'
   )
   refused(
     with_({ views: [{ name: 'B', layout: 'board', collection: 'adr' }] }),
-    '"projects.marketing.views[0].collection" names adr, which is not on this board'
+    '"boards.marketing.views[0].collection" names adr, which is not on this board'
   )
   refused(
     with_({
       fields: {},
       views: [{ name: 'B', layout: 'board', collection: 'marketing' }],
     }),
-    '"projects.marketing.views[0].collection" needs a select field from $collection to filter by'
+    '"boards.marketing.views[0].collection" needs a select field from $collection to filter by'
   )
 })
 
 test('colours', () => {
   refused(
     with_({ colors: { Idea: 'teal' } }),
-    '"projects.marketing.colors.Idea" must be one of gray, blue, green, yellow, orange, red, pink, purple'
+    '"boards.marketing.colors.Idea" must be one of gray, blue, green, yellow, orange, red, pink, purple'
   )
 })
 
 test('labels', () => {
   refused(
     with_({ labels: '' }),
-    '"projects.marketing.labels" must be directory or a front-matter key'
+    '"boards.marketing.labels" must be directory or a front-matter key'
   )
 })
 
@@ -311,7 +314,7 @@ test("readme and updates: a path within .rness, never out of it — rness.json i
     ])
       refused(
         with_({ [key]: path }),
-        `"projects.marketing.${key}" must be a path within .rness, as ${example}`
+        `"boards.marketing.${key}" must be a path within .rness, as ${example}`
       )
 })
 
@@ -369,37 +372,37 @@ test('hooks: each action at its event, a name or an object, the defaults filled'
 test('hooks: every refusal by its full key', () => {
   refused(
     hooked({ start: ['mark'] }),
-    '"projects.marketing.hooks.start" is not an event: session-start, edit or session-end'
+    '"boards.marketing.hooks.start" is not an event: session-start, edit or session-end'
   )
   refused(
     hooked({ edit: 'mark' }),
-    '"projects.marketing.hooks.edit" must list actions'
+    '"boards.marketing.hooks.edit" must list actions'
   )
   refused(
     hooked({ edit: ['notify'] }),
-    '"projects.marketing.hooks.edit[0]" names notify, which is no action: mark, mark-in-progress, clear-marks, journal or journal-summary'
+    '"boards.marketing.hooks.edit[0]" names notify, which is no action: mark, mark-in-progress, clear-marks, journal or journal-summary'
   )
   refused(
     hooked({ 'session-end': ['mark'] }),
-    '"projects.marketing.hooks.session-end[0]": mark is an action of edit, not of session-end'
+    '"boards.marketing.hooks.session-end[0]": mark is an action of edit, not of session-end'
   )
   refused(
     hooked({ edit: [{ action: 'mark', run: './notify.sh' }] }),
-    '"projects.marketing.hooks.edit[0].run" is not a parameter of mark'
+    '"boards.marketing.hooks.edit[0].run" is not a parameter of mark'
   )
   refused(
     hooked({ edit: ['mark', 'mark'] }),
-    '"projects.marketing.hooks.edit[1]": mark is there already'
+    '"boards.marketing.hooks.edit[1]": mark is there already'
   )
   refused(
     hooked({ edit: ['mark'] }, {}),
-    '"projects.marketing.hooks.edit[0]": mark needs a select field from $agent with the option working'
+    '"boards.marketing.hooks.edit[0]": mark needs a select field from $agent with the option working'
   )
   refused(
     hooked({
       'session-start': [{ action: 'mark-in-progress', statuses: [] }],
     }),
-    '"projects.marketing.hooks.session-start[0].statuses" must list statuses'
+    '"boards.marketing.hooks.session-start[0].statuses" must list statuses'
   )
 })
 
@@ -435,21 +438,21 @@ test('hooks: journal and journal-summary refused by their full key', () => {
   }
   refused(
     with_({ ...plans, hooks: { 'session-start': ['journal'] } }),
-    '"projects.marketing.hooks.session-start[0].to" must be plan or repo'
+    '"boards.marketing.hooks.session-start[0].to" must be plan or repo'
   )
   refused(
     with_({
       ...plans,
       hooks: { 'session-start': [{ action: 'journal', to: 'repo', limit: 0 }] },
     }),
-    '"projects.marketing.hooks.session-start[0].limit" must be a number of notes, 1 or more'
+    '"boards.marketing.hooks.session-start[0].limit" must be a number of notes, 1 or more'
   )
   refused(
     with_({ hooks: { 'session-start': [{ action: 'journal', to: 'plan' }] } }),
-    '"projects.marketing.hooks.session-start[0]": journal needs the plans on its board'
+    '"boards.marketing.hooks.session-start[0]": journal needs the plans on its board'
   )
   refused(
     with_({ ...plans, hooks: { 'session-end': ['journal-summary'] } }),
-    '"projects.marketing.hooks.session-end[0]": journal-summary needs journal at session-start on its board'
+    '"boards.marketing.hooks.session-end[0]": journal-summary needs journal at session-start on its board'
   )
 })

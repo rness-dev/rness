@@ -155,10 +155,15 @@ async function missingAccess(provider: Provider): Promise<string | null> {
   return scopes?.includes(PROJECT_SCOPE) === true ? null : NEEDS_SCOPE
 }
 
-/** A declared project, opened: its name in `projects`, its declaration, its board. */
+/** A board the provider has: its declaration names its project. */
+export type Created = BoardDeclaration & { number: number }
+
+const isCreated = (d: BoardDeclaration): d is Created => d.number !== null
+
+/** A declared project, opened: its name in `boards`, its declaration, its board. */
 export interface Declared {
   name: string
-  declaration: BoardDeclaration
+  declaration: Created
   board: Board
 }
 
@@ -172,20 +177,22 @@ const namedCollections = (d: BoardDeclaration): string[] =>
 
 /**
  * Every declared board, read whole (a number is its preset): those that
- * name their collections first, in the order of `projects`, one that takes
+ * name their collections first, in the order of `boards`, one that takes
  * all last — a document moving leaves it only once its own board holds it
  * (spec 0025 §3). A board `rness.json` refuses is said and skipped.
  */
 async function declarations(
   c: Context,
   ui?: Ui
-): Promise<{ name: string; declaration: BoardDeclaration }[]> {
-  const projects = c.manifest.projects ?? {}
+): Promise<{ name: string; declaration: Created }[]> {
+  const boards = c.manifest.boards ?? {}
   for (const r of c.manifest.refused ?? [])
     ui?.line('skipped', `${r.name}: ${r.reason}`)
-  const all: { name: string; declaration: BoardDeclaration }[] = []
-  for (const [name, entry] of Object.entries(projects)) {
+  const all: { name: string; declaration: Created }[] = []
+  for (const [name, entry] of Object.entries(boards)) {
     const declaration = await declaredBoard(name, entry, c.rnessDir)
+    // Not on the provider yet: `board push` creates it (spec 0033 §4).
+    if (!isCreated(declaration)) continue
     // A README that still declares what rness.json declares now (spec 0031
     // §6): this board waits until `rness sync` moves it.
     const still: string[] = []
@@ -211,7 +218,7 @@ async function declarations(
 
 /** Every declared board, opened; `sync` and `mark` need one. */
 export async function declaredBoards(c: Context, ui?: Ui): Promise<Declared[]> {
-  if (c.manifest.projects === null)
+  if (c.manifest.boards === null)
     throw new Error(
       c.manifest.refused === undefined
         ? 'no pulse declared — rness pulse create'
@@ -608,7 +615,7 @@ async function syncBoard(
 
 /**
  * Every declared project, in turn (spec 0025 §3); `sayLayout` says what a
- * project's layout gained, by the project's name in `projects`.
+ * project's layout gained, by the board's name in `boards`.
  */
 async function syncAll(
   c: Context,
@@ -643,13 +650,15 @@ export async function pulseCreateCommand(
     const wait = waitSaid(opts, ui)
     let c = await context(opts, wait)
     const name = opts.collection ?? PULSE
-    const declared = c.manifest.projects?.[name]
+    const declared = c.manifest.boards?.[name]
     if (opts.collection === PULSE)
       throw new Error('"pulse" names Agent Pulse: rness pulse create')
-    if (declared !== undefined)
+    if (declared !== undefined) {
+      const number = projectNumber(declared)
       throw new Error(
-        `already declared: ${boardUrl(c.org, projectNumber(declared))} — rness pulse sync`
+        `already declared: ${number === null ? 'not created yet' : boardUrl(c.org, number)} — rness pulse sync`
       )
+    }
     const refused = c.manifest.refused?.find((r) => r.name === name)
     if (refused !== undefined)
       throw new Error(`already declared, and refused: ${refused.reason}`)
@@ -727,8 +736,8 @@ export async function pulseCreateCommand(
     const manifest = {
       ...c.manifest,
       provider: detected,
-      projects: {
-        ...c.manifest.projects,
+      boards: {
+        ...c.manifest.boards,
         [name]: parseBoard(name, { ...source, number: board.number }),
       },
     }
@@ -967,7 +976,7 @@ export interface RunOptions {
 
 /**
  * Hidden, for the hooks (spec 0032 §4): the actions each board declares at
- * `event`, in the order of `projects`, under one lock per workspace. It
+ * `event`, in the order of `boards`, under one lock per workspace. It
  * never prompts; a failure is recorded, naming each board and action that
  * failed, for the next session start to say. The exit is 0.
  */

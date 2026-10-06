@@ -150,7 +150,7 @@ export function mergeBoard(
   theirs: Record<string, Json>,
   ref: string
 ): { board: Record<string, Json>; kept: string[] } {
-  const at = `projects.${name}`
+  const at = `boards.${name}`
   const kept: Kept = []
   const { number, preset: _, ...team } = ours
   const keys = [

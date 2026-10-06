@@ -14,14 +14,16 @@ import {
   presetNameOf,
   presetTemplate,
 } from './presets.ts'
-import type { Manifest, Projects } from './types.ts'
+import type { Boards, Manifest } from './types.ts'
 
 /**
  * What `sync` does to the boards of `rness.json` (plan 0045), in the copy
- * an upgrade runs: a board declared by its number (0.20 and before) written
- * whole; what a collection's `README.md` declared (spec 0025 §4) moved into
- * its board (spec 0031 §6); a newer revision of a preset merged into the
- * boards made from an older one. `upgrade` commits the result.
+ * an upgrade runs: `projects`, or the older `pulse`, renamed `boards` (spec
+ * 0033 §3); a board declared by its number (0.20 and before) written whole;
+ * what a collection's `README.md` declared (spec 0025 §4) moved into its
+ * board (spec 0031 §6); a newer revision of a preset merged into the boards
+ * made from an older one. A preset not created yet is left as written:
+ * `board push` writes it whole. `upgrade` commits the result.
  */
 
 /** The keys of a collection's README that `rness.json` declares now. */
@@ -117,7 +119,7 @@ const normalField = (value: unknown): unknown => asBoardField(value)
 export interface Migration {
   /** Whether rness.json or a README is to be written. */
   changed: boolean
-  projects: Projects | null
+  boards: Boards | null
   /** The READMEs to write, by path of `.rness/`. */
   readmes: Map<string, string>
   /** What `sync` says, `[verb, rest]`. */
@@ -171,7 +173,7 @@ function moveInto(
         conflicts.push(`fields.${field}`)
     }
   if (conflicts.length > 0)
-    return `${README(collection)} declares ${conflicts.join(', ')} otherwise than projects.${name}: keep one, in rness.json`
+    return `${README(collection)} declares ${conflicts.join(', ')} otherwise than boards.${name}: keep one, in rness.json`
   source['fields'] = fields
   return null
 }
@@ -184,13 +186,24 @@ export async function migrateBoards(
 ): Promise<Migration> {
   const migration: Migration = {
     changed: false,
-    projects: manifest.projects,
+    boards: manifest.boards,
     readmes: new Map(),
     lines: [],
   }
-  if (manifest.projects === null) return migration
-  const projects: Projects = {}
-  for (const [name, entry] of Object.entries(manifest.projects)) {
+  if (manifest.formerKey !== undefined) {
+    migration.lines.push([
+      'renamed',
+      `${manifest.formerKey} to boards in .rness/rness.json`,
+    ])
+    migration.changed = true
+  }
+  if (manifest.boards === null) return migration
+  const boards: Boards = {}
+  for (const [name, entry] of Object.entries(manifest.boards)) {
+    if (typeof entry === 'string') {
+      boards[name] = entry
+      continue
+    }
     let source: Record<string, unknown>
     if (typeof entry === 'number') {
       // Today's board, from its preset and its README's declarations.
@@ -251,7 +264,7 @@ export async function migrateBoards(
     }
 
     try {
-      projects[name] =
+      boards[name] =
         typeof entry === 'number' || migration.changed
           ? parseBoard(name, source, presets.knows)
           : entry
@@ -259,9 +272,9 @@ export async function migrateBoards(
       if (!(e instanceof BoardRefused)) throw e
       // A merge or a move the declaration refuses: the board left as it was.
       migration.lines.push(['refused', e.message])
-      projects[name] = entry
+      boards[name] = entry
     }
   }
-  migration.projects = projects
+  migration.boards = boards
   return migration
 }

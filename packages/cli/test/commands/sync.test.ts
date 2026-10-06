@@ -905,3 +905,32 @@ test('a written provider this copy lacks does not stop sync: git does the clonin
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /updated {2}AGENTS\.md/)
 })
+
+test('the former projects becomes boards, its boards read back the same; --check and --scope leave it (spec 0033 §3)', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { pulse: 4, marketing: 'collection' },
+    files: { 'marketing/a.md': '---\nstatus: Idea\n---\n# A\n' },
+  })
+  const file = join(root, '.rness', 'rness.json')
+  const checked = await sync(['--check', '--cwd', root])
+  assert.doesNotMatch(checked.out, /renamed/)
+  assert.match(await readFile(file, 'utf8'), /"projects"/)
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^renamed {2}projects to boards in \.rness\/rness\.json$/m
+  )
+  const text = await readFile(file, 'utf8')
+  assert.doesNotMatch(text, /"projects"/)
+  const after = await loadManifest(join(root, '.rness'))
+  assert.equal(after.formerKey, undefined)
+  assert.equal(after.boards?.['marketing'], 'collection')
+  const pulse = after.boards?.['pulse']
+  assert.ok(typeof pulse === 'object')
+  assert.equal(pulse.number, 4)
+  const again = await sync(['--yes', '--cwd', root])
+  assert.doesNotMatch(again.out, /renamed|wrote/)
+  assert.equal(await readFile(file, 'utf8'), text)
+})

@@ -218,7 +218,7 @@ async function boarded(t: TestContext, journal: boolean) {
   const hooks = journal
     ? { 'session-start': [{ action: 'journal', to: 'plan' }] }
     : {}
-  manifest.projects = {
+  manifest.boards = {
     pulse: {
       number: 7,
       ...presetTemplate('agent-pulse/1', { collection: 'pulse' }),

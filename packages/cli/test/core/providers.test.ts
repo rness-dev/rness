@@ -16,7 +16,7 @@ const manifest = (provider: Manifest['provider']): Manifest => ({
   provider,
   org: 'acme',
   agents: null,
-  projects: null,
+  boards: null,
   repos: {},
   scopes: {},
 })
