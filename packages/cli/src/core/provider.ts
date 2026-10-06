@@ -1,6 +1,7 @@
 import type { StatusUpdate } from '../pulse/collection.ts'
 import type { Layout } from '../pulse/layout.ts'
 import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
+import type { JournalIssue } from './github-journal.ts'
 import type { CreateRepositoryResult, RepositoryListing } from './github.ts'
 
 // The seam between the commands and the place the repositories live (spec
@@ -128,6 +129,35 @@ export interface Provider {
    * file changed, found by its path (spec 0025 §4). Returns what it wrote.
    */
   postUpdates(board: Board, updates: readonly StatusUpdate[]): Promise<string[]>
+  /** The agent journal (spec 0030 §8): the open implementation issue of a plan in `owner/repo`, or null. */
+  journalIssue(
+    owner: string,
+    repo: string,
+    planPath: string
+  ): Promise<JournalIssue | null>
+  /** A new implementation issue, labelled `rness:plan`, its marker its body's last line; `JournalRefused` when the repository takes none. */
+  createJournalIssue(
+    owner: string,
+    repo: string,
+    planPath: string,
+    issue: { title: string; body: string }
+  ): Promise<JournalIssue>
+  /** An issue by its number: its node id and whether it is open; null when there is none. */
+  issueOf(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<{ id: string; number: number; open: boolean } | null>
+  /** `childId` made a sub-issue of `parentId`. */
+  addSubIssue(parentId: string, childId: string): Promise<void>
+  /** A comment on an issue. */
+  comment(issueId: string, body: string): Promise<void>
+  /** The latest pull request whose head is `branch`: its number and state; null when there is none. */
+  pullRequestFor(
+    owner: string,
+    repo: string,
+    branch: string
+  ): Promise<{ number: number; state: string } | null>
 }
 
 /** @deprecated the pre-0.12 name, kept for the package's API. */

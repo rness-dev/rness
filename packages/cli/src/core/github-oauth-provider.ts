@@ -4,6 +4,8 @@ import type { BoardItem, Placed, Step } from '../pulse/plan.ts'
 import { type ResolvedToken, resolveToken } from './auth.ts'
 import { approvalUrl } from './device-flow.ts'
 import { GitHubBoards } from './github-board.ts'
+import * as gj from './github-journal.ts'
+import type { JournalIssue } from './github-journal.ts'
 import {
   type ApiOptions,
   type CreateRepositoryResult,
@@ -182,6 +184,60 @@ export class GitHubOAuthProvider implements Provider {
     updates: readonly StatusUpdate[]
   ): Promise<string[]> {
     return this.#boards().postUpdates(board, updates)
+  }
+
+  #journalApi(): ApiOptions {
+    if (this.#token === null)
+      throw new Error('the journal needs a GitHub login: run rness login')
+    return this.#api(this.#token.token)
+  }
+
+  // The journal's methods are async so that a missing login rejects, never throws.
+  async journalIssue(
+    owner: string,
+    repo: string,
+    planPath: string
+  ): Promise<JournalIssue | null> {
+    return gj.journalIssue(owner, repo, planPath, this.#journalApi())
+  }
+
+  async createJournalIssue(
+    owner: string,
+    repo: string,
+    planPath: string,
+    issue: { title: string; body: string }
+  ): Promise<JournalIssue> {
+    return gj.createJournalIssue(
+      owner,
+      repo,
+      planPath,
+      issue,
+      this.#journalApi()
+    )
+  }
+
+  async issueOf(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<{ id: string; number: number; open: boolean } | null> {
+    return gj.issueOf(owner, repo, number, this.#journalApi())
+  }
+
+  async addSubIssue(parentId: string, childId: string): Promise<void> {
+    return gj.addSubIssue(parentId, childId, this.#journalApi())
+  }
+
+  async comment(issueId: string, body: string): Promise<void> {
+    return gj.comment(issueId, body, this.#journalApi())
+  }
+
+  async pullRequestFor(
+    owner: string,
+    repo: string,
+    branch: string
+  ): Promise<{ number: number; state: string } | null> {
+    return gj.pullRequestFor(owner, repo, branch, this.#journalApi())
   }
 
   credentialsFor(url: string): GitCredentials | null {

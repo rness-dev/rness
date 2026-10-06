@@ -172,6 +172,15 @@ export async function board(
     labels?: string[]
     /** The seed's project exists already: the first project made is a new one. */
     existing?: boolean
+    /** Repositories of acme besides .rness, by name: their Issues switch (on by default). */
+    repositories?: Record<string, { issues?: boolean }>
+    /** Pull requests of acme's repositories (spec 0030 §6). */
+    pullRequests?: {
+      repository: string
+      head: string
+      number: number
+      state: string
+    }[]
   } = {}
 ) {
   let next = 100
@@ -322,6 +331,8 @@ export async function board(
   let nextNumber = 1 + Math.max(0, ...issues.map((i) => i.number))
   const issueOf = (id: unknown) => issues.find((i) => i.id === id)
   const restLabels: unknown[] = []
+  const comments: { subjectId: string; body: string }[] = []
+  const subIssues: { parent: string; child: string }[] = []
   const mutations: {
     op: string
     variables: Record<string, unknown>
@@ -344,38 +355,69 @@ export async function board(
       [
         // The repository itself: its Issues switch and label, not its issues.
         'hasIssuesEnabled',
-        () =>
-          memory.exists
-            ? data({
-                repository: {
-                  id: 'R_1',
-                  hasIssuesEnabled: memory.issues,
-                  label: memory.label ? { id: 'L_1' } : null,
+        (v) =>
+          v['name'] !== '.rness'
+            ? Object.hasOwn(seed.repositories ?? {}, String(v['name']))
+              ? data({
+                  repository: {
+                    id: `R_${String(v['name'])}`,
+                    hasIssuesEnabled:
+                      seed.repositories?.[String(v['name'])]?.issues ?? true,
+                    label: labels.has(String(v['label']))
+                      ? { id: labels.get(String(v['label'])) }
+                      : null,
+                  },
+                })
+              : {
+                  json: {
+                    data: { repository: null },
+                    errors: [
+                      {
+                        type: 'NOT_FOUND',
+                        message: 'Could not resolve to a Repository',
+                      },
+                    ],
+                  },
+                }
+            : memory.exists
+              ? data({
+                  repository: {
+                    id: 'R_1',
+                    hasIssuesEnabled: memory.issues,
+                    label: memory.label ? { id: 'L_1' } : null,
+                  },
+                })
+              : {
+                  json: {
+                    data: { repository: null },
+                    errors: [
+                      {
+                        type: 'NOT_FOUND',
+                        message: 'Could not resolve to a Repository',
+                      },
+                    ],
+                  },
                 },
-              })
-            : {
-                json: {
-                  data: { repository: null },
-                  errors: [
-                    {
-                      type: 'NOT_FOUND',
-                      message: 'Could not resolve to a Repository',
-                    },
-                  ],
-                },
-              },
       ],
       [
         'createIssue(',
         (v) => {
           mutations.push({ op: 'createIssue', variables: v })
+          const repositoryId = String(v['repositoryId'])
           const made = anIssue(nextNumber++, {
             id: `ISSUE_${next++}`,
             title: String(v['title']),
             body: String(v['body'] ?? ''),
-            labels: (v['labelIds'] as string[] | undefined)?.includes('L_1')
-              ? ['rness']
-              : [],
+            labels: ((v['labelIds'] as string[] | undefined) ?? []).flatMap(
+              (id) => {
+                const name = labelName(id)
+                return name === undefined ? [] : [name]
+              }
+            ),
+            repository:
+              repositoryId === 'R_1'
+                ? 'acme/.rness'
+                : `acme/${repositoryId.replace(/^R_/, '')}`,
           })
           issues.push(made)
           return data({
@@ -720,6 +762,63 @@ export async function board(
         },
       ],
       [
+        'addSubIssue(',
+        (v) => {
+          mutations.push({ op: 'addSubIssue', variables: v })
+          subIssues.push({
+            parent: String(v['issueId']),
+            child: String(v['subIssueId']),
+          })
+          return data({ addSubIssue: { issue: { id: v['issueId'] } } })
+        },
+      ],
+      [
+        'addComment(',
+        (v) => {
+          mutations.push({ op: 'comment', variables: v })
+          comments.push({
+            subjectId: String(v['subjectId']),
+            body: String(v['body']),
+          })
+          return data({ addComment: { commentEdge: { node: { id: 'C' } } } })
+        },
+      ],
+      [
+        'issue(number',
+        (v) => {
+          const found = issues.find(
+            (i) =>
+              i.repository === `acme/${String(v['name'])}` &&
+              i.number === v['number']
+          )
+          return data({
+            repository: {
+              issue:
+                found === undefined
+                  ? null
+                  : { id: found.id, number: found.number, state: found.state },
+            },
+          })
+        },
+      ],
+      [
+        'pullRequests(headRefName',
+        (v) =>
+          data({
+            repository: {
+              pullRequests: {
+                nodes: (seed.pullRequests ?? [])
+                  .filter(
+                    (p) =>
+                      p.repository === `acme/${String(v['name'])}` &&
+                      p.head === v['branch']
+                  )
+                  .map(({ number, state }) => ({ number, state })),
+              },
+            },
+          }),
+      ],
+      [
         'organization(login: $login) { id }',
         () => data({ organization: { id: 'O_1' } }),
       ],
@@ -816,7 +915,8 @@ export async function board(
                 nodes: issues
                   .filter(
                     (i) =>
-                      i.repository === 'acme/.rness' &&
+                      i.repository ===
+                        `acme/${String(v['name'] ?? '.rness')}` &&
                       i.state === 'OPEN' &&
                       i.labels.includes(String(v['label']))
                   )
@@ -891,7 +991,7 @@ export async function board(
     if (other !== undefined) return other
     if (r.path !== '/graphql') {
       assert.equal(r.method, 'POST')
-      if (r.path === '/repos/acme/.rness/labels') {
+      if (/^\/repos\/acme\/[^/]+\/labels$/.test(r.path)) {
         restLabels.push(r.body)
         const name = (r.body as { name: string }).name
         if (name === 'rness') memory.label = true
@@ -972,6 +1072,8 @@ export async function board(
     },
     restViews,
     restLabels,
+    comments,
+    subIssues,
     mutations,
     requests: gh.requests,
   }
