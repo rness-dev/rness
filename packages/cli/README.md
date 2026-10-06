@@ -31,6 +31,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness status [<tab>] [--json]
     rness pulse create [<collection>] [-y]
     rness pulse sync
+    rness pulse note [--plan <path>] [--kind approach|deviation|blocker|done] [<text>]
     rness validate
     rness mcp
 
@@ -244,7 +245,9 @@ workspace root's carry four Claude Code hooks, all run by the pinned copy:
   repository or nothing installed there, a `rness.json` rness refuses, a pin
   the installed copy does not match, the problems `rness validate` reports.
   A Claude Code too old for the plugin's mod gets one more line, once (see
-  "The mod"). After a compaction, the context only.
+  "The mod"). When a board keeps a journal and the scope has a plan in
+  progress, the model gets one more line: how and when to post a note (see
+  "Pulse"). After a compaction, the context only.
 - **Before an edit** (`PreToolUse` on `Edit|Write`): refused, with the
   reason for the model, when it would change what `sync` generates — a
   line of the block of an `AGENTS.md` or `CLAUDE.md` (the reason names the
@@ -262,8 +265,9 @@ workspace root's carry four Claude Code hooks, all run by the pinned copy:
   `mark` and holds the document, the edit is then marked on it, broken or
   not; see "Pulse".
 - **At session end** (`SessionEnd`): when a board declares `clear-marks`,
-  clears the marks this session set and syncs; see "Pulse". Without one,
-  nothing.
+  clears the marks this session set and syncs; when one declares
+  `journal-summary`, posts the session's summary; see "Pulse". Without
+  either, nothing.
 
 Each hook is one fixed `sh` line: it runs
 `<.rness>/node_modules/@rness/cli/dist/bin/rness.js hook <event>` when that
@@ -275,7 +279,8 @@ own hooks stay where they are.
 
 Claude Code runs hooks from a committed settings file without asking each
 developer, including in `claude -p`. These four read `.rness/`, write
-nothing in the workspace and run no install. Only with a pulse declared do
+no file of the workspace and run no install; with a journal, the session
+start records the clone's `HEAD` in its git directory. Only with a pulse declared do
 they reach the network, through a detached `rness` process that uses your
 login; when that process fails, it writes why to `pulse.json` in rness's
 configuration directory (`~/.config/rness/` by default), which the next
@@ -540,6 +545,40 @@ added to project`) may change a field of rness's items; the next sync
   `the pulse needs the project scope: run rness login` or
   `cannot reach GitHub: …`. Two sessions marking one plan both write; the
   last wins.
+- **Agent journal** (spec 0030, 0.21.0): how a plan was implemented, in
+  the agent's words. A board that holds `plans` declares
+  `{ "action": "journal", "to": "plan" | "repo", "limit": 5 }` at
+  `session-start`, and `journal-summary` at `session-end`. With a plan
+  `In progress` in the session's scope, the session start tells the model
+  to post a note — `rness pulse note`, or `rness_note` — when it chooses an
+  approach, deviates from the plan, is blocked, and when done: decisions
+  and their reasons, not steps. A note is a comment headed
+  `**Approach** · claude · 1a2b3c4d · \`feat/limits\` @ \`9f8e7d6\``
+(`--kind`titles it; the branch and commit are those of the session's
+repository), then the text, from the argument or stdin. With`"plan"`it goes to the plan's issue in`.rness`. With `"repo"`, to the plan's
+implementation issue in the repository the session works in: labelled
+`rness:plan`, found again by the last line of its body, made by the
+first note and made a sub-issue of the plan's. The note prints where it
+went (`acme/api#87`), for the pull request that completes the plan there
+to carry `Closes acme/api#87`and an earlier one`Refs acme/api#87`.
+GitHub closes the issue when a person merges that pull request into the
+default branch; rness closes nothing. A repository with its issues off,
+that refuses this login's write, or not under the organization on GitHub
+sends the note to the plan's issue, its first line saying why, and the
+next session start says so once. A session in `.rness/`or at the root
+writes on the plan's issue. With several plans in progress,`--plan`names one. Each note holds 1 to 4,000 characters; a session posts at most`limit` per plan (`journal full for this session: put the rest in the
+  pull request`); a note that looks like it holds a credential (`ghp_`,
+`gho_`, `github_pat_`, `AKIA…`, a private key, `xox…-`, `sk-…`) is
+refused, never redacted. The counts stay in the `.rness` clone's git
+directory (`rness/journal`), never pushed. At the session's end,
+`journal-summary`posts`**Session summary** · claude · 1a2b3c4d ·
+  47 min`, the branch and its commits since the session started (its
+`HEAD`, recorded in the clone's git directory, `rness/sessions/<id>`)
+and the branch's pull request: to each issue the notes went to, else to
+the one plan in progress when there is a commit; with neither, nothing.
+It counts toward no limit. Not verified against GitHub yet (2026-10-06):
+a sub-issue across repositories, and `Closes` on a pull request merged
+  into the default branch.
 - **One issue per document**: before making an issue, `pulse sync` reads
   the open issues of `.rness` labelled `rness` (one request per 100, and
   only when it has one to make). One whose body starts with the document's
@@ -596,22 +635,25 @@ github)`. `add`, `sync` and the local commands never refuse. `null` is not a
 
     rness mcp      # started by the agent over stdio, not by hand
 
-A local, read-only MCP server over the workspace's `.rness/`, for an agent to
-find what applies to the repository it works in and where a subject was
-decided:
+A local MCP server over the workspace's `.rness/`, for an agent to find what
+applies to the repository it works in and where a subject was decided. It
+is read-only but for `rness_note`, listed only when a board keeps a journal:
 
-| Tool                                   | Returns                                                                                                                                             |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rness_context({ scope? })`            | the scope of the working directory (or the one named) and what applies to it: standards, decisions, specifications, plans — id, status, title, path |
-| `rness_list({ collection, status? })`  | every document of a collection, across scopes, optionally of one status                                                                             |
-| `rness_read({ path })`                 | one file of `.rness/`, 256 KiB at most; nothing outside it                                                                                          |
-| `rness_search({ query, collection? })` | the documents that match, most matching first, with the matching lines                                                                              |
+| Tool                                          | Returns                                                                                                                                             |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rness_context({ scope? })`                   | the scope of the working directory (or the one named) and what applies to it: standards, decisions, specifications, plans — id, status, title, path |
+| `rness_list({ collection, status? })`         | every document of a collection, across scopes, optionally of one status                                                                             |
+| `rness_read({ path })`                        | one file of `.rness/`, 256 KiB at most; nothing outside it                                                                                          |
+| `rness_search({ query, collection? })`        | the documents that match, most matching first, with the matching lines                                                                              |
+| `rness_note({ text, session, kind?, plan? })` | a note of the agent's journal posted to GitHub, as `rness pulse note` posts it; the issue it went to (see "Pulse")                                  |
 
 - MCP over stdio, one message per line: the `2026-07-28` revision and the
   earlier ones that open with `initialize` (`2025-11-25` back to
   `2024-11-05`). No MCP SDK, no added dependency.
 - `.rness/` is read again on each call, so an edit shows at once. Nothing is
-  written.
+  written, but by `rness_note`, which posts with your login. It takes the
+  session as an argument (`claude · 1a2b3c4d`, as the session start spells
+  it): the server's environment names none.
 - With `claude` in `agents`, `sync` registers it in each clone:
   `.mcp.json` gets `mcpServers.rness`, which runs the pinned copy
   (`node ../../.rness/node_modules/@rness/cli/dist/bin/rness.js mcp`). A
@@ -782,6 +824,14 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 
 ## Unreleased
 
+- The agent journal (spec 0030, see "Pulse"): a board declares `journal`
+  at `session-start` and `journal-summary` at `session-end`. The agent
+  posts notes on the plan it implements — `rness pulse note`, or
+  `rness_note` of `rness mcp` — to the plan's issue in `.rness`, or to an
+  implementation issue in the repository it works in, a sub-issue of the
+  plan's, which the pull request closes. The session's end posts a summary:
+  its commits, its pull request, its duration. The preset `agent-pulse`
+  declares neither: nothing changes until a board does.
 - Boards are declared in `rness.json` (spec 0031, see "Pulse"): each one's
   collections, statuses, colours, fields, labels and views, written whole.
   Agent Pulse is the preset `agent-pulse`, no longer a special case of the
