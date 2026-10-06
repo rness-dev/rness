@@ -233,6 +233,7 @@ function buildProgram(state: RunState): Command {
       (value: string, previous: string[] = []) => [...previous, value]
     )
     .option('--scope <scope>', "the session's scope; absent, the root's")
+    .option('--clone <name>', 'the clone the session worked in')
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(
@@ -242,6 +243,7 @@ function buildProgram(state: RunState): Command {
           session: string
           path?: string[]
           scope?: string
+          clone?: string
           cwd?: string
           githubApi?: string
         }

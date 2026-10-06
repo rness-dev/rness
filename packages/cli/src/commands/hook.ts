@@ -479,11 +479,26 @@ function refuse(io: HookIo, lines: readonly string[]): number {
 /** Clears the session's marks, detached; says nothing. */
 async function sessionEnd(input: Input, io: HookIo): Promise<number> {
   try {
-    const ws = await findWorkspace(cwdOf(input, io.env))
-    await runDetached(ws, input, io, 'session-end', async (session) => [
-      '--session',
-      session,
-    ])
+    const cwd = cwdOf(input, io.env)
+    const ws = await findWorkspace(cwd)
+    await runDetached(ws, input, io, 'session-end', async (session, boards) => {
+      const summarised = boards.some((b) =>
+        (b.declaration.hooks['session-end'] ?? []).some(
+          (a) => a.action === 'journal-summary'
+        )
+      )
+      if (!summarised) return ['--session', session]
+      // The summary's plan is the scope's; its commits, the clone's.
+      const manifest = await loadManifest(ws.rnessDir)
+      const scope = resolveScope(manifest, toPosix(relative(ws.root, cwd)))
+      const clone = cloneHolding(ws.root, manifest.repos, cwd)
+      return [
+        '--session',
+        session,
+        ...(scope === null ? [] : ['--scope', scope]),
+        ...(clone === null ? [] : ['--clone', clone.name]),
+      ]
+    })
   } catch {
     // No workspace, nothing to clear.
   }

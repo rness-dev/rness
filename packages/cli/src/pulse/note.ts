@@ -102,10 +102,10 @@ function checked(input: NoteInput): { kind: Kind; session: string } {
   return { kind, session }
 }
 
-type Journal = Extract<BoardAction, { action: 'journal' }>
+export type Journal = Extract<BoardAction, { action: 'journal' }>
 
 /** The board that keeps the journal: the first whose session start declares `journal`. */
-function journalOf(
+export function journalOf(
   declared: readonly Declared[]
 ): { board: Declared; journal: Journal } | null {
   for (const d of declared)
@@ -162,7 +162,7 @@ async function planOf(
 }
 
 /** A plan's issue in `.rness`, found by its card's `Path` on the journal's board. */
-async function planIssue(
+export async function planIssue(
   c: Context,
   board: Declared,
   plan: string
@@ -305,9 +305,10 @@ export async function postNote(input: NoteInput): Promise<Posted> {
     `<!-- rness note ${id} -->`,
   ].join('\n')
   await fromGithub(c.provider.comment(target.id, body))
-  await notePosted(c.rnessDir, session, plan)
+  const reference = `${target.repository}#${target.number}`
+  await notePosted(c.rnessDir, session, plan, { id: target.id, reference })
   return {
-    reference: `${target.repository}#${target.number}`,
+    reference,
     to: target === parent ? 'plan' : 'repo',
   }
 }

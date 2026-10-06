@@ -179,6 +179,8 @@ export async function board(
     repositories?: Record<string, { issues?: boolean; writable?: boolean }>
     /** Whether GitHub links a sub-issue (default true). */
     subIssues?: boolean
+    /** Whether GitHub takes a comment (default true). */
+    comments?: boolean
     /** Pull requests of acme's repositories (spec 0030 §6). */
     pullRequests?: {
       repository: string
@@ -800,6 +802,13 @@ export async function board(
       [
         'addComment(',
         (v) => {
+          if (seed.comments === false)
+            return {
+              json: {
+                data: { addComment: null },
+                errors: [{ message: 'Resource not accessible by integration' }],
+              },
+            }
           mutations.push({ op: 'comment', variables: v })
           comments.push({
             subjectId: String(v['subjectId']),

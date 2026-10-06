@@ -957,8 +957,10 @@ export interface RunOptions {
   session: string
   /** `edit`: the document edited. */
   paths: string[]
-  /** `session-start`: the session's scope; absent, the workspace's root. */
+  /** `session-start`, `session-end`: the session's scope; absent, the workspace's root. */
   scope?: string
+  /** `session-end`: the clone the session worked in, a name of `repos`. */
+  clone?: string
   /** Internal (tests): how the lock's poll sleeps. */
   sleep?: (ms: number) => Promise<void>
 }
@@ -992,6 +994,21 @@ async function run(opts: RunOptions, failures: string[]): Promise<void> {
       (d.declaration.hooks[event] ?? []).some((a) => a.action === name)
     )
   if (event === 'session-end') {
+    for (const d of acting('journal-summary'))
+      try {
+        const { postSummary } = await import('../pulse/summary.ts')
+        await postSummary({
+          c,
+          board: d,
+          session: opts.session,
+          scope: opts.scope ?? null,
+          ...(opts.clone === undefined ? {} : { clone: opts.clone }),
+        })
+      } catch (e) {
+        failures.push(
+          `journal-summary on ${label(d)} failed: ${e instanceof Error ? e.message : String(e)}`
+        )
+      }
     const clearing = acting('clear-marks')
     for (const d of clearing)
       try {

@@ -4,9 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
-import { pulseCreateCommand } from '../../src/commands/pulse.ts'
+import {
+  pulseCreateCommand,
+  pulseRunCommand,
+} from '../../src/commands/pulse.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
-import { takeNotices } from '../../src/pulse/journal-state.ts'
+import { takeFailure } from '../../src/pulse/detached.ts'
+import {
+  recordStart,
+  startOf,
+  takeNotices,
+} from '../../src/pulse/journal-state.ts'
 import { pulseNoteCommand, sessionFrom } from '../../src/pulse/note.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
@@ -64,6 +72,13 @@ async function journaled(
     url?: string
     repositories?: Record<string, { issues?: boolean; writable?: boolean }>
     subIssues?: boolean
+    comments?: boolean
+    pullRequests?: {
+      repository: string
+      head: string
+      number: number
+      state: string
+    }[]
     files?: Record<string, string>
   } = {}
 ) {
@@ -73,6 +88,10 @@ async function journaled(
     memory: { label: false, linked: false },
     repositories: opts.repositories ?? { api: {} },
     ...(opts.subIssues === undefined ? {} : { subIssues: opts.subIssues }),
+    ...(opts.comments === undefined ? {} : { comments: opts.comments }),
+    ...(opts.pullRequests === undefined
+      ? {}
+      : { pullRequests: opts.pullRequests }),
   })
   const root = await makeWorkspace(t, {
     org: 'acme',
@@ -107,6 +126,7 @@ async function journaled(
         ...(opts.limit === undefined ? {} : { limit: opts.limit }),
       },
     ],
+    'session-end': ['clear-marks', 'journal-summary'],
   }
   await writeFile(file, JSON.stringify(manifest, null, 2))
   await commitDir(join(root, '.rness'))
@@ -335,4 +355,111 @@ test("a sub-issue GitHub refuses: the implementation issue kept, named on the pl
     body: `Implementation: acme/api#${impl?.number}`,
   })
   assert.equal(g.comments[1]?.subjectId, impl?.id)
+})
+
+// --- the session-end summary (spec 0030 §6) ---------------------------------
+
+/** `pulse run session-end`, as the hook spawns it for a session in `api`. */
+async function sessionEnd(g: { base: string }, root: string) {
+  const c = capture()
+  try {
+    return await pulseRunCommand({
+      cwd: root,
+      githubApi: g.base,
+      event: 'session-end',
+      session: SESSION,
+      paths: [],
+      scope: 'api',
+      clone: 'api',
+    })
+  } finally {
+    c.restore()
+  }
+}
+
+async function commitIn(dir: string, file: string): Promise<string> {
+  await writeFile(join(dir, file), `${file}\n`)
+  await git(['add', file], dir)
+  await git(['commit', '-q', '-m', file], dir)
+  return (await git(['rev-parse', '--short=7', 'HEAD'], dir)).trim()
+}
+
+test("summary with commits and a pull request, no note: on the one plan's issue, its duration, branch, commits and pull request; the start forgotten", async (t) => {
+  const { g, root, api } = await journaled(t, {
+    pullRequests: [
+      {
+        repository: 'acme/api',
+        head: 'feat/limits',
+        number: 91,
+        state: 'OPEN',
+      },
+    ],
+  })
+  await recordStart(api, SESSION, Date.now() - 47 * 60_000)
+  const shas = [await commitIn(api, 'a.ts'), await commitIn(api, 'b.ts')]
+  assert.equal(await sessionEnd(g, root), 0)
+  assert.equal(await takeFailure(), null)
+  const plan = g.issues.find((i) => i.title === '0002 — Limits')
+  const summaries = g.comments.filter((c) => c.body.includes('summary -->'))
+  assert.deepEqual(summaries, [
+    {
+      subjectId: plan?.id,
+      body: [
+        '**Session summary** · claude · 1a2b3c4d · 47 min',
+        '',
+        `Branch \`feat/limits\` · 2 commits (\`${shas[0]}\`, \`${shas[1]}\`)`,
+        'Pull request acme/api#91 (open)',
+        '',
+        '<!-- rness note 1a2b3c4d summary -->',
+      ].join('\n'),
+    },
+  ])
+  assert.equal(await startOf(api, SESSION), null)
+})
+
+test('summary with notes and no commit: on the issue the notes went to; it is no note of the limit', async (t) => {
+  const { g, root, api } = await journaled(t, { limit: 1 })
+  await recordStart(api, SESSION)
+  const r = await note(g, api)
+  assert.equal(r.code, 0, r.err)
+  const impl = g.issues.find((i) => i.repository === 'acme/api')
+  assert.equal(await sessionEnd(g, root), 0)
+  assert.equal(await takeFailure(), null)
+  const last = g.comments.at(-1)
+  assert.equal(last?.subjectId, impl?.id)
+  assert.match(
+    last?.body ?? '',
+    /^\*\*Session summary\*\* · claude · 1a2b3c4d · 1 min\n\nBranch `feat\/limits` · no commit\n\n<!-- rness note 1a2b3c4d summary -->$/
+  )
+  assert.equal(g.comments.length, 2)
+})
+
+test('summary skipped with neither a commit nor a note, or with several plans and no note; the start forgotten all the same', async (t) => {
+  const { g, root, api } = await journaled(t)
+  await recordStart(api, SESSION)
+  assert.equal(await sessionEnd(g, root), 0)
+  assert.deepEqual(g.comments, [])
+  assert.equal(await startOf(api, SESSION), null)
+
+  const several = await journaled(t, {
+    files: {
+      ...FILES,
+      'plans/0003-more.md': doc('In progress', '0003 — More'),
+    },
+  })
+  await recordStart(several.api, SESSION)
+  await commitIn(several.api, 'c.ts')
+  assert.equal(await sessionEnd(several.g, several.root), 0)
+  assert.deepEqual(several.g.comments, [])
+})
+
+test('a summary GitHub refuses: recorded for the next session start, naming the board and the action', async (t) => {
+  const { g, root, api } = await journaled(t, { comments: false })
+  await recordStart(api, SESSION)
+  await commitIn(api, 'a.ts')
+  assert.equal(await sessionEnd(g, root), 0)
+  assert.match(
+    (await takeFailure()) ?? '',
+    /^journal-summary on Agent Pulse failed: .*Resource not accessible by integration/
+  )
 })

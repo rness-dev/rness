@@ -1062,3 +1062,32 @@ test("the session's start is recorded in the clone it works in, for the summary;
     'a resumed session keeps its first start'
   )
 })
+
+test('session end with a summary declared: the run told the scope and the clone the session worked in; at the root, neither', async (t) => {
+  const root = await declaredBoards(
+    t,
+    { pulse: journalBoard('repo') },
+    PULSE_FILES
+  )
+  const spawned: Spawned[] = []
+  const web = join(root, 'org', 'web')
+  await hook('session-end', { cwd: web, session_id: ID }, {}, spawned)
+  await hook('session-end', { cwd: root, session_id: ID }, {}, spawned)
+  assert.deepEqual(
+    spawned.map((s) => s.args),
+    [
+      [
+        'pulse',
+        'run',
+        'session-end',
+        '--session',
+        'claude · 1a2b3c4d',
+        '--scope',
+        'web',
+        '--clone',
+        'web',
+      ],
+      ['pulse', 'run', 'session-end', '--session', 'claude · 1a2b3c4d'],
+    ]
+  )
+})

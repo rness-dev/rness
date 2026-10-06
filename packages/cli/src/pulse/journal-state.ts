@@ -14,7 +14,26 @@ import { gitPath, headOf } from '../core/git.ts'
  * configuration directory.
  */
 
-type Counts = Record<string, Record<string, number>>
+/** A session's notes on a plan: how many, and the issues they went to, node id by reference. */
+interface Noted {
+  notes: number
+  to: Record<string, string>
+}
+/** `rness/journal`: `{ "<session id>": { "<plan path>": Noted } }`. */
+type Counts = Record<string, Record<string, unknown>>
+
+/** An issue a note went to: `acme/api#87`, and its node id. */
+export interface NotedIssue {
+  id: string
+  reference: string
+}
+
+const notedOf = (value: unknown): Noted => {
+  const v = value as Partial<Noted> | null
+  return typeof v?.notes === 'number'
+    ? { notes: v.notes, to: { ...(v.to ?? {}) } }
+    : { notes: 0, to: {} }
+}
 
 const COUNTS = 'rness/journal'
 
@@ -49,15 +68,15 @@ export async function notesPosted(
   const file = await gitPath(rnessDir, COUNTS)
   if (file === null) return 0
   const data = (await readJson(file)) as Counts | null
-  const n = data?.[keyOf(session)]?.[plan]
-  return typeof n === 'number' ? n : 0
+  return notedOf(data?.[keyOf(session)]?.[plan]).notes
 }
 
-/** One more note of `session` on `plan`, recorded; best effort. */
+/** One more note of `session` on `plan`, to the issue `to`, recorded; best effort. */
 export async function notePosted(
   rnessDir: string,
   session: string,
-  plan: string
+  plan: string,
+  to: NotedIssue
 ): Promise<void> {
   const file = await gitPath(rnessDir, COUNTS)
   if (file === null) return
@@ -65,7 +84,11 @@ export async function notePosted(
     const data = ((await readJson(file)) as Counts | null) ?? {}
     const key = keyOf(session)
     const of = data[key] ?? {}
-    of[plan] = (of[plan] ?? 0) + 1
+    const noted = notedOf(of[plan])
+    of[plan] = {
+      notes: noted.notes + 1,
+      to: { ...noted.to, [to.reference]: to.id },
+    }
     data[key] = of
     await writeJson(file, data)
   } catch {
@@ -73,15 +96,36 @@ export async function notePosted(
   }
 }
 
-/** The plans `session` posted a note on, from this clone. */
-export async function plansNoted(
+/** The issues `session`'s notes went to, from this clone, each once. */
+export async function issuesNoted(
   rnessDir: string,
   session: string
-): Promise<string[]> {
+): Promise<NotedIssue[]> {
   const file = await gitPath(rnessDir, COUNTS)
   if (file === null) return []
   const data = (await readJson(file)) as Counts | null
-  return Object.keys(data?.[keyOf(session)] ?? {})
+  const issues = new Map<string, string>()
+  for (const value of Object.values(data?.[keyOf(session)] ?? {}))
+    for (const [reference, id] of Object.entries(notedOf(value).to))
+      issues.set(reference, id)
+  return [...issues].map(([reference, id]) => ({ id, reference }))
+}
+
+/** `session`'s notes forgotten once it ended: its summary is posted or skipped. */
+export async function forgetNotes(
+  rnessDir: string,
+  session: string
+): Promise<void> {
+  const file = await gitPath(rnessDir, COUNTS)
+  if (file === null) return
+  try {
+    const data = ((await readJson(file)) as Counts | null) ?? {}
+    if (!Object.hasOwn(data, keyOf(session))) return
+    delete data[keyOf(session)]
+    await writeJson(file, data)
+  } catch {
+    // Kept: a few bytes, nothing worse.
+  }
 }
 
 /** Where a session started: the clone's `HEAD`, and when (ms). */
