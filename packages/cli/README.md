@@ -637,7 +637,8 @@ github)`. `add`, `sync` and the local commands never refuse. `null` is not a
 
 A local MCP server over the workspace's `.rness/`, for an agent to find what
 applies to the repository it works in and where a subject was decided. It
-is read-only but for `rness_note`, listed only when a board keeps a journal:
+is read-only but for `rness_note`, listed only when a board keeps a journal
+as the server starts (Claude Code starts it with the session):
 
 | Tool                                          | Returns                                                                                                                                             |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
