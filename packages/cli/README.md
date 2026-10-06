@@ -823,7 +823,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.21.0 — boards declared in rness.json; what a session does to a board, declared; the agent's journal
 
 - The agent journal (spec 0030, see "Pulse"): a board declares `journal`
   at `session-start` and `journal-summary` at `session-end`. The agent
