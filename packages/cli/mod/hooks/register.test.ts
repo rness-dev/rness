@@ -73,11 +73,12 @@ function files(on: On, text: string | null, path = '/.rness/plans/0002-b.md') {
   return reads
 }
 
-/** The pinned CLI as the module finds it; `runs` counts the status calls, `looked` the paths tried. A function gives what `status --json` prints at each run. */
+/** The pinned CLI as the module finds it; `runs` counts the status calls, `looked` the paths tried, `inits` what each run was given beside its argv. A function gives what `status --json` prints at each run. */
 function cli(
   on: On,
   snapshot: RnessSnapshot | null | (() => RnessSnapshot | null),
-  looked: string[] = []
+  looked: string[] = [],
+  inits: unknown[] = []
 ) {
   const runs: (readonly string[])[] = []
   const current = () => (typeof snapshot === 'function' ? snapshot() : snapshot)
@@ -91,6 +92,7 @@ function cli(
   })
   on('process.run', async (_$, e) => {
     runs.push(e.argv)
+    inits.push(e.init)
     return {
       value: {
         exitCode: 0,
@@ -364,6 +366,19 @@ test('/rness:status with no pinned CLI falls through to the skill', async ($, on
     args: '',
   } as never)
   expect(ran.text).toBe('the skill')
+})
+
+test('the pinned CLI runs with RNESS_NO_DELEGATE=1: a pin that drifts is reported in the band, never installed from the session', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  const inits: unknown[] = []
+  cli(on, SNAPSHOT, [], inits)
+  await $.session.start(start)
+  await clock.advance(0)
+  expect(inits).toHaveLength(1)
+  expect(inits[0]).toEqual(
+    expect.objectContaining({ env: { RNESS_NO_DELEGATE: '1' } })
+  )
 })
 
 test('one path to the pinned CLI, the one sync wrote: a missing copy is never looked for elsewhere', async ($, on) => {

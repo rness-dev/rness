@@ -89,9 +89,13 @@ async function refresh($: EngineInterface): Promise<RnessSnapshot | null> {
     const project = projectOf($.plugin.root)
     const bin = `${project}/${RNESS}/${BIN}`
     if (await $.fs.exists(bin)) {
+      // `RNESS_NO_DELEGATE`: a pin that drifts is reported (a note, in the
+      // band), never installed from inside the session, as the settings
+      // hooks have it (spec 0015 §3). `status` is not among the commands
+      // catch-up spares, and its install would replace a local copy.
       const ran = await $.process.run(
         ['node', bin, 'status', '--json', '--cwd', project],
-        { cwd: project, timeoutMs: 20_000 }
+        { cwd: project, timeoutMs: 20_000, env: { RNESS_NO_DELEGATE: '1' } }
       )
       if (ran.exitCode === 0) next = JSON.parse(ran.stdout) as RnessSnapshot
     }
