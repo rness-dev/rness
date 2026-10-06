@@ -78,7 +78,7 @@ export async function readmeDeclarations(
   )
 }
 
-const FRONT = /^(﻿?)---\r?\n([\s\S]*?)\r?\n?---(\r?\n|$)/
+const FRONT = /^(\uFEFF?)---\r?\n([\s\S]*?)\r?\n?---(\r?\n|$)/
 
 /** `text` without the keys rness.json declares now; a front matter left empty goes whole. */
 export function withoutDeclarations(text: string): string {
