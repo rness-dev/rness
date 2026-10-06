@@ -53,7 +53,7 @@ Node 22.17 or later and git are required.
    a marked block the rest of the file keeps around, and a `CLAUDE.md` that
    points to it. `rness sync --check` fails CI when a block is out of date.
 5. `rness status` shows every decision, specification and plan and its
-   status. `rness pulse` puts them on a GitHub Project. `rness mcp` serves
+   status. `rness board push` puts them on a board (a GitHub Project). `rness mcp` serves
    the same context to any MCP client over stdio. In Claude Code,
    `/rness:status`, `/rness:adr`, `/rness:spec` and `/rness:plan` run the
    document lifecycle from the conversation.

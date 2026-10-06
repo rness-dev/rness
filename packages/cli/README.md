@@ -29,9 +29,8 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness logout
     rness context [--scope <name>] [--json]
     rness status [<tab>] [--json]
-    rness pulse create [<collection>] [-y]
-    rness pulse sync
-    rness pulse note [--plan <path>] [--kind approach|deviation|blocker|done] [<text>]
+    rness board push [-y]
+    rness note [--plan <path>] [--kind approach|deviation|blocker|done] [<text>]
     rness validate
     rness mcp
 
@@ -64,8 +63,8 @@ when dropped, red `?` when missing.
 - `--json`, terminal or not: the tabs and their rows — each row with the
   colour of its status on Agent Pulse (`color`, the board's name for it:
   `yellow` for `In progress`; `red` without a status) and its item there
-  (`link`, the board filtered on its path; null without a pulse) — the
-  board (`pulse`), and what a Claude Code session shows of the workspace,
+  (`link`, the board filtered on its path; null without a board, or before
+  `board push` creates it) — the board (`pulse`), and what a Claude Code session shows of the workspace,
   worded by the CLI — the session-start banner, the footer's label, the
   scope's plans `In progress` and the notes of the safety net (see
   "Hooks"). The plugin's mod reads it (see
@@ -198,7 +197,7 @@ the pinned copy, and computes nothing itself:
   document is read from `.rness/` without its front matter, as the
   board's card shows it; `q` brings the list back, Esc still closes. An
   edit of the document shows at the next refresh. **Agent
-  Pulse is a link** when the workspace declares a pulse: the board from the
+  Pulse is a link** when the workspace has a board: the board from the
   list, the document's item (the board filtered on its path) from the
   document. The terminal opens it as it opens any hyperlink (cmd+click on
   macOS, as a rule), a desktop surface on a click. In `claude -p`, or where
@@ -247,7 +246,7 @@ workspace root's carry four Claude Code hooks, all run by the pinned copy:
   A Claude Code too old for the plugin's mod gets one more line, once (see
   "The mod"). When a board keeps a journal and the scope has a plan in
   progress, the model gets one more line: how and when to post a note (see
-  "Pulse"). After a compaction, the context only.
+  "Boards"). After a compaction, the context only.
 - **Before an edit** (`PreToolUse` on `Edit|Write`): refused, with the
   reason for the model, when it would change what `sync` generates — a
   line of the block of an `AGENTS.md` or `CLAUDE.md` (the reason names the
@@ -263,10 +262,10 @@ workspace root's carry four Claude Code hooks, all run by the pinned copy:
   to the model, which fixes them in the same turn. Any other edit costs one
   path check. Stale blocks are left to `sync`. When a board declares
   `mark` and holds the document, the edit is then marked on it, broken or
-  not; see "Pulse".
+  not; see "Boards".
 - **At session end** (`SessionEnd`): when a board declares `clear-marks`,
   clears the marks this session set and syncs; when one declares
-  `journal-summary`, posts the session's summary; see "Pulse". Without
+  `journal-summary`, posts the session's summary; see "Boards". Without
   either, nothing.
 
 Each hook is one fixed `sh` line: it runs
@@ -280,31 +279,37 @@ own hooks stay where they are.
 Claude Code runs hooks from a committed settings file without asking each
 developer, including in `claude -p`. These four read `.rness/`, write
 no file of the workspace and run no install; with a journal, the session
-start records the clone's `HEAD` in its git directory. Only with a pulse declared do
+start records the clone's `HEAD` in its git directory. Only with a board created do
 they reach the network, through a detached `rness` process that uses your
-login; when that process fails, it writes why to `pulse.json` in rness's
+login; when that process fails, it writes why to `board.json` in rness's
 configuration directory (`~/.config/rness/` by default), which the next
-session start reads, says once and deletes. See "Pulse". Review a change to
+session start reads, says once and deletes (0.21 wrote `pulse.json`: read
+once too). See "Boards". Review a change to
 them like code. Verified with Claude Code 2.1.284 on 2026-09-29: in a clone
 and at the root, the model received the context; after an edit that broke a
 status, it received the problem. The `sh` line is not verified on Windows.
 
-### Pulse
+### Boards
 
-    rness pulse create            # once per organization: the board, then a first sync
-    rness pulse create marketing  # a collection's own project (0.17.0)
-    rness pulse sync              # every declared project, as often as wanted
+    rness board push    # every board rness.json declares: created if it is not yet, then brought up to date
+    rness note "…"      # the agent's journal on the plan in progress
 
-A projection of rness's state on the organization's GitHub Projects,
-each declared in `rness.json`: first **Agent Pulse**, where the team sees —
-and reads — every document of `.rness/`, and sees when an agent is at work
-on one. rness writes the boards; if it is not in rness, it does not belong
-there.
+A board is a view of the rules the agent applies: the documents of
+`.rness/` — decisions, specifications, plans, a team's own collections —
+and where an agent is at work on them. The provider supplies the tool:
+GitHub Projects today. Each board is declared in `rness.json`, under
+`boards`: first **Agent Pulse** (`pulse`), where the team sees — and reads
+— every document of `.rness/`, and sees when an agent is at work on one.
+rness writes the boards; if it is not in rness, it does not belong there.
 
-- **Boards declared in `rness.json`** (0.21.0): `projects` maps a name to
-  a board, written whole — its `number`, `collections`, `colors`,
-  `fields`, `labels`, `views`, and optionally `title`, `description`,
-  `readme` and `updates` (files of `.rness/`). What `rness.json` says is
+- **Boards declared in `rness.json`** (0.21.0; `boards` since 0.22.0,
+  `projects` before): `boards` maps a name to a board, written whole — its
+  `number`, `collections`, `colors`, `fields`, `labels`, `views`, and
+  optionally `title`, `description`, `readme` and `updates` (files of
+  `.rness/`) — or to a preset not created yet, by name:
+  `"boards": { "pulse": "agent-pulse", "marketing": "collection" }`
+  (`agent-pulse` for `pulse`, `collection` for a collection's board; see
+  "A board created"). What `rness.json` says is
   the board; what it does not declare, the board does not have, but the
   engine's own: one issue of `.rness` per document, found by its `Path`,
   its `Status`, the label `rness`. Nothing knows Agent Pulse by name: it
@@ -328,7 +333,7 @@ there.
     status its tone, a collection pink). A colour changed is set at the
     next sync, every card keeping its value.
   - A board that `rness.json` declares wrongly is refused alone, by its
-    full key (`"projects.marketing.views[2].date" must name a date
+    full key (`"boards.marketing.views[2].date" must name a date
 field`); the others sync. `validate` reports it, and also a collection
     that is no directory of `.rness/`, one on two boards, a `readme` or
     `updates` not there, a README that still declares (below). `readme`
@@ -343,12 +348,12 @@ field`); the others sync. `validate` reports it, and also a collection
 delete it on GitHub if unwanted`), as is a field no longer declared and
     views out of the declared order (GitHub reorders none). A roadmap's
     date is chosen in its settings: GitHub's API does not set it.
-  - **Presets and their revisions.** `pulse create` writes a board from a
+  - **Presets and their revisions.** `board push` writes a board from a
     preset, `agent-pulse` or `collection`, recording it (`"preset":
 "agent-pulse/1"`). When a later rness ships a newer revision, `rness
 sync` merges it into the board value by value: a value the team never
     changed takes the new one, one it changed is kept, and said when the
-    revision changed it too (`kept projects.pulse.colors.Draft: kept orange,
+    revision changed it too (`kept boards.pulse.colors.Draft: kept orange,
 agent-pulse/2 gives blue`). Removing `preset` takes a board off the
     merge. An upgrade commits the result, for the team to read before
     pushing.
@@ -358,7 +363,12 @@ upgrade` runs — writes it whole; nothing changes on GitHub. A
     collection's `README.md` that declared `description`, `statuses`,
     `fields` or `labels` has them moved into its board and out of its front
     matter (a value declared otherwise in both is refused, naming both).
-    Until then, `pulse sync` skips a board whose README still declares.
+    Until then, `board push` skips a board whose README still declares.
+  - **From 0.21 and before.** `projects`, and the older
+    `"pulse": { "project": <number> }`, still read as `boards`; more than
+    one of the three at once is refused. `rness sync` renames the key
+    (`renamed projects to boards in .rness/rness.json`), the boards as they
+    were, and every write of `rness.json` writes `boards`.
 
 - **Items**: one per document of `rness status`, an issue of
   `<org>/.rness` added to the project. GitHub shows it only to people who
@@ -394,10 +404,9 @@ status, …`) and its body the document (see **Body**). It carries the
   on `main`, and branches of it are rare). The project is linked to
   `.rness`, so Agent Pulse shows in its Projects tab. Comments are the
   team's: a spec's discussion lives on its issue, and rness never writes
-  or deletes one. `pulse create` and `pulse sync` need Issues on
-  `.rness`. Without them they stop before
-  writing anything: `the pulse needs Issues on <org>/.rness: turn them on
-in its Settings`.
+  or deletes one. `board push` needs Issues on `.rness`. Without them it
+  stops before writing anything: `boards need Issues on <org>/.rness: turn
+them on in its Settings`.
 - **Body**: the document, the same bytes for the same document. It starts
   with a first line: the document's path and a link to the file. Then comes
   the document without its front matter (the status is a field) and
@@ -430,36 +439,46 @@ Session → Working session`). A board per directory, named as
   `rness status` names its tab, filtered on its `Collection`, its columns
   that collection's own steps: each collection has its own status field
   (`ADR status`, `Specs status`, …; a directory without statuses is columned
-  by `Status`, which holds them all for the `All` table). `pulse sync`
+  by `Status`, which holds them all for the `All` table). `board push`
   remakes a board built by an earlier version (its URL changes once); a `Working` table, filtered on `Agent: working`. A first view named `View 1` (GitHub's default) becomes `All` when no `All` exists, on create and on sync, showing Title, Collection, Status and Working session. Options are coloured (statuses by lifecycle: blue proposed, purple approved, yellow in progress, red blocked or rejected, yellow superseded, green done, gray abandoned; collections and `working` too); a sync recolours rness's options and leaves other options' colours alone. rness does
   not set the project's visibility: the project gets GitHub's default for a
   new organization project, which is private (`public: false`). Verified
   with Claude Code 2.1.284 on 2026-09-29.
-- **Login**: the pulse needs the `project` scope. `rness login` asks for it
-  when the workspace declares a pulse, or when `pulse create` needs it (in a
-  terminal it offers to log in; with `-y` or off a terminal it stops with
-  `the pulse needs a GitHub login: run rness login` or
-  `the pulse needs the project scope: run rness login`). A developer who
-  never uses the pulse grants nothing more than `repo read:org`. When GitHub
-  cannot be asked, the pulse says so (`cannot reach GitHub: …`, or GitHub's
-  own answer) instead of asking for a login. A classic `GITHUB_TOKEN` works
-  if it carries the scope; a fine-grained or GitHub App token reports no
-  scope, so the pulse refuses it whatever its permissions. An organization
+- **Login**: boards need the `project` scope. `rness login` asks for it
+  when the workspace declares a board, and `board push` when it creates one
+  (in a terminal it offers to log in; with `-y` or off a terminal it stops
+  with `boards need a GitHub login: run rness login` or
+  `boards need the project scope: run rness login`). A developer who never
+  uses boards grants nothing more than `repo read:org`. When GitHub cannot
+  be asked, rness says so (`cannot reach GitHub: …`, or GitHub's own
+  answer) instead of asking for a login. A classic `GITHUB_TOKEN` works if
+  it carries the scope; a fine-grained or GitHub App token reports no
+  scope, so boards refuse it whatever its permissions. An organization
   that restricts OAuth apps must approve "Rness", as for its private
   repositories.
-- **`pulse create`** needs an `org` in `rness.json` (a blank workspace is
-  refused) and no pulse yet. It creates the project and at once writes the
-  board whole, from the preset `agent-pulse`, into `projects.pulse` (and
-  the `provider`) in `rness.json`,
-  then adds the fields, options and views, and runs a first sync; its
-  `created` lines say what it added. If a step after the project fails, it
-  exits 1 with the pulse declared, and `rness pulse sync` completes the
-  layout. Commit `rness.json` in `.rness`. The number is that of the
-  project in the organization. A CLI older than 0.12.0 refuses the key, so
-  the pin moves first (`rness upgrade`). A workspace without a `provider`
-  whose repositories look like GitLab is refused before anything is
-  created: write `"provider": "github"` if the organization is on GitHub.
-- **`pulse sync`** works in two passes. First every document gets its
+- **A board created** (0.22.0): a board of `boards` without a `number` —
+  a preset's name, or a declaration that leaves it out — is not on GitHub
+  yet, and `board push` creates it. Its name is `pulse` or a collection of
+  `.rness/`, else it is refused before GitHub is asked anything (`validate`
+  says so too). In a terminal push asks once
+  (`Create Agent Pulse (pulse) on GitHub, in acme?`); `-y` does not ask.
+  Off a terminal without `-y`, or declined, it creates none, pushes the
+  others and exits 1: `not created: pulse — rness board push in a terminal,
+or with --yes, creates it`. Then, in order: the login and its `project`
+  scope, Issues on `.rness`, the project, and at once its `number` in
+  `rness.json` — a preset's name is written whole from that preset, a
+  declaration gets its `number` and nothing else — with the `provider`;
+  then the fields, options and views, and a first push. Its `created` lines
+  say what it added, and the last line what to commit
+  (`git -C .rness commit -am "chore: board pulse"`). If a step after the
+  project fails, it exits 1 with the number written, and the next
+  `board push` completes the layout. A project deleted on GitHub is not
+  made again: push stops on `GitHub has no project 4 in acme`; removing the
+  `number` asks for a new one. A workspace needs an `org` (a blank one is
+  refused); one without a `provider` whose repositories look like GitLab
+  is refused before anything is created: write `"provider": "github"` if
+  the organization is on GitHub.
+- **`board push`** works in two passes. First every document gets its
   issue — created, converted from a 0.12.0 draft, or reopened — with its
   title, label and fields. Then the bodies whose digest differs are
   written, since a body links to other documents' issues by number. It
@@ -479,15 +498,14 @@ unchanged`.
   as the team's item. A workflow someone turns on (`Item closed`, `Item
 added to project`) may change a field of rness's items; the next sync
   writes it back.
-- **A collection's own project** (0.17.0): `rness pulse create <collection>`
-  gives a directory of `.rness/` whose documents carry a status — a tab of
-  `rness status` — a project of its own, named after it, written whole
-  from the preset `collection` into `projects.<collection>` (0.21.0;
-  before, `"projects": { "pulse": 4, "marketing": 5 }`). Agent Pulse keeps every
-  other collection and the `Working` table; the collection's items leave
-  it (`deleteProjectV2Item`, their issues untouched) once its project
-  holds them. `pulse sync` syncs the collections' projects, then Agent
-  Pulse. The project is written from the collection's files, one way:
+- **A collection's own board** (0.17.0): `"marketing": "collection"` in
+  `boards`, then `rness board push`, gives a directory of `.rness/` whose
+  documents carry a status — a tab of `rness status` — a project of its
+  own, named after it, written whole from the preset `collection` into
+  `boards.marketing`. Agent Pulse keeps every other collection and the
+  `Working` table; the collection's items leave it (`deleteProjectV2Item`,
+  their issues untouched) once its board holds them. `board push` pushes
+  the collections' boards, then Agent Pulse. The project is written from the collection's files, one way:
   - `<collection>/README.md` is its README (`readme` in its board since
     0.21.0, where `description`, `statuses`, `fields` and `labels` are
     declared too: what follows is how a README declared them before,
@@ -522,11 +540,11 @@ added to project`) may change a field of rness's items; the next sync
   organization's and the hooks run on every developer's machine. The
   preset `agent-pulse` declares all three, which is 0.20's behaviour;
   removing `hooks` from a board turns its marking off, and a board without
-  them is only what `pulse sync` makes of the documents. For each event,
-  one detached `rness pulse run <event>` does every board's actions, in
-  the order of `projects`; a failure is recorded naming the board and the
-  action (`mark on Marketing failed: …`). `rness pulse mark`, which 0.20's
-  hooks started, stays, hidden, through 0.21.x. With Agent Pulse's preset:
+  them is only what `board push` makes of the documents. For each event,
+  one detached `rness board run <event>` does every board's actions, in
+  the order of `boards`; a failure is recorded naming the board and the
+  action (`mark on Marketing failed: …`). A board not created yet runs
+  none. With Agent Pulse's preset:
   session start marks the `In progress` plans of the session's scope
   `Agent: working`, with the session; an edit of a document of `.rness/` marks it — one the agent has just written, with no item yet, gets its issue first
   through a sync, and so does one whose status the edit changed, so its
@@ -541,8 +559,8 @@ added to project`) may change a field of rness's items; the next sync
   its file 3 s after `/exit`. It uses your login: with none, without the
   scope, or when GitHub cannot be reached, nothing is sent, and the next
   session start's banner says why, once:
-  `rness: pulse not updated — <reason>`, such as
-  `the pulse needs the project scope: run rness login` or
+  `rness: board not updated — <reason>`, such as
+  `boards need the project scope: run rness login` or
   `cannot reach GitHub: …`. Two sessions marking one plan both write; the
   last wins.
 - **Agent journal** (spec 0030, 0.21.0): how a plan was implemented, in
@@ -550,7 +568,7 @@ added to project`) may change a field of rness's items; the next sync
   `{ "action": "journal", "to": "plan" | "repo", "limit": 5 }` at
   `session-start`, and `journal-summary` at `session-end`. With a plan
   `In progress` in the session's scope, the session start tells the model
-  to post a note — `rness pulse note`, or `rness_note` — when it chooses an
+  to post a note — `rness note`, or `rness_note` — when it chooses an
   approach, deviates from the plan, is blocked, and when done: decisions
   and their reasons, not steps. A note is a comment headed
   `**Approach** · claude · 1a2b3c4d · \`feat/limits\` @ \`9f8e7d6\``
@@ -579,7 +597,7 @@ the one plan in progress when there is a commit; with neither, nothing.
 It counts toward no limit. Not verified against GitHub yet (2026-10-06):
 a sub-issue across repositories, and `Closes` on a pull request merged
   into the default branch.
-- **One issue per document**: before making an issue, `pulse sync` reads
+- **One issue per document**: before making an issue, `board push` reads
   the open issues of `.rness` labelled `rness` (one request per 100, and
   only when it has one to make). One whose body starts with the document's
   first line was made by an earlier sync, whose item the board's listing
@@ -596,10 +614,16 @@ a sub-issue across repositories, and `Closes` on a pull request merged
   documents, 2026-09-30): the migration from 0.12.0 took 169 s with no
   wait; a sync with nothing to change, 4 s; the listing, one page of
   852 KB in about 1 s.
-- **Not yet**: GitLab and Atlassian. `create` lists them, disabled; a
-  workspace whose `rness.json` names one is refused by `pulse`. `Waiting`
-  and `Review` statuses, several agents on one board and hooks for agents
-  other than Claude Code are not built.
+- **Not yet**: GitLab and Atlassian, and their own boards. `create` lists
+  them, disabled; a workspace whose `rness.json` names one is refused by
+  `board push`. `Waiting` and `Review` statuses, several agents on one
+  board and hooks for agents other than Claude Code are not built.
+- **`rness pulse`**, the name of all this until 0.21: hidden, each of its
+  commands still runs as its new one and says so once on stderr
+  (`rness pulse sync is now rness board push`); `rness pulse create
+[<collection>]` adds the preset's name to `boards` when it is not there,
+  then pushes without asking. `rness pulse mark`, which 0.20's hooks
+  started, exits 0 and does nothing. The alias goes in a later minor.
 
 ### Provider
 
@@ -618,15 +642,16 @@ repository, the board).
   names.
 - A workspace without the key is read from its first repository URL: a
   GitLab host reads as `gitlab`, any other host — or no repository — as
-  `github`. Nothing to change: `pulse create` writes it, and refuses a
-  detected provider this version cannot talk to. The order of keys is
-  `contract`, `provider`, `org`, `agents`, `projects`, `repos`, `scopes`.
-  The former `"pulse": { "project": <number> }` still reads, as
-  `"projects": { "pulse": <number> }`; both at once are refused. Since
-  0.21.0 a board in `projects` is written whole, on several lines; a
-  number still reads, as its preset, until `rness sync` writes it whole.
+  `github`. Nothing to change: `board push` writes it when it creates a
+  board, and refuses a detected provider this version cannot talk to. The
+  order of keys is `contract`, `provider`, `org`, `agents`, `boards`,
+  `repos`, `scopes`. The former `projects` and
+  `"pulse": { "project": <number> }` still read, as `boards`; more than one
+  of them at once is refused. A board in `boards` is written whole, on
+  several lines, once created; a number still reads, as its preset, until
+  `rness sync` writes it whole.
 - A provider _written_ in `rness.json` that this version cannot talk to
-  (`gitlab`) is refused by `validate`, `create`, `login` and `pulse`:
+  (`gitlab`) is refused by `validate`, `create`, `login` and `board`:
   `provider "gitlab" is not supported by @rness/cli 0.17.1 (supported:
 github)`. `add`, `sync` and the local commands never refuse. `null` is not a
   value: an absent key means none.
@@ -646,7 +671,7 @@ as the server starts (Claude Code starts it with the session):
 | `rness_list({ collection, status? })`         | every document of a collection, across scopes, optionally of one status                                                                             |
 | `rness_read({ path })`                        | one file of `.rness/`, 256 KiB at most; nothing outside it                                                                                          |
 | `rness_search({ query, collection? })`        | the documents that match, most matching first, with the matching lines                                                                              |
-| `rness_note({ text, session, kind?, plan? })` | a note of the agent's journal posted to GitHub, as `rness pulse note` posts it; the issue it went to (see "Pulse")                                  |
+| `rness_note({ text, session, kind?, plan? })` | a note of the agent's journal posted to GitHub, as `rness note` posts it; the issue it went to (see "Boards")                                       |
 
 - MCP over stdio, one message per line: the `2026-07-28` revision and the
   earlier ones that open with `initialize` (`2025-11-25` back to
@@ -686,7 +711,7 @@ anonymously.
   it — CI needs no login.
 - rness asks for `repo` and `read:org`: GitHub has no read-only scope for
   private repositories. It only lists and clones. Where the workspace
-  declares a pulse it asks for `project` too; see "Pulse".
+  declares a board it asks for `project` too; see "Boards".
 - A new workspace has to reach GitHub before teammates can join it. Logged
   in, the `create` wizard offers to do it: it creates the private repository
   `<org>/.rness` and pushes the context with `git`. Declined, refused by
@@ -822,6 +847,32 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## Unreleased — `board`, not `pulse`: `rness board push`, `rness note`, `boards` in rness.json
+
+- One word for the view, whatever the provider (spec 0033, see "Boards"):
+  `rness board push` replaces `rness pulse sync`, `rness note` replaces
+  `rness pulse note`, and the hooks start `rness board run`. `rness.json`
+  names its boards `boards`; `projects` and the older `pulse` still read,
+  and `rness sync` (which `rness upgrade` runs) renames the key. `pulse`
+  stays the name of the board rness ships, Agent Pulse.
+- A board comes to exist by its declaration and a push: there is no
+  `create`. A board of `boards` without a `number`, or a preset by name
+  (`"pulse": "agent-pulse"`, `"marketing": "collection"`), is created by
+  `rness board push` once asked (`-y` off a terminal), its number then
+  written into `rness.json`.
+- `rness pulse …` still runs, hidden, as its new command, and says so on
+  stderr; it goes in a later minor. `rness pulse mark`, kept through
+  0.21.x for 0.20's hooks, now exits 0 and does nothing. Spec 0031's
+  `eject` is not built and will not be: every board is written whole.
+- The session-start notice is `rness: board not updated — …`, its record
+  `board.json` (one 0.21 left in `pulse.json` is said once), and messages
+  name boards: `boards need a GitHub login: run rness login`.
+- Upgrade with `npx @rness/cli@latest upgrade`, which runs the new copy
+  throughout: a 0.21 copy cannot read `boards` (`unknown key "boards"`).
+- For the package's API: `Manifest.projects` is `Manifest.boards`
+  (`Boards`, a record of `BoardEntry`: a number, a preset's name, or a
+  `BoardDeclaration`, whose `number` is null until the board is created).
 
 ## 0.21.0 — boards declared in rness.json; what a session does to a board, declared; the agent's journal
 

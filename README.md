@@ -45,8 +45,9 @@ npm create rness
   `rness mcp` serves the same context to any MCP client.
 - **Where everything stands.** `rness status` shows every decision,
   specification and plan and its status, in a terminal or as Markdown.
-  `rness pulse` puts them on a GitHub Project, Agent Pulse: one issue per
-  document, the card an agent is working on marked while it works.
+  `rness board push` puts them on the boards `rness.json` declares — GitHub
+  Projects today — first Agent Pulse: one issue per document, the card an
+  agent is working on marked while it works.
 - **Upgrades without surprises.** The CLI version is pinned in
   `.rness/package.json`; every `rness` in the workspace delegates to it.
   `rness upgrade` moves the pin and merges the scaffold's changes with git.
