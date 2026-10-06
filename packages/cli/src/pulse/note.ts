@@ -12,6 +12,7 @@ import { parseFrontMatter } from '../core/frontmatter.ts'
 import { branchOf, headOf } from '../core/git.ts'
 import { JournalRefused } from '../core/github-journal.ts'
 import type { JournalIssue } from '../core/github-journal.ts'
+import { cloneHolding } from '../core/repos.ts'
 import { resolveScope } from '../core/scope.ts'
 import { plansInProgress, statusTabs } from '../core/status.ts'
 import { notePosted, notesPosted, recordNotice } from './journal-state.ts'
@@ -113,11 +114,6 @@ function journalOf(
   return null
 }
 
-const within = (dir: string, path: string): boolean => {
-  const r = relative(dir, path)
-  return r === '' || (!r.startsWith('..') && !r.startsWith(sep) && r !== '..')
-}
-
 /** `git@github.com:acme/api.git` or `https://github.com/acme/api` → `acme`, `api`; null on another host. */
 export function githubRepo(
   url: string
@@ -129,18 +125,6 @@ export function githubRepo(
   return m === null || m[1] === undefined || m[2] === undefined
     ? null
     : { owner: m[1], name: m[2] }
-}
-
-/** The clone the session works in: its name and directory; null in `.rness/` or at the root. */
-function cloneOf(
-  c: Context,
-  cwd: string
-): { name: string; dir: string; url: string } | null {
-  for (const [name, repo] of Object.entries(c.manifest.repos)) {
-    const dir = resolve(c.root, 'org', name)
-    if (within(dir, resolve(cwd))) return { name, dir, url: repo.url }
-  }
-  return null
 }
 
 /** The plan the note is on (spec 0030 §2). */
@@ -250,7 +234,7 @@ export async function postNote(input: NoteInput): Promise<Posted> {
       'journal full for this session: put the rest in the pull request'
     )
   const parent = await planIssue(c, kept.board, plan)
-  const clone = cloneOf(c, input.cwd)
+  const clone = cloneHolding(c.root, c.manifest.repos, input.cwd)
 
   let target: JournalIssue = parent
   let why: string | null = null

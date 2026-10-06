@@ -1,5 +1,5 @@
 import { glob, readFile, rm } from 'node:fs/promises'
-import { join, posix, sep } from 'node:path'
+import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 
 import { exists } from './fs.ts'
 import { clone, originUrl } from './git.ts'
@@ -107,6 +107,21 @@ export async function addRepository(
   }
   await writeManifest(input.rnessDir, manifest)
   return { manifest, name, url, action, declared }
+}
+
+/** The clone of `repos` that holds `dir`: its name, directory and URL; null in `.rness/`, at the root, or outside. */
+export function cloneHolding(
+  root: string,
+  repos: Manifest['repos'],
+  dir: string
+): { name: string; dir: string; url: string } | null {
+  for (const [name, repo] of Object.entries(repos)) {
+    const clone = resolve(root, 'org', name)
+    const r = relative(clone, resolve(dir))
+    if (r === '' || (!r.startsWith('..') && !isAbsolute(r)))
+      return { name, dir: clone, url: repo.url }
+  }
+  return null
 }
 
 /** Directories matched by `package.json#workspaces` that hold a `package.json`, POSIX-relative, sorted. */

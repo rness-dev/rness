@@ -18,12 +18,14 @@ import {
 import { readOrNull } from '../core/fs.ts'
 import { loadManifest, parseManifest } from '../core/manifest.ts'
 import { declaredBoard } from '../core/preset-board.ts'
+import { cloneHolding } from '../core/repos.ts'
 import { safetyNet } from '../core/safety-net.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
-import { documentsIn } from '../core/status.ts'
+import { documentsIn, plansInProgress } from '../core/status.ts'
 import type { Manifest, Workspace } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { type Spawn, detached, takeFailure } from '../pulse/detached.ts'
+import { recordStart, takeNotices } from '../pulse/journal-state.ts'
 import { noteLines, scopeBanner } from './snapshot.ts'
 
 /**
@@ -145,6 +147,60 @@ async function runDetached(
 }
 
 /**
+ * The journal at session start (spec 0030 §6, §7), with no network: what
+ * the model is told, when a board keeps one and the scope has a plan in
+ * progress; and the session's start in the clone it works in, for the
+ * summary. Never throws.
+ */
+async function journalStart(
+  ws: Workspace,
+  manifest: Manifest,
+  scope: string | null,
+  cwd: string,
+  input: Input
+): Promise<string[]> {
+  try {
+    for (const { declaration } of await boardsOf(ws))
+      for (const a of declaration.hooks['session-start'] ?? []) {
+        if (a.action !== 'journal') continue
+        const plans = await plansInProgress(ws, manifest, scope)
+        if (plans.length === 0) return []
+        const session = sessionOf(input)
+        const clone = cloneHolding(ws.root, manifest.repos, cwd)
+        const summarised = (declaration.hooks['session-end'] ?? []).some(
+          (e) => e.action === 'journal-summary'
+        )
+        if (session !== null && clone !== null && summarised)
+          await recordStart(clone.dir, session)
+        // `rness pulse note` reads the session from the Bash tool's
+        // environment; `rness_note` cannot, so it is spelt for it.
+        const tool =
+          session === null
+            ? 'rness_note'
+            : `rness_note, its session "${session}"`
+        const which =
+          plans.length === 1
+            ? plans.join('')
+            : `${plans.join(' or ')} (pass --plan)`
+        return [
+          [
+            `Journal: post a note with \`rness pulse note\` (or ${tool}) when you choose an approach, deviate from plan ${which}, are blocked, and when done.`,
+            `At most ${a.limit}: decisions and their reasons, not steps.`,
+            ...(a.to === 'repo'
+              ? [
+                  'The first note prints the issue to reference; the pull request that completes this plan here carries `Closes <issue>`, an earlier one `Refs <issue>`.',
+                ]
+              : []),
+          ].join(' '),
+        ]
+      }
+  } catch {
+    // The journal is a courtesy: nothing here may reach the session.
+  }
+  return []
+}
+
+/**
  * A banner for the developer and the scope's summary for the model (spec
  * 0015 §3). One JSON object, always, and exit 0: a failure is a line of it.
  */
@@ -166,6 +222,7 @@ async function sessionStart(
     context = [
       ...view.lines,
       `These documents are in ${at}: read one there, or with rness_read when the rness MCP server is connected.`,
+      ...(await journalStart(ws, manifest, scope, cwd, input)),
     ]
     notes = await safetyNet(ws, manifest)
     // Only when some board has documents of the scope to mark: no process
@@ -203,6 +260,7 @@ async function sessionStart(
   }
   const failure = await takeFailure()
   if (failure !== null) notes.push(`pulse not updated — ${failure}`)
+  notes.push(...(await takeNotices()))
   const warnings = noteLines(notes)
   const compact = input['source'] === 'compact'
   // For the developer only: the model has nothing to do about it.

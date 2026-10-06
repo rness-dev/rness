@@ -13,7 +13,9 @@ import { configDir } from '../../src/core/auth.ts'
 import { OWN_COMMANDS } from '../../src/core/catch-up.ts'
 import { presetTemplate } from '../../src/core/presets.ts'
 import { recordFailure } from '../../src/pulse/detached.ts'
+import { recordNotice } from '../../src/pulse/journal-state.ts'
 import { VERSION } from '../../src/version.ts'
+import { commitDir } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const binPath = fileURLToPath(
@@ -920,5 +922,143 @@ test('a board rness.json refuses runs nothing, and the session start names it', 
   assert.match(
     JSON.parse(r.out).systemMessage,
     /"projects\.pulse\.views" must list at least one view/
+  )
+})
+
+// --- the journal at session start (spec 0030 §6, §7) ----------------------------
+
+const journalBoard = (to: 'plan' | 'repo', limit?: number) =>
+  pulseWith({
+    hooks: {
+      'session-start': [
+        {
+          action: 'journal',
+          to,
+          ...(limit === undefined ? {} : { limit }),
+        },
+      ],
+      'session-end': ['journal-summary'],
+    },
+  })
+
+const contextOf = (r: Ran): string =>
+  JSON.parse(r.out).hookSpecificOutput.additionalContext as string
+
+test('journal "repo": the model is told how to write it, with its session and its plan; the pull request sentence', async (t) => {
+  const root = await declaredBoards(
+    t,
+    { pulse: journalBoard('repo', 3) },
+    {
+      'plans/web/0027-web.md': plan('In progress'),
+    }
+  )
+  const r = await hook('session-start', {
+    cwd: join(root, 'org', 'web'),
+    source: 'startup',
+    session_id: ID,
+  })
+  const context = contextOf(r)
+  assert.ok(
+    context.includes(
+      'Journal: post a note with `rness pulse note` (or rness_note, its session "claude · 1a2b3c4d") when you choose an approach, deviate from plan plans/web/0027-web.md, are blocked, and when done. At most 3: decisions and their reasons, not steps. The first note prints the issue to reference; the pull request that completes this plan here carries `Closes <issue>`, an earlier one `Refs <issue>`.'
+    ),
+    context
+  )
+  assert.doesNotMatch(
+    JSON.parse(r.out).systemMessage ?? '',
+    /Journal:/,
+    "the banner is the developer's: unchanged"
+  )
+})
+
+test('journal "plan": the same, without the pull request sentence; no plan in progress, or no journal: no line', async (t) => {
+  const root = await declaredBoards(
+    t,
+    { pulse: journalBoard('plan') },
+    {
+      'plans/0026-a.md': plan('In progress'),
+      'plans/0029-b.md': plan('In progress'),
+    }
+  )
+  const context = contextOf(
+    await hook('session-start', {
+      cwd: root,
+      source: 'startup',
+      session_id: ID,
+    })
+  )
+  assert.match(context, /Journal: post a note with `rness pulse note`/)
+  assert.match(
+    context,
+    /deviate from plan plans\/0026-a\.md or plans\/0029-b\.md \(pass --plan\)/
+  )
+  assert.doesNotMatch(context, /Closes/)
+  const idle = await declaredBoards(
+    t,
+    { pulse: journalBoard('plan') },
+    {
+      'plans/0028-done.md': plan('Completed'),
+    }
+  )
+  assert.doesNotMatch(
+    contextOf(await hook('session-start', { cwd: idle, session_id: ID })),
+    /Journal:/
+  )
+  const none = await declaredBoards(t, { pulse: pulseWith() }, PULSE_FILES)
+  assert.doesNotMatch(
+    contextOf(await hook('session-start', { cwd: none, session_id: ID })),
+    /Journal:/
+  )
+})
+
+test("the session's start is recorded in the clone it works in, for the summary; a fallback of the journal is said once", async (t) => {
+  const root = await declaredBoards(
+    t,
+    { pulse: journalBoard('repo') },
+    PULSE_FILES
+  )
+  const web = join(root, 'org', 'web')
+  await writeFile(join(web, 'a.md'), 'a\n')
+  await commitDir(web)
+  await recordNotice(
+    "journal — acme/web takes no issues, notes go to the plan's issue"
+  )
+  const first = JSON.parse(
+    (
+      await hook('session-start', {
+        cwd: web,
+        source: 'startup',
+        session_id: ID,
+      })
+    ).out
+  )
+  const recorded = JSON.parse(
+    readFileSync(join(web, '.git', 'rness', 'sessions', '1a2b3c4d'), 'utf8')
+  )
+  assert.match(recorded.head, /^[0-9a-f]{40}$/)
+  assert.equal(typeof recorded.at, 'number')
+  assert.ok(
+    first.systemMessage
+      .split('\n')
+      .includes(
+        "rness: journal — acme/web takes no issues, notes go to the plan's issue"
+      )
+  )
+  const again = JSON.parse(
+    (
+      await hook('session-start', {
+        cwd: web,
+        source: 'startup',
+        session_id: ID,
+      })
+    ).out
+  )
+  assert.doesNotMatch(again.systemMessage ?? '', /takes no issues/)
+  assert.deepEqual(
+    JSON.parse(
+      readFileSync(join(web, '.git', 'rness', 'sessions', '1a2b3c4d'), 'utf8')
+    ),
+    recorded,
+    'a resumed session keeps its first start'
   )
 })
