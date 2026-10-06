@@ -377,7 +377,7 @@ test('hooks: every refusal by its full key', () => {
   )
   refused(
     hooked({ edit: ['notify'] }),
-    '"projects.marketing.hooks.edit[0]" names notify, which is no action: mark, mark-in-progress or clear-marks'
+    '"projects.marketing.hooks.edit[0]" names notify, which is no action: mark, mark-in-progress, clear-marks, journal or journal-summary'
   )
   refused(
     hooked({ 'session-end': ['mark'] }),
@@ -400,5 +400,56 @@ test('hooks: every refusal by its full key', () => {
       'session-start': [{ action: 'mark-in-progress', statuses: [] }],
     }),
     '"projects.marketing.hooks.session-start[0].statuses" must list statuses'
+  )
+})
+
+test('hooks: journal at session start, to the plan or the repository, a limit; journal-summary at session end', () => {
+  const plans = {
+    collections: { plans: { statuses: 'contract' } },
+    views: [{ name: 'Plans', layout: 'board' }],
+  }
+  const b = parseBoard('pulse', {
+    ...with_(plans),
+    hooks: {
+      'session-start': [{ action: 'journal', to: 'repo' }],
+      'session-end': ['journal-summary'],
+    },
+  })
+  assert.deepEqual(b.hooks, {
+    'session-start': [{ action: 'journal', to: 'repo', limit: 5 }],
+    'session-end': [{ action: 'journal-summary' }],
+  })
+  const three = parseBoard('pulse', {
+    ...with_(plans),
+    hooks: { 'session-start': [{ action: 'journal', to: 'plan', limit: 3 }] },
+  })
+  assert.deepEqual(three.hooks['session-start'], [
+    { action: 'journal', to: 'plan', limit: 3 },
+  ])
+})
+
+test('hooks: journal and journal-summary refused by their full key', () => {
+  const plans = {
+    collections: { plans: { statuses: 'contract' } },
+    views: [{ name: 'Plans', layout: 'board' }],
+  }
+  refused(
+    with_({ ...plans, hooks: { 'session-start': ['journal'] } }),
+    '"projects.marketing.hooks.session-start[0].to" must be plan or repo'
+  )
+  refused(
+    with_({
+      ...plans,
+      hooks: { 'session-start': [{ action: 'journal', to: 'repo', limit: 0 }] },
+    }),
+    '"projects.marketing.hooks.session-start[0].limit" must be a number of notes, 1 or more'
+  )
+  refused(
+    with_({ hooks: { 'session-start': [{ action: 'journal', to: 'plan' }] } }),
+    '"projects.marketing.hooks.session-start[0]": journal needs the plans on its board'
+  )
+  refused(
+    with_({ ...plans, hooks: { 'session-end': ['journal-summary'] } }),
+    '"projects.marketing.hooks.session-end[0]": journal-summary needs journal at session-start on its board'
   )
 })

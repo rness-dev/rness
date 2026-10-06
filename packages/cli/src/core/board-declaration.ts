@@ -85,13 +85,16 @@ export type BoardAction =
   | { action: 'mark' }
   | { action: 'mark-in-progress'; collections: string[]; statuses: string[] }
   | { action: 'clear-marks' }
+  /** The agent's journal (spec 0030, 0032 §6): where notes go, how many per session and plan. */
+  | { action: 'journal'; to: 'plan' | 'repo'; limit: number }
+  | { action: 'journal-summary' }
 export type ActionName = BoardAction['action']
 
-/** Each action, its event, and its parameters with their defaults. */
+/** Each action, its event, and its parameters with their defaults (`undefined`: required). */
 export const ACTIONS: Readonly<
   Record<
     ActionName,
-    { event: HookEvent; parameters: Readonly<Record<string, string[]>> }
+    { event: HookEvent; parameters: Readonly<Record<string, unknown>> }
   >
 > = {
   mark: { event: 'edit', parameters: {} },
@@ -100,7 +103,16 @@ export const ACTIONS: Readonly<
     parameters: { collections: ['plans'], statuses: ['In progress'] },
   },
   'clear-marks': { event: 'session-end', parameters: {} },
+  journal: { event: 'session-start', parameters: { to: undefined, limit: 5 } },
+  'journal-summary': { event: 'session-end', parameters: {} },
 }
+
+/** The actions that write marks: they need a select from `$agent` with `working`. */
+const MARKING: readonly ActionName[] = [
+  'mark',
+  'mark-in-progress',
+  'clear-marks',
+]
 
 /** A board's actions by event; an event it declares nothing at is absent. */
 export type BoardHooks = Partial<Record<HookEvent, BoardAction[]>>
@@ -457,7 +469,8 @@ const marks = (fields: Record<string, FieldDeclaration>): boolean =>
 function readHooks(
   value: unknown,
   at: string,
-  fields: Record<string, FieldDeclaration>
+  fields: Record<string, FieldDeclaration>,
+  holdsPlans: boolean
 ): BoardHooks {
   if (value === undefined) return {}
   if (!isRecord(value)) throw new BoardRefused(at, 'must map events to actions')
@@ -502,10 +515,15 @@ function readHooks(
           )
       if (actions.some((a) => a.action === action))
         throw new BoardRefused(key, `${action} is there already`).withColon()
-      if (!marks(fields))
+      if (MARKING.includes(action) && !marks(fields))
         throw new BoardRefused(
           key,
           `${action} needs a select field from $agent with the option ${WORKING}`
+        ).withColon()
+      if (action === 'journal' && !holdsPlans)
+        throw new BoardRefused(
+          key,
+          'journal needs the plans on its board'
         ).withColon()
       if (action === 'mark-in-progress') {
         const list = (p: string): string[] => {
@@ -519,10 +537,32 @@ function readHooks(
           collections: list('collections'),
           statuses: list('statuses'),
         })
+      } else if (action === 'journal') {
+        const to = raw['to']
+        if (to !== 'plan' && to !== 'repo')
+          throw new BoardRefused(`${key}.to`, 'must be plan or repo')
+        const limit = raw['limit'] ?? spec.parameters['limit']
+        if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)
+          throw new BoardRefused(
+            `${key}.limit`,
+            'must be a number of notes, 1 or more'
+          )
+        actions.push({ action, to, limit })
       } else actions.push({ action })
     }
     hooks[known] = actions
   }
+  // A summary closes a journal: one this board keeps.
+  const ends = hooks['session-end'] ?? []
+  const at_ = ends.findIndex((a) => a.action === 'journal-summary')
+  if (
+    at_ !== -1 &&
+    !(hooks['session-start'] ?? []).some((a) => a.action === 'journal')
+  )
+    throw new BoardRefused(
+      `${at}.session-end[${at_}]`,
+      'journal-summary needs journal at session-start on its board'
+    ).withColon()
   return hooks
 }
 
@@ -646,7 +686,12 @@ export function parseBoard(
     fields,
     labels: readLabels(value['labels'], `${at}.labels`),
     views,
-    hooks: readHooks(value['hooks'], `${at}.hooks`, fields),
+    hooks: readHooks(
+      value['hooks'],
+      `${at}.hooks`,
+      fields,
+      collections === 'all' || Object.hasOwn(collections, 'plans')
+    ),
     source: value,
   }
 }
