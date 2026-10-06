@@ -136,13 +136,16 @@ on `rness-dev/docs` only, since a workflow's own token cannot start a
 workflow in another repository. Without it, or when GitHub refuses it, the
 run warns and the docs wait for their hourly run.
 
-The same run then creates the tag's GitHub release from the version's section
-of the changelog (`## 0.20.1 — <tagline>` in `packages/cli/README.md`), so
-write that section before tagging. Without it the release job fails, the
-packages already on npm, and a re-run reads the same commit: write the
-section on `main`, then draft the release on GitHub (Releases, Draft a new
-release) with what `node scripts/release-notes.mjs v0.20.1` prints (`--title`
-for its title).
+The same run then calls the `Release` workflow, which creates the tag's
+GitHub release from the version's section of the changelog
+(`## 0.20.1 — <tagline>` in `packages/cli/README.md`): write that section
+before tagging. Without it the release fails, the packages already on npm,
+and a re-run reads the same commit. Write the section on `main`, then run
+`Release` by hand (Actions, Release, Run workflow, on `main`, with the tag):
+it reads the changelog of the branch it runs on. The same run releases a tag
+that never had one. A release already there is left as it is, and only the
+highest version is marked Latest, whatever order the releases are made in.
+`node scripts/release-notes.mjs v0.20.1` prints the notes it would write.
 
 ## Community
 

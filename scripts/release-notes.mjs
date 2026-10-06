@@ -1,8 +1,8 @@
-// The GitHub release of a tag (the publish workflow, after npm): its notes are
+// The GitHub release of a tag (the Release workflow): its notes are
 // the version's section of the CLI changelog, `## 0.20.1 — <tagline>` in
 // packages/cli/README.md, its title `v0.20.1: <tagline>`. `--title` prints the
 // title, otherwise the notes. A version with no section fails rather than
-// leave a release empty (README, Develop, says what to do then).
+// leave a release empty: write it on main, then run Release by hand.
 import { readFile } from 'node:fs/promises'
 
 const CHANGELOG = 'packages/cli/README.md' // run from the repository root
@@ -60,7 +60,7 @@ const heading = `## ${version} — `
 const start = lines.findIndex((l) => l.startsWith(heading))
 if (start === -1) {
   console.error(
-    `packages/cli/README.md has no "${heading}…" section: write it, then draft the release from this script (README, Develop)`
+    `packages/cli/README.md has no "${heading}…" section: write it on main, then run the Release workflow for this tag`
   )
   process.exit(1)
 }
@@ -70,7 +70,7 @@ const section = trimBlankLines(
 )
 if (section.length === 0) {
   console.error(
-    `the "${heading}…" section is empty: write it, then draft the release from this script (README, Develop)`
+    `the "${heading}…" section is empty: write it on main, then run the Release workflow for this tag`
   )
   process.exit(1)
 }

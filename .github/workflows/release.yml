@@ -1,0 +1,66 @@
+name: Release
+
+# The GitHub release of a tag. Publish calls it once the tag's packages are on
+# npm; Run workflow (Actions, Release) does it by hand for any tag: one whose
+# changelog section was written after it, or one that never had a release.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to release, e.g. v0.20.1
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      # The run's own ref: the tag when Publish calls, the branch picked in Run
+      # workflow (main) by hand, whose changelog may have caught up since.
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # Notes and title from the version's section of packages/cli/README.md;
+      # no section fails the run, so a release is never empty. A release
+      # already there (a re-run, one made by hand) is left as it is.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::the tag must read vX.Y.Z or vX.Y.Z-<prerelease>"
+            exit 1
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "release $TAG already exists: left as it is"
+            exit 0
+          fi
+          node scripts/release-notes.mjs "$TAG" > "$RUNNER_TEMP/notes.md"
+          title="$(node scripts/release-notes.mjs "$TAG" --title)"
+          # Latest goes to the highest version, whatever order the releases
+          # are made in (GitHub would give it to the newest); never to a
+          # prerelease.
+          highest="$(git ls-remote --tags --refs origin 'v*' | sed -e 's|.*refs/tags/||' -e '/-/d' | sort -V | tail -n 1)"
+          flags=(--latest=false)
+          case "$TAG" in
+            *-*) flags=(--prerelease --latest=false) ;;
+            "$highest") flags=(--latest) ;;
+          esac
+          gh release create "$TAG" --verify-tag --title "$title" \
+            --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
