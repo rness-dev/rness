@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { readShape } from '../pulse/collection.ts'
 import { type BoardDeclaration, parseBoard } from './board-declaration.ts'
-import { PULSE } from './manifest.ts'
+import { PULSE, loadManifest } from './manifest.ts'
 import { currentPreset, presetTemplate } from './presets.ts'
 import type { Projects } from './types.ts'
 
@@ -114,4 +114,35 @@ export async function declaredBoard(
 ): Promise<BoardDeclaration> {
   if (typeof entry !== 'number') return entry
   return parseBoard(name, await presetSource(name, rnessDir, entry))
+}
+
+/** A board of `rness.json`, read whole (a number is its preset). */
+export interface NamedBoard {
+  name: string
+  declaration: BoardDeclaration
+}
+
+/**
+ * The boards `rness.json` declares, for what reads them on a session's
+ * path (the hooks, `rness mcp`): none when it cannot be read, and a board
+ * that cannot, left out — `validate` and the safety net say why. Never throws.
+ */
+export async function readBoards(rnessDir: string): Promise<NamedBoard[]> {
+  let projects: Projects
+  try {
+    projects = (await loadManifest(rnessDir)).projects ?? {}
+  } catch {
+    return []
+  }
+  const boards: NamedBoard[] = []
+  for (const [name, entry] of Object.entries(projects))
+    try {
+      boards.push({
+        name,
+        declaration: await declaredBoard(name, entry, rnessDir),
+      })
+    } catch {
+      // Refused: said elsewhere.
+    }
+  return boards
 }

@@ -6,6 +6,7 @@ import { COLLECTIONS, assembleContext, ownerScope } from '../core/context.ts'
 import { STATUSES } from '../core/contract.ts'
 import { documentNumber, documentTitle } from '../core/documents.ts'
 import { loadManifest, workspaceName } from '../core/manifest.ts'
+import { readBoards } from '../core/preset-board.ts'
 import { resolveScope } from '../core/scope.ts'
 import type { CollectionName, Manifest, Workspace } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
@@ -13,7 +14,8 @@ import type { McpTool } from './protocol.ts'
 
 /**
  * The four read-only tools of `rness mcp` (spec 0014 §2), over the
- * workspace found from `cwd`. Everything is read again on each call: an
+ * workspace found from `cwd`, and `rness_note` when a board keeps a
+ * journal (spec 0030 §5). Everything is read again on each call: an
  * edit in `.rness/` shows at once. Text out, for a model to read.
  */
 
@@ -349,4 +351,84 @@ export function mcpTools(cwd: string): McpTool[] {
       call: (args) => guard(() => search(cwd, args)),
     },
   ]
+}
+
+/** The kinds of a note, as `rness pulse note --kind` takes them. */
+const NOTE_KINDS = ['approach', 'deviation', 'blocker', 'done']
+
+/** `rness_note`: the agent's journal, the server's one tool that writes. */
+function noteTool(cwd: string, githubApi?: string): McpTool {
+  return {
+    name: 'rness_note',
+    title: "rness: a note on the plan's issue",
+    description:
+      "A note of the agent's journal on the plan in progress, posted to GitHub: when you choose an approach, deviate from the plan, are blocked, and when done. Decisions and their reasons, not steps; a few per session. Returns the issue it went to (owner/repo#N), for the pull request to reference.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'Markdown, 1 to 4,000 characters',
+        },
+        kind: {
+          type: 'string',
+          enum: NOTE_KINDS,
+          description: 'What the note titles itself; default approach',
+        },
+        plan: {
+          type: 'string',
+          description:
+            'The plan, relative to .rness/ (plans/0021-x.md); needed when several are in progress',
+        },
+        session: {
+          type: 'string',
+          description:
+            'The session, as the session start spells it: claude · 1a2b3c4d',
+        },
+      },
+      required: ['text', 'session'],
+      additionalProperties: false,
+    },
+    call: (args) =>
+      guard(async () => {
+        const { postNote } = await import('../pulse/note.ts')
+        const given = (key: string): string | undefined => {
+          const value = args[key]
+          return typeof value === 'string' ? value : undefined
+        }
+        const kind = given('kind')
+        const plan = given('plan')
+        const posted = await postNote({
+          cwd,
+          text: given('text') ?? '',
+          session: given('session') ?? '',
+          // The server's environment names no session: only the argument does.
+          env: {},
+          ...(kind === undefined ? {} : { kind }),
+          ...(plan === undefined ? {} : { plan }),
+          ...(githubApi === undefined ? {} : { githubApi }),
+        })
+        return { text: posted.reference }
+      }),
+  }
+}
+
+/** What `rness mcp` serves: the four tools, and `rness_note` when a valid board declares `journal`. */
+export async function serverTools(
+  cwd: string,
+  /** Internal (tests): GitHub API base. */
+  githubApi?: string
+): Promise<McpTool[]> {
+  let journal = false
+  try {
+    const ws = await findWorkspace(cwd)
+    journal = (await readBoards(ws.rnessDir)).some((b) =>
+      (b.declaration.hooks['session-start'] ?? []).some(
+        (a) => a.action === 'journal'
+      )
+    )
+  } catch {
+    // No workspace: the four tools say so.
+  }
+  return [...mcpTools(cwd), ...(journal ? [noteTool(cwd, githubApi)] : [])]
 }

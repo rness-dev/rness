@@ -260,7 +260,7 @@ function buildProgram(state: RunState): Command {
   program
     .command('mcp')
     .description(
-      'Serve the workspace context to agents over MCP (stdio, read-only)'
+      'Serve the workspace context to agents over MCP (stdio; read-only but for rness_note, when a board keeps a journal)'
     )
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (opts: McpOptions) => {

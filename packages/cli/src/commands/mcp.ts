@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline'
 import type { Readable, Writable } from 'node:stream'
 
 import { createProtocol } from '../mcp/protocol.ts'
-import { mcpTools } from '../mcp/tools.ts'
+import { serverTools } from '../mcp/tools.ts'
 import { VERSION } from '../version.ts'
 
 export interface McpOptions {
@@ -25,7 +25,7 @@ export async function mcpCommand(
   const protocol = createProtocol({
     name: 'rness',
     version: VERSION,
-    tools: mcpTools(opts.cwd ?? process.cwd()),
+    tools: await serverTools(opts.cwd ?? process.cwd()),
   })
   const lines = createInterface({ input: io.input, crlfDelay: Infinity })
   for await (const line of lines) {

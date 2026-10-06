@@ -17,7 +17,7 @@ import {
 } from '../core/edit-guard.ts'
 import { readOrNull } from '../core/fs.ts'
 import { loadManifest, parseManifest } from '../core/manifest.ts'
-import { declaredBoard } from '../core/preset-board.ts'
+import { type NamedBoard, readBoards } from '../core/preset-board.ts'
 import { cloneHolding } from '../core/repos.ts'
 import { safetyNet } from '../core/safety-net.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
@@ -84,32 +84,11 @@ function sessionOf(input: Input): string | null {
   ].join(' · ')
 }
 
-/** A board of `rness.json`, read whole (a number is its preset). */
-interface HookBoard {
-  name: string
-  declaration: BoardDeclaration
-}
+type HookBoard = NamedBoard
 
-/** The boards `rness.json` declares; none when it cannot be read, and a board that cannot, left out. Never throws. */
-async function boardsOf(ws: Workspace): Promise<HookBoard[]> {
-  let manifest: Manifest
-  try {
-    manifest = await loadManifest(ws.rnessDir)
-  } catch {
-    return []
-  }
-  const boards: HookBoard[] = []
-  for (const [name, entry] of Object.entries(manifest.projects ?? {}))
-    try {
-      boards.push({
-        name,
-        declaration: await declaredBoard(name, entry, ws.rnessDir),
-      })
-    } catch {
-      // `validate` and the safety net say why.
-    }
-  return boards
-}
+/** The boards `rness.json` declares (see {@link readBoards}). */
+const boardsOf = (ws: Workspace): Promise<HookBoard[]> =>
+  readBoards(ws.rnessDir)
 
 /** Whether a board holds a document: one that takes all, any; else one of its collections'. */
 const holds = (board: BoardDeclaration, path: string): boolean =>

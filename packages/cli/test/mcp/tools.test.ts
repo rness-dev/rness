@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
-import { mcpTools } from '../../src/mcp/tools.ts'
+import { presetTemplate } from '../../src/core/presets.ts'
+import { mcpTools, serverTools } from '../../src/mcp/tools.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const doc = (status: string, title: string, body = '') =>
@@ -198,4 +206,60 @@ test('outside a workspace every tool says where it looked', async (t) => {
   assert.ok(r)
   assert.equal(r.isError, true)
   assert.match(r.text, /no rness workspace/)
+})
+
+// --- rness_note, the one tool that writes (spec 0030 §5, plan 0047) ---------
+
+/** The fixture, Agent Pulse declared on it, keeping a journal or not. */
+async function boarded(t: TestContext, journal: boolean) {
+  const root = await fixture(t)
+  const file = join(root, '.rness', 'rness.json')
+  const manifest = JSON.parse(await readFile(file, 'utf8'))
+  const hooks = journal
+    ? { 'session-start': [{ action: 'journal', to: 'plan' }] }
+    : {}
+  manifest.projects = {
+    pulse: {
+      number: 7,
+      ...presetTemplate('agent-pulse/1', { collection: 'pulse' }),
+      hooks,
+    },
+  }
+  await writeFile(file, JSON.stringify(manifest))
+  return root
+}
+
+test('the server lists rness_note only when a valid board keeps a journal: four tools, else five', async (t) => {
+  const names = async (cwd: string) =>
+    (await serverTools(cwd)).map((x) => x.name)
+  const four = ['rness_context', 'rness_list', 'rness_read', 'rness_search']
+  assert.deepEqual(await names(await fixture(t)), four)
+  assert.deepEqual(await names(await boarded(t, false)), four)
+  assert.deepEqual(await names(await boarded(t, true)), [...four, 'rness_note'])
+  const none = await realpath(await mkdtemp(join(tmpdir(), 'rness-none-')))
+  t.after(() => rm(none, { recursive: true, force: true }))
+  assert.deepEqual(await names(none), four)
+})
+
+test('rness_note: its session required, a strict schema; a refusal is an error the model reads, nothing posted', async (t) => {
+  const root = await boarded(t, true)
+  const tool = (await serverTools(root)).find((x) => x.name === 'rness_note')
+  assert.ok(tool)
+  assert.deepEqual(tool.inputSchema['required'], ['text', 'session'])
+  assert.equal(tool.inputSchema['additionalProperties'], false)
+  const r = await tool.call({
+    text: 'The key is ghp_0123456789',
+    session: 'claude · 1a2b3c4d',
+  })
+  assert.deepEqual(r, {
+    text: 'the note looks like it holds a credential',
+    isError: true,
+  })
+  const kind = await tool.call({
+    text: 'x',
+    kind: 'aside',
+    session: 'claude · 1a2b3c4d',
+  })
+  assert.equal(kind.isError, true)
+  assert.match(kind.text, /^--kind is one of/)
 })

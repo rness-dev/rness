@@ -9,6 +9,7 @@ import {
   pulseRunCommand,
 } from '../../src/commands/pulse.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
+import { serverTools } from '../../src/mcp/tools.ts'
 import { takeFailure } from '../../src/pulse/detached.ts'
 import {
   recordStart,
@@ -355,6 +356,27 @@ test("a sub-issue GitHub refuses: the implementation issue kept, named on the pl
     body: `Implementation: acme/api#${impl?.number}`,
   })
   assert.equal(g.comments[1]?.subjectId, impl?.id)
+})
+
+// --- rness_note (spec 0030 §5) ---------------------------------------------
+
+test("rness_note: the same note through the MCP server, its session given; the issue's reference returned", async (t) => {
+  const { g, api } = await journaled(t, { to: 'plan' })
+  const tool = (await serverTools(api, g.base)).find(
+    (x) => x.name === 'rness_note'
+  )
+  assert.ok(tool)
+  const r = await tool.call({
+    text: 'Chose a token bucket.',
+    kind: 'done',
+    session: SESSION,
+  })
+  const plan = g.issues.find((i) => i.title === '0002 — Limits')
+  assert.deepEqual(r, { text: `acme/.rness#${plan?.number}` })
+  assert.match(
+    g.comments[0]?.body ?? '',
+    /^\*\*Done\*\* · claude · 1a2b3c4d · `feat\/limits` @ `[0-9a-f]{7}`\n\nChose a token bucket\.\n\n/
+  )
 })
 
 // --- the session-end summary (spec 0030 §6) ---------------------------------
