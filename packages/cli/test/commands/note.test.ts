@@ -81,6 +81,8 @@ async function journaled(
       state: string
     }[]
     files?: Record<string, string>
+    /** The session end's actions; default `clear-marks`, `journal-summary`. */
+    end?: string[]
   } = {}
 ) {
   await machine(t)
@@ -127,7 +129,7 @@ async function journaled(
         ...(opts.limit === undefined ? {} : { limit: opts.limit }),
       },
     ],
-    'session-end': ['clear-marks', 'journal-summary'],
+    'session-end': opts.end ?? ['clear-marks', 'journal-summary'],
   }
   await writeFile(file, JSON.stringify(manifest, null, 2))
   await commitDir(join(root, '.rness'))
@@ -484,4 +486,26 @@ test('a summary GitHub refuses: recorded for the next session start, naming the 
     (await takeFailure()) ?? '',
     /^journal-summary on Agent Pulse failed: .*Resource not accessible by integration/
   )
+})
+
+test("a summary after notes costs GitHub the pull request query and its comment, beside the login and the board's lookup: no issue looked up", async (t) => {
+  const { g, root, api } = await journaled(t, { end: ['journal-summary'] })
+  await recordStart(api, SESSION)
+  assert.equal((await note(g, api)).code, 0)
+  await commitIn(api, 'a.ts')
+  const before = g.requests.length
+  assert.equal(await sessionEnd(g, root), 0)
+  const sent = g.requests.slice(before).map((r) => {
+    const query = String((r.body as { query?: string } | undefined)?.query)
+    return r.path === '/user'
+      ? 'login'
+      : /organization\(login/.test(query)
+        ? 'board'
+        : /pullRequests\(headRefName/.test(query)
+          ? 'pull request'
+          : /addComment\(/.test(query)
+            ? 'comment'
+            : query.replace(/\s+/g, ' ').slice(0, 60)
+  })
+  assert.deepEqual(sent, ['login', 'board', 'pull request', 'comment'])
 })
