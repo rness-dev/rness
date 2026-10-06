@@ -15,7 +15,7 @@ const SNAPSHOT: RnessSnapshot = {
   workspace: 'acme',
   scope: null,
   banner: 'rness 0.19.0 · acme · global scope — 1 standard, 2 plans',
-  statusLine: 'global · 1 in progress',
+  statusLine: 'rness · global · 1 in progress',
   inProgress: ['plans/0002-b.md'],
   notes: [],
   pulse: 'https://github.com/orgs/acme/projects/4',
@@ -73,14 +73,19 @@ function files(on: On, text: string | null, path = '/.rness/plans/0002-b.md') {
   return reads
 }
 
-/** The pinned CLI as the module finds it; `runs` counts the status calls, `looked` the paths tried. */
-function cli(on: On, snapshot: RnessSnapshot | null, looked: string[] = []) {
+/** The pinned CLI as the module finds it; `runs` counts the status calls, `looked` the paths tried. A function gives what `status --json` prints at each run. */
+function cli(
+  on: On,
+  snapshot: RnessSnapshot | null | (() => RnessSnapshot | null),
+  looked: string[] = []
+) {
   const runs: (readonly string[])[] = []
+  const current = () => (typeof snapshot === 'function' ? snapshot() : snapshot)
   on('fs.exists', async (_$, e) => {
     looked.push(e.path)
     return {
       value:
-        snapshot !== null &&
+        current() !== null &&
         e.path.endsWith('/.rness/node_modules/@rness/cli/dist/bin/rness.js'),
     }
   })
@@ -89,7 +94,7 @@ function cli(on: On, snapshot: RnessSnapshot | null, looked: string[] = []) {
     return {
       value: {
         exitCode: 0,
-        stdout: `${JSON.stringify(snapshot)}\n`,
+        stdout: `${JSON.stringify(current())}\n`,
         stderr: '',
         isStdoutTruncated: false,
         isStderrTruncated: false,
@@ -105,7 +110,7 @@ interface Panes {
   closed: string[]
 }
 
-/** What the engine answers beneath the plugins in a session; `status` collects the status line, `panes` the opens and closes, `scrolled` the scroll events as they reach the bottom, `focused` the focus events that do. */
+/** What the engine answers beneath the plugins in a session; `status` collects what `ui.status` is given (nothing, since plan 0044), `panes` the opens and closes, `scrolled` the scroll events as they reach the bottom, `focused` the focus events that do. */
 function engine(
   on: On,
   status: (string | undefined)[] = [],
@@ -182,7 +187,7 @@ test('a note: the band with its line and no banner, before and after the first p
   cli(on, {
     ...SNAPSHOT,
     notes: [NOTE],
-    statusLine: 'global · 1 in progress · ⚠ 1',
+    statusLine: 'rness · global · 1 in progress · ⚠ 1',
   })
   await $.session.start(start)
   await clock.advance(0)
@@ -216,14 +221,78 @@ test('no pinned CLI: no band', async ($, on) => {
   expect(await band.findAll({ type: 'Text' })).toHaveLength(0)
 })
 
-test('the status line carries the snapshot’s', async ($, on) => {
+/** The prompt footer's modes as the engine has them before any plugin: `focus` is its own. */
+const FOOTER = {
+  plugin: 'rness',
+  component: 'SessionMode',
+  props: { modes: ['focus'] } as never,
+} as const
+
+/** The footer as the engine draws it beneath the plugins: the modes joined by ` & `; `modes` keeps what reached it. */
+function footer(on: On) {
+  const modes: (readonly string[])[] = []
+  on('ui.render', { component: 'SessionMode' }, async (_$, e) => {
+    modes.push(e.props.modes)
+    return {
+      type: 'Text' as const,
+      props: {},
+      children: [e.props.modes.join(' & ')],
+    }
+  })
+  return modes
+}
+
+test('the prompt footer’s modes carry the label after the engine’s own; nothing is pinned under the prompt', async ($, on) => {
   const clock = mock.clock(on)
   const lines: (string | undefined)[] = []
+  const modes = footer(on)
   engine(on, lines)
   cli(on, SNAPSHOT)
   await $.session.start(start)
   await clock.advance(0)
-  expect(lines).toContain(SNAPSHOT.statusLine)
+  for (const surface of SURFACES) {
+    const drawn = await $.ui.mount({ ...FOOTER, surface })
+    expect((await drawn.find({ type: 'Text' }))?.text).toBe(
+      `focus & ${SNAPSHOT.statusLine}`
+    )
+  }
+  expect(modes.at(-1)).toEqual(['focus', SNAPSHOT.statusLine])
+  expect(lines).toHaveLength(0)
+})
+
+test('a refresh with another snapshot redraws the footer', async ($, on) => {
+  const clock = mock.clock(on)
+  footer(on)
+  engine(on)
+  let now: RnessSnapshot = SNAPSHOT
+  cli(on, () => now)
+  on('tool.call', async () => ({ result: 'ok' }) as never)
+  await $.session.start(start)
+  await clock.advance(0)
+  now = { ...SNAPSHOT, statusLine: 'rness · global · 2 in progress' }
+  await $.tool.call({
+    tool: 'Edit',
+    file_path: '/w/.rness/plans/0003-c.md',
+    old_string: 'a',
+    new_string: 'b',
+  } as never)
+  await clock.advance(0)
+  const drawn = await $.ui.mount({ ...FOOTER, surface: 'terminal' })
+  expect((await drawn.find({ type: 'Text' }))?.text).toBe(
+    'focus & rness · global · 2 in progress'
+  )
+})
+
+test('no pinned CLI: the footer’s modes as the engine had them', async ($, on) => {
+  const clock = mock.clock(on)
+  const modes = footer(on)
+  engine(on)
+  cli(on, null)
+  await $.session.start(start)
+  await clock.advance(0)
+  const drawn = await $.ui.mount({ ...FOOTER, surface: 'terminal' })
+  expect((await drawn.find({ type: 'Text' }))?.text).toBe('focus')
+  expect(modes.at(-1)).toEqual(['focus'])
 })
 
 test('an Edit under .rness refreshes the snapshot; an Edit elsewhere does not', async ($, on) => {

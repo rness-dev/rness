@@ -48,10 +48,11 @@ export const noteLines = (notes: readonly string[]): string[] =>
   notes.map((n) => `rness: ${n}`)
 
 /**
- * The status line entry (spec 0029 §3.3, plan 0042): the scope, the plans in
- * progress, and the notes to act on, counted. A note's indented detail lines
- * do not count. No leading `rness`: Claude Code draws the plugin's name
- * before the entry.
+ * The workspace's label in the prompt footer (spec 0029 §3.3, plan 0044):
+ * `rness`, the scope, the plans in progress, and the notes to act on,
+ * counted. A note's indented detail lines do not count. The mod adds it to
+ * the session modes (`focus`, `memory paused`), which carry no plugin name,
+ * so the word `rness` is part of it.
  */
 export function statusLine(
   scope: string | null,
@@ -59,7 +60,7 @@ export function statusLine(
   notes: readonly string[]
 ): string {
   const acting = notes.filter((n) => !n.startsWith(' ')).length
-  return `${scope ?? 'global'} · ${inProgress.length} in progress${acting > 0 ? ` · ⚠ ${acting}` : ''}`
+  return `rness · ${scope ?? 'global'} · ${inProgress.length} in progress${acting > 0 ? ` · ⚠ ${acting}` : ''}`
 }
 
 /** A row of a tab as the mod draws it: the document, its colour, its item. */

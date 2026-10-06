@@ -79,7 +79,7 @@ const openNow = async ($: EngineInterface) =>
   (await $.state.get(OPEN)).value ?? null
 
 /**
- * Reads the snapshot from the pinned CLI and keeps it; the status line
+ * Reads the snapshot from the pinned CLI and keeps it; the footer's label
  * follows, and so does the document open in the pane, read again. No
  * pinned copy, or a run that fails: no snapshot, nothing drawn.
  */
@@ -99,7 +99,6 @@ async function refresh($: EngineInterface): Promise<RnessSnapshot | null> {
     next = null
   }
   await update($, snapshot, () => next)
-  $.ui.status(next?.statusLine)
   const opened = await openNow($)
   if (opened !== null) await show($, opened.path)
   return next
@@ -250,6 +249,20 @@ export const register: Register = (on) => {
         ))}
       </Box>
     )
+  })
+
+  // The workspace's label among the session modes at the right of the
+  // prompt footer (plan 0044): `rness · <scope> · <n> in progress`, worded
+  // by the CLI, after the engine's own (`focus`). A mode is dim and carries
+  // no sign; `$.ui.status` would draw it as a warning. No snapshot: the
+  // footer as the engine has it.
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    const shown = await read($, snapshot)
+    if (shown === null) return next(e)
+    return next({
+      ...e,
+      props: { modes: [...e.props.modes, shown.statusLine] },
+    })
   })
 
   // `/rness:status` is the skill's name: answered here with the pane, it
