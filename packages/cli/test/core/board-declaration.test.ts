@@ -111,8 +111,8 @@ test('the board and its number', () => {
 
 test('an unknown key, at any level, named in full', () => {
   refused(
-    with_({ hooks: {} }),
-    '"projects.marketing.hooks" is not a key of a board'
+    with_({ sort: 'Title' }),
+    '"projects.marketing.sort" is not a key of a board'
   )
   refused(
     with_({
@@ -313,4 +313,92 @@ test("readme and updates: a path within .rness, never out of it — rness.json i
         with_({ [key]: path }),
         `"projects.marketing.${key}" must be a path within .rness, as ${example}`
       )
+})
+
+// --- hooks (spec 0032 §1, §3) -------------------------------------------------
+
+const AGENT = {
+  Agent: { type: 'select', from: '$agent', options: ['working'] },
+  'Working session': { type: 'text', from: '$session' },
+}
+const hooked = (hooks: unknown, fields: Record<string, unknown> = AGENT) =>
+  with_({ fields: { ...MARKETING.fields, ...fields }, hooks })
+
+test('hooks: each action at its event, a name or an object, the defaults filled', () => {
+  const b = parseBoard(
+    'marketing',
+    hooked({
+      'session-start': ['mark-in-progress'],
+      edit: [{ action: 'mark' }],
+      'session-end': ['clear-marks'],
+    })
+  )
+  assert.deepEqual(b.hooks, {
+    'session-start': [
+      {
+        action: 'mark-in-progress',
+        collections: ['plans'],
+        statuses: ['In progress'],
+      },
+    ],
+    edit: [{ action: 'mark' }],
+    'session-end': [{ action: 'clear-marks' }],
+  })
+  const c = parseBoard(
+    'marketing',
+    hooked({
+      'session-start': [
+        {
+          action: 'mark-in-progress',
+          collections: ['marketing'],
+          statuses: ['Draft', 'Scheduled'],
+        },
+      ],
+    })
+  )
+  assert.deepEqual(c.hooks['session-start'], [
+    {
+      action: 'mark-in-progress',
+      collections: ['marketing'],
+      statuses: ['Draft', 'Scheduled'],
+    },
+  ])
+  assert.deepEqual(parseBoard('marketing', MARKETING).hooks, {})
+})
+
+test('hooks: every refusal by its full key', () => {
+  refused(
+    hooked({ start: ['mark'] }),
+    '"projects.marketing.hooks.start" is not an event: session-start, edit or session-end'
+  )
+  refused(
+    hooked({ edit: 'mark' }),
+    '"projects.marketing.hooks.edit" must list actions'
+  )
+  refused(
+    hooked({ edit: ['notify'] }),
+    '"projects.marketing.hooks.edit[0]" names notify, which is no action: mark, mark-in-progress or clear-marks'
+  )
+  refused(
+    hooked({ 'session-end': ['mark'] }),
+    '"projects.marketing.hooks.session-end[0]": mark is an action of edit, not of session-end'
+  )
+  refused(
+    hooked({ edit: [{ action: 'mark', run: './notify.sh' }] }),
+    '"projects.marketing.hooks.edit[0].run" is not a parameter of mark'
+  )
+  refused(
+    hooked({ edit: ['mark', 'mark'] }),
+    '"projects.marketing.hooks.edit[1]": mark is there already'
+  )
+  refused(
+    hooked({ edit: ['mark'] }, {}),
+    '"projects.marketing.hooks.edit[0]": mark needs a select field from $agent with the option working'
+  )
+  refused(
+    hooked({
+      'session-start': [{ action: 'mark-in-progress', statuses: [] }],
+    }),
+    '"projects.marketing.hooks.session-start[0].statuses" must list statuses'
+  )
 })

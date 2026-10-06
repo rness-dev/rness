@@ -76,6 +76,35 @@ export interface ViewDeclaration {
 
 export type LabelSource = { kind: 'directory' } | { kind: 'key'; key: string }
 
+/** The session events a board's actions run at (spec 0032 §2): Claude Code's hooks. */
+export const HOOK_EVENTS = ['session-start', 'edit', 'session-end'] as const
+export type HookEvent = (typeof HOOK_EVENTS)[number]
+
+/** An action of the catalogue (spec 0032 §3), its parameters filled. */
+export type BoardAction =
+  | { action: 'mark' }
+  | { action: 'mark-in-progress'; collections: string[]; statuses: string[] }
+  | { action: 'clear-marks' }
+export type ActionName = BoardAction['action']
+
+/** Each action, its event, and its parameters with their defaults. */
+export const ACTIONS: Readonly<
+  Record<
+    ActionName,
+    { event: HookEvent; parameters: Readonly<Record<string, string[]>> }
+  >
+> = {
+  mark: { event: 'edit', parameters: {} },
+  'mark-in-progress': {
+    event: 'session-start',
+    parameters: { collections: ['plans'], statuses: ['In progress'] },
+  },
+  'clear-marks': { event: 'session-end', parameters: {} },
+}
+
+/** A board's actions by event; an event it declares nothing at is absent. */
+export type BoardHooks = Partial<Record<HookEvent, BoardAction[]>>
+
 export interface BoardDeclaration {
   number: number
   /** The preset and revision it was made from, `agent-pulse/1`; null: none. */
@@ -91,6 +120,8 @@ export interface BoardDeclaration {
   fields: Record<string, FieldDeclaration>
   labels: LabelSource | null
   views: ViewDeclaration[]
+  /** What a session does to the board (spec 0032); none by default. */
+  hooks: BoardHooks
   /** The entry as `rness.json` holds it: what is written back. */
   source: Record<string, unknown>
 }
@@ -131,6 +162,7 @@ const BOARD_KEYS = [
   'fields',
   'labels',
   'views',
+  'hooks',
 ]
 const COLLECTION_KEYS = ['label', 'statuses', 'field']
 const FIELD_KEYS = ['type', 'from', 'options']
@@ -157,9 +189,16 @@ const PRESET = /^[a-z][a-z0-9-]*\/[1-9][0-9]*$/
 /** A refused declaration: its full key and why. */
 export class BoardRefused extends Error {
   readonly key: string
+  readonly reason: string
   constructor(key: string, reason: string) {
     super(`"${key}" ${reason}`)
     this.key = key
+    this.reason = reason
+  }
+  /** The same refusal said as `"key": reason`, for a reason that is a sentence of its own. */
+  withColon(): BoardRefused {
+    this.message = `"${this.key}": ${this.reason}`
+    return this
   }
 }
 
@@ -405,6 +444,88 @@ function readView(value: unknown, at: string, k: Known): ViewDeclaration {
   }
 }
 
+/** Whether a board has the fields a mark writes: a select from `$agent` with `working`. */
+const marks = (fields: Record<string, FieldDeclaration>): boolean =>
+  Object.values(fields).some(
+    (f) =>
+      f.type === 'select' &&
+      f.from.includes('$agent') &&
+      f.options.includes(WORKING)
+  )
+
+/** `hooks`: each event's actions, each from the catalogue, its requirements met (spec 0032 §3). */
+function readHooks(
+  value: unknown,
+  at: string,
+  fields: Record<string, FieldDeclaration>
+): BoardHooks {
+  if (value === undefined) return {}
+  if (!isRecord(value)) throw new BoardRefused(at, 'must map events to actions')
+  const hooks: BoardHooks = {}
+  for (const [event, list] of Object.entries(value)) {
+    const where = `${at}.${event}`
+    const known = HOOK_EVENTS.find((e) => e === event)
+    if (known === undefined)
+      throw new BoardRefused(
+        where,
+        `is not an event: ${HOOK_EVENTS.slice(0, -1).join(', ')} or ${HOOK_EVENTS.at(-1)}`
+      )
+    if (!Array.isArray(list)) throw new BoardRefused(where, 'must list actions')
+    const actions: BoardAction[] = []
+    for (const [i, item] of list.entries()) {
+      const key = `${where}[${i}]`
+      const raw: Record<string, unknown> | null =
+        typeof item === 'string'
+          ? { action: item }
+          : isRecord(item)
+            ? item
+            : null
+      const name = raw?.['action']
+      const names = Object.keys(ACTIONS) as ActionName[]
+      const action = names.find((a) => a === name)
+      if (raw === null || action === undefined)
+        throw new BoardRefused(
+          key,
+          `names ${typeof name === 'string' ? name : JSON.stringify(item)}, which is no action: ${names.slice(0, -1).join(', ')} or ${names.at(-1)}`
+        )
+      const spec = ACTIONS[action]
+      if (spec.event !== known)
+        throw new BoardRefused(
+          key,
+          `${action} is an action of ${spec.event}, not of ${known}`
+        ).withColon()
+      for (const p of Object.keys(raw))
+        if (p !== 'action' && !Object.hasOwn(spec.parameters, p))
+          throw new BoardRefused(
+            `${key}.${p}`,
+            `is not a parameter of ${action}`
+          )
+      if (actions.some((a) => a.action === action))
+        throw new BoardRefused(key, `${action} is there already`).withColon()
+      if (!marks(fields))
+        throw new BoardRefused(
+          key,
+          `${action} needs a select field from $agent with the option ${WORKING}`
+        ).withColon()
+      if (action === 'mark-in-progress') {
+        const list = (p: string): string[] => {
+          const v = raw[p] ?? spec.parameters[p]
+          if (!isNames(v) || v.length === 0)
+            throw new BoardRefused(`${key}.${p}`, `must list ${p}`)
+          return [...v]
+        }
+        actions.push({
+          action,
+          collections: list('collections'),
+          statuses: list('statuses'),
+        })
+      } else actions.push({ action })
+    }
+    hooks[known] = actions
+  }
+  return hooks
+}
+
 /**
  * One entry of `projects` that is an object: the board, read whole, or
  * {@link BoardRefused}. `knows` says which preset revisions there are: this
@@ -525,6 +646,7 @@ export function parseBoard(
     fields,
     labels: readLabels(value['labels'], `${at}.labels`),
     views,
+    hooks: readHooks(value['hooks'], `${at}.hooks`, fields),
     source: value,
   }
 }

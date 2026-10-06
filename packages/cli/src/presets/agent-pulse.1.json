@@ -20,10 +20,23 @@
     "working": "green"
   },
   "fields": {
-    "Collection": { "type": "select", "from": "$collection" },
-    "Agent": { "type": "select", "from": "$agent", "options": ["working"] },
-    "Working session": { "type": "text", "from": "$session" },
-    "Session history": { "type": "text", "from": "$sessions" }
+    "Collection": {
+      "type": "select",
+      "from": "$collection"
+    },
+    "Agent": {
+      "type": "select",
+      "from": "$agent",
+      "options": ["working"]
+    },
+    "Working session": {
+      "type": "text",
+      "from": "$session"
+    },
+    "Session history": {
+      "type": "text",
+      "from": "$sessions"
+    }
   },
   "views": [
     {
@@ -55,5 +68,10 @@
       "filter": "agent:working",
       "fields": ["Title", "Collection", "Status", "Working session"]
     }
-  ]
+  ],
+  "hooks": {
+    "session-start": ["mark-in-progress"],
+    "edit": ["mark"],
+    "session-end": ["clear-marks"]
+  }
 }
