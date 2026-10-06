@@ -432,10 +432,15 @@ export function pluginFiles(
       at,
       content: lifecycleSkill(rness, s),
     })),
+    // Read from disk when the content is asked for, never when only the
+    // paths are: `upgrade` lists them after the install, and with pnpm the
+    // install has removed the folder this copy runs from (0.20.0 → 0.20.1).
     ...MOD_FILES.map((rel) => ({
       file: `${PLUGIN}/${rel}`,
       at,
-      content: modFile(rel, rness),
+      get content() {
+        return modFile(rel, rness)
+      },
     })),
     ...RETIRED_SKILLS.map((name) => ({
       file: `${PLUGIN}/skills/${name}/SKILL.md`,
