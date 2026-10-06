@@ -207,7 +207,9 @@ It reads the snapshot again at session start, after an `Edit` or `Write`
 of a file under `.rness/`, and at the end of each turn, off the turn's
 path. The module runs the pinned copy at the one path `sync` writes into it
 for its place (`.rness` at the root, `../../.rness` in a clone), as the
-settings hooks do: never a copy a clone's own tree could hold. It loads
+settings hooks do: never a copy a clone's own tree could hold. Like them,
+it never installs: a pin that drifts from the installed copy is a note in
+the band, and `npm install` in `.rness` is the developer's. It loads
 where the plugin loads — a trusted folder, `claude -p` included — on a
 Claude Code that has mods: run by 2.1.280 and later, ignored without an
 error by 2.1.240 and 2.1.199, where the skills work as before (verified on
@@ -703,6 +705,11 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 --json`'s `statusLine` carries the leading `rness` again. VS Code and
   mobile surfaces, which draw no session modes, show no line; the
   `/rness:status` pane stays.
+- The mod no longer installs the pin from inside Claude Code. It ran
+  `status --json` with catch-up on, so in a workspace whose pin drifts each
+  refresh ran `npm install` in `.rness`, without asking, and replaced a
+  local copy. It now runs with `RNESS_NO_DELEGATE=1`: the drift is a note
+  in the band, as the settings hooks report it.
 
 ## 0.20.0 — the status pane opens a document; ↑/↓ select, Tab changes the tab; Agent Pulse's colours and links
 
