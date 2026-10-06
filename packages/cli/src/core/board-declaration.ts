@@ -1,4 +1,5 @@
 import { STATUSES } from './contract.ts'
+import { isPresetRevision, labelOf } from './presets.ts'
 
 /**
  * A board as `rness.json` declares it (spec 0031 §2.2): what a GitHub
@@ -169,10 +170,6 @@ const isText = (v: unknown): v is string =>
 
 const isNames = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every(isText) && new Set(v).size === v.length
-
-/** A tab's label, as `rness status` makes it for a directory: capitalised. */
-export const labelOf = (name: string): string =>
-  `${name.charAt(0).toUpperCase()}${name.slice(1)}`
 
 const taken = (name: string): boolean =>
   TAKEN_FIELDS.some((t) => t.toLowerCase() === name.toLowerCase())
@@ -424,6 +421,11 @@ export function parseBoard(name: string, value: unknown): BoardDeclaration {
     throw new BoardRefused(
       `${at}.preset`,
       'must name a preset and its revision, as agent-pulse/1'
+    )
+  if (typeof preset === 'string' && !isPresetRevision(preset))
+    throw new BoardRefused(
+      `${at}.preset`,
+      `names ${preset}, which this rness does not have`
     )
 
   const rawCollections = value['collections']

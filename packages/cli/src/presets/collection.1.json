@@ -1,0 +1,41 @@
+{
+  "title": "{label}",
+  "collections": {
+    "{collection}": { "label": "{label}", "statuses": "found" }
+  },
+  "colors": {
+    "Draft": "gray",
+    "Proposed": "blue",
+    "Ready": "blue",
+    "Approved": "purple",
+    "In progress": "yellow",
+    "Blocked": "red",
+    "Accepted": "green",
+    "Implemented": "green",
+    "Completed": "green",
+    "Rejected": "red",
+    "Superseded": "yellow",
+    "Abandoned": "gray",
+    "working": "green"
+  },
+  "fields": {
+    "Collection": { "type": "select", "from": "$collection" },
+    "Agent": { "type": "select", "from": "$agent", "options": ["working"] },
+    "Working session": { "type": "text", "from": "$session" },
+    "Session history": { "type": "text", "from": "$sessions" }
+  },
+  "views": [
+    {
+      "name": "All",
+      "layout": "table",
+      "fields": ["Title", "Collection", "Status", "Working session"]
+    },
+    { "name": "{label}", "layout": "board", "collection": "{collection}" },
+    {
+      "name": "Working",
+      "layout": "table",
+      "filter": "agent:working",
+      "fields": ["Title", "Collection", "Status", "Working session"]
+    }
+  ]
+}

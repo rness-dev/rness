@@ -1,0 +1,59 @@
+{
+  "title": "Agent Pulse",
+  "collections": "all",
+  "colors": {
+    "Draft": "gray",
+    "Proposed": "blue",
+    "Ready": "blue",
+    "Approved": "purple",
+    "In progress": "yellow",
+    "Blocked": "red",
+    "Accepted": "green",
+    "Implemented": "green",
+    "Completed": "green",
+    "Rejected": "red",
+    "Superseded": "yellow",
+    "Abandoned": "gray",
+    "ADR": "purple",
+    "Specs": "blue",
+    "Plans": "orange",
+    "working": "green"
+  },
+  "fields": {
+    "Collection": { "type": "select", "from": "$collection" },
+    "Agent": { "type": "select", "from": "$agent", "options": ["working"] },
+    "Working session": { "type": "text", "from": "$session" },
+    "Session history": { "type": "text", "from": "$sessions" }
+  },
+  "views": [
+    {
+      "name": "All",
+      "layout": "table",
+      "fields": ["Title", "Collection", "Status", "Working session"]
+    },
+    {
+      "name": "ADR",
+      "layout": "board",
+      "collection": "adr",
+      "columns": "ADR status"
+    },
+    {
+      "name": "Specs",
+      "layout": "board",
+      "collection": "specs",
+      "columns": "Specs status"
+    },
+    {
+      "name": "Plans",
+      "layout": "board",
+      "collection": "plans",
+      "columns": "Plans status"
+    },
+    {
+      "name": "Working",
+      "layout": "table",
+      "filter": "agent:working",
+      "fields": ["Title", "Collection", "Status", "Working session"]
+    }
+  ]
+}
