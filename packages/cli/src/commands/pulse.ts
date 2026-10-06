@@ -4,10 +4,15 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import type { BoardDeclaration } from '../core/board-declaration.ts'
 import { parseBoard } from '../core/board-declaration.ts'
+import {
+  readmeDeclarations,
+  withoutDeclarations,
+} from '../core/board-migration.ts'
 import { collectMarkdown } from '../core/collect.ts'
 import { containedPath } from '../core/contained.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { stripFrontMatter } from '../core/frontmatter.ts'
+import { writeFileAtomic } from '../core/fs.ts'
 import { seenPaths } from '../core/git.ts'
 import {
   GitHubMessageError,
@@ -165,11 +170,28 @@ async function declarations(
   for (const r of c.manifest.refused ?? [])
     ui?.line('skipped', `${r.name}: ${r.reason}`)
   const all: { name: string; declaration: BoardDeclaration }[] = []
-  for (const [name, entry] of Object.entries(projects))
-    all.push({
-      name,
-      declaration: await declaredBoard(name, entry, c.rnessDir),
-    })
+  for (const [name, entry] of Object.entries(projects)) {
+    const declaration = await declaredBoard(name, entry, c.rnessDir)
+    // A README that still declares what rness.json declares now (spec 0031
+    // §6): this board waits until `rness sync` moves it.
+    const still: string[] = []
+    if (typeof entry !== 'number')
+      for (const collection of namedCollections(declaration)) {
+        const keys = Object.keys(
+          await readmeDeclarations(c.rnessDir, collection)
+        )
+        if (keys.length > 0)
+          still.push(`${collection}/README.md declares ${keys.join(', ')}`)
+      }
+    if (still.length > 0) {
+      ui?.line(
+        'skipped',
+        `${name}: ${still.join(', ')}, which rness.json declares now — rness sync moves it`
+      )
+      continue
+    }
+    all.push({ name, declaration })
+  }
   return all.sort((a, b) => Number(takesAll(a)) - Number(takesAll(b)))
 }
 
@@ -230,6 +252,22 @@ async function textOf(rnessDir: string, rel: string): Promise<string | null> {
   try {
     return stripFrontMatter(
       await readFile(await containedPath(rnessDir, rel), 'utf8')
+    )
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw e
+  }
+}
+
+/** A collection's README as written; null when it has none. */
+async function readmeText(
+  rnessDir: string,
+  collection: string
+): Promise<string | null> {
+  try {
+    return await readFile(
+      await containedPath(rnessDir, `${collection}/README.md`),
+      'utf8'
     )
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -660,8 +698,13 @@ export async function pulseCreateCommand(
     )
 
     // The board as its preset makes it here (spec 0031 §3, plan 0045),
-    // written whole: what rness.json says is the board.
+    // written whole: what rness.json says is the board. What a collection's
+    // README declared is in it now, and leaves the README (spec 0031 §6).
     const source = await presetSource(name, c.rnessDir, 1)
+    const readme =
+      opts.collection === undefined
+        ? null
+        : await readmeText(c.rnessDir, opts.collection)
     const title = typeof source['title'] === 'string' ? source['title'] : name
     const board = await fromGithub(c.provider.createBoard(c.org, title))
     // Declared as soon as the project exists, before its layout: whatever
@@ -676,6 +719,14 @@ export async function pulseCreateCommand(
       },
     }
     await writeManifest(c.rnessDir, manifest)
+    if (readme !== null && opts.collection !== undefined) {
+      const cleaned = withoutDeclarations(readme)
+      if (cleaned !== readme)
+        await writeFileAtomic(
+          join(c.rnessDir, opts.collection, 'README.md'),
+          cleaned
+        )
+    }
     c = { ...c, manifest }
     ui.line('created', `${title} — ${board.url}`)
     try {

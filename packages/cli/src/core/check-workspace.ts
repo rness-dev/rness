@@ -1,6 +1,7 @@
 import { type TargetOutcome, agentTargets } from './agent-targets.ts'
 import { unsupportedAgents, unsupportedMessage } from './agents.ts'
 import { type CheckBlocksResult, checkBlocks } from './blocks.ts'
+import { checkBoards } from './board-checks.ts'
 import { checkContract } from './contract.ts'
 import { workspaceName } from './manifest.ts'
 import { rnessCommand } from './pm.ts'
@@ -29,6 +30,7 @@ export async function checkWorkspace(
   // an extends cycle is reported here rather than breaking `context` later.
   for (const s of Object.keys(manifest.scopes)) scopeChain(manifest, s)
   const problems = await checkContract(ws.rnessDir)
+  problems.push(...(await checkBoards(ws.rnessDir, manifest)))
   const blocks = await checkBlocks({
     root: ws.root,
     rnessDir: ws.rnessDir,

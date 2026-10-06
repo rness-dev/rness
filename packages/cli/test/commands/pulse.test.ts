@@ -2429,3 +2429,37 @@ test("a collection's README that is a link out of .rness: the sync stops on it, 
     'nothing published'
   )
 })
+
+test("a board whose collection's README still declares: skipped by pulse sync, until rness sync moves it", async (t) => {
+  await machine(t)
+  const g = await board(t, {
+    fields: seededFields(),
+    views: VIEWS,
+    other: asUser('repo, project'),
+  })
+  const cwd = await declaredWorkspace(
+    t,
+    {
+      pulse: pulseBoard(),
+      marketing: {
+        number: 8,
+        ...presetTemplate('collection/1', { collection: 'marketing' }),
+      },
+    },
+    {
+      ...FILES,
+      'marketing/a.md': '---\nstatus: Idea\n---\n# A\n',
+      'marketing/README.md': '---\nstatuses: [Idea, Done]\n---\n# M\n',
+    }
+  )
+  const r = await run(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.ok(
+    lines(r.out).includes(
+      'skipped marketing: marketing/README.md declares statuses, which rness.json declares now — rness sync moves it'
+    ),
+    r.out
+  )
+})

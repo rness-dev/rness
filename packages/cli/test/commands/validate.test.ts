@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -447,4 +454,117 @@ test('a plan without a number: exit 1, named with the next number', async (t) =>
   } finally {
     c.restore()
   }
+})
+
+// --- boards declared in rness.json (spec 0031 §5, §6) -------------------------
+
+/** A collection's board declared whole: `collections` and `over` as given. */
+const declared = (number: number, over: Record<string, unknown> = {}) => ({
+  number,
+  collections: { marketing: { statuses: 'found' } },
+  views: [{ name: 'Board', layout: 'board' }],
+  ...over,
+})
+
+async function validateBoards(
+  t: Parameters<typeof makeWorkspace>[0],
+  projects: Record<string, unknown>,
+  files: Record<string, string> = {
+    'marketing/a.md': '---\nstatus: Idea\n---\n# A\n',
+  }
+) {
+  const cwd = await makeWorkspace(t, { org: 'acme', files })
+  const file = join(cwd, '.rness', 'rness.json')
+  const manifest = JSON.parse(await readFile(file, 'utf8'))
+  await writeFile(file, JSON.stringify({ ...manifest, projects }))
+  const c = capture()
+  const code = await run(['validate', '--cwd', cwd])
+  c.restore()
+  return { code, err: c.err() }
+}
+
+test('boards: valid as declared, context ok', async (t) => {
+  const r = await validateBoards(t, { marketing: declared(5) })
+  assert.equal(r.code, 0, r.err)
+})
+
+test('boards: a refused board is a problem, by its full key', async (t) => {
+  const r = await validateBoards(t, { marketing: declared(5, { views: [] }) })
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /"projects\.marketing\.views" must list at least one view/
+  )
+})
+
+test('boards: a collection that is no directory of .rness, or one never a collection', async (t) => {
+  const none = await validateBoards(t, {
+    marketing: declared(5, {
+      collections: { research: { statuses: 'found' } },
+    }),
+  })
+  assert.match(
+    none.err,
+    /"projects\.marketing\.collections\.research" names no directory of \.rness/
+  )
+  const never = await validateBoards(t, {
+    marketing: declared(5, {
+      collections: { standards: { statuses: 'found' } },
+    }),
+  })
+  assert.match(
+    never.err,
+    /"projects\.marketing\.collections\.standards" is no collection/
+  )
+})
+
+test('boards: a collection on two boards; two boards that take all', async (t) => {
+  const two = await validateBoards(t, {
+    marketing: declared(5),
+    launch: declared(6),
+  })
+  assert.match(
+    two.err,
+    /"projects\.launch\.collections\.marketing" is on marketing too: a collection is on one board at most/
+  )
+  const all = await validateBoards(t, {
+    a: declared(5, { collections: 'all' }),
+    b: declared(6, { collections: 'all' }),
+  })
+  assert.match(
+    all.err,
+    /"projects\.a" and "projects\.b" each take every collection/
+  )
+})
+
+test('boards: a readme or updates not there', async (t) => {
+  const r = await validateBoards(t, {
+    marketing: declared(5, {
+      readme: 'marketing/README.md',
+      updates: 'marketing/updates',
+    }),
+  })
+  assert.match(
+    r.err,
+    /"projects\.marketing\.readme" names marketing\/README\.md, which is not there/
+  )
+  assert.match(
+    r.err,
+    /"projects\.marketing\.updates" names marketing\/updates, which is not there/
+  )
+})
+
+test("boards: a collection's README that still declares what rness.json declares now", async (t) => {
+  const r = await validateBoards(
+    t,
+    { marketing: declared(5) },
+    {
+      'marketing/a.md': '---\nstatus: Idea\n---\n# A\n',
+      'marketing/README.md': '---\nstatuses: [Idea]\n---\n# M\n',
+    }
+  )
+  assert.match(
+    r.err,
+    /marketing\/README\.md: "statuses" is declared in rness\.json now — rness sync moves it/
+  )
 })

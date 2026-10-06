@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { type TestContext, test } from 'node:test'
@@ -230,6 +230,48 @@ test('--json: each row in Agent Pulse’s colour; with a pulse, the board and ea
     json.tabs[2].rows[0].link,
     'https://github.com/orgs/acme/projects/4?filterQuery=path%3A%22plans%2F0002-b.md%22'
   )
+})
+
+test("--json: a collection on its own board takes that board's colour and item; the others Agent Pulse's", async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { pulse: 4 },
+    files: {
+      'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
+      'marketing/2026-10-01-post.md': doc('Idea', 'A post'),
+    },
+  })
+  const file = join(root, '.rness', 'rness.json')
+  const manifest = JSON.parse(await readFile(file, 'utf8'))
+  await writeFile(
+    file,
+    JSON.stringify({
+      ...manifest,
+      projects: {
+        pulse: 4,
+        marketing: {
+          number: 8,
+          collections: { marketing: { statuses: 'found' } },
+          colors: { Idea: 'purple' },
+          views: [{ name: 'Board', layout: 'board' }],
+        },
+      },
+    })
+  )
+  const { code, json, err } = await snapshot(['--cwd', root])
+  assert.equal(code, 0, err)
+  const row = (path: string) =>
+    json.tabs
+      .flatMap((tab: { rows: { path: string }[] }) => tab.rows)
+      .find((r: { path: string }) => r.path === path)
+  assert.equal(row('marketing/2026-10-01-post.md').color, 'purple')
+  assert.equal(
+    row('marketing/2026-10-01-post.md').link,
+    'https://github.com/orgs/acme/projects/8?filterQuery=path%3A%22marketing%2F2026-10-01-post.md%22'
+  )
+  assert.equal(row('adr/0001-org.md').color, 'green')
+  assert.match(row('adr/0001-org.md').link, /projects\/4\?/)
+  assert.equal(json.pulse, 'https://github.com/orgs/acme/projects/4')
 })
 
 test('--json without an organization: no pulse, no item, even with a project declared', async (t) => {
