@@ -1,0 +1,138 @@
+[
+  {
+    "op": "set",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_151",
+      "fieldId": "F_Agent",
+      "value": {
+        "singleSelectOptionId": "o_137"
+      }
+    }
+  },
+  {
+    "op": "set",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_151",
+      "fieldId": "F_Working session",
+      "value": {
+        "text": "claude · 1a2b3c4d"
+      }
+    }
+  },
+  {
+    "op": "set",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_153",
+      "fieldId": "F_Agent",
+      "value": {
+        "singleSelectOptionId": "o_137"
+      }
+    }
+  },
+  {
+    "op": "set",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_153",
+      "fieldId": "F_Working session",
+      "value": {
+        "text": "claude · 1a2b3c4d"
+      }
+    }
+  },
+  {
+    "op": "set",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_147",
+      "fieldId": "F_status",
+      "value": {
+        "singleSelectOptionId": "o_101"
+      }
+    }
+  },
+  {
+    "op": "set",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_147",
+      "fieldId": "F_Specs status",
+      "value": {
+        "singleSelectOptionId": "o_124"
+      }
+    }
+  },
+  {
+    "op": "set",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_147",
+      "fieldId": "F_Agent",
+      "value": {
+        "singleSelectOptionId": "o_137"
+      }
+    }
+  },
+  {
+    "op": "set",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_147",
+      "fieldId": "F_Working session",
+      "value": {
+        "text": "claude · 1a2b3c4d"
+      }
+    }
+  },
+  {
+    "op": "clear",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_147",
+      "fieldId": "F_Agent"
+    }
+  },
+  {
+    "op": "clear",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_147",
+      "fieldId": "F_Working session"
+    }
+  },
+  {
+    "op": "clear",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_151",
+      "fieldId": "F_Agent"
+    }
+  },
+  {
+    "op": "clear",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_151",
+      "fieldId": "F_Working session"
+    }
+  },
+  {
+    "op": "clear",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_153",
+      "fieldId": "F_Agent"
+    }
+  },
+  {
+    "op": "clear",
+    "variables": {
+      "projectId": "P_1",
+      "itemId": "I_153",
+      "fieldId": "F_Working session"
+    }
+  }
+]
