@@ -258,10 +258,12 @@ workspace root's carry four Claude Code hooks, all run by the pinned copy:
 - **After an edit** (`PostToolUse` on `Edit|Write`): when the file is under
   `.rness/`, its front-matter problems — or those of `rness.json` — go back
   to the model, which fixes them in the same turn. Any other edit costs one
-  path check. Stale blocks are left to `sync`. With a pulse declared, the
-  edit is then marked on the board, broken or not; see "Pulse".
-- **At session end** (`SessionEnd`): with a pulse declared, clears the marks
-  this session set and syncs the board; see "Pulse". Without one, nothing.
+  path check. Stale blocks are left to `sync`. When a board declares
+  `mark` and holds the document, the edit is then marked on it, broken or
+  not; see "Pulse".
+- **At session end** (`SessionEnd`): when a board declares `clear-marks`,
+  clears the marks this session set and syncs; see "Pulse". Without one,
+  nothing.
 
 Each hook is one fixed `sh` line: it runs
 `<.rness>/node_modules/@rness/cli/dist/bin/rness.js hook <event>` when that
@@ -503,9 +505,25 @@ added to project`) may change a field of rness's items; the next sync
   none of this reaches Agent Pulse: a workspace that declares no collection
   keeps its board as 0.16 made it.
 
-- **Hooks**, with `claude` in `agents` and a pulse declared: session start
-  marks the `In progress` plans of the session's scope `Agent: working`, with
-  the session; an edit of a document of `.rness/` marks it — one the agent has just written, with no item yet, gets its issue first
+- **Hooks**, with `claude` in `agents`: what a session does to a board is
+  declared in its `hooks` (spec 0032, 0.21.0), each event — `session-start`,
+  `edit`, `session-end` — listing actions from a fixed catalogue:
+  `mark-in-progress` (the documents of the session's scope in the given
+  `collections` and `statuses`, `plans` and `In progress` by default),
+  `mark` (the document edited, on a board that holds it) and `clear-marks`
+  (the session's marks, then a sync). Marks are written through the
+  board's select from `$agent` and its text from `$session`, whatever their
+  names. A hook never runs a command `rness.json` names: the file is the
+  organization's and the hooks run on every developer's machine. The
+  preset `agent-pulse` declares all three, which is 0.20's behaviour;
+  removing `hooks` from a board turns its marking off, and a board without
+  them is only what `pulse sync` makes of the documents. For each event,
+  one detached `rness pulse run <event>` does every board's actions, in
+  the order of `projects`; a failure is recorded naming the board and the
+  action (`mark on Marketing failed: …`). `rness pulse mark`, which 0.20's
+  hooks started, stays, hidden, through 0.21.x. With Agent Pulse's preset:
+  session start marks the `In progress` plans of the session's scope
+  `Agent: working`, with the session; an edit of a document of `.rness/` marks it — one the agent has just written, with no item yet, gets its issue first
   through a sync, and so does one whose status the edit changed, so its
   card moves within seconds rather than at the session's end; an edit that
   leaves the status alone, or of any other file of `.rness/`, costs no sync;
@@ -777,6 +795,12 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 BoardDeclaration>`; `BoardDeclaration` and `parseBoard` are exported.
 - A board's `readme` and `updates` stay within `.rness/`: a path out of
   it, or a link leading out, is refused before anything is read.
+- What a session does to a board is declared in its `hooks` (spec 0032):
+  `mark-in-progress`, `mark` and `clear-marks`, from a fixed catalogue; a
+  hook never runs a command `rness.json` names. The preset `agent-pulse`
+  declares today's three, so nothing changes on GitHub. The hooks start
+  `rness pulse run <event>`; `rness pulse mark` stays, hidden, through
+  0.21.x, for sessions started before an upgrade.
 - `upgrade` run by a workspace's pinned copy installed with pnpm no longer
   ends on `mod directory not found next to the @rness/cli package`. After
   its commit it lists the files to commit in the clones, and that list read
