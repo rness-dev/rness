@@ -405,8 +405,16 @@ function readView(value: unknown, at: string, k: Known): ViewDeclaration {
   }
 }
 
-/** One entry of `projects` that is an object: the board, read whole, or {@link BoardRefused}. */
-export function parseBoard(name: string, value: unknown): BoardDeclaration {
+/**
+ * One entry of `projects` that is an object: the board, read whole, or
+ * {@link BoardRefused}. `knows` says which preset revisions there are: this
+ * rness's, unless a caller brings its own.
+ */
+export function parseBoard(
+  name: string,
+  value: unknown,
+  knows: (ref: string) => boolean = isPresetRevision
+): BoardDeclaration {
   const at = `projects.${name}`
   if (!isRecord(value))
     throw new BoardRefused(
@@ -426,7 +434,7 @@ export function parseBoard(name: string, value: unknown): BoardDeclaration {
       `${at}.preset`,
       'must name a preset and its revision, as agent-pulse/1'
     )
-  if (typeof preset === 'string' && !isPresetRevision(preset))
+  if (typeof preset === 'string' && !knows(preset))
     throw new BoardRefused(
       `${at}.preset`,
       `names ${preset}, which this rness does not have`

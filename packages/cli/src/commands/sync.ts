@@ -17,6 +17,7 @@ import {
   isCurrentBlock,
   renderBlock,
 } from '../core/block.ts'
+import { migrateBoards } from '../core/board-migration.ts'
 import { assembleContext } from '../core/context.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
@@ -271,6 +272,22 @@ export async function syncCommand(
       if (declare.length === 0)
         ui.line('declared', 'no agent in .rness/rness.json')
       ui.hint('rness.json changed: commit it in .rness, for the whole team')
+    }
+
+    // The boards (plan 0045): a number written whole, a README's
+    // declarations moved, a newer preset merged. Workspace-wide: not for
+    // one scope, never under --check. An upgrade commits what this writes.
+    if (!check && opts.scope === undefined) {
+      const boards = await migrateBoards(ws.rnessDir, manifest)
+      if (boards.changed) {
+        manifest.projects = boards.projects
+        await writeManifest(ws.rnessDir, manifest)
+        for (const [rel, text] of boards.readmes)
+          await writeFileAtomic(join(ws.rnessDir, ...rel.split('/')), text)
+      }
+      for (const [verb, rest] of boards.lines) ui.line(verb, rest)
+      if (boards.changed)
+        ui.hint('rness.json changed: commit it in .rness, for the whole team')
     }
 
     const clones = await clonesIn(ws.root)

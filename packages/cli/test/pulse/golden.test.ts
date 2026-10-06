@@ -9,6 +9,7 @@ import {
   pulseCreateCommand,
   pulseSyncCommand,
 } from '../../src/commands/pulse.ts'
+import { syncCommand } from '../../src/commands/sync.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Reply, withEnv } from '../helpers/fake-github.ts'
@@ -305,6 +306,51 @@ test('golden: boards 0.20.1 made, declared by number, synced: nothing written', 
   g.mutations.length = 0
   await quiet(() =>
     pulseSyncCommand({ cwd: both, githubApi: g.base }, { terminal: NO_TTY })
+  )
+  assert.deepEqual(
+    g.mutations.filter((m) => m.op !== 'updateIssue'),
+    []
+  )
+})
+
+test('golden: rness sync writes the boards 0.20.1 declared by number whole, the README cleaned; a pulse sync then writes nothing', async (t) => {
+  await machine(t)
+  const read = async (name: string) =>
+    JSON.parse(
+      await readFile(join(FIXTURES, `${name}.json`), 'utf8')
+    ) as ReturnType<typeof snapshot>
+  const first = seeded(await read('agent-pulse'), 7)
+  const second = seeded(await read('marketing'), 8)
+  const g = await board(t, {
+    other: asUser,
+    existing: true,
+    fields: first.fields,
+    views: first.views,
+    items: first.items,
+    projects: [second],
+  })
+  const files = { ...PULSE_FILES, ...MARKETING_FILES }
+  const cwd = await makeWorkspace(t, {
+    org: 'acme',
+    projects: { pulse: 7, marketing: 8 },
+    files,
+  })
+  await quiet(() => syncCommand({ cwd, yes: true }, { terminal: NO_TTY }))
+  const manifest = JSON.parse(
+    await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
+  )
+  assert.equal(manifest.projects.pulse.preset, 'agent-pulse/1')
+  assert.equal(manifest.projects.marketing.preset, 'collection/1')
+  assert.equal(
+    manifest.projects.marketing.description,
+    'The launch, from 1 October.'
+  )
+  assert.equal(
+    await readFile(join(cwd, '.rness', 'marketing', 'README.md'), 'utf8'),
+    '# The launch\n\nStrategy.\n'
+  )
+  await quiet(() =>
+    pulseSyncCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
   )
   assert.deepEqual(
     g.mutations.filter((m) => m.op !== 'updateIssue'),
