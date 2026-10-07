@@ -1,7 +1,7 @@
 # rness workspace member — scope: rness
 
 <!-- BEGIN rness -->
-<!-- rness · scope: rness · contract: 1 · hash: c695cb252c67 · generated: run `rness sync`, never edit inside this block -->
+<!-- rness · scope: rness · contract: 1 · hash: eb944e08d718 · generated: run `rness sync`, never edit inside this block -->
 This directory is scope `rness` of rness workspace `rness-dev`. Full context lives in
 `../../.rness/` — start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
 live: `rness context --scope rness`. If `.rness/` is not reachable, this is a
@@ -94,7 +94,7 @@ language in use and document it before applying it broadly.
 - Model expected empty, loading, error, and success states explicitly.
 - Avoid broad suppression of lint, type, or test failures. Use a narrow,
   documented exception only when justified.
-- Keep comments for non-obvious reasoning, constraints, or trade-offs—not for
+- Keep comments for non-obvious reasoning, constraints, or trade-offs, not for
   restating code.
 
 <!-- rness: standards/deployment.md -->
@@ -139,6 +139,9 @@ clearly label a proposal, limitation, or pending item.
 - Do not claim reviews, audits, certifications, availability, or guarantees
   that have not occurred.
 - Keep setup instructions executable and free of secret values.
+- Never write an em dash (U+2014), in any text of any repository: copy,
+  documentation, READMEs, code comments, commit messages, titles. It reads
+  as AI-generated. Use " - ", a comma, a colon or a period.
 
 <!-- rness: standards/engineering.md -->
 # Engineering standards
