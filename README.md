@@ -127,8 +127,11 @@ pnpm verdaccio stop      # or `clean` to also delete what it stored
 change; it also clears the npx cache (`<npm cache>/_npx`), which would
 otherwise keep serving the first copy of that version to `npm create`.
 
-Maintainers release by tagging `vX.Y.Z`; GitHub Actions publishes the
-packages to npm, then starts the `Release` workflow of
+Maintainers release by tagging `vX.Y.Z` on `main`: a tag on any other commit
+fails before a dependency is installed. GitHub Actions builds, checks and
+packs the packages in a job that cannot publish, publishes the archives to
+npm from a job that runs nothing of the project (actions pinned by commit,
+npm pinned, no dependency cache), then starts the `Release` workflow of
 [rness-dev/docs](https://github.com/rness-dev/docs), which opens the pull
 request that freezes the docs for that version. That last step needs the
 repository secret `DOCS_RELEASE_TOKEN` (Settings, Secrets and variables,
