@@ -848,7 +848,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased — what rness writes carries no em dash
+## 0.22.1 — what rness writes carries no em dash
 
 - Nothing rness writes carries an em dash (U+2014) any more: the `AGENTS.md`
   block, the title `rness doc new` opens (`# NNNN - Title`), the `rness:adr`,
