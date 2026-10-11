@@ -1,0 +1,13 @@
+# The workflows pin every action by commit (a tag can be moved, a commit
+# cannot), so nothing moves them but this: one pull request a month with the
+# new commits and their version comments, grouped so a bump is one review.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - '*'
