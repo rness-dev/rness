@@ -20,9 +20,14 @@ export function documentNumber(rel: string): string | null {
   return /^(\d{4})-/.exec(posix.basename(rel))?.[1] ?? null
 }
 
-/** The scaffold's heading is `NNNN — Title`; the number is shown once. */
+/**
+ * The scaffold's heading is `NNNN - Title`; an older document may carry an
+ * em dash or an en dash after the number. The number is shown once.
+ */
 export function documentTitle(heading: string, number: string | null): string {
   if (number === null) return heading
-  const rest = new RegExp(`^${number}\\s*[—–:-]\\s*(.+)$`).exec(heading)?.[1]
+  const rest = new RegExp(`^${number}\\s*[\u2014\u2013:-]\\s*(.+)$`).exec(
+    heading
+  )?.[1]
   return rest ?? heading
 }

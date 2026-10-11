@@ -744,14 +744,14 @@ export async function createCommand(
     if (joining)
       ui.line(
         'found',
-        `${org}/.rness — joining`,
-        `${org} has a workspace — joining it`
+        `${org}/.rness - joining`,
+        `${org} has a workspace - joining it`
       )
     else
       ui.line(
         'not found',
-        `${org}/.rness (or not visible to you) — starting a new workspace`,
-        `${org} has no workspace yet (or none you can see) — starting one`
+        `${org}/.rness (or not visible to you) - starting a new workspace`,
+        `${org} has no workspace yet (or none you can see) - starting one`
       )
 
     // Joining: the catalogue is read from a clone staged outside the target,
@@ -905,7 +905,7 @@ export async function createCommand(
       ]
       if (ui.session) ui.note('Next steps', next)
       else process.stdout.write(`\n${next.map((l) => `  ${l}`).join('\n')}\n`)
-      ui.outro(`You joined ${org} — your workspace is in ${shown}/`)
+      ui.outro(`You joined ${org}: your workspace is in ${shown}/`)
       return failures.length > 0 ? 1 : 0
     }
 

@@ -226,13 +226,13 @@ test('upgrade merges the target scaffold, pins, installs, syncs through the new 
       'updated  package.json',
       'installed dependencies with npm',
       'PINNED 0.5.0 sync --yes',
-      `committed ${label} — chore: rness 0.5.0`,
+      `committed ${label}: chore: rness 0.5.0`,
       '',
       `upgraded ${label} to @rness/cli 0.5.0`,
       '',
       'Next:',
       '  git -C .rness push',
-      '  # teammates: git pull — the next rness command installs it',
+      '  # teammates: git pull - the next rness command installs it',
       '',
     ].join('\n')
   )
@@ -344,12 +344,12 @@ test('only the scaffold is behind (the pin moved by pull request): merged, synce
     scaffoldFor: async () => ({ dir: next }),
   })
   assert.equal(r.code, 0, r.err)
-  assert.match(r.out, /^scaffold @rness\/cli 0\.5\.0 — merging it into /m)
+  assert.match(r.out, /^scaffold @rness\/cli 0\.5\.0: merging it into /m)
   assert.match(r.out, /^updated {2}WORKSPACE\.md$/m)
   assert.doesNotMatch(r.out, /^installed|package\.json/m)
   // The sync runs all the same: a release may add to the agent files.
   assert.match(r.out, /^PINNED 0\.5\.0 sync --yes$/m)
-  assert.match(r.out, /^committed .*\.rness — chore: rness 0\.5\.0$/m)
+  assert.match(r.out, /^committed .*\.rness: chore: rness 0\.5\.0$/m)
   // The merge commit: the pull request's history, and the scaffold's.
   assert.equal(
     await git(rnessDir, 'log', '-1', '--format=%s'),
@@ -374,7 +374,7 @@ test('already at the target, scaffold included: nothing runs; a pin ahead of the
   assert.equal(r2.code, 0, r2.err)
   assert.match(
     r2.out,
-    /^install {2}@rness\/cli 0\.5\.0 in .*\.rness \(npm\) — 0\.4\.0 is installed\n/
+    /^install {2}@rness\/cli 0\.5\.0 in .*\.rness \(npm\): 0\.4\.0 is installed\n/
   )
   assert.doesNotMatch(r2.out, /merging/)
   assert.match(r2.out, /^PINNED 0\.5\.0 sync --yes$/m)
@@ -481,7 +481,7 @@ test('a lower version is a downgrade only when it is named', async (t) => {
   assert.equal(named.code, 0, named.err)
   assert.match(
     named.out,
-    /^upgrade {2}@rness\/cli 0\.6\.0-rc\.1 → 0\.5\.0 .* — downgrading\n/
+    /^upgrade {2}@rness\/cli 0\.6\.0-rc\.1 → 0\.5\.0 .*, downgrading\n/
   )
 })
 

@@ -483,7 +483,7 @@ export async function syncCommand(
         }
         if (check && differences > 0)
           problems.push(
-            `${differences} block(s) out of date — run ${rnessCommand()} sync`
+            `${differences} block(s) out of date: run ${rnessCommand()} sync`
           )
 
         // 3. Agent targets — the whole workspace, so never under --scope.
@@ -501,7 +501,7 @@ export async function syncCommand(
           }
           if (stale > 0)
             problems.push(
-              `${stale} agent file(s) out of date — run ${rnessCommand()} sync`
+              `${stale} agent file(s) out of date: run ${rnessCommand()} sync`
             )
           if (!check)
             for (const label of await leftoverTargets(ws.root, manifest))

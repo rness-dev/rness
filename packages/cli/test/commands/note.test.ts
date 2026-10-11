@@ -37,10 +37,10 @@ const asUser = (r: { method: string; path: string }): Reply | undefined =>
 const doc = (status: string, title: string, extra = '') =>
   `---\nstatus: ${status}\n${extra}---\n\n# ${title}\n`
 const FILES = {
-  'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
+  'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),
   'plans/0002-limits.md': doc(
     'In progress',
-    '0002 — Limits',
+    '0002 - Limits',
     "spec: '[0001](../specs/0001-limits.md)'\n"
   ),
 }
@@ -186,12 +186,12 @@ test("to the repository: the implementation issue made once — labelled, its ma
   const impl = g.issues.find((i) => i.repository === 'acme/api')
   assert.ok(impl !== undefined)
   assert.equal(first.out, `acme/api#${impl.number}`)
-  assert.equal(impl.title, 'Implement 0002 — Limits')
+  assert.equal(impl.title, 'Implement 0002 - Limits')
   assert.deepEqual(impl.labels, ['rness:plan'])
   assert.match(impl.body, /^Plan \[`plans\/0002-limits\.md`\]\(/)
   assert.match(impl.body, /\nSpecification \[`specs\/0001-limits\.md`\]\(/)
   assert.match(impl.body, /\n<!-- rness journal plans\/0002-limits\.md -->\n$/)
-  const plan = g.issues.find((i) => i.title === '0002 — Limits')
+  const plan = g.issues.find((i) => i.title === '0002 - Limits')
   assert.deepEqual(g.subIssues, [{ parent: plan?.id, child: impl.id }])
   assert.match(
     g.comments[0]?.body ?? '',
@@ -212,7 +212,7 @@ test("to the plan: the note on the plan's issue in .rness, nothing made elsewher
   const { g, api } = await journaled(t, { to: 'plan' })
   const r = await note(g, api, { kind: 'blocker' })
   assert.equal(r.code, 0, r.err)
-  const plan = g.issues.find((i) => i.title === '0002 — Limits')
+  const plan = g.issues.find((i) => i.title === '0002 - Limits')
   assert.equal(r.out, `acme/.rness#${plan?.number}`)
   assert.equal(g.comments[0]?.subjectId, plan?.id)
   assert.equal(g.issues.filter((i) => i.repository === 'acme/api').length, 0)
@@ -262,7 +262,7 @@ test("each fallback goes to the plan's issue, its first line naming why, and is 
       )
     )
     assert.deepEqual(await takeNotices(), [
-      `journal — ${why}, notes go to the plan's issue`,
+      `journal: ${why}, notes go to the plan's issue`,
     ])
   }
 })
@@ -324,7 +324,7 @@ test('refusals, each in one line, nothing posted: the length, a credential, the 
 test('no plan in progress, or several: refused, naming them', async (t) => {
   const none = await journaled(t, {
     to: 'plan',
-    files: { 'plans/0002-limits.md': doc('Completed', '0002 — Limits') },
+    files: { 'plans/0002-limits.md': doc('Completed', '0002 - Limits') },
   })
   assert.equal(
     (await note(none.g, none.api)).err,
@@ -333,8 +333,8 @@ test('no plan in progress, or several: refused, naming them', async (t) => {
   const two = await journaled(t, {
     to: 'plan',
     files: {
-      'plans/0002-limits.md': doc('In progress', '0002 — Limits'),
-      'plans/0003-more.md': doc('In progress', '0003 — More'),
+      'plans/0002-limits.md': doc('In progress', '0002 - Limits'),
+      'plans/0003-more.md': doc('In progress', '0003 - More'),
     },
   })
   assert.equal(
@@ -349,7 +349,7 @@ test("a sub-issue GitHub refuses: the implementation issue kept, named on the pl
   const r = await note(g, api)
   assert.equal(r.code, 0, r.err)
   const impl = g.issues.find((i) => i.repository === 'acme/api')
-  const plan = g.issues.find((i) => i.title === '0002 — Limits')
+  const plan = g.issues.find((i) => i.title === '0002 - Limits')
   assert.equal(r.out, `acme/api#${impl?.number}`)
   assert.deepEqual(g.comments[0], {
     subjectId: plan?.id,
@@ -371,7 +371,7 @@ test("rness_note: the same note through the MCP server, its session given; the i
     kind: 'done',
     session: SESSION,
   })
-  const plan = g.issues.find((i) => i.title === '0002 — Limits')
+  const plan = g.issues.find((i) => i.title === '0002 - Limits')
   assert.deepEqual(r, { text: `acme/.rness#${plan?.number}` })
   assert.match(
     g.comments[0]?.body ?? '',
@@ -421,7 +421,7 @@ test("summary with commits and a pull request, no note: on the one plan's issue,
   const shas = [await commitIn(api, 'a.ts'), await commitIn(api, 'b.ts')]
   assert.equal(await sessionEnd(g, root), 0)
   assert.equal(await takeFailure(), null)
-  const plan = g.issues.find((i) => i.title === '0002 — Limits')
+  const plan = g.issues.find((i) => i.title === '0002 - Limits')
   const summaries = g.comments.filter((c) => c.body.includes('summary -->'))
   assert.deepEqual(summaries, [
     {
@@ -466,7 +466,7 @@ test('summary skipped with neither a commit nor a note, or with several plans an
   const several = await journaled(t, {
     files: {
       ...FILES,
-      'plans/0003-more.md': doc('In progress', '0003 — More'),
+      'plans/0003-more.md': doc('In progress', '0003 - More'),
     },
   })
   await recordStart(several.api, SESSION)

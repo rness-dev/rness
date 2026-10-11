@@ -14,7 +14,7 @@ const SNAPSHOT: RnessSnapshot = {
   version: '0.19.0',
   workspace: 'acme',
   scope: null,
-  banner: 'rness 0.19.0 · acme · global scope — 1 standard, 2 plans',
+  banner: 'rness 0.19.0 · acme · global scope · 1 standard, 2 plans',
   statusLine: 'rness · global · 1 in progress',
   inProgress: ['plans/0002-b.md'],
   notes: [],
@@ -159,7 +159,7 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 10 } as never,
 } as const
 
-const NOTE = 'rness: 1 problem in the workspace context — run rness validate'
+const NOTE = 'rness: 1 problem in the workspace context: run rness validate'
 
 test('no note: no band, before and after the first prompt — the session-start line says the banner', async ($, on) => {
   const clock = mock.clock(on)

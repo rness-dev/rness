@@ -28,7 +28,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, ProviderEntry>> = {
   gitlab: { name: 'gitlab', label: 'GitLab', available: false },
   atlassian: {
     name: 'atlassian',
-    label: 'Atlassian — Bitbucket + Jira',
+    label: 'Atlassian (Bitbucket + Jira)',
     available: false,
   },
 }

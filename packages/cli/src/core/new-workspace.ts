@@ -156,7 +156,7 @@ export async function commitContext(input: {
     ui.line('committed', `${shown}/.rness`)
   } catch (e) {
     ui.warn(
-      `${e instanceof Error ? e.message : String(e)} — commit ${shown}/.rness yourself`
+      `${e instanceof Error ? e.message : String(e)}: commit ${shown}/.rness yourself`
     )
   }
 }

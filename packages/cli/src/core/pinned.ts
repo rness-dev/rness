@@ -164,7 +164,7 @@ export async function driftWarning(cwd: string): Promise<string | null> {
   if (drift === null) return null
   const pm = await workspacePackageManager(rnessDir)
   return warn(
-    `${basename(root)}/.rness pins @rness/cli ${drift.pin} but ${drift.installed ?? 'nothing'} is installed — run ${pm} install in .rness`
+    `${basename(root)}/.rness pins @rness/cli ${drift.pin} but ${drift.installed ?? 'nothing'} is installed: run ${pm} install in .rness`
   )
 }
 

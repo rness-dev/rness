@@ -42,7 +42,7 @@ export async function scopeBanner(
     const n = summary.counts[c]
     return n === undefined ? [] : [count(n, NOUNS[c])]
   })
-  const banner = `rness ${VERSION} · ${workspaceName(manifest, ws.root)} · ${scope === null ? 'global scope' : `scope ${scope}`} — ${counts.length === 0 ? 'nothing applies yet' : counts.join(', ')}`
+  const banner = `rness ${VERSION} · ${workspaceName(manifest, ws.root)} · ${scope === null ? 'global scope' : `scope ${scope}`} · ${counts.length === 0 ? 'nothing applies yet' : counts.join(', ')}`
   return { banner, lines: summary.lines }
 }
 

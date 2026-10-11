@@ -131,7 +131,7 @@ test('a second run changes nothing; --check agrees; editing a standard makes --c
   const stale = await sync(['--check', '--cwd', root])
   assert.equal(stale.code, 1)
   assert.match(stale.out, /stale {4}org\/web\/AGENTS\.md/)
-  assert.match(stale.err, /1 block\(s\) out of date — run rness sync/)
+  assert.match(stale.err, /1 block\(s\) out of date: run rness sync/)
   assert.doesNotMatch(
     await readFile(join(root, 'org', 'web', 'AGENTS.md'), 'utf8'),
     /Changed\./
@@ -213,7 +213,7 @@ test('hints spell rness the way it was launched: pnpm dlx here', async (t) => {
   )
   assert.match(
     `${check.out}${check.err}`,
-    /out of date — run pnpm dlx @rness\/cli sync/
+    /out of date: run pnpm dlx @rness\/cli sync/
   )
 })
 

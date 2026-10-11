@@ -90,7 +90,7 @@ async function documents(
 
 function line(d: Doc, withScope = false): string {
   const head = [d.id, d.status].filter((x) => x !== null).join(' ')
-  return `- ${head === '' ? '' : `${head} — `}${d.title}${withScope ? ` — ${d.scope ?? 'global'}` : ''} — ${d.path}`
+  return `- ${head === '' ? '' : `${head} - `}${d.title}${withScope ? ` · ${d.scope ?? 'global'}` : ''} · ${d.path}`
 }
 
 function isCollection(value: unknown): value is CollectionName {
@@ -282,7 +282,7 @@ export function mcpTools(cwd: string): McpTool[] {
       name: 'rness_context',
       title: 'rness: what applies here',
       description:
-        'The rness scope of the current repository (or the one named) and what applies to it: the standards, decisions (ADRs), specifications and plans of that scope and of the scopes it extends — ids, statuses, titles and paths, no bodies. Start here, then read a document with rness_read.',
+        'The rness scope of the current repository (or the one named) and what applies to it: the standards, decisions (ADRs), specifications and plans of that scope and of the scopes it extends: ids, statuses, titles and paths, no bodies. Start here, then read a document with rness_read.',
       inputSchema: {
         type: 'object',
         properties: {

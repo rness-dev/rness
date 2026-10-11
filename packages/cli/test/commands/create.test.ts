@@ -129,7 +129,7 @@ test('new: ./<org> is scaffolded with org and tokens, commits it, adds --repos, 
   const root = join(cwd, 'acme')
   assert.match(
     r.out,
-    /^not found acme\/\.rness \(or not visible to you\) — starting a new workspace\ncreated {2}acme\/\.rness \(new workspace\)\nskipped {2}install with npm \(--skip-install\)\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncommitted acme\/\.rness\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n/
+    /^not found acme\/\.rness \(or not visible to you\) - starting a new workspace\ncreated {2}acme\/\.rness \(new workspace\)\nskipped {2}install with npm \(--skip-install\)\ncloned {3}org\/api\ndeclared scope api \(org\/api\)\ncommitted acme\/\.rness\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n/
   )
   assert.match(r.out, /Workspace for `acme` is ready in acme\/\./)
   assert.match(r.out, /Next:\n {2}cd acme\/\.rness\n/)
@@ -197,7 +197,7 @@ test('join without --repos: the whole catalogue is cloned', async (t) => {
   assert.equal(r.code, 0, r.err)
   assert.equal(
     r.out,
-    'found    acme/.rness — joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n'
+    'found    acme/.rness - joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n'
   )
   const root = join(cwd, 'acme')
   const { stdout } = await execFileP('git', ['remote', 'get-url', 'origin'], {
@@ -236,7 +236,7 @@ test('join --repos: catalogue entries are cloned without rewriting rness.json; o
   assert.equal(only.code, 0, only.err)
   assert.equal(
     only.out,
-    'found    acme/.rness — joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nnot cloned: web (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web\n  rness sync --all\n'
+    'found    acme/.rness - joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nnot cloned: web (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web\n  rness sync --all\n'
   )
   const root = join(cwd, 'acme')
   await assert.rejects(access(join(root, 'org', 'web')))
@@ -838,7 +838,7 @@ const PROVIDER_OPTIONS = [
   { value: 'gitlab', label: 'GitLab (coming later)', disabled: true },
   {
     value: 'atlassian',
-    label: 'Atlassian — Bitbucket + Jira (coming later)',
+    label: 'Atlassian (Bitbucket + Jira) (coming later)',
     disabled: true,
   },
   {
@@ -915,7 +915,7 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
   assert.equal(requests[0]?.headers['authorization'], undefined)
   assert.ok(
     r.out.startsWith(
-      `not found acme/.rness (or not visible to you) — starting a new workspace\nlisting  acme repositories…\n${NO_TOKEN_NOTE}names rness cannot declare yet (struck through): -dash\ncreated  acme/.rness (new workspace)\nskipped  install with npm (--skip-install)\ncloned   org/api\ndeclared scope api (org/api)\ncloned   org/website\ndeclared scope website (org/website)\ncommitted acme/.rness\n`
+      `not found acme/.rness (or not visible to you) - starting a new workspace\nlisting  acme repositories…\n${NO_TOKEN_NOTE}names rness cannot declare yet (struck through): -dash\ncreated  acme/.rness (new workspace)\nskipped  install with npm (--skip-install)\ncloned   org/api\ndeclared scope api (org/api)\ncloned   org/website\ndeclared scope website (org/website)\ncommitted acme/.rness\n`
     ),
     r.out
   )
@@ -972,7 +972,7 @@ test('wizard, join: the catalogue is pre-selected and completed; unpicked stays 
   assert.deepEqual(term.preselected, [['api', 'web', 'secret']])
   assert.equal(
     r.out,
-    'found    acme/.rness — joining\nlisting  acme repositories…\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\ncloned   org/other\ndeclared scope other (org/other)\nnot cloned: web, secret (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/other/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web, secret\n  rness sync --all\n'
+    'found    acme/.rness - joining\nlisting  acme repositories…\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\ncloned   org/other\ndeclared scope other (org/other)\nnot cloned: web, secret (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/other/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web, secret\n  rness sync --all\n'
   )
   const root = join(cwd, 'acme')
   await assert.rejects(access(join(root, 'org', 'web')))
@@ -1008,7 +1008,7 @@ test('wizard, join: a cancelled picker exits 0, writes nothing and leaves no sta
   assert.equal(r.err, 'cancelled\n')
   assert.equal(
     r.out,
-    `found    acme/.rness — joining\nlisting  acme repositories…\n${NO_TOKEN_NOTE}`
+    `found    acme/.rness - joining\nlisting  acme repositories…\n${NO_TOKEN_NOTE}`
   )
   await assert.rejects(access(join(cwd, 'acme')))
   assert.deepEqual(await stagedJoins(), before)
@@ -1074,7 +1074,7 @@ test('wizard: a personal account lists public repositories only, token or not; t
   assert.equal(r.code, 0, r.err)
   assert.ok(
     r.out.startsWith(
-      'not found octo/.rness (or not visible to you) — starting a new workspace\nlisting  octo repositories…\nonly public repositories of octo are listed; add private ones later with rness add <repo>\nlisted the first 5000 repositories of octo\ncreated  octo/.rness'
+      'not found octo/.rness (or not visible to you) - starting a new workspace\nlisting  octo repositories…\nonly public repositories of octo are listed; add private ones later with rness add <repo>\nlisted the first 5000 repositories of octo\ncreated  octo/.rness'
     ),
     r.out
   )
@@ -1184,7 +1184,7 @@ test('new workspace: URLs are written over SSH when the SSH test passes, over HT
   assert.equal(r.code, 0, r.err)
   assert.ok(
     r.out.startsWith(
-      'using    ssh (github.com as octo)\nnot found acme/.rness (or not visible to you) — starting a new workspace\n'
+      'using    ssh (github.com as octo)\nnot found acme/.rness (or not visible to you) - starting a new workspace\n'
     ),
     r.out
   )
@@ -1300,7 +1300,7 @@ test('join: a .rness reachable over SSH only is found, and cloned over SSH', asy
   const cwd = await scratch(t)
   const r = await wizard({ ...FLAGS, cwd }, NO_TTY, ok.transport)
   assert.equal(r.code, 0, r.err)
-  assert.match(r.out, /^found {4}acme\/\.rness — joining$/m)
+  assert.match(r.out, /^found {4}acme\/\.rness - joining$/m)
   assert.equal(
     await originUrl(join(cwd, 'acme', '.rness')),
     `${ok.ssh.host}acme/.rness.git`

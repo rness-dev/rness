@@ -28,7 +28,7 @@ status: Accepted
 
 # 0006 — A workspace is a GitHub organisation
 `
-const spec = (status: string, title = '0001 — A spec') => `---
+const spec = (status: string, title = '0001 - A spec') => `---
 status: ${status}
 ---
 
@@ -113,7 +113,7 @@ test('session start in a clone: a banner for the developer, the scope for the mo
   const answer = JSON.parse(r.out)
   assert.equal(
     answer.systemMessage,
-    `rness ${VERSION} · acme · scope web — 2 standards, 1 decision`
+    `rness ${VERSION} · acme · scope web · 2 standards, 1 decision`
   )
   assert.equal(answer.hookSpecificOutput.hookEventName, 'SessionStart')
   const context: string = answer.hookSpecificOutput.additionalContext
@@ -121,7 +121,7 @@ test('session start in a clone: a banner for the developer, the scope for the mo
   assert.match(context, /\nStandards \(2\):\n/)
   assert.match(
     context,
-    /\n- 0006 Accepted — A workspace is a GitHub organisation — adr\/0006-org\.md\n/
+    /\n- 0006 Accepted - A workspace is a GitHub organisation · adr\/0006-org\.md\n/
   )
   assert.match(
     context,
@@ -172,15 +172,15 @@ test('the safety net: a pin the installed copy does not match, and the problems 
     (await hook('session-start', { cwd: join(root, 'org', 'web') })).out
   )
   const lines: string[] = answer.systemMessage.split('\n')
-  assert.match(lines[0] ?? '', /^rness \S+ · acme · scope web — /)
+  assert.match(lines[0] ?? '', /^rness \S+ · acme · scope web · /)
   assert.deepEqual(lines.slice(1), [
-    'rness: .rness pins @rness/cli 9.9.9 but nothing is installed — run npm install in .rness',
-    'rness: 1 problem in the workspace context — run rness validate',
+    'rness: .rness pins @rness/cli 9.9.9 but nothing is installed: run npm install in .rness',
+    'rness: 1 problem in the workspace context: run rness validate',
     'rness:   specs/0001-a.md: unknown status "Done" (expected Draft, Proposed, Approved, Implemented, Superseded, Rejected)',
   ])
   assert.match(
     answer.hookSpecificOutput.additionalContext,
-    /\nrness: 1 problem in the workspace context — run rness validate\n/
+    /\nrness: 1 problem in the workspace context: run rness validate\n/
   )
 })
 
@@ -189,7 +189,7 @@ test('unreadable input: the project directory is used', async (t) => {
   const r = await hook('session-start', 'not json', {
     CLAUDE_PROJECT_DIR: join(root, 'org', 'web'),
   })
-  assert.match(JSON.parse(r.out).systemMessage, / · scope web — /)
+  assert.match(JSON.parse(r.out).systemMessage, / · scope web · /)
 })
 
 test('through the launcher: one JSON object on stdout, nothing around it', async (t) => {
@@ -247,7 +247,7 @@ test('an edit outside .rness, or with no path, or under node_modules: exit 0, si
 test("a valid edit is silent; a broken one gets that file's problems back, exit 2", async (t) => {
   const root = await workspace(t, {
     'specs/0001-a.md': spec('Approved'),
-    'specs/0002-b.md': spec('Nope', '0002 — Another'),
+    'specs/0002-b.md': spec('Nope', '0002 - Another'),
   })
   const web = join(root, 'org', 'web')
   const file = join(root, '.rness', 'specs', '0001-a.md')
@@ -276,8 +276,8 @@ test("a valid edit is silent; a broken one gets that file's problems back, exit 
 
 test('an edit that gives a document the number of another: exit 2, that file named', async (t) => {
   const root = await workspace(t, {
-    'specs/0029-a.md': spec('Draft', '0029 — A'),
-    'specs/0029-b.md': spec('Draft', '0029 — B'),
+    'specs/0029-a.md': spec('Draft', '0029 - A'),
+    'specs/0029-b.md': spec('Draft', '0029 - B'),
   })
   const web = join(root, 'org', 'web')
   const r = await hook(
@@ -294,7 +294,7 @@ test('an edit that gives a document the number of another: exit 2, that file nam
 
 test('a plan written without a number: exit 2, the next number given', async (t) => {
   const root = await workspace(t, {
-    'plans/0001-a.md': spec('Completed', '0001 — A'),
+    'plans/0001-a.md': spec('Completed', '0001 - A'),
     'plans/2026-10-02-copy-fix.md': spec('Draft', 'Copy fix'),
   })
   const web = join(root, 'org', 'web')
@@ -507,7 +507,7 @@ test('a failure 0.21 recorded in pulse.json is in the next session start, once, 
   assert.ok(
     first.systemMessage
       .split('\n')
-      .includes(`rness: board not updated — ${reason}`)
+      .includes(`rness: board not updated: ${reason}`)
   )
   const second = JSON.parse((await hook('session-start', { cwd: root })).out)
   assert.doesNotMatch(second.systemMessage, /board not updated/)
@@ -517,7 +517,7 @@ test('a failure recorded by an earlier run is in the next session start, once', 
   const root = await workspace(t)
   const reason = 'boards need the project scope: run rness login'
   await recordFailure(reason)
-  const line = `rness: board not updated — ${reason}`
+  const line = `rness: board not updated: ${reason}`
   const first = JSON.parse((await hook('session-start', { cwd: root })).out)
   assert.ok(first.systemMessage.split('\n').includes(line))
   assert.ok(
@@ -534,7 +534,7 @@ test('a failure recorded by an earlier run is in the next session start, once', 
 // --- a Claude Code too old for the mod (plan 0041) ---------------------------
 
 const TOO_OLD =
-  'rness: Claude Code 2.1.240 shows no rness band, footer label or pane; 2.1.280 or later does — claude update'
+  'rness: Claude Code 2.1.240 shows no rness band, footer label or pane; 2.1.280 or later does: claude update'
 
 /** No version told yet: the file the hook records them in, removed. */
 const noneTold = () =>
@@ -548,7 +548,7 @@ test('a Claude Code too old for the mod: the line for the developer, after the b
     (await hook('session-start', { cwd: root, source: 'startup' }, env)).out
   )
   const lines: string[] = first.systemMessage.split('\n')
-  assert.match(lines[0] ?? '', /^rness \S+ · acme · global scope — /)
+  assert.match(lines[0] ?? '', /^rness \S+ · acme · global scope · /)
   assert.deepEqual(lines.slice(1), [TOO_OLD])
   assert.doesNotMatch(
     first.hookSpecificOutput.additionalContext,
@@ -1039,7 +1039,7 @@ test("the session's start is recorded in the clone it works in, for the summary;
   await writeFile(join(web, 'a.md'), 'a\n')
   await commitDir(web)
   await recordNotice(
-    "journal — acme/web takes no issues, notes go to the plan's issue"
+    "journal: acme/web takes no issues, notes go to the plan's issue"
   )
   const first = JSON.parse(
     (
@@ -1059,7 +1059,7 @@ test("the session's start is recorded in the clone it works in, for the summary;
     first.systemMessage
       .split('\n')
       .includes(
-        "rness: journal — acme/web takes no issues, notes go to the plan's issue"
+        "rness: journal: acme/web takes no issues, notes go to the plan's issue"
       )
   )
   const again = JSON.parse(

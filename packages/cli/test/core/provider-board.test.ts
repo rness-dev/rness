@@ -260,7 +260,7 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
       {
         id: 'I_1',
         draftId: null,
-        issue: anIssue(2, { title: '0001 — A', body: 'b' }),
+        issue: anIssue(2, { title: '0001 - A', body: 'b' }),
         title: '',
         archived: false,
         values: { Status: 'draft', Path: 'adr/a.md' },
@@ -280,7 +280,7 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
       {
         id: 'I_3',
         draftId: 'D_3',
-        title: '0003 — C',
+        title: '0003 - C',
         archived: false,
         values: { Path: 'adr/c.md' },
       },
@@ -343,7 +343,7 @@ test("items: rness's are drafts and issues of acme/.rness with a Path; anything 
       body: 'b',
       labels: ['rness'],
     },
-    title: '0001 — A',
+    title: '0001 - A',
     status: 'draft',
     type: null,
     collectionStatus: null,
@@ -439,7 +439,7 @@ async function laidOut(t: TestContext, items: FItem[] = []) {
 
 const want = {
   path: 'adr/a.md',
-  title: '0001 — A',
+  title: '0001 - A',
   body: 'header',
   status: 'draft',
   statusField: null,
@@ -457,7 +457,7 @@ test('apply create: an issue of .rness, labelled, the first line as body, added 
   )
   assert.deepEqual(g.mutations[0]!.variables, {
     repositoryId: 'R_1',
-    title: '0001 — A',
+    title: '0001 - A',
     body: 'header',
     labelIds: ['L_1'],
   })
@@ -517,7 +517,7 @@ test('apply convert: the draft becomes an issue of .rness in place, labelled; it
   })
   assert.deepEqual(g.mutations[2]!.variables, {
     id: issue.id,
-    title: '0001 — A',
+    title: '0001 - A',
   })
   assert.equal(g.mutations[3]!.variables['fieldId'], 'F_status')
   assert.deepEqual(placed, { id: 'I_1', number: issue.number })
@@ -551,7 +551,7 @@ test('apply update: a closed issue reopened, a lost label added, the title and t
   assert.deepEqual(g.mutations[0]!.variables, { id: 'ISSUE_4' })
   assert.deepEqual(g.mutations[2]!.variables, {
     id: 'ISSUE_4',
-    title: '0001 — A',
+    title: '0001 - A',
   })
   assert.equal(g.mutations[3]!.variables['fieldId'], 'F_status')
   g.mutations.length = 0
@@ -646,7 +646,7 @@ test('a label is its name in any case: an issue labelled RNESS is labelled, and 
     {
       id: 'I_1',
       draftId: null,
-      issue: anIssue(4, { title: '0001 — A', labels: ['RNESS'] }),
+      issue: anIssue(4, { title: '0001 - A', labels: ['RNESS'] }),
       title: '',
       archived: false,
       values: { Path: 'adr/a.md', Collection: 'ADR', Status: 'accepted' },
@@ -1018,7 +1018,7 @@ test('an existing board columned by Status is made again by its own field; one a
     'note views are not in the declared order: GitHub keeps them as they were made',
   ]
   const lines = await g.provider.ensureLayout(BOARD, own)
-  assert.deepEqual(lines, ['view ADR remade — columns ADR status', ...notes])
+  assert.deepEqual(lines, ['view ADR remade, columns ADR status', ...notes])
   assert.deepEqual(
     g.mutations.map((m) => m.op),
     ['deleteView']
@@ -1072,7 +1072,7 @@ test('a declared view whose filter or fields changed is updated in place, its id
   }
   const lines = await g.provider.ensureLayout(BOARD, changed)
   assert.deepEqual(lines, [
-    'view All remade — columns Status',
+    'view All remade, columns Status',
     'updated view Working',
     'note views are not in the declared order: GitHub keeps them as they were made',
   ])

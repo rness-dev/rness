@@ -174,7 +174,7 @@ test('desiredOf: title, the first line of its body, status, its collection and h
   const [first, second] = pulse(tabs).want
   assert.deepEqual(first, {
     path: 'adr/0002-b.md',
-    title: '0002 — Title 0002',
+    title: '0002 - Title 0002',
     body: '`adr/0002-b.md` · [on GitHub](https://github.com/acme/.rness/blob/main/adr/0002-b.md)',
     status: 'accepted',
     statusField: 'ADR status',

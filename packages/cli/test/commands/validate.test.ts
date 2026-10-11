@@ -418,8 +418,8 @@ test('two documents with one number: exit 1, both named', async (t) => {
     `---\ndate: 2026-10-02\nstatus: Draft\nrepo: x\n---\n\n# ${title}\n`
   const root = await makeWorkspace(t, {
     files: {
-      'specs/0029-a.md': doc('0029 — A'),
-      'specs/0029-b.md': doc('0029 — B'),
+      'specs/0029-a.md': doc('0029 - A'),
+      'specs/0029-b.md': doc('0029 - B'),
     },
   })
   const c = capture()
@@ -593,6 +593,6 @@ test("boards: a collection's README that still declares what rness.json declares
   )
   assert.match(
     r.err,
-    /marketing\/README\.md: "statuses" is declared in rness\.json now — rness sync moves it/
+    /marketing\/README\.md: "statuses" is declared in rness\.json now: rness sync moves it/
   )
 })

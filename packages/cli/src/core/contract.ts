@@ -103,7 +103,7 @@ export async function checkContract(
         for (const key of PLACEMENT_KEYS) {
           if (Object.hasOwn(item.fields, key)) {
             problems.push(
-              `${where}: front matter "${key}" is not supported — the directory decides the scope; move the file`
+              `${where}: front matter "${key}" is not supported: the directory decides the scope; move the file`
             )
           }
         }

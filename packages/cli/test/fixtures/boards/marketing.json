@@ -144,7 +144,7 @@
         "Kind": "launch"
       },
       "issue": {
-        "title": "2026-09-30 — Show HN",
+        "title": "2026-09-30 - Show HN",
         "state": "OPEN",
         "labels": [
           "hn",
@@ -162,7 +162,7 @@
         "Reach": "120"
       },
       "issue": {
-        "title": "2026-09-30 — First post",
+        "title": "2026-09-30 - First post",
         "state": "OPEN",
         "labels": [
           "linkedin",

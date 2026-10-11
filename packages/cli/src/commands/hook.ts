@@ -238,7 +238,7 @@ async function sessionStart(
     notes = [message(e)]
   }
   const failure = await takeFailure()
-  if (failure !== null) notes.push(`board not updated — ${failure}`)
+  if (failure !== null) notes.push(`board not updated: ${failure}`)
   notes.push(...(await takeNotices()))
   const warnings = noteLines(notes)
   const compact = input['source'] === 'compact'

@@ -108,7 +108,7 @@ test('a step spins — unless it runs git while git might still ask for a passph
     'spin: Syncing the blocks',
     'stop: Synced 3 blocks: 3 unchanged',
     'spin: Installing dependencies with npm',
-    'spin-error: Installing dependencies with npm — failed',
+    'spin-error: Installing dependencies with npm: failed',
   ])
 })
 

@@ -319,7 +319,7 @@ test('upgrade is served by the invoked copy, never by the pinned one; other comm
   assert.equal(stdout, 'DELEGATED validate\n')
   assert.equal(
     stderr,
-    `warning: ${root.split('/').at(-1)}/.rness pins @rness/cli 9.9.10 but 9.9.9 is installed — run pnpm install in .rness\n`
+    `warning: ${root.split('/').at(-1)}/.rness pins @rness/cli 9.9.10 but 9.9.9 is installed: run pnpm install in .rness\n`
   )
 })
 

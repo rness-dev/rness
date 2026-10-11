@@ -36,7 +36,7 @@ test('rows: sessions from the front matter — { id, agent } or a bare id; the f
   const dir = await rness(t, {
     'specs/0001-list.md': fm('[s1, s2, s1, "", 3]'),
     'specs/0002-string.md': fm('s1'),
-    'specs/0003-none.md': doc('Draft', '0003 — C'),
+    'specs/0003-none.md': doc('Draft', '0003 - C'),
     'specs/0004-empty.md': fm('[]'),
     'specs/0005-agents.md': fm(
       '[{ id: s1, agent: Claude Opus 5.5 }, s2, { id: s1, agent: other }, { agent: no id }, { id: s3, agent: "" }]'
@@ -60,11 +60,11 @@ test('rows: sessions from the front matter — { id, agent } or a bare id; the f
 
 test('rows: id, title without its number, status; newest first; the template left out', async (t) => {
   const dir = await rness(t, {
-    'plans/0005-old.md': doc('Draft', '0005 — Maintenance'),
-    'plans/0023-new.md': doc('In progress', '0023 — Claude hooks'),
+    'plans/0005-old.md': doc('Draft', '0005 - Maintenance'),
+    'plans/0023-new.md': doc('In progress', '0023 - Claude hooks'),
     'plans/0010-broken.md': '---\nstatus: [oops\n---\n# 0010 — Broken\n',
-    'plans/0011-bare.md': doc(null, '0011 — No front matter'),
-    'adr/0000-template.md': doc('Proposed', '0000 — Template'),
+    'plans/0011-bare.md': doc(null, '0011 - No front matter'),
+    'adr/0000-template.md': doc('Proposed', '0000 - Template'),
     'adr/notes.md': 'no heading here\n',
   })
   const [adr, , plans] = await statusTabs(dir)
@@ -105,7 +105,7 @@ test('a directory whose documents carry a status is a tab of its own; its other 
     'skills/x.md': doc('Accepted', 'A skill'),
     '.github/notes.md': doc('Accepted', 'Hidden'),
     'node_modules/pkg/README.md': doc('Accepted', 'A package'),
-    'zines/0001-first.md': doc('Draft', '0001 — First'),
+    'zines/0001-first.md': doc('Draft', '0001 - First'),
   })
   const tabs = await statusTabs(dir)
   assert.deepEqual(
@@ -148,8 +148,8 @@ test('a tab is found by name or label, whatever the case', async (t) => {
 
 test('Markdown: a heading, a section and a table per tab, an empty one said so, pipes escaped', async (t) => {
   const dir = await rness(t, {
-    'specs/0002-a.md': doc('Approved', '0002 — Pipes | in a title'),
-    'specs/0001-b.md': doc(null, '0001 — No status'),
+    'specs/0002-a.md': doc('Approved', '0002 - Pipes | in a title'),
+    'specs/0001-b.md': doc(null, '0001 - No status'),
   })
   const tabs = await statusTabs(dir)
   assert.equal(

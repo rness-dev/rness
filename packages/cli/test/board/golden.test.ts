@@ -64,15 +64,15 @@ const doc = (status: string, title: string, extra = '') =>
 
 /** ADR, specs, plans and a discovered collection: every kind of tab Agent Pulse shows. */
 const PULSE_FILES = {
-  'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
-  'specs/0001-a.md': doc('Draft', '0001 — First'),
-  'specs/0002-b.md': doc('Approved', '0002 — Second'),
+  'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),
+  'specs/0001-a.md': doc('Draft', '0001 - First'),
+  'specs/0002-b.md': doc('Approved', '0002 - Second'),
   'plans/0001-x.md': doc(
     'In progress',
-    '0001 — Do it',
+    '0001 - Do it',
     'sessions:\n  - { id: 1a2b3c4d, agent: Claude Opus 5.5 }\n'
   ),
-  'research/0001-r.md': doc('Exploring', '0001 — A question'),
+  'research/0001-r.md': doc('Exploring', '0001 - A question'),
 }
 
 const README = `---
@@ -90,7 +90,7 @@ labels: directory
 Strategy.
 `
 const MARKETING_FILES = {
-  'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
+  'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),
   'marketing/README.md': README,
   'marketing/linkedin/2026-09-30-post.md': doc(
     'Draft',

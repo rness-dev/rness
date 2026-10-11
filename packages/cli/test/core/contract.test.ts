@@ -39,12 +39,12 @@ const doc = (status: string, title: string) =>
 test('two documents with one number in a collection are each named after the other; across collections a number is free', async (t) => {
   const root = await makeWorkspace(t, {
     files: {
-      'specs/0029-a.md': doc('Draft', '0029 — A'),
-      'specs/0029-b.md': doc('Draft', '0029 — B'),
-      'specs/0030-c.md': doc('Draft', '0030 — C'),
-      'plans/0029-d.md': doc('Draft', '0029 — D'),
-      'adr/0000-template.md': doc('Proposed', '0000 — Template'),
-      'adr/0000-zero.md': doc('Proposed', '0000 — Zero'),
+      'specs/0029-a.md': doc('Draft', '0029 - A'),
+      'specs/0029-b.md': doc('Draft', '0029 - B'),
+      'specs/0030-c.md': doc('Draft', '0030 - C'),
+      'plans/0029-d.md': doc('Draft', '0029 - D'),
+      'adr/0000-template.md': doc('Proposed', '0000 - Template'),
+      'adr/0000-zero.md': doc('Proposed', '0000 - Zero'),
     },
   })
   assert.deepEqual(await checkContract(join(root, '.rness')), [
@@ -56,11 +56,11 @@ test('two documents with one number in a collection are each named after the oth
 test('a document of adr, specs or plans without a number is named, with the next number; a dated name is not a number', async (t) => {
   const root = await makeWorkspace(t, {
     files: {
-      'plans/0001-a.md': doc('Completed', '0001 — A'),
+      'plans/0001-a.md': doc('Completed', '0001 - A'),
       'plans/web/2026-10-02-copy-fix.md': doc('In progress', 'Copy fix'),
       'plans/2026-10-03-other.md': doc('Draft', 'Other'),
       'specs/notes.md': doc('Draft', 'Notes'),
-      'adr/0000-template.md': doc('Proposed', '0000 — Template'),
+      'adr/0000-template.md': doc('Proposed', '0000 - Template'),
       'standards/style.md': '# Style\n',
     },
   })
@@ -76,13 +76,13 @@ test('a document of adr, specs or plans without a number is named, with the next
 
 test('an override replaces the file on disk, for the check only', async (t) => {
   const root = await makeWorkspace(t, {
-    files: { 'specs/0001-a.md': doc('Draft', '0001 — A') },
+    files: { 'specs/0001-a.md': doc('Draft', '0001 - A') },
   })
   const rnessDir = join(root, '.rness')
   assert.deepEqual(
     await checkContract(rnessDir, {
       rel: 'specs/0001-a.md',
-      text: doc('Done', '0001 — A'),
+      text: doc('Done', '0001 - A'),
     }),
     [
       'specs/0001-a.md: unknown status "Done" (expected Draft, Proposed, Approved, Implemented, Superseded, Rejected)',
@@ -93,7 +93,7 @@ test('an override replaces the file on disk, for the check only', async (t) => {
 
 test('an override of a file not on disk adds it: a new unnumbered plan is named', async (t) => {
   const root = await makeWorkspace(t, {
-    files: { 'plans/0003-c.md': doc('Draft', '0003 — C') },
+    files: { 'plans/0003-c.md': doc('Draft', '0003 - C') },
   })
   assert.deepEqual(
     await checkContract(join(root, '.rness'), {
@@ -107,7 +107,7 @@ test('an override of a file not on disk adds it: a new unnumbered plan is named'
 })
 
 test('an override equal to the disk changes nothing', async (t) => {
-  const broken = doc('Done', '0001 — A')
+  const broken = doc('Done', '0001 - A')
   const root = await makeWorkspace(t, {
     files: { 'specs/0001-a.md': broken },
   })

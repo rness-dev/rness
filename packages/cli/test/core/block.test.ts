@@ -68,7 +68,7 @@ test('renders the scope block: markers, header, intro, rules in resolution order
   )
   const expectedBody = [
     'This directory is scope `web` of rness workspace `acme`. Full context lives in',
-    '`../../.rness/` — start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;',
+    '`../../.rness/`: start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;',
     'live: `rness context --scope web`. If `.rness/` is not reachable, this is a',
     'standalone clone: the rules below are all you have.',
     '',
@@ -119,7 +119,7 @@ test('the global block names the root, has no relative path, and says where the 
   assert.match(block.text.split('\n')[1] ?? '', /· scope: global ·/)
   assert.match(
     body,
-    /^This is the root of rness workspace `acme`\. Full context lives in `\.rness\/` —/
+    /^This is the root of rness workspace `acme`\. Full context lives in `\.rness\/`:/
   )
   assert.match(body, /Every `org\/<repo>\/` carries its own block/)
   assert.match(body, /start at its `AGENTS\.md`, then task-relevant/)

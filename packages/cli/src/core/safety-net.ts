@@ -23,13 +23,13 @@ export async function safetyNet(
   const drift = await pinDrift(ws.rnessDir)
   if (drift !== null)
     notes.push(
-      `.rness pins @rness/cli ${drift.pin} but ${drift.installed ?? 'nothing'} is installed — run ${await workspacePackageManager(ws.rnessDir)} install in .rness`
+      `.rness pins @rness/cli ${drift.pin} but ${drift.installed ?? 'nothing'} is installed: run ${await workspacePackageManager(ws.rnessDir)} install in .rness`
     )
   try {
     const { problems } = await checkWorkspace(ws, manifest)
     if (problems.length > 0)
       notes.push(
-        `${count(problems.length, ['problem', 'problems'])} in the workspace context — run rness validate`,
+        `${count(problems.length, ['problem', 'problems'])} in the workspace context: run rness validate`,
         ...problems.slice(0, SHOWN_PROBLEMS).map((p) => `  ${p}`)
       )
   } catch (e) {

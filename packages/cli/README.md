@@ -848,6 +848,16 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## Unreleased — what rness writes carries no em dash
+
+- Nothing rness writes carries an em dash (U+2014) any more: the `AGENTS.md`
+  block, the title `rness doc new` opens (`# NNNN - Title`), the `rness:adr`,
+  `rness:spec` and `rness:plan` skills, the scaffold, the titles of a board's
+  issues (`NNNN - Title`, renamed once at the next `rness board push`), and
+  the messages of the CLI and of the mod: " - ", a comma or a colon take its
+  place. A title written with the old separator still reads. The
+  repository's lint refuses a new one in a string of the CLI or the mod.
+
 ## 0.22.0 — `board`, not `pulse`: `rness board push`, `rness note`, `boards` in rness.json
 
 - One word for the view, whatever the provider (spec 0033, see "Boards"):

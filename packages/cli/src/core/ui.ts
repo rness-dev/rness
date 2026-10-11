@@ -175,7 +175,7 @@ export function sessionUi(p: Session): Ui {
         spin.stop(line === null ? label : label_(line))
         return result
       } catch (e) {
-        spin.error(`${label} — failed`)
+        spin.error(`${label}: failed`)
         throw e
       }
     },

@@ -34,7 +34,7 @@ async function fixture(t: TestContext) {
       // The scaffold's heading: the id, a dash, the title.
       'adr/0006-workspace.md': doc(
         'Accepted',
-        '0006 — A workspace is a GitHub organisation',
+        '0006 - A workspace is a GitHub organisation',
         '\nNever squash an upgrade.\n'
       ),
       'adr/0009-landing.md': doc('Proposed', 'The landing shows the target'),
@@ -83,20 +83,20 @@ test('rness_context: the scope of the directory, its chain, and what applies —
     r.text,
     /^Workspace acme · scope web \(org\/platform\/apps\/web, extends platform\)\n/
   )
-  assert.match(r.text, /- SEO — standards\/web\/seo\.md/)
-  assert.match(r.text, /- Coding style — standards\/coding\.md/)
+  assert.match(r.text, /- SEO · standards\/web\/seo\.md/)
+  assert.match(r.text, /- Coding style · standards\/coding\.md/)
   assert.doesNotMatch(r.text, /Errors/, 'another scope')
   assert.match(
     r.text,
-    /- 0006 Accepted — A workspace is a GitHub organisation — adr\/0006-workspace\.md/
+    /- 0006 Accepted - A workspace is a GitHub organisation · adr\/0006-workspace\.md/
   )
   assert.match(
     r.text,
-    /- 0011 Implemented — Agent targets — specs\/web\/0011-agents\.md/
+    /- 0011 Implemented - Agent targets · specs\/web\/0011-agents\.md/
   )
   assert.match(
     r.text,
-    /- 0019 Completed — Agent targets, the plan — plans\/platform\/0019-agents\.md/
+    /- 0019 Completed - Agent targets, the plan · plans\/platform\/0019-agents\.md/
   )
   assert.doesNotMatch(r.text, /Template|Two spaces|squash/i)
 
@@ -114,7 +114,7 @@ test('rness_list: a whole collection across scopes, filtered by status; bad inpu
   const all = await call(root, 'rness_list', { collection: 'adr' })
   assert.match(
     all.text,
-    /- 0006 Accepted — A workspace is a GitHub organisation — global — adr\/0006-workspace\.md/
+    /- 0006 Accepted - A workspace is a GitHub organisation · global · adr\/0006-workspace\.md/
   )
   assert.match(all.text, /- 0009 Proposed/)
   assert.doesNotMatch(all.text, /0000/)
@@ -124,7 +124,7 @@ test('rness_list: a whole collection across scopes, filtered by status; bad inpu
   })
   assert.doesNotMatch(accepted.text, /0009/)
   const specs = await call(root, 'rness_list', { collection: 'specs' })
-  assert.match(specs.text, /— web — specs\/web\/0011-agents\.md/)
+  assert.match(specs.text, /· web · specs\/web\/0011-agents\.md/)
   for (const args of [
     { collection: 'nope' },
     { collection: 'adr', status: 'Done' },

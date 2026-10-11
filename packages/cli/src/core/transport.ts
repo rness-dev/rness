@@ -157,8 +157,8 @@ export function usingSentence(
   login?: string | null
 ): string {
   return access.ok
-    ? `SSH works for github.com (as ${access.login}) — repositories are cloned over SSH`
-    : `No SSH access to github.com (${access.reason}) — repositories are cloned over HTTPS${loggedInAs(login)}`
+    ? `SSH works for github.com (as ${access.login}): repositories are cloned over SSH`
+    : `No SSH access to github.com (${access.reason}): repositories are cloned over HTTPS${loggedInAs(login)}`
 }
 
 /** Is `url` written with the SSH base? */
@@ -172,7 +172,7 @@ export const CHECKING_LINE = status('checking', 'ssh access to github.com…')
 export const CHECKING = [
   'checking',
   'ssh access to github.com…',
-  'Checking SSH access to github.com — ssh may ask for your passphrase',
+  'Checking SSH access to github.com: ssh may ask for your passphrase',
 ] as const
 
 /** `login`: who rness is logged in as, which is what makes HTTPS reach private repositories. */

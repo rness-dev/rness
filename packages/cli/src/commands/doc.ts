@@ -125,7 +125,7 @@ export async function docNewCommand(
     const sections =
       name === 'adr' ? await adrSections(ws.rnessDir) : (SECTIONS[name] ?? [])
     const body = [
-      `# ${number} — ${title}`,
+      `# ${number} - ${title}`,
       // The rule under the title, as the ADR and specification templates draw it.
       ...(name === 'plans' ? [] : ['', '---']),
       ...sections.flatMap((s) => ['', `## ${s}`]),

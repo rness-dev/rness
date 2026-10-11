@@ -140,7 +140,7 @@ export async function context(
 /** Rate-limit waits said as they begin: a pause of minutes must not look like a hang (spec 0018 §4). */
 const waitSaid = (opts: BoardOptions, ui: Ui): RateWait =>
   rateWait(async (ms) => {
-    ui.line('waiting', `${Math.round(ms / 1000)} s — GitHub's rate limit`)
+    ui.line('waiting', `${Math.round(ms / 1000)} s: GitHub's rate limit`)
     await (opts.sleep ?? ((n: number) => delay(n)))(ms)
   })
 
@@ -218,7 +218,7 @@ async function declarations(
     if (still.length > 0) {
       ui?.line(
         'skipped',
-        `${name}: ${still.join(', ')}, which rness.json declares now — rness sync moves it`
+        `${name}: ${still.join(', ')}, which rness.json declares now: rness sync moves it`
       )
       continue
     }
@@ -236,7 +236,7 @@ async function declarations(
 function noBoard(c: Context): Error {
   return new Error(
     c.manifest.refused === undefined
-      ? 'no board declared — declare one in .rness/rness.json, as "boards": { "pulse": "agent-pulse" }, then rness board push'
+      ? 'no board declared: declare one in .rness/rness.json, as "boards": { "pulse": "agent-pulse" }, then rness board push'
       : `no board rness.json declares is valid: ${c.manifest.refused.map((r) => r.reason).join('; ')}`
   )
 }
@@ -622,7 +622,7 @@ async function syncBoard(
     if (!(e instanceof RateLimitError)) throw e
     const total = changes + writes.length
     throw new Error(
-      `${e.message}: ${total - made} of ${total} changes not made — the next rness board push makes them`,
+      `${e.message}: ${total - made} of ${total} changes not made: the next rness board push makes them`,
       { cause: e }
     )
   }
@@ -787,7 +787,7 @@ async function createBoards(
     }
     c = { ...c, manifest }
     made.push(b.name)
-    ui.line('created', `${title} — ${board.url}`)
+    ui.line('created', `${title} - ${board.url}`)
   }
   return { c, made, left: [] }
 }
@@ -828,12 +828,12 @@ export async function boardPushCommand(
       if (made.length > 0)
         ui.line(
           'declared',
-          `${made.join(', ')} in .rness/rness.json — commit it: git -C .rness commit -am "chore: board ${made.join(', ')}"`
+          `${made.join(', ')} in .rness/rness.json - commit it: git -C .rness commit -am "chore: board ${made.join(', ')}"`
         )
     }
     if (left.length > 0)
       throw new Error(
-        `not created: ${left.join(', ')} — rness board push in a terminal, or with --yes, creates ${left.length === 1 ? 'it' : 'them'}`
+        `not created: ${left.join(', ')} - rness board push in a terminal, or with --yes, creates ${left.length === 1 ? 'it' : 'them'}`
       )
     return 0
   } catch (e) {

@@ -125,7 +125,7 @@ const allocateStep = (allocate: string, collection: string): string =>
    \`${collection}/NNNN-untitled.md\` with the next number, the front matter
    and the opening sections, and prints the path. Rename it to
    \`NNNN-<slug>.md\`, the slug a few lowercase words of the title joined by
-   hyphens, and write the title as \`# NNNN — <title>\`. Never choose the
+   hyphens, and write the title as \`# NNNN - <title>\`. Never choose the
    number yourself.`
 
 const HOOK_LINE = (rness: string): string =>
@@ -135,7 +135,7 @@ const LIFECYCLE: readonly Lifecycle[] = [
   {
     name: 'adr',
     description:
-      'Record a decision of the rness workspace as an ADR in .rness/adr/ — a choice expensive to reverse or that creates a lasting constraint — or reopen one. Use when the developer asks for an ADR, or when the conversation reaches such a decision.',
+      'Record a decision of the rness workspace as an ADR in .rness/adr/ - a choice expensive to reverse or that creates a lasting constraint - or reopen one. Use when the developer asks for an ADR, or when the conversation reaches such a decision.',
     hint: '[create <subject> | open NNNN]',
     tab: 'adr',
     body: (
@@ -155,7 +155,7 @@ it; a bare reference is \`open\`; any other words are the subject of a
 Creating:
 
 1. If the developer did not ask for an ADR in so many words, propose one in
-   a single line — its title, and why the choice is hard to reverse — and
+   a single line - its title, and why the choice is hard to reverse - and
    wait for a yes.
 2. Read \`${rness}/CONVENTIONS.md\` and \`${rness}/adr/0000-template.md\`: they hold the
    rules and the sections; this skill is only the procedure.
@@ -165,7 +165,7 @@ Creating:
 4. ${allocateStep(allocate, 'adr')}
 5. Fill it: \`repo\` the repositories under \`org/\` it affects; the template's
    sections, their guidance lines removed; an ADR it replaces named in
-   Context — that one becomes \`Superseded\`, with \`superseded_by:\`, only once
+   Context - that one becomes \`Superseded\`, with \`superseded_by:\`, only once
    the new ADR is \`Accepted\`. Add ${SESSION_LINE}.
 6. ${HOOK_LINE(rness)}
 
@@ -184,7 +184,7 @@ ${COMMIT_RULE}
   {
     name: 'spec',
     description:
-      'Write a specification of the rness workspace in .rness/specs/ — the outcome wanted and its scope, before any plan — or reopen one. Use when the developer asks for a spec, or when agreed work is too large to start without one.',
+      'Write a specification of the rness workspace in .rness/specs/ - the outcome wanted and its scope, before any plan - or reopen one. Use when the developer asks for a spec, or when agreed work is too large to start without one.',
     hint: '[create <subject> | open NNNN]',
     tab: 'specs',
     body: (
@@ -211,7 +211,7 @@ Creating:
    what is in and out of scope, the ADRs it rests on: ask what the
    conversation does not say, one question at a time.
 4. ${allocateStep(allocate, 'specs')}
-5. Fill it: \`repo\`, and \`adr:\` linking the decisions it rests on — or the
+5. Fill it: \`repo\`, and \`adr:\` linking the decisions it rests on - or the
    rationale in the body when none does; the sections it opened with
    (Summary, Scope, Out of scope, Alternatives considered, To verify,
    Tests), or the most recent specification's when the team's differ. What
@@ -220,8 +220,8 @@ Creating:
    question. Add ${SESSION_LINE}.
 6. ${HOOK_LINE(rness)}
 
-Opening: read the specification and amend what the developer asks — a
-section, a scope, an open question answered — \`updated\` today, the session
+Opening: read the specification and amend what the developer asks - a
+section, a scope, an open question answered - \`updated\` today, the session
 line added. A status moves only as the developer says, or by
 \`/rness:plan from\`.
 
@@ -237,7 +237,7 @@ ${COMMIT_RULE}
   {
     name: 'plan',
     description:
-      'The plans of the rness workspace in .rness/plans/ — a plan from a specification (from, which approves it), from the conversation (create), reopened (open), or closed on evidence (check). Use when the developer asks for a plan, to approve a specification, or to check the work of a plan.',
+      'The plans of the rness workspace in .rness/plans/ - a plan from a specification (from, which approves it), from the conversation (create), reopened (open), or closed on evidence (check). Use when the developer asks for a plan, to approve a specification, or to check the work of a plan.',
     hint: '[create <subject> | from <spec> | open NNNN | check NNNN]',
     tab: 'plans',
     body: (
@@ -247,7 +247,7 @@ ${COMMIT_RULE}
 lists the existing ones, newest first. Arguments: \`$ARGUMENTS\`.
 
 The first word is the verb, when a reference (\`0037\`, or a path) follows
-it — \`check\` alone means the plan \`In progress\`; a bare reference is
+it - \`check\` alone means the plan \`In progress\`; a bare reference is
 \`open\`; any other words are the subject of a \`create\`:
 
 - \`from NNNN\`: a plan from specification NNNN, which this approves.
@@ -265,7 +265,7 @@ it — \`check\` alone means the plan \`In progress\`; a bare reference is
    reopen it rather than write a second.
 2. The developer typed this command: that is their approval, and the
    specification moves from \`Draft\` or \`Proposed\` to \`Approved\`, \`updated\`
-   today, in the same commit as the plan — no confirmation question. If
+   today, in the same commit as the plan - no confirmation question. If
    you are proposing it yourself, propose it in a single line and wait for
    a yes first: the approval is theirs, never yours.
 3. Read the code and the repositories the specification touches: every
@@ -273,7 +273,7 @@ it — \`check\` alone means the plan \`In progress\`; a bare reference is
 4. ${allocateStep(allocate, 'plans')}
 5. Fill it: \`spec:\` linking the specification; tasks in order, as
    checkboxes, each with the files, what changes, and the command that
-   proves it (a test, a build, a run) — the last tasks the documentation
+   proves it (a test, a build, a run) - the last tasks the documentation
    the work makes inaccurate, then the release when the repository has
    one; where the plan decides something the specification leaves open, the
    section it opened with says so. Add ${SESSION_LINE}.
@@ -284,7 +284,7 @@ for a plan in so many words, propose one in a single line and wait for a
 yes. The body says what the work is and why it needs no specification.
 
 \`open\`: read the plan and its specification; amend what the developer
-asks — a task added, split or reworded, a blocker recorded — \`updated\`
+asks - a task added, split or reworded, a blocker recorded - \`updated\`
 today, the session line added; move \`Draft\` to \`Ready\` or \`Blocked\` as they
 say. A \`Completed\` or \`Abandoned\` plan is not reopened: offer a new plan of
 the same specification.
@@ -302,7 +302,7 @@ the same specification.
    check has no cache: run twice, it proves twice.
 5. Every task proven:
    - the plan: \`status: Completed\`, \`updated\` today, the checkboxes of the
-     proven tasks ticked, and a section \`Verification (YYYY-MM-DD)\` — what
+     proven tasks ticked, and a section \`Verification (YYYY-MM-DD)\` - what
      ran, what it showed, what could not run and why;
    - the specification: \`Implemented\` once every plan of it is
      \`Completed\`; \`updated\` today;

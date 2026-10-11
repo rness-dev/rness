@@ -113,7 +113,7 @@ export async function addCommand(
     // the same directory and the same catalogue key.
     if (parsed.name === CONTEXT_REPO) {
       process.stderr.write(
-        `${CONTEXT_REPO} is the workspace context, not a member repository — it is already cloned at ${basename(ws.root)}/${CONTEXT_REPO}\n`
+        `${CONTEXT_REPO} is the workspace context, not a member repository: it is already cloned at ${basename(ws.root)}/${CONTEXT_REPO}\n`
       )
       return 2
     }

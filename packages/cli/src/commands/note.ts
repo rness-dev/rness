@@ -258,7 +258,7 @@ export async function postNote(input: NoteInput): Promise<Posted> {
             ?.rows.find((r) => r.path === plan)
           target = await fromGithub(
             c.provider.createJournalIssue(repo.owner, repo.name, plan, {
-              title: `Implement ${row === undefined ? plan : `${row.id} — ${row.title}`}`,
+              title: `Implement ${row === undefined ? plan : `${row.id} - ${row.title}`}`,
               body: await implementationBody(c, plan, parent.number),
             })
           )
@@ -286,7 +286,7 @@ export async function postNote(input: NoteInput): Promise<Posted> {
       }
   }
   if (why !== null)
-    await recordNotice(`journal — ${why}, notes go to the plan's issue`)
+    await recordNotice(`journal: ${why}, notes go to the plan's issue`)
 
   const where = clone?.dir ?? input.cwd
   const [branch, head] = await Promise.all([branchOf(where), headOf(where)])

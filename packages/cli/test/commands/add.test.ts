@@ -396,7 +396,7 @@ test('add refuses the context repository, whatever organization it is named with
     assert.equal(r.code, 2, `${spec} must be refused`)
     assert.match(
       r.err,
-      /^\.rness is the workspace context, not a member repository — it is already cloned at [^/]+\/\.rness$/m
+      /^\.rness is the workspace context, not a member repository: it is already cloned at [^/]+\/\.rness$/m
     )
     assert.equal(r.out, '', 'nothing is written')
   }

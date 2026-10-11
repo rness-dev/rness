@@ -397,7 +397,7 @@ export function desiredOf(
       }
       return {
         path: row.path,
-        title: `${row.id} — ${row.title}`,
+        title: `${row.id} - ${row.title}`,
         body: headerOf(row.path, org),
         status,
         statusField: c.field,

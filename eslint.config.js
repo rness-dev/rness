@@ -26,6 +26,30 @@ export default defineConfig([
     },
   },
   {
+    // No em dash (U+2014) in a string of the CLI or the mod: rness writes
+    // text into every repository of a workspace, and the standard of this one
+    // forbids the character in any text. The raw source is what is read, so
+    // the escape \u2014 passes: a parser that must still read an older title
+    // says so. Tests hold a user's titles as inputs, so they are not covered.
+    files: ['packages/cli/src/**', 'packages/cli/mod/**'],
+    ignores: ['**/*.test.*'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'Literal[raw=/\u2014/]',
+          message:
+            'No em dash in a string rness writes: " - ", a comma, a colon or a period (standards/documentation.md).',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/\u2014/]',
+          message:
+            'No em dash in a string rness writes: " - ", a comma, a colon or a period (standards/documentation.md).',
+        },
+      ],
+    },
+  },
+  {
     // typescript-eslint disables no-undef only for TypeScript files (the
     // compiler already checks names there); plain JS keeps the rule and
     // needs Node's globals declared explicitly.

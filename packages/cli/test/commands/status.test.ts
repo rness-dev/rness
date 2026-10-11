@@ -18,9 +18,9 @@ async function workspace(t: TestContext) {
   return makeWorkspace(t, {
     org: 'acme',
     files: {
-      'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
-      'specs/0002-b.md': doc('Approved', '0002 — Second'),
-      'specs/0001-a.md': doc('Implemented', '0001 — First'),
+      'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),
+      'specs/0002-b.md': doc('Approved', '0002 - Second'),
+      'specs/0001-a.md': doc('Implemented', '0001 - First'),
     },
   })
 }
@@ -161,9 +161,9 @@ async function scoped(t: TestContext, files: Record<string, string> = {}) {
     scopes: { web: { path: 'org/web' } },
     files: {
       'standards/style.md': '# Style\n',
-      'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
-      'plans/0002-b.md': doc('In progress', '0002 — Second'),
-      'plans/0001-a.md': doc('Completed', '0001 — First'),
+      'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),
+      'plans/0002-b.md': doc('In progress', '0002 - Second'),
+      'plans/0001-a.md': doc('Completed', '0001 - First'),
       ...files,
     },
     dirs: ['org/web'],
@@ -179,7 +179,7 @@ test('--json at the workspace root: the banner, the status line, the tabs', asyn
   assert.equal(json.scope, null)
   assert.equal(
     json.banner,
-    `rness ${VERSION} · acme · global scope — 1 standard, 1 decision, 2 plans`
+    `rness ${VERSION} · acme · global scope · 1 standard, 1 decision, 2 plans`
   )
   assert.deepEqual(json.inProgress, ['plans/0002-b.md'])
   assert.deepEqual(json.notes, [])
@@ -204,11 +204,11 @@ test('--json: each row in Agent Pulse’s colour; with a pulse, the board and ea
     org: 'acme',
     boards: { pulse: 4, marketing: 7 },
     files: {
-      'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
-      'specs/0003-c.md': doc('Reviewing', '0003 — Third'),
+      'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),
+      'specs/0003-c.md': doc('Reviewing', '0003 - Third'),
       'specs/0002-b.md': '# 0002 — No front matter\n',
-      'plans/0002-b.md': doc('In progress', '0002 — Second'),
-      'plans/0001-a.md': doc('Draft', '0001 — First'),
+      'plans/0002-b.md': doc('In progress', '0002 - Second'),
+      'plans/0001-a.md': doc('Draft', '0001 - First'),
     },
   })
   const { code, json, err } = await snapshot(['--cwd', root])
@@ -237,7 +237,7 @@ test("--json: a collection on its own board takes that board's colour and item; 
     org: 'acme',
     boards: { pulse: 4 },
     files: {
-      'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
+      'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),
       'marketing/2026-10-01-post.md': doc('Idea', 'A post'),
     },
   })
@@ -277,7 +277,7 @@ test("--json: a collection on its own board takes that board's colour and item; 
 test('--json without an organization: no pulse, no item, even with a project declared', async (t) => {
   const root = await makeWorkspace(t, {
     boards: { pulse: 4 },
-    files: { 'plans/0001-a.md': doc('Draft', '0001 — First') },
+    files: { 'plans/0001-a.md': doc('Draft', '0001 - First') },
   })
   const { json } = await snapshot(['--cwd', root])
   assert.equal(json.pulse, null)
@@ -288,20 +288,20 @@ test('--json in a clone: the scope of the directory', async (t) => {
   const root = await scoped(t)
   const { json } = await snapshot(['--cwd', join(root, 'org', 'web')])
   assert.equal(json.scope, 'web')
-  assert.match(json.banner, / · acme · scope web — /)
+  assert.match(json.banner, / · acme · scope web · /)
   assert.equal(json.statusLine, 'rness · web · 1 in progress')
 })
 
 test('--json: the notes of the safety net, counted on the status line', async (t) => {
-  const root = await scoped(t, { 'specs/0001-a.md': doc('Done', '0001 — A') })
+  const root = await scoped(t, { 'specs/0001-a.md': doc('Done', '0001 - A') })
   await writeFile(
     join(root, '.rness', 'package.json'),
     JSON.stringify({ devDependencies: { '@rness/cli': '9.9.9' } })
   )
   const { json } = await snapshot(['--cwd', root])
   assert.deepEqual(json.notes, [
-    'rness: .rness pins @rness/cli 9.9.9 but nothing is installed — run npm install in .rness',
-    'rness: 1 problem in the workspace context — run rness validate',
+    'rness: .rness pins @rness/cli 9.9.9 but nothing is installed: run npm install in .rness',
+    'rness: 1 problem in the workspace context: run rness validate',
     'rness:   specs/0001-a.md: unknown status "Done" (expected Draft, Proposed, Approved, Implemented, Superseded, Rejected)',
   ])
   assert.equal(json.statusLine, 'rness · global · 1 in progress · ⚠ 2')

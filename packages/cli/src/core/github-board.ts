@@ -468,7 +468,7 @@ export class GitHubBoards implements Pick<
         await gh.deleteView(there.id, this.#o)
         added.push(
           `view ${view.name} remade${
-            view.layout === 'board' ? ` — columns ${view.columns}` : ''
+            view.layout === 'board' ? `, columns ${view.columns}` : ''
           }`
         )
         await create(view)

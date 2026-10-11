@@ -71,7 +71,7 @@ export async function checkBoards(
           await readmeDeclarations(rnessDir, collection).catch(() => ({}))
         ))
           problems.push(
-            `${collection}/README.md: "${k}" is declared in rness.json now — rness sync moves it`
+            `${collection}/README.md: "${k}" is declared in rness.json now: rness sync moves it`
           )
       }
     for (const key of ['readme', 'updates'] as const) {

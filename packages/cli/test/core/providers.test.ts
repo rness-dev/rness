@@ -27,7 +27,7 @@ test('the registry lists the three providers, only GitHub available', () => {
     [
       ['github', 'GitHub', true],
       ['gitlab', 'GitLab', false],
-      ['atlassian', 'Atlassian — Bitbucket + Jira', false],
+      ['atlassian', 'Atlassian (Bitbucket + Jira)', false],
     ]
   )
   assert.equal(typeof PROVIDERS.github.open, 'function')

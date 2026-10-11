@@ -48,11 +48,11 @@ async function machine(t: TestContext) {
 const doc = (status: string, title: string) =>
   `---\nstatus: ${status}\n---\n\n# ${title}\n`
 const FILES = {
-  'adr/0001-org.md': doc('Accepted', '0001 — A workspace is an org'),
-  'specs/0001-a.md': doc('Draft', '0001 — First'),
-  'plans/0001-x.md': doc('In progress', '0001 — Do it'),
-  'plans/0002-y.md': doc('In progress', '0002 — Do that'),
-  'plans/0003-z.md': doc('Completed', '0003 — Done'),
+  'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),
+  'specs/0001-a.md': doc('Draft', '0001 - First'),
+  'plans/0001-x.md': doc('In progress', '0001 - Do it'),
+  'plans/0002-y.md': doc('In progress', '0002 - Do that'),
+  'plans/0003-z.md': doc('Completed', '0003 - Done'),
 }
 const ID = '1a2b3c4d-5e6f-7a8b-9c0d-e1f2a3b4c5d6'
 
@@ -129,7 +129,7 @@ test('golden: a session writes on Agent Pulse what 0.20.1 writes — its start, 
   }
   await session('session-start', { cwd, source: 'startup', session_id: ID })
   const spec = join(cwd, '.rness', 'specs', '0001-a.md')
-  await writeFile(spec, doc('Proposed', '0001 — First'))
+  await writeFile(spec, doc('Proposed', '0001 - First'))
   await session('post-tool-use', {
     cwd,
     session_id: ID,

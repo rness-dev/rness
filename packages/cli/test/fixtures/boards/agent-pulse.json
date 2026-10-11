@@ -271,7 +271,7 @@
         "ADR status": "Accepted"
       },
       "issue": {
-        "title": "0001 — A workspace is an org",
+        "title": "0001 - A workspace is an org",
         "state": "OPEN",
         "labels": [
           "rness"
@@ -287,7 +287,7 @@
         "Session history": "Claude Opus 5.5 · 1a2b3c4d"
       },
       "issue": {
-        "title": "0001 — Do it",
+        "title": "0001 - Do it",
         "state": "OPEN",
         "labels": [
           "rness"
@@ -302,7 +302,7 @@
         "Research status": "Exploring"
       },
       "issue": {
-        "title": "0001 — A question",
+        "title": "0001 - A question",
         "state": "OPEN",
         "labels": [
           "rness"
@@ -317,7 +317,7 @@
         "Specs status": "Draft"
       },
       "issue": {
-        "title": "0001 — First",
+        "title": "0001 - First",
         "state": "OPEN",
         "labels": [
           "rness"
@@ -332,7 +332,7 @@
         "Specs status": "Approved"
       },
       "issue": {
-        "title": "0002 — Second",
+        "title": "0002 - Second",
         "state": "OPEN",
         "labels": [
           "rness"

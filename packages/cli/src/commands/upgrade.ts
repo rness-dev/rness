@@ -229,7 +229,7 @@ function finish(
       `git -C ${c.dir} add ${c.paths.join(' ')} && git -C ${c.dir} commit -m "${message}"`
     )
   if (ending.commit !== 'nothing')
-    next.push('# teammates: git pull — the next rness command installs it')
+    next.push('# teammates: git pull - the next rness command installs it')
   if (ui.session) {
     if (next.length > 0) ui.note('Next steps', next)
     ui.outro(`${label} runs @rness/cli ${target}`)
@@ -339,18 +339,18 @@ export async function upgradeCommand(
     if (pin.spec === target && installed === target)
       ui.line(
         'scaffold',
-        `@rness/cli ${target} — merging it into ${label}`,
+        `@rness/cli ${target}: merging it into ${label}`,
         `Merging the @rness/cli ${target} scaffold into ${label}`
       )
     else if (pin.spec === target)
       ui.line(
         'install',
-        `@rness/cli ${target} in ${label} (${pm}) — ${installed ?? 'nothing'} is installed`
+        `@rness/cli ${target} in ${label} (${pm}): ${installed ?? 'nothing'} is installed`
       )
     else {
       ui.line(
         'upgrade',
-        `@rness/cli ${pin.spec} → ${target} in ${label} (${pm})${downgrading ? ' — downgrading' : ''}`
+        `@rness/cli ${pin.spec} → ${target} in ${label} (${pm})${downgrading ? ', downgrading' : ''}`
       )
       ui.line('notes', NOTES, `Release notes: ${NOTES}`)
     }
@@ -381,7 +381,7 @@ export async function upgradeCommand(
           ui.line(
             'adopting',
             `the @rness/cli ${target} scaffold (no scaffold commit in ${label} yet)`,
-            `Adopting the @rness/cli ${target} scaffold — ${label} has no scaffold commit yet`
+            `Adopting the @rness/cli ${target} scaffold: ${label} has no scaffold commit yet`
           )
         else
           ui.line(
@@ -484,12 +484,12 @@ export async function upgradeCommand(
     if (committed.kind === 'committed')
       ui.line(
         'committed',
-        `${label} — ${message}`,
+        `${label}: ${message}`,
         `Committed ${label}: ${message}`
       )
     if (committed.kind === 'refused') {
       ui.error(
-        `the commit of ${label} was refused; everything is staged — deal with what git said, then commit`
+        `the commit of ${label} was refused; everything is staged: deal with what git said, then commit`
       )
       for (const line of committed.output.split('\n'))
         if (line.trim() !== '') ui.hint(line, 'stderr')

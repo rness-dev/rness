@@ -73,6 +73,6 @@ test('rness mcp over stdio: both generations, only JSON on stdout, exit on end o
   const content = replies[2]?.result['content'] as { text: string }[]
   assert.match(
     content[0]?.text ?? '',
-    /- 0006 Accepted — A workspace — adr\/0006-workspace\.md/
+    /- 0006 Accepted - A workspace · adr\/0006-workspace\.md/
   )
 })

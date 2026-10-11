@@ -39,8 +39,8 @@ import { makeWorkspace } from '../helpers/workspace.ts'
 const doc = (status: string, title: string) =>
   `---\nstatus: ${status}\n---\n\n# ${title}\n`
 const FILES = {
-  'adr/0001-a.md': doc('Accepted', '0001 — A'),
-  'plans/0002-b.md': doc('In progress', '0002 — B'),
+  'adr/0001-a.md': doc('Accepted', '0001 - A'),
+  'plans/0002-b.md': doc('In progress', '0002 - B'),
 }
 
 const NO_TTY: Terminal = {
@@ -548,7 +548,7 @@ test('push creates a board declared by its preset: the project, then the layout 
   )
   assert.match(
     lines[1]!,
-    /^created\s+Agent Pulse — https:\/\/github\.com\/orgs\/acme\/projects\/7$/
+    /^created\s+Agent Pulse - https:\/\/github\.com\/orgs\/acme\/projects\/7$/
   )
   // What ensureLayout added: Status is GitHub's own field, its options rness's.
   assert.match(
@@ -566,7 +566,7 @@ test('push creates a board declared by its preset: the project, then the layout 
   assert.match(lines[8]!, /^synced\s+2 items: 2 created$/)
   assert.match(
     lines[9]!,
-    /^declared\s+pulse in \.rness\/rness\.json — commit it: git -C \.rness commit -am "chore: board pulse"$/
+    /^declared\s+pulse in \.rness\/rness\.json - commit it: git -C \.rness commit -am "chore: board pulse"$/
   )
   assert.equal(lines.length, 10)
   const manifest = JSON.parse(
@@ -579,7 +579,7 @@ test('push creates a board declared by its preset: the project, then the layout 
     g.mutations
       .filter((m) => m.op === 'createIssue')
       .map((m) => m.variables['title']),
-    ['0001 — A', '0002 — B']
+    ['0001 - A', '0002 - B']
   )
 })
 
@@ -609,7 +609,7 @@ test('a view GitHub refuses once the project exists — its number written all t
   const lines = created.out.trim().split('\n')
   assert.match(
     lines[1]!,
-    /^created\s+Agent Pulse — https:\/\/github\.com\/orgs\/acme\/projects\/7$/
+    /^created\s+Agent Pulse - https:\/\/github\.com\/orgs\/acme\/projects\/7$/
   )
   assert.match(lines.at(-1)!, /^declared\s+pulse in \.rness\/rness\.json/)
   const manifest = JSON.parse(
@@ -681,7 +681,7 @@ test('push without a board: refused, naming how to declare one', async (t) => {
   assert.equal(r.code, 1)
   assert.equal(
     r.err.trim(),
-    'no board declared — declare one in .rness/rness.json, as "boards": { "pulse": "agent-pulse" }, then rness board push'
+    'no board declared: declare one in .rness/rness.json, as "boards": { "pulse": "agent-pulse" }, then rness board push'
   )
 })
 
@@ -703,7 +703,7 @@ test('off a terminal without --yes, nothing is created: the boards created are p
   assert.equal(r.code, 1)
   assert.equal(
     r.err.trim(),
-    'not created: marketing — rness board push in a terminal, or with --yes, creates it'
+    'not created: marketing - rness board push in a terminal, or with --yes, creates it'
   )
   // Agent Pulse holds marketing's document until its own board exists.
   assert.match(r.out, /^synced\s+3 items/m)
@@ -738,7 +738,7 @@ test('declined in a terminal, nothing is created; a second push with --yes creat
   assert.deepEqual(asked, ['Create Agent Pulse (pulse) on GitHub, in acme?'])
   assert.equal(
     declined.err.trim(),
-    'not created: pulse — rness board push in a terminal, or with --yes, creates it'
+    'not created: pulse - rness board push in a terminal, or with --yes, creates it'
   )
   assert.deepEqual(g.requests, [], 'GitHub not asked')
   const made = await run(() =>
@@ -825,7 +825,7 @@ test('a new document: its issue (labelled, the first line as body), added to the
   )
   assert.deepEqual(g.mutations[0]!.variables, {
     repositoryId: 'R_1',
-    title: '0001 — A',
+    title: '0001 - A',
     body: headerOf('adr/0001-a.md', 'acme'),
     labelIds: ['L_1'],
   })
@@ -877,7 +877,7 @@ test('hand changes on GitHub are written back: a body edited under its digest, a
     g.mutations.map((m) => [m.op, m.variables]),
     [
       ['reopenIssue', { id: b.id }],
-      ['updateIssue', { id: b.id, title: '0002 — B' }],
+      ['updateIssue', { id: b.id, title: '0002 - B' }],
       ['updateIssue', { id: a.id, body: written }],
     ]
   )
@@ -905,7 +905,7 @@ test("a gone document — committed, then deleted: its issue closed as not plann
       Status: 'Draft',
       'Specs status': 'Draft',
     },
-    '0009 — Theirs'
+    '0009 - Theirs'
   )
   g.items.push(theirs)
   const r = await sync()
@@ -947,7 +947,7 @@ async function renamedBeforeCommit(
   const { g, cwd, sync } = await settled(t)
   const specs = join(cwd, '.rness', 'specs')
   await commitDir(join(cwd, '.rness'), 'docs')
-  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 — C'))
+  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 - C'))
   assert.equal((await sync()).code, 0)
   const c = g.items.find((i) => i.values['Path'] === 'specs/0003-c.md')!
   assert.deepEqual(await recorded(cwd), {
@@ -1012,7 +1012,7 @@ test('an issue this clone opened is forgotten once its git has seen the path', a
   const { g, cwd, sync } = await settled(t)
   const memory = join(cwd, '.rness')
   await commitDir(memory, 'docs')
-  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 — C'))
+  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 - C'))
   assert.equal((await sync()).code, 0)
   const c = g.items.find((i) => i.values['Path'] === 'specs/0003-c.md')!
   assert.deepEqual(await recorded(cwd), {
@@ -1038,7 +1038,7 @@ test("the first sync with 0.13.0: 0.12.0's drafts converted in place, labelled, 
           Status: 'Accepted',
           'ADR status': 'Accepted',
         },
-        '0001 — A'
+        '0001 - A'
       ),
       draft(
         'i2',
@@ -1048,7 +1048,7 @@ test("the first sync with 0.13.0: 0.12.0's drafts converted in place, labelled, 
           Status: 'In progress',
           'Plans status': 'In progress',
         },
-        '0002 — B'
+        '0002 - B'
       ),
     ],
     other: asUser('repo, project'),
@@ -1097,7 +1097,7 @@ test("a 0.12.0 CLI's drafts on a migrated board: archived, the issues kept", asy
     draft(
       'd9',
       { Path: 'adr/0001-a.md', Collection: 'ADR', Status: 'Accepted' },
-      '0001 — A'
+      '0001 - A'
     )
   )
   const r = await sync()
@@ -1174,8 +1174,8 @@ test('a body links another document to its issue, both new in the same sync: two
     org: 'acme',
     pulse: { project: 7 },
     files: {
-      'adr/0001-a.md': `${doc('Accepted', '0001 — A')}\nSee [B](../plans/0002-b.md).\n`,
-      'plans/0002-b.md': `${doc('In progress', '0002 — B')}\nFollows [ADR 0001](../adr/0001-a.md#context).\n`,
+      'adr/0001-a.md': `${doc('Accepted', '0001 - A')}\nSee [B](../plans/0002-b.md).\n`,
+      'plans/0002-b.md': `${doc('In progress', '0002 - B')}\nFollows [ADR 0001](../adr/0001-a.md#context).\n`,
     },
   })
   const r = await run(() =>
@@ -1312,7 +1312,7 @@ test('a secondary rate limit is waited on as GitHub says, and said', async (t) =
   assert.equal(r.code, 0, r.err)
   assert.deepEqual(slept, [7_000])
   assert.deepEqual(lines(r.out), [
-    "waiting 7 s — GitHub's rate limit",
+    "waiting 7 s: GitHub's rate limit",
     'created 2 issues',
     'synced 2 items: 2 created',
   ])
@@ -1350,7 +1350,7 @@ test('a rate limit past the 10 minutes stops the sync with what is left; the nex
   assert.equal(stopped.code, 1)
   assert.equal(
     stopped.err.trim(),
-    "GitHub's rate limit outlasted the 10 minutes rness waits: 2 of 2 changes not made — the next rness board push makes them"
+    "GitHub's rate limit outlasted the 10 minutes rness waits: 2 of 2 changes not made: the next rness board push makes them"
   )
   assert.deepEqual(slept, [])
   limit = false
@@ -1399,7 +1399,7 @@ test('a rate limit after the first issue: the stop says 1 of 2; the next sync ma
   assert.equal(stopped.code, 1)
   assert.equal(
     stopped.err.trim(),
-    "GitHub's rate limit outlasted the 10 minutes rness waits: 1 of 2 changes not made — the next rness board push makes them"
+    "GitHub's rate limit outlasted the 10 minutes rness waits: 1 of 2 changes not made: the next rness board push makes them"
   )
   assert.equal(g.issues.length, 1)
   g.mutations.length = 0
@@ -1545,7 +1545,7 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
           Status: 'Accepted',
           'ADR status': 'Accepted',
         },
-        '0001 — A'
+        '0001 - A'
       ),
       item(
         'i2',
@@ -1557,7 +1557,7 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
           Agent: 'working',
           'Working session': 'claude · s1',
         },
-        '0002 — B'
+        '0002 - B'
       ),
       item('i3', {
         Path: 'plans/0004-d.md',
@@ -1749,7 +1749,7 @@ test('--end clears the session and its subagents (same id, any agent type), not 
     fields: seededFields(),
     views: VIEWS,
     items: [
-      item('i1', marked('claude · 1a2b3c4d'), '0002 — B'),
+      item('i1', marked('claude · 1a2b3c4d'), '0002 - B'),
       item('i2', marked('claude · reviewer · 1a2b3c4d')),
       item('i3', marked('claude · 9f9f9f9f')),
     ],
@@ -1801,7 +1801,7 @@ async function writeDoc(cwd: string, path: string, text: string) {
 
 test('mark: a document just written has no item yet — it gets its issue, then its mark, in one run', async (t) => {
   const { g, cwd } = await settled(t)
-  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 — C'))
+  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 - C'))
   const r = await run(() =>
     markAs({
       cwd,
@@ -1813,7 +1813,7 @@ test('mark: a document just written has no item yet — it gets its issue, then 
   assert.equal(r.code, 0)
   assert.equal(await takeFailure(), null)
   const made = g.items.find((i) => i.values['Path'] === 'specs/0003-c.md')
-  assert.equal(made?.issue?.title, '0003 — C')
+  assert.equal(made?.issue?.title, '0003 - C')
   assert.equal(made?.values['Agent'], 'working')
   assert.equal(made?.values['Working session'], 'claude · s1')
   assert.equal(g.mutations.filter((m) => m.op === 'createIssue').length, 1)
@@ -1842,7 +1842,7 @@ test('mark: a document already on the board costs no sync, and its listing reads
 
 test('mark: an edit that changes a status syncs, and the card moves within the session', async (t) => {
   const { g, cwd } = await settled(t)
-  await writeDoc(cwd, 'adr/0001-a.md', doc('Superseded', '0001 — A'))
+  await writeDoc(cwd, 'adr/0001-a.md', doc('Superseded', '0001 - A'))
   const before = listings(g)
   const r = await run(() =>
     markAs({
@@ -1943,7 +1943,7 @@ test('mark: a file of .rness that is no document of rness status costs no sync a
 
 test("mark: while a hook's sync runs, an edit of a new document makes no second issue", async (t) => {
   const { g, cwd } = await settled(t)
-  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 — C'))
+  await writeDoc(cwd, 'specs/0003-c.md', doc('Draft', '0003 - C'))
   let code: number | undefined
   const ran = await oneSyncAtATime('acme-7', async () => {
     code = (
@@ -2014,7 +2014,7 @@ async function withThirdDocument(
   const cwd = await makeWorkspace(t, {
     org: 'acme',
     pulse: { project: 7 },
-    files: { ...FILES, 'specs/0003-c.md': doc('Draft', '0003 — C') },
+    files: { ...FILES, 'specs/0003-c.md': doc('Draft', '0003 - C') },
   })
   const r = await run(() =>
     boardPushCommand({ cwd, githubApi: g.base }, { terminal: NO_TTY })
@@ -2034,24 +2034,24 @@ test('an open issue already made for a document, on no board, is adopted — not
   assert.match(r.out, /^created\s+2 issues$/m, 'the two other documents')
   assert.equal(onPath.length, 1)
   assert.equal(onPath[0]?.issue?.number, 9)
-  assert.equal(onPath[0]?.issue?.title, '0003 — C', 'its title set again')
+  assert.equal(onPath[0]?.issue?.title, '0003 - C', 'its title set again')
   assert.equal(
     g.mutations.filter(
-      (m) => m.op === 'createIssue' && m.variables['title'] === '0003 — C'
+      (m) => m.op === 'createIssue' && m.variables['title'] === '0003 - C'
     ).length,
     0
   )
 })
 
 test("an item the board's listing leaves out yet: its issue is added again as the item it is — no second issue", async (t) => {
-  const made = anIssue(9, { title: '0003 — C', body: `${THIRD}\n\nbody` })
+  const made = anIssue(9, { title: '0003 - C', body: `${THIRD}\n\nbody` })
   const { g, r, onPath } = await withThirdDocument(t, {
     items: [
       {
         id: 'i9',
         draftId: null,
         issue: made,
-        title: '0003 — C',
+        title: '0003 - C',
         archived: false,
         values: { Path: 'specs/0003-c.md' },
       },
@@ -2276,9 +2276,9 @@ test('marketing declared by its preset: its project made, its number written, sy
   assert.equal(g.issues.find((i) => i.number === 2)?.state, 'OPEN')
   const out = lines(r.out)
   for (const line of [
-    'created Marketing — https://github.com/orgs/acme/projects/8',
+    'created Marketing - https://github.com/orgs/acme/projects/8',
     "moved 1 item to their collection's project",
-    `declared marketing in .rness/rness.json — commit it: git -C .rness commit -am "chore: board marketing"`,
+    `declared marketing in .rness/rness.json - commit it: git -C .rness commit -am "chore: board marketing"`,
   ])
     assert.ok(out.includes(line), `${line}\n${r.out}`)
 })
@@ -2659,7 +2659,7 @@ test("a board whose collection's README still declares: skipped by pulse sync, u
   assert.equal(r.code, 0, r.err)
   assert.ok(
     lines(r.out).includes(
-      'skipped marketing: marketing/README.md declares statuses, which rness.json declares now — rness sync moves it'
+      'skipped marketing: marketing/README.md declares statuses, which rness.json declares now: rness sync moves it'
     ),
     r.out
   )
