@@ -1,6 +1,6 @@
 ---
 name: adr
-description: Record a decision of the rness workspace as an ADR in .rness/adr/ — a choice expensive to reverse or that creates a lasting constraint — or reopen one. Use when the developer asks for an ADR, or when the conversation reaches such a decision.
+description: Record a decision of the rness workspace as an ADR in .rness/adr/ - a choice expensive to reverse or that creates a lasting constraint - or reopen one. Use when the developer asks for an ADR, or when the conversation reaches such a decision.
 argument-hint: '[create <subject> | open NNNN]'
 allowed-tools: Bash(node "${CLAUDE_PROJECT_DIR}/../../.rness/node_modules/@rness/cli/dist/bin/rness.js" status adr --cwd "${CLAUDE_PROJECT_DIR}"), Bash(node "../../.rness/node_modules/@rness/cli/dist/bin/rness.js" doc new adr)
 ---
@@ -21,7 +21,7 @@ it; a bare reference is `open`; any other words are the subject of a
 Creating:
 
 1. If the developer did not ask for an ADR in so many words, propose one in
-   a single line — its title, and why the choice is hard to reverse — and
+   a single line - its title, and why the choice is hard to reverse - and
    wait for a yes.
 2. Read `../../.rness/CONVENTIONS.md` and `../../.rness/adr/0000-template.md`: they hold the
    rules and the sections; this skill is only the procedure.
@@ -34,11 +34,11 @@ Creating:
    `adr/NNNN-untitled.md` with the next number, the front matter
    and the opening sections, and prints the path. Rename it to
    `NNNN-<slug>.md`, the slug a few lowercase words of the title joined by
-   hyphens, and write the title as `# NNNN — <title>`. Never choose the
+   hyphens, and write the title as `# NNNN - <title>`. Never choose the
    number yourself.
 5. Fill it: `repo` the repositories under `org/` it affects; the template's
    sections, their guidance lines removed; an ADR it replaces named in
-   Context — that one becomes `Superseded`, with `superseded_by:`, only once
+   Context - that one becomes `Superseded`, with `superseded_by:`, only once
    the new ADR is `Accepted`. Add `{ id: ${CLAUDE_SESSION_ID}, agent: <model> }` at the end of
   `sessions:` in the front matter, unless that id is already there;
   `<model>` is the model you run as, as Claude Code names it, after

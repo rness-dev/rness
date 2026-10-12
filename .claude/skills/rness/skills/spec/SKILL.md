@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Write a specification of the rness workspace in .rness/specs/ — the outcome wanted and its scope, before any plan — or reopen one. Use when the developer asks for a spec, or when agreed work is too large to start without one.
+description: Write a specification of the rness workspace in .rness/specs/ - the outcome wanted and its scope, before any plan - or reopen one. Use when the developer asks for a spec, or when agreed work is too large to start without one.
 argument-hint: '[create <subject> | open NNNN]'
 allowed-tools: Bash(node "${CLAUDE_PROJECT_DIR}/../../.rness/node_modules/@rness/cli/dist/bin/rness.js" status specs --cwd "${CLAUDE_PROJECT_DIR}"), Bash(node "../../.rness/node_modules/@rness/cli/dist/bin/rness.js" doc new specs)
 ---
@@ -33,9 +33,9 @@ Creating:
    `specs/NNNN-untitled.md` with the next number, the front matter
    and the opening sections, and prints the path. Rename it to
    `NNNN-<slug>.md`, the slug a few lowercase words of the title joined by
-   hyphens, and write the title as `# NNNN — <title>`. Never choose the
+   hyphens, and write the title as `# NNNN - <title>`. Never choose the
    number yourself.
-5. Fill it: `repo`, and `adr:` linking the decisions it rests on — or the
+5. Fill it: `repo`, and `adr:` linking the decisions it rests on - or the
    rationale in the body when none does; the sections it opened with
    (Summary, Scope, Out of scope, Alternatives considered, To verify,
    Tests), or the most recent specification's when the team's differ. What
@@ -47,8 +47,8 @@ Creating:
   `Claude`: for example `Claude Opus 5.5`.
 6. The rness hook checks every edit under `../../.rness/`: fix what it reports.
 
-Opening: read the specification and amend what the developer asks — a
-section, a scope, an open question answered — `updated` today, the session
+Opening: read the specification and amend what the developer asks - a
+section, a scope, an open question answered - `updated` today, the session
 line added. A status moves only as the developer says, or by
 `/rness:plan from`.
 

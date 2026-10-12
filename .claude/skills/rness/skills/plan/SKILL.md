@@ -1,6 +1,6 @@
 ---
 name: plan
-description: The plans of the rness workspace in .rness/plans/ — a plan from a specification (from, which approves it), from the conversation (create), reopened (open), or closed on evidence (check). Use when the developer asks for a plan, to approve a specification, or to check the work of a plan.
+description: The plans of the rness workspace in .rness/plans/ - a plan from a specification (from, which approves it), from the conversation (create), reopened (open), or closed on evidence (check). Use when the developer asks for a plan, to approve a specification, or to check the work of a plan.
 argument-hint: '[create <subject> | from <spec> | open NNNN | check NNNN]'
 allowed-tools: Bash(node "${CLAUDE_PROJECT_DIR}/../../.rness/node_modules/@rness/cli/dist/bin/rness.js" status plans --cwd "${CLAUDE_PROJECT_DIR}"), Bash(node "../../.rness/node_modules/@rness/cli/dist/bin/rness.js" doc new plans)
 ---
@@ -11,7 +11,7 @@ You keep the plans of this workspace, in `../../.rness/plans/`. The table above
 lists the existing ones, newest first. Arguments: `$ARGUMENTS`.
 
 The first word is the verb, when a reference (`0037`, or a path) follows
-it — `check` alone means the plan `In progress`; a bare reference is
+it - `check` alone means the plan `In progress`; a bare reference is
 `open`; any other words are the subject of a `create`:
 
 - `from NNNN`: a plan from specification NNNN, which this approves.
@@ -29,7 +29,7 @@ it — `check` alone means the plan `In progress`; a bare reference is
    reopen it rather than write a second.
 2. The developer typed this command: that is their approval, and the
    specification moves from `Draft` or `Proposed` to `Approved`, `updated`
-   today, in the same commit as the plan — no confirmation question. If
+   today, in the same commit as the plan - no confirmation question. If
    you are proposing it yourself, propose it in a single line and wait for
    a yes first: the approval is theirs, never yours.
 3. Read the code and the repositories the specification touches: every
@@ -40,11 +40,11 @@ it — `check` alone means the plan `In progress`; a bare reference is
    `plans/NNNN-untitled.md` with the next number, the front matter
    and the opening sections, and prints the path. Rename it to
    `NNNN-<slug>.md`, the slug a few lowercase words of the title joined by
-   hyphens, and write the title as `# NNNN — <title>`. Never choose the
+   hyphens, and write the title as `# NNNN - <title>`. Never choose the
    number yourself.
 5. Fill it: `spec:` linking the specification; tasks in order, as
    checkboxes, each with the files, what changes, and the command that
-   proves it (a test, a build, a run) — the last tasks the documentation
+   proves it (a test, a build, a run) - the last tasks the documentation
    the work makes inaccurate, then the release when the repository has
    one; where the plan decides something the specification leaves open, the
    section it opened with says so. Add `{ id: ${CLAUDE_SESSION_ID}, agent: <model> }` at the end of
@@ -58,7 +58,7 @@ for a plan in so many words, propose one in a single line and wait for a
 yes. The body says what the work is and why it needs no specification.
 
 `open`: read the plan and its specification; amend what the developer
-asks — a task added, split or reworded, a blocker recorded — `updated`
+asks - a task added, split or reworded, a blocker recorded - `updated`
 today, the session line added; move `Draft` to `Ready` or `Blocked` as they
 say. A `Completed` or `Abandoned` plan is not reopened: offer a new plan of
 the same specification.
@@ -76,7 +76,7 @@ the same specification.
    check has no cache: run twice, it proves twice.
 5. Every task proven:
    - the plan: `status: Completed`, `updated` today, the checkboxes of the
-     proven tasks ticked, and a section `Verification (YYYY-MM-DD)` — what
+     proven tasks ticked, and a section `Verification (YYYY-MM-DD)` - what
      ran, what it showed, what could not run and why;
    - the specification: `Implemented` once every plan of it is
      `Completed`; `updated` today;
