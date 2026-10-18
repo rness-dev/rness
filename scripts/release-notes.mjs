@@ -1,8 +1,9 @@
 // The GitHub release of a tag (the Release workflow): its notes are
 // the version's section of the CLI changelog, `## 0.22.2 - <tagline>` in
-// packages/cli/README.md, its title `v0.22.2: <tagline>`. The sections up to
-// 0.22.1 separate the tagline with an em dash; both read. `--title` prints the
-// title, otherwise the notes. A version with no section fails rather than
+// packages/cli/README.md, its title the tag alone, `v0.22.2`, as npm packages
+// usually title theirs: the tagline stays in the changelog. The sections up
+// to 0.22.1 separate the tagline with an em dash; both read. `--title` prints
+// the title, otherwise the notes. A version with no section fails rather than
 // leave a release empty: write it on main, then run Release by hand.
 import { readFile } from 'node:fs/promises'
 
@@ -79,7 +80,7 @@ if (section.length === 0) {
 }
 
 if (args.includes('--title')) {
-  console.log(`v${version}: ${lines[start].slice(heading.length).trim()}`)
+  console.log(`v${version}`)
 } else {
   const create = 'npm create rness'
   const upgrade = `pnpm rness upgrade ${version}`
