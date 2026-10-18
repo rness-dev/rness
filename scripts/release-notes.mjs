@@ -1,6 +1,7 @@
 // The GitHub release of a tag (the Release workflow): its notes are
-// the version's section of the CLI changelog, `## 0.20.1 — <tagline>` in
-// packages/cli/README.md, its title `v0.20.1: <tagline>`. `--title` prints the
+// the version's section of the CLI changelog, `## 0.22.2 - <tagline>` in
+// packages/cli/README.md, its title `v0.22.2: <tagline>`. The sections up to
+// 0.22.1 separate the tagline with an em dash; both read. `--title` prints the
 // title, otherwise the notes. A version with no section fails rather than
 // leave a release empty: write it on main, then run Release by hand.
 import { readFile } from 'node:fs/promises'
@@ -56,8 +57,10 @@ if (tag === undefined) {
 }
 const version = tag.replace(/^v/, '')
 const lines = (await readFile(CHANGELOG, 'utf8')).split('\n')
-const heading = `## ${version} — `
-const start = lines.findIndex((l) => l.startsWith(heading))
+// " - ", or the em dash (written as its escape) of the older sections.
+const headings = [`## ${version} - `, `## ${version} \u2014 `]
+const start = lines.findIndex((l) => headings.some((h) => l.startsWith(h)))
+const heading = headings.find((h) => lines[start]?.startsWith(h)) ?? headings[0]
 if (start === -1) {
   console.error(
     `packages/cli/README.md has no "${heading}…" section: write it on main, then run the Release workflow for this tag`
