@@ -848,7 +848,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased - repository names in any case
+## 0.22.2 - repository names in any case
 
 - `rness add` takes a repository name in any case, as `create` does:
   `rness add dApp` declares `dapp` in `rness.json` and clones into
