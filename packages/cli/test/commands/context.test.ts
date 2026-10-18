@@ -56,6 +56,21 @@ test('markdown output carries provenance markers', async () => {
   assert.match(c.out(), /<!-- rness: standards\/web\/seo\.md -->/)
 })
 
+test('--scope in any case names the same scope: scope names are lowercase', async () => {
+  const c = capture()
+  const code = await run([
+    'context',
+    '--scope',
+    'WEB',
+    '--json',
+    '--cwd',
+    scopedCwd,
+  ])
+  c.restore()
+  assert.equal(code, 0, c.err())
+  assert.equal((JSON.parse(c.out()) as Emitted).scope, 'web')
+})
+
 test('unknown --scope returns 1 with a message on stderr', async () => {
   const c = capture()
   const code = await run(['context', '--scope', 'ghost', '--cwd', scopedCwd])

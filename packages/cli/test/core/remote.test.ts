@@ -10,6 +10,7 @@ import {
   classifyProbe,
   probeRemote,
   repoUrl,
+  sameRemote,
 } from '../../src/core/remote.ts'
 import { makeBareRepo } from '../helpers/git.ts'
 
@@ -22,6 +23,40 @@ test('repoUrl joins host, org and repo for https, ssh and file hosts', () => {
   assert.equal(
     repoUrl('file:///tmp/gh/', 'acme', '.rness'),
     'file:///tmp/gh/acme/.rness.git'
+  )
+})
+
+test('sameRemote: one repository whatever the transport, the case, a user or a trailing .git', () => {
+  const ssh = 'git@github.com:acme/dApp.git'
+  for (const other of [
+    'git@github.com:acme/dapp.git',
+    'https://github.com/acme/dapp.git',
+    'https://github.com/Acme/DAPP',
+    'https://x-access-token:secret@github.com/acme/dApp.git',
+    'ssh://git@github.com/acme/dApp.git',
+    'ssh://git@github.com:22/acme/dApp.git',
+    'https://github.com/acme/dApp/',
+    'https://github.com/acme/dApp.git/',
+  ])
+    assert.equal(sameRemote(ssh, other), true, other)
+  for (const other of [
+    'git@github.com:other/dApp.git',
+    'git@github.com:acme/dApp2.git',
+    'git@gitlab.com:acme/dApp.git',
+    'https://github.com/acme/team/dApp.git',
+  ])
+    assert.equal(sameRemote(ssh, other), false, other)
+  // A local remote is its path.
+  assert.equal(
+    sameRemote('file:///tmp/gh/acme/dApp.git', 'file:///tmp/gh/acme/dapp.git'),
+    true
+  )
+  assert.equal(
+    sameRemote(
+      'file:///tmp/gh/acme/dApp.git',
+      'file:///tmp/other/acme/dApp.git'
+    ),
+    false
   )
 })
 

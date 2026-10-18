@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -7,8 +7,9 @@ import { exists } from '../../src/core/fs.ts'
 import { originUrl } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import { addRepository, workspaceDirs } from '../../src/core/repos.ts'
-import { makeBareRepo } from '../helpers/git.ts'
-import { makeWorkspace } from '../helpers/workspace.ts'
+import { git, makeBareRepo } from '../helpers/git.ts'
+import { makeRemoteOrg } from '../helpers/remote-org.ts'
+import { ignoresCase, makeWorkspace } from '../helpers/workspace.ts'
 
 process.env['GIT_AUTHOR_NAME'] = 'rness-test'
 process.env['GIT_AUTHOR_EMAIL'] = 'test@rness.invalid'
@@ -97,6 +98,160 @@ test('adopts an existing clone of the same URL; refuses a different origin or a 
   )
 })
 
+test('adopts a clone whose origin differs only by transport or case; the URL chosen is the one declared', async (t) => {
+  const url = await makeBareRepo(t, 'api')
+  const { root, rnessDir, manifest } = await ws(t)
+  const dir = join(root, 'org', 'api')
+  await git(['clone', '-q', url, dir], root)
+  // Adopting reads the origin and never fetches: a GitHub URL is enough.
+  await git(['remote', 'set-url', 'origin', 'https://github.com/Acme/API'], dir)
+  const adopted = await addRepository({
+    root,
+    rnessDir,
+    manifest,
+    spec: 'api',
+    org: 'acme',
+    host: 'git@github.com:',
+    scopes: [],
+  })
+  assert.equal(adopted.action, 'adopted')
+  assert.deepEqual((await loadManifest(rnessDir)).repos, {
+    api: { url: 'git@github.com:acme/api.git' },
+  })
+  // Another repository is still another repository.
+  await assert.rejects(
+    addRepository({
+      root,
+      rnessDir,
+      manifest: adopted.manifest,
+      spec: 'other/api',
+      org: 'acme',
+      host: 'git@github.com:',
+      scopes: [],
+    }),
+    /^Error: org\/api is a clone of https:\/\/github\.com\/Acme\/API, not git@github\.com:other\/api\.git$/
+  )
+})
+
+test('a clone whose directory differs from its key only by case is renamed to the key', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const url = await remote.addRepo('dApp', { 'apps/Web/README.md': '# web\n' })
+  const { root, rnessDir, manifest } = await ws(t)
+  await git(['clone', '-q', url, join(root, 'org', 'dApp')], root)
+  const result = await addRepository({
+    root,
+    rnessDir,
+    manifest,
+    spec: 'dapp',
+    org: 'acme',
+    host: remote.host,
+    scopes: ['apps/Web'],
+  })
+  assert.equal(result.action, 'adopted')
+  assert.equal(result.renamed, 'dApp')
+  // readdir, not exists(): on macOS exists('org/dapp') is true for org/dApp,
+  // and a teammate on Linux would have no org/dapp.
+  assert.deepEqual(await readdir(join(root, 'org')), ['dapp'])
+  assert.equal(await originUrl(join(root, 'org', 'dapp')), url)
+  const written = await loadManifest(rnessDir)
+  assert.deepEqual(written.repos, {
+    dapp: { url: `${remote.host}acme/dapp.git` },
+  })
+  // A sub-scope's key is lowercase too; its path is the directory as it is.
+  assert.deepEqual(written.scopes, {
+    dapp: { path: 'org/dapp', extends: [] },
+    web: { path: 'org/dapp/apps/Web', extends: ['dapp'] },
+  })
+})
+
+test('a case variant cloned from another repository is refused and left as it is', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const other = await remote.addRepo('other', { 'README.md': '# other\n' })
+  await remote.addRepo('dApp', { 'README.md': '# dApp\n' })
+  const { root, rnessDir, manifest } = await ws(t)
+  await git(['clone', '-q', other, join(root, 'org', 'dApp')], root)
+  await assert.rejects(
+    addRepository({
+      root,
+      rnessDir,
+      manifest,
+      spec: 'dApp',
+      org: 'acme',
+      host: remote.host,
+      scopes: [],
+    }),
+    /^Error: org\/dApp is a clone of .*\/acme\/other\.git, not .*\/acme\/dApp\.git$/
+  )
+  assert.deepEqual(await readdir(join(root, 'org')), ['dApp'])
+  assert.deepEqual((await loadManifest(rnessDir)).repos, {})
+})
+
+test('a scope path that differs from the clone only by case is repaired, not a collision', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const url = await remote.addRepo('dApp', { 'README.md': '# dApp\n' })
+  const { root, rnessDir, manifest } = await ws(t)
+  await git(['clone', '-q', url, join(root, 'org', 'dApp')], root)
+  const stale = {
+    ...manifest,
+    repos: { dapp: { url } },
+    scopes: { dapp: { path: 'org/dApp', extends: [] } },
+  }
+  const result = await addRepository({
+    root,
+    rnessDir,
+    manifest: stale,
+    spec: 'dApp',
+    org: 'acme',
+    host: remote.host,
+    scopes: [],
+  })
+  assert.deepEqual(result.manifest.scopes, {
+    dapp: { path: 'org/dapp', extends: [] },
+  })
+  assert.deepEqual(await readdir(join(root, 'org')), ['dapp'])
+})
+
+test('two directories that differ from the key only by case are refused (Linux)', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const url = await remote.addRepo('dApp', { 'README.md': '# dApp\n' })
+  const { root, rnessDir, manifest } = await ws(t)
+  if (await ignoresCase(join(root, 'org'))) {
+    t.skip(
+      'this file system ignores case: org/dApp and org/DAPP cannot coexist'
+    )
+    return
+  }
+  await git(['clone', '-q', url, join(root, 'org', 'dApp')], root)
+  await git(['clone', '-q', url, join(root, 'org', 'DAPP')], root)
+  await assert.rejects(
+    addRepository({
+      root,
+      rnessDir,
+      manifest,
+      spec: 'dapp',
+      org: 'acme',
+      host: remote.host,
+      scopes: [],
+    }),
+    /^Error: org\/DAPP and org\/dApp both differ from org\/dapp only by case: keep one, then run rness add again$/
+  )
+  assert.deepEqual((await readdir(join(root, 'org'))).sort(), ['DAPP', 'dApp'])
+  // The exact name wins over a variant: org/dapp is adopted, org/dApp left.
+  await rm(join(root, 'org', 'DAPP'), { recursive: true })
+  await git(['clone', '-q', url, join(root, 'org', 'dapp')], root)
+  const result = await addRepository({
+    root,
+    rnessDir,
+    manifest,
+    spec: 'dapp',
+    org: 'acme',
+    host: remote.host,
+    scopes: [],
+  })
+  assert.equal(result.renamed, null)
+  assert.deepEqual((await readdir(join(root, 'org'))).sort(), ['dApp', 'dapp'])
+})
+
 test('a malformed sub-scope is rejected before cloning: no partial clone is left behind', async (t) => {
   const url = await makeBareRepo(t, 'bad')
   const { root, rnessDir, manifest } = await ws(t)
@@ -108,9 +263,9 @@ test('a malformed sub-scope is rejected before cloning: no partial clone is left
       spec: url,
       org: 'acme',
       host: 'file:///unused/',
-      scopes: ['apps/Bad_Name'],
+      scopes: ['apps/Bad Name'],
     }),
-    /the last segment of sub-scope "apps\/Bad_Name" may only contain lowercase letters/
+    /the last segment of sub-scope "apps\/Bad Name" may only contain lowercase letters/
   )
   assert.equal(await exists(join(root, 'org', 'bad')), false)
   await assert.rejects(

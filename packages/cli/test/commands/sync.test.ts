@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  readdir,
   readlink,
   symlink,
   writeFile,
@@ -24,7 +25,7 @@ import {
 import { capture } from '../helpers/capture.ts'
 import { commitTo, makeBareRepo } from '../helpers/git.ts'
 import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
-import { makeWorkspace } from '../helpers/workspace.ts'
+import { ignoresCase, makeWorkspace } from '../helpers/workspace.ts'
 
 const seo = '# SEO\n\nEvery page sets a title.\n'
 const coding = '# Coding\n\nTwo-space indent.\n'
@@ -182,6 +183,10 @@ test('unknown --scope and a workspace without org/ are handled', async (t) => {
   const unknown = await sync(['--yes', '--scope', 'ghost', '--cwd', root])
   assert.equal(unknown.code, 1)
   assert.match(unknown.err, /unknown scope: ghost/)
+  // Scope names are lowercase: `--scope Web` is scope web.
+  const cased = await sync(['--yes', '--scope', 'Web', '--cwd', root])
+  assert.equal(cased.code, 0, cased.err)
+  assert.match(cased.out, /^updated {2}org\/web\/AGENTS\.md$/m)
   const bare = await makeWorkspace(t, {
     org: 'acme',
     scopes: { web: { path: 'org/web' } },
@@ -675,13 +680,70 @@ test('an excluded directory under org/ is not taken for an undeclared clone', as
     org: 'acme',
     scopes: { web: { path: 'org/web' } },
     files: { 'standards/coding.md': coding },
-    // An install run one directory too high, and a name rness could never
-    // declare: neither is a clone (spec 0009 §3).
-    dirs: ['org/web', 'org/node_modules', 'org/WebSite'],
+    // An install run one directory too high: never a clone, never named.
+    dirs: ['org/web', 'org/node_modules'],
   })
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.out, /not in rness\.json|not read/)
+})
+
+test('a directory under org/ that is no name rness.json can hold is named, not skipped silently', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/web' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org/web', 'org/WebSite', 'org/-rf', 'org/Api.rness-rename'],
+  })
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^not read: org\/-rf \(not a repository name: lowercase letters, digits, '\.', '_' and '-', not starting with '-'\)\nnot read: org\/Api\.rness-rename \(left by an interrupted rename: move it back to org\/Api\)\nnot read: org\/WebSite \(names are lowercase: rness add website renames it org\/website\)$/m
+  )
   assert.doesNotMatch(r.out, /not in rness\.json/)
+  await assert.rejects(access(join(root, 'org', 'WebSite', 'AGENTS.md')))
+})
+
+test('a declared repository whose directory differs only by case is neither cloned again nor written', async (t) => {
+  const url = await makeBareRepo(t, 'dapp')
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    repos: { dapp: { url } },
+    scopes: { dapp: { path: 'org/dapp' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org/dApp'],
+  })
+  // --all would clone org/dapp: a duplicate on Linux, a failed clone on macOS.
+  const r = await sync(['--yes', '--all', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.equal(
+    r.out,
+    'not read: org/dApp (names are lowercase: rness add dapp renames it org/dapp)\nupdated  AGENTS.md\n'
+  )
+  assert.deepEqual(await readdir(join(root, 'org')), ['dApp'])
+  await assert.rejects(access(join(root, 'org', 'dApp', 'AGENTS.md')))
+})
+
+test('a case variant next to the exact directory is named, the exact one synced (Linux)', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/web' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org/web'],
+  })
+  if (await ignoresCase(join(root, 'org'))) {
+    t.skip('this file system ignores case: org/web and org/Web cannot coexist')
+    return
+  }
+  await mkdir(join(root, 'org', 'Web'))
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^not read: org\/Web \(names are lowercase, and org\/web is another directory\)$/m
+  )
+  assert.match(r.out, /^updated {2}org\/web\/AGENTS\.md$/m)
 })
 
 // --- agents (spec 0011 §3) ---------------------------------------------------

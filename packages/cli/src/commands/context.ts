@@ -39,11 +39,13 @@ export async function contextCommand(opts: ContextOptions): Promise<number> {
 
     let scope: string | null
     if (opts.scope !== undefined) {
-      if (!Object.hasOwn(manifest.scopes, opts.scope)) {
+      // Scope names are lowercase (`NAME`): `--scope Web` is scope `web`.
+      const wanted = opts.scope.toLowerCase()
+      if (!Object.hasOwn(manifest.scopes, wanted)) {
         process.stderr.write(`unknown scope: ${opts.scope}\n`)
         return 1
       }
-      scope = opts.scope
+      scope = wanted
     } else {
       const rel = relative(ws.root, cwd).split(sep).join(posix.sep)
       scope = resolveScope(manifest, rel)

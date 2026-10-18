@@ -107,14 +107,14 @@ async function context(cwd: string, args: Record<string, unknown>) {
   let scope: string | null
   if (args['scope'] !== undefined) {
     const known = Object.keys(manifest.scopes).sort()
-    if (
-      typeof args['scope'] !== 'string' ||
-      !Object.hasOwn(manifest.scopes, args['scope'])
-    )
+    // Scope names are lowercase (`NAME`): `Web` is scope `web`.
+    const wanted =
+      typeof args['scope'] === 'string' ? args['scope'].toLowerCase() : null
+    if (wanted === null || !Object.hasOwn(manifest.scopes, wanted))
       return refuse(
         `unknown scope ${JSON.stringify(args['scope'])}; known: ${known.length === 0 ? 'none' : known.join(', ')}`
       )
-    scope = args['scope']
+    scope = wanted
   } else
     scope = resolveScope(
       manifest,

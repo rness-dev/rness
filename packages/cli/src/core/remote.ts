@@ -11,6 +11,37 @@ export function repoUrl(host: string, org: string, repo: string): string {
   return `${host}${org}/${repo}.git`
 }
 
+/**
+ * What names the repository in a remote URL: host and path, without the
+ * scheme, a user or a token, a port, `.git` or a trailing slash, in
+ * lowercase. `git@host:o/r.git`, `ssh://git@host/o/r` and `https://host/o/r`
+ * give the same key; a `file://` URL gives its path.
+ */
+function remoteKey(url: string): string {
+  let rest = url.trim()
+  const scp = /^[^@/:]+@([^/:]+):(.*)$/.exec(rest)
+  if (scp !== null) rest = `${scp[1]}/${scp[2]}`
+  else {
+    const full = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?([^/]*)(.*)$/i.exec(rest)
+    if (full !== null)
+      rest = `${(full[1] ?? '').replace(/:\d+$/, '')}${full[2] ?? ''}`
+  }
+  return rest
+    .replace(/\/+$/, '')
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+}
+
+/**
+ * Whether two remote URLs reach the same repository. GitHub resolves owner
+ * and repository names case-insensitively, and a clone made over HTTPS is the
+ * same repository as the SSH URL `rness.json` holds.
+ */
+export function sameRemote(a: string, b: string): boolean {
+  return remoteKey(a) === remoteKey(b)
+}
+
 export type Probe =
   { kind: 'found' } | { kind: 'not-found' } | { kind: 'error'; message: string }
 

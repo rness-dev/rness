@@ -55,3 +55,21 @@ export async function makeWorkspace(
     await mkdir(join(root, ...dir.split('/')), { recursive: true })
   return root
 }
+
+/**
+ * Whether the file system holding `dir` ignores case, as macOS and Windows do
+ * by default: `org/dApp` and `org/DAPP` can then never coexist, so a test of
+ * that case runs on Linux (CI) only.
+ */
+export async function ignoresCase(dir: string): Promise<boolean> {
+  const probe = await mkdtemp(join(dir, 'rness-case-'))
+  try {
+    await mkdir(join(probe, 'a'))
+    await mkdir(join(probe, 'A'))
+    return false
+  } catch {
+    return true
+  } finally {
+    await rm(probe, { recursive: true, force: true })
+  }
+}

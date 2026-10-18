@@ -22,7 +22,13 @@ import { assembleContext } from '../core/context.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
-import { loadManifest, workspaceName, writeManifest } from '../core/manifest.ts'
+import {
+  NAME,
+  NAME_RULE,
+  loadManifest,
+  workspaceName,
+  writeManifest,
+} from '../core/manifest.ts'
 import {
   type MergeResult,
   claudeMdAtRoot,
@@ -46,7 +52,7 @@ import {
 } from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Line, type Ui, makeUi, plainUi } from '../core/ui.ts'
-import { clonesIn, findWorkspace } from '../core/workspace.ts'
+import { findWorkspace, orgDirs } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 
 export interface SyncOptions {
@@ -179,6 +185,23 @@ async function askWhatToSync(input: {
 }
 
 /**
+ * Why `sync` does not read `org/<dir>`, and what to do about it: a name in
+ * another case is one `rness add` renames, unless the lowercase directory is
+ * there too; a directory left by an interrupted rename goes back; anything
+ * else is no repository name.
+ */
+function unreadWhy(dir: string, clones: ReadonlySet<string>): string {
+  const lower = dir.toLowerCase()
+  const step = /^(.+)\.rness-rename$/.exec(dir)
+  if (step !== null)
+    return `left by an interrupted rename: move it back to org/${step[1]}`
+  if (!NAME.test(lower)) return `not a repository name: ${NAME_RULE}`
+  if (clones.has(lower))
+    return `names are lowercase, and org/${lower} is another directory`
+  return `names are lowercase: ${rnessCommand()} add ${lower} renames it org/${lower}`
+}
+
+/**
  * `rness sync`: write the blocks of the repositories cloned in `org/` (spec
  * 0003 §4). The clones are the workspace; `rness.json` is the organization's
  * catalogue, so a catalogue repository that is not cloned is offered (in a
@@ -186,9 +209,14 @@ async function askWhatToSync(input: {
  * Returns the exit code.
  */
 export async function syncCommand(
-  opts: SyncOptions,
+  given: SyncOptions,
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
+  // Scope names are lowercase (`NAME`): `--scope Web` is scope `web`.
+  const opts: SyncOptions =
+    given.scope === undefined
+      ? given
+      : { ...given, scope: given.scope.toLowerCase() }
   const terminal = deps.terminal ?? defaultTerminal
   const transport = deps.transport ?? defaultTransport
   // Only a clone or a pull needs it, and it reads the stored login.
@@ -290,8 +318,19 @@ export async function syncCommand(
         ui.hint('rness.json changed: commit it in .rness, for the whole team')
     }
 
-    const clones = await clonesIn(ws.root)
-    const missing = Object.keys(manifest.repos).filter((n) => !clones.has(n))
+    const { clones, unread } = await orgDirs(ws.root)
+    // A declared repository whose directory differs only by case (`org/dApp`
+    // for `dapp`) is not missing: cloning `org/dapp` would fail where the file
+    // system ignores case and make a second copy where it does not. It gets
+    // its `not read:` line and no block until `rness add` renames it.
+    const misnamed = new Set(
+      unread
+        .map((d) => d.toLowerCase())
+        .filter((n) => Object.hasOwn(manifest.repos, n) && !clones.has(n))
+    )
+    const missing = Object.keys(manifest.repos).filter(
+      (n) => !clones.has(n) && !misnamed.has(n)
+    )
     let toClone = new Set<string>(opts.all === true && !check ? missing : [])
     if (!check && opts.yes !== true) {
       const answer = await askWhatToSync({
@@ -340,6 +379,7 @@ export async function syncCommand(
       // only clean trees.
       const notCloned = new Set<string>()
       for (const [name, repo] of Object.entries(manifest.repos)) {
+        if (misnamed.has(name)) continue
         const dir = join(ws.root, 'org', name)
         const label = `org/${name}`
         if (!(await exists(dir))) {
@@ -398,6 +438,10 @@ export async function syncCommand(
         lines.push(
           `not in rness.json: ${undeclared.join(', ')} (${rnessCommand()} add <name> declares it)`
         )
+      // A directory that is no name rness.json can hold is no clone: said,
+      // since `rness add` takes a name in any case and renames the directory.
+      for (const d of unread)
+        lines.push(`not read: org/${d} (${unreadWhy(d, clones)})`)
 
       // 2. Blocks — only where repositories live; a standalone context checkout has no org/.
       if (!(await exists(join(ws.root, 'org')))) {
@@ -405,6 +449,12 @@ export async function syncCommand(
       } else {
         let differences = 0
         for (const t of targetsOf(manifest, ws.root, opts.scope)) {
+          // `exists()` would find `org/dApp` for `org/dapp` on macOS: the
+          // block waits for the rename, on every system alike.
+          const owner = t.label.startsWith('org/')
+            ? t.label.split('/')[1]
+            : undefined
+          if (owner !== undefined && misnamed.has(owner)) continue
           if (!(await exists(t.dir))) {
             // A scope inside a repository that is not cloned is covered by
             // the `not cloned:` line; only a directory missing from a present

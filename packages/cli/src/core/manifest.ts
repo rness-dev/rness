@@ -23,6 +23,10 @@ import type {
  * A repository or scope name: what GitHub allows in a repository name, in
  * lowercase — letters, digits, `.`, `_` and `-`. Not `.` or `..` (the name is
  * a directory under `org/`), and no leading `-` (git would read an option).
+ * Lowercase because the key in `rness.json`, the directory `org/<name>` and
+ * the scope directories must agree on every file system: `dApp` and `dapp`
+ * are one directory on macOS and two on Linux. A name typed in another case
+ * is lowercased (`parseRepoSpec`), never refused.
  */
 export const NAME = /^(?!\.{1,2}$)[a-z0-9._][a-z0-9._-]*$/
 
@@ -67,9 +71,9 @@ export function isMemberRepo(repo: {
 
 /**
  * Whether a directory under `org/` is one of the workspace's clones. It must
- * be a name the catalogue could hold: a directory `rness add` could never
- * declare is not reported as an undeclared clone, since the command suggested
- * to bring it in would refuse it.
+ * be a name the catalogue could hold: `org/dApp` is not the clone `dapp`, and
+ * `sync` names it on a `not read:` line, pointing at `rness add`, which
+ * renames it (plan 0052).
  */
 export function isWorkspaceClone(name: string): boolean {
   return NAME.test(name) && !EXCLUDED_NAMES.has(name)
@@ -440,7 +444,13 @@ export async function writeManifest(
 
 const FULL_URL = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/
 
-/** `web` → `<host><org>/web.git`; `other/api` → `<host>other/api.git`; a full URL is kept. */
+/**
+ * `web` → `<host><org>/web.git`; `other/api` → `<host>other/api.git`; a full
+ * URL is kept. The name is the key in `rness.json` and the directory under
+ * `org/`, so it is lowercased, as `create` declares it: `dApp` is `dapp`. The
+ * URL keeps the spelling typed, since a host may tell cases apart (a
+ * `file://` remote on Linux) even where GitHub does not.
+ */
 export function parseRepoSpec(
   spec: string,
   org: string | null,
@@ -470,8 +480,9 @@ export function parseRepoSpec(
       )
   }
   const last = url.replace(/\/+$/, '').split(/[/:]/).at(-1) ?? ''
-  const name = last.endsWith('.git') ? last.slice(0, -4) : last
+  const typed = last.endsWith('.git') ? last.slice(0, -4) : last
+  const name = typed.toLowerCase()
   if (!NAME.test(name))
-    throw new Error(`repository name "${name}" may only contain ${NAME_RULE}`)
+    throw new Error(`repository name "${typed}" may only contain ${NAME_RULE}`)
   return { name, url }
 }

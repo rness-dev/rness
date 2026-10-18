@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { findWorkspace } from '../../src/core/workspace.ts'
+import { findWorkspace, orgDirs } from '../../src/core/workspace.ts'
 
 async function workspace(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'rness-')))
@@ -85,5 +85,20 @@ test('a bare rness.json below a real workspace never shadows it (e.g. the shippe
   assert.deepEqual(await findWorkspace(join(shallow, 'sub')), {
     root,
     rnessDir: join(root, '.rness'),
+  })
+})
+
+test('orgDirs: the clones, and the directories that are not, an excluded name left out', async (t) => {
+  const root = await workspace()
+  t.after(() => rm(root, { recursive: true, force: true }))
+  for (const d of ['web', '.github', 'dApp', '-rf', 'node_modules', '.git'])
+    await mkdir(join(root, 'org', d), { recursive: true })
+  await writeFile(join(root, 'org', 'README.md'), '# org\n')
+  const { clones, unread } = await orgDirs(root)
+  assert.deepEqual([...clones].sort(), ['.github', 'web'])
+  assert.deepEqual(unread, ['-rf', 'dApp'])
+  assert.deepEqual(await orgDirs(join(root, 'nowhere')), {
+    clones: new Set(),
+    unread: [],
   })
 })

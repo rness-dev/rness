@@ -104,6 +104,8 @@ test('rness_context: the scope of the directory, its chain, and what applies —
   assert.match(global.text, /^Workspace acme · global scope\n/)
   const named = await call(root, 'rness_context', { scope: 'api' })
   assert.match(named.text, /Errors/)
+  const cased = await call(root, 'rness_context', { scope: 'API' })
+  assert.equal(cased.text, named.text)
   const unknown = await call(root, 'rness_context', { scope: 'nope' })
   assert.equal(unknown.isError, true)
   assert.match(unknown.text, /unknown scope "nope"; known: api, platform, web/)

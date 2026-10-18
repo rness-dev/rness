@@ -763,16 +763,41 @@ test('parseRepoSpec accepts repo, owner/repo and full URLs, and validates the na
     url: 'https://github.com/acme/web',
   })
   assert.throws(
-    () => parseRepoSpec('Bad_Name', 'acme', host),
-    /repository name "Bad_Name" may only contain lowercase letters, digits, '\.', '_' and '-'/
+    () => parseRepoSpec('Bad Name', 'acme', host),
+    /repository name "Bad Name" may only contain lowercase letters, digits, '\.', '_' and '-'/
   )
   // What GitHub allows in a repository name is a name: dots and underscores.
   for (const name of ['my_lib', 'angular.js', 'v2.api-client', '.github', '_x'])
     assert.equal(parseRepoSpec(name, 'acme', host).name, name)
   // A directory under org/ and a git argument: never `.`, `..` or an option.
-  for (const name of ['.', '..', '-rf', 'a b', 'Caps'])
+  for (const name of ['.', '..', '-rf', 'a b', 'A B'])
     assert.throws(() => parseRepoSpec(name, 'acme', host), /repository name/)
   assert.throws(() => parseRepoSpec('a/b/c', 'acme', host), /repository name/)
+})
+
+test('parseRepoSpec takes a name in any case: the key is lowercase, the URL as typed', () => {
+  // GitHub resolves names case-insensitively, a file:// remote on Linux does
+  // not: the URL keeps the spelling the user typed, the key and the directory
+  // under org/ are lowercase, as `create` declares them.
+  const host = 'https://github.com/'
+  assert.deepEqual(parseRepoSpec('dApp', 'acme', host), {
+    name: 'dapp',
+    url: 'https://github.com/acme/dApp.git',
+  })
+  assert.deepEqual(parseRepoSpec('Other/My_Lib', 'acme', host), {
+    name: 'my_lib',
+    url: 'https://github.com/Other/My_Lib.git',
+  })
+  assert.deepEqual(
+    parseRepoSpec('git@github.com:acme/dApp.git', 'acme', host),
+    { name: 'dapp', url: 'git@github.com:acme/dApp.git' }
+  )
+  assert.deepEqual(
+    parseRepoSpec('file:///tmp/gh/acme/Tools.git', 'acme', host),
+    { name: 'tools', url: 'file:///tmp/gh/acme/Tools.git' }
+  )
+  // The context repository is the same name in any case.
+  assert.equal(parseRepoSpec('.RNESS', 'acme', host).name, '.rness')
 })
 
 test('parseRepoSpec without an organization: owner/repo and URLs only', () => {

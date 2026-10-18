@@ -848,6 +848,28 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## Unreleased - repository names in any case
+
+- `rness add` takes a repository name in any case, as `create` does:
+  `rness add dApp` declares `dapp` in `rness.json` and clones into
+  `org/dapp`; the URL keeps the spelling typed. `create --repos` follows, and
+  `add --scopes apps/Web` declares scope `web`.
+- A clone whose directory differs from its name only by case (`org/dApp` for
+  `dapp`) is renamed `org/dapp` by `rness add`, once its origin is checked:
+  the confirmation says so, and `--yes` consents to it. A path in another
+  case is the same on macOS and Windows but not on Linux, so a teammate's
+  clone would not match. Two such directories are refused, named.
+- `rness add` adopts a clone whose origin differs from the URL only by case
+  or by transport (an HTTPS clone, an SSH URL in `rness.json`). Another
+  repository is still refused.
+- `rness sync` names each directory under `org/` it does not read on a
+  `not read:` line, instead of skipping it silently; for `org/dApp` the line
+  points at `rness add dapp`, which renames it. A declared repository whose
+  directory differs only by case is not cloned a second time and gets no
+  block until renamed.
+- `--scope` takes a scope name in any case: `rness context`, `rness sync`,
+  and `rness_context` over MCP.
+
 ## 0.22.1 — what rness writes carries no em dash
 
 - Nothing rness writes carries an em dash (U+2014) any more: the `AGENTS.md`

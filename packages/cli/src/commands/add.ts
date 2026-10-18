@@ -1,7 +1,6 @@
 import { basename, join } from 'node:path'
 
 import type { CommandDeps } from '../core/deps.ts'
-import { exists } from '../core/fs.ts'
 import {
   CONTEXT_REPO,
   loadManifest,
@@ -29,7 +28,7 @@ import {
 } from '../core/transport.ts'
 import type { Manifest } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
-import { findWorkspace } from '../core/workspace.ts'
+import { entryFor, findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
 import { syncCommand } from './sync.ts'
 
@@ -180,13 +179,19 @@ export async function addCommand(
       .map((s) => s.trim())
       .filter((s) => s !== '')
     const dir = join(ws.root, 'org', parsed.name)
-    const present = await exists(dir)
+    // The directory as it is on disk: `org/dApp` for `dapp` is adopted, then
+    // renamed `org/dapp` (`addRepository`).
+    const entry = await entryFor(ws.root, parsed.name)
+    const present = entry !== null
 
     if (interactive) {
       const { confirm, isCancel } = await terminal.prompts()
-      const plan = present
-        ? `adopt org/${parsed.name}`
-        : `clone ${parsed.url} into org/${parsed.name}`
+      const plan =
+        entry === null
+          ? `clone ${parsed.url} into org/${parsed.name}`
+          : entry === parsed.name
+            ? `adopt org/${parsed.name}`
+            : `adopt org/${entry}, rename it org/${parsed.name}`
       const ok = await confirm({
         message: `${plan}, declare scope "${parsed.name}" in rness.json, then sync?`,
       })
@@ -200,7 +205,7 @@ export async function addCommand(
     const chosenHost = host
     let result = await ui.step(
       {
-        doing: `${present ? 'adopting' : 'cloning '} org/${parsed.name}`,
+        doing: `${present ? 'adopting' : 'cloning '} org/${entry ?? parsed.name}`,
         git: true,
       },
       () =>
@@ -214,7 +219,12 @@ export async function addCommand(
           scopes,
           credentialsFor: () => credentials,
         }),
-      (r) => [r.action, `org/${r.name}`]
+      (r) => [
+        r.action,
+        r.renamed === null
+          ? `org/${r.name}`
+          : `org/${r.renamed} as org/${r.name}`,
+      ]
     )
     const announced = new Set<string>()
     printDeclared(ui, result, announced)

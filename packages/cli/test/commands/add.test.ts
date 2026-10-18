@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdir } from 'node:fs/promises'
+import { access, mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -13,7 +13,7 @@ import {
   sshWorkspaceLines,
 } from '../../src/core/transport.ts'
 import { capture } from '../helpers/capture.ts'
-import { makeBareRepo } from '../helpers/git.ts'
+import { git, makeBareRepo } from '../helpers/git.ts'
 import { makeRemoteOrg } from '../helpers/remote-org.ts'
 import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
@@ -128,9 +128,9 @@ test('refuses without a TTY and --yes, outside a workspace, and on a bad name', 
   const outside = await add(['--yes', '--cwd', '/', url])
   assert.equal(outside.code, 1)
   assert.match(outside.err, /no rness workspace/)
-  const bad = await add(['--yes', '--cwd', root, 'Bad_Name'])
+  const bad = await add(['--yes', '--cwd', root, 'Bad Name'])
   assert.equal(bad.code, 2)
-  assert.match(bad.err, /repository name "Bad_Name"/)
+  assert.match(bad.err, /repository name "Bad Name"/)
 })
 
 test('a clone failure leaves the manifest untouched and exits 1', async (t) => {
@@ -241,6 +241,38 @@ test('add: SSH that worked only by asking for the passphrase prints how to load 
   ])
   assert.equal(r.err.match(/ssh asked for your passphrase/g)?.length, 1, r.err)
   assert.match(r.err, /\n {2}ssh-add .*~\/\.ssh\/id_ed25519\n/)
+})
+
+test('add renames a clone whose directory differs only by case, and says so before and after', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const url = await remote.addRepo('dApp', { 'README.md': '# dApp\n' })
+  const ok = await fakeTransport(t, 'acme', SSH_OK)
+  const root = await makeWorkspace(t, { org: 'acme', dirs: ['org'] })
+  await git(['clone', '-q', url, join(root, 'org', 'dApp')], root)
+  const declined = confirming([false])
+  const no = await addWith(
+    'dapp',
+    { cwd: root, host: remote.host },
+    declined.terminal,
+    ok.transport
+  )
+  assert.equal(no.code, 1)
+  assert.deepEqual(declined.asked, [
+    'adopt org/dApp, rename it org/dapp, declare scope "dapp" in rness.json, then sync?',
+  ])
+  assert.deepEqual(
+    await readdir(join(root, 'org')),
+    ['dApp'],
+    'declined: untouched'
+  )
+
+  const r = await add(['--yes', '--cwd', root, '--host', remote.host, 'dapp'])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^adopted {2}org\/dApp as org\/dapp\ndeclared scope dapp \(org\/dapp\)\n/
+  )
+  assert.deepEqual(await readdir(join(root, 'org')), ['dapp'])
 })
 
 test('without SSH access, a workspace that does not clone over SSH falls back to HTTPS', async (t) => {
@@ -371,7 +403,7 @@ test('a full URL, --host and a bad name never run the SSH test; --ssh and --http
   assert.equal(hosted.code, 0, hosted.err)
 
   const bad = await addWith(
-    'Bad_Name',
+    'Bad Name',
     { yes: true, cwd: root },
     NO_TTY,
     ok.transport
@@ -389,9 +421,28 @@ test('a full URL, --host and a bad name never run the SSH test; --ssh and --http
   assert.equal(both.err, '--ssh and --https cannot be combined\n')
 })
 
+test('add takes a name in any case, as create does: key and directory lowercase, URL as typed', async (t) => {
+  // The remote holds `dApp.git`: on Linux a file:// URL tells the cases apart,
+  // so a URL rewritten in lowercase would not clone.
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('dApp', { 'README.md': '# dApp\n' })
+  const root = await makeWorkspace(t, { org: 'acme', dirs: ['org'] })
+  const r = await add(['--yes', '--cwd', root, '--host', remote.host, 'dApp'])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^cloned {3}org\/dapp\ndeclared scope dapp \(org\/dapp\)\n/
+  )
+  // readdir, not exists(): on macOS exists('org/dapp') is true for org/dApp.
+  assert.deepEqual(await readdir(join(root, 'org')), ['dapp'])
+  const m = await loadManifest(join(root, '.rness'))
+  assert.deepEqual(m.repos, { dapp: { url: `${remote.host}acme/dApp.git` } })
+  assert.deepEqual(m.scopes['dapp'], { path: 'org/dapp', extends: [] })
+})
+
 test('add refuses the context repository, whatever organization it is named with', async (t) => {
   const root = await makeWorkspace(t, { org: 'acme', dirs: ['org'] })
-  for (const spec of ['.rness', 'acme/.rness', 'other/.rness']) {
+  for (const spec of ['.rness', 'acme/.rness', 'other/.rness', '.RNESS']) {
     const r = await add(['--yes', '--cwd', root, spec])
     assert.equal(r.code, 2, `${spec} must be refused`)
     assert.match(
