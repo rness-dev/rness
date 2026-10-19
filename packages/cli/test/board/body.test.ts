@@ -321,12 +321,12 @@ test('on GitLab, every reference GitLab makes is escaped outside code; code, URL
 
 test('on GitLab, a cross-project reference and an entity that decodes to a marker are escaped too', () => {
   const b = body(
-    '# B\n\nSee api#4, acme/api!5, other&6 and US$7; &#64;cedric, &#x40;cedric, &commat;cedric, &#35;4, &num;4 and &amp;6; but AT&amp;T stays.\n',
+    '# B\n\nSee api#4, acme/api!5, other&6 and US$7; &#64;cedric, &#x40;cedric, &commat;cedric, &#35;4, &num;4, &amp;6 and AT&amp;T.\n',
     { provider: 'gitlab' }
   )
   assert.equal(
     content(b),
-    'See api\\#4, acme/api\\!5, other\\&6 and US\\$7; \\&#64;cedric, \\&#x40;cedric, \\&commat;cedric, \\&#35;4, \\&num;4 and \\&amp;6; but AT&amp;T stays.'
+    'See api\\#4, acme/api\\!5, other\\&6 and US\\$7; \\&#64;cedric, \\&#x40;cedric, \\&commat;cedric, \\&#35;4, \\&num;4, \\&amp;6 and AT\\&amp;T.'
   )
 })
 
@@ -338,6 +338,17 @@ test('on GitLab, an entity is judged by its value, and a marker after an escaped
   assert.equal(
     content(b),
     '\\&#064;cedric, \\&#x0040;cedric, \\&#0035;4, caf&#233; and &#xE9;t&eacute; stay; &\\#4 is no entity; \\\\\\@cedric and \\\\\\#4.'
+  )
+})
+
+test('on GitLab, a reference before another, and the escape parity of a reference', () => {
+  const b = body(
+    '# B\n\n&#64;&#99;edric; \\&#64;one is text; \\\\&#64;two is a backslash then a reference.\n',
+    { provider: 'gitlab' }
+  )
+  assert.equal(
+    content(b),
+    '\\&#64;&#99;edric; \\&#64;one is text; \\\\\\&#64;two is a backslash then a reference.'
   )
 })
 

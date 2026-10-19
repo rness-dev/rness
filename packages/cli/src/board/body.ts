@@ -191,16 +191,9 @@ const GITLAB_REFERENCES: readonly RegExp[] = [
   new RegExp(String.raw`${UNESCAPED}(?<![A-Za-z0-9\x60])@(?=[A-Za-z0-9])`, 'g'),
 ]
 
-/** The characters GitLab makes references of, and what must follow one for it to be a reference. */
-const MARKERS: ReadonlyMap<string, RegExp> = new Map([
-  ['#', /^\d/],
-  ['!', /^\d/],
-  ['&', /^\d/],
-  ['$', /^\d/],
-  ['~', /^[A-Za-z0-9"]/],
-  ['%', /^[A-Za-z0-9"]/],
-  ['@', /^[A-Za-z0-9]/],
-])
+/** The characters GitLab makes references of. */
+const MARKERS = new Set(['#', '!', '&', '$', '~', '%', '@'])
+/** The named references (CommonMark takes HTML5's) that decode to a marker. */
 const NAMED: Readonly<Record<string, string>> = {
   num: '#',
   excl: '!',
@@ -209,13 +202,17 @@ const NAMED: Readonly<Record<string, string>> = {
   percnt: '%',
   commat: '@',
 }
-const CHARACTER_REFERENCE =
-  /&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]{1,31}));/g
+const CHARACTER_REFERENCE = new RegExp(
+  String.raw`${UNESCAPED}&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]{1,31}));`,
+  'g'
+)
 
 /**
- * A character reference that decodes to a marker would become one once
- * GitLab decodes it (`&#064;cedric`): judged by its value, its `&` escaped,
- * and it reads as written. Any other (`&#233;`, `&eacute;`) is left alone.
+ * A character reference that decodes to a marker could become one once
+ * GitLab decodes it (`&#064;cedric`, `&#64;&#99;edric`): judged by its
+ * value, whatever follows it, its `&` escaped, and it reads as written
+ * (`AT&amp;T` too). One already escaped, after an odd run of backslashes,
+ * is left; any other (`&#233;`, `&eacute;`) as well.
  */
 const escapedReferences = (text: string): string =>
   text.replace(
@@ -224,8 +221,7 @@ const escapedReferences = (text: string): string =>
       whole: string,
       dec: string | undefined,
       hex: string | undefined,
-      name: string | undefined,
-      at: number
+      name: string | undefined
     ) => {
       const code =
         dec !== undefined
@@ -239,10 +235,7 @@ const escapedReferences = (text: string): string =>
             ? String.fromCodePoint(code)
             : ''
           : (NAMED[(name ?? '').toLowerCase()] ?? '')
-      const follows = MARKERS.get(char)
-      const live =
-        follows !== undefined && follows.test(text.slice(at + whole.length))
-      return live ? `\\${whole}` : whole
+      return MARKERS.has(char) ? `\\${whole}` : whole
     }
   )
 
