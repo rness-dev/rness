@@ -1,16 +1,21 @@
 import { spawn } from 'node:child_process'
 
+import { HOSTS, type HostSpec } from './hosts.ts'
 import { rnessCommand } from './pm.ts'
-import { DEFAULT_HOST, SSH_HOST } from './remote.ts'
 import { status } from './style.ts'
 
-/** The two bases a github.com URL can be written with (spec 0005). */
+/** The two bases a repository URL can be written with (spec 0005). */
 export interface Hosts {
   ssh: string
   https: string
 }
 
-export const GITHUB_HOSTS: Hosts = { ssh: SSH_HOST, https: DEFAULT_HOST }
+/** The bases of a host's row. */
+export function hostsOf(spec: HostSpec): Hosts {
+  return { ssh: spec.ssh, https: spec.https }
+}
+
+export const GITHUB_HOSTS: Hosts = hostsOf(HOSTS.github)
 
 export type SshAccess =
   { ok: true; login: string } | { ok: false; reason: string }
@@ -23,11 +28,15 @@ export interface Transport {
   detect: DetectSsh
 }
 
-const GREETING = /^Hi ([^!\s]+)! You've successfully authenticated/m
-
-/** The login in GitHub's `Hi <login>! You've successfully authenticated…`, or null. */
-export function parseSshGreeting(stderr: string): string | null {
-  return GREETING.exec(stderr)?.[1] ?? null
+/**
+ * The login in the host's greeting, or null: GitHub's `Hi <login>! You've
+ * successfully authenticated…`, GitLab's `Welcome to GitLab, @<login>!`.
+ */
+export function parseSshGreeting(
+  stderr: string,
+  host: HostSpec = HOSTS.github
+): string | null {
+  return host.greeting.exec(stderr)?.[1] ?? null
 }
 
 function firstLine(text: string): string | null {
@@ -43,9 +52,9 @@ function firstLine(text: string): string | null {
 const STDERR_FLUSH_MS = 200
 
 /**
- * `ssh -T git@github.com`: does github.com accept one of the user's keys?
- * GitHub greets an accepted key and exits 1, so the greeting — not the exit
- * code — is the answer.
+ * `ssh -T git@<host>`: does the host accept one of the user's keys? GitHub
+ * greets an accepted key and exits 1, so the greeting, not the exit code, is
+ * the answer.
  *
  * In a terminal `ssh` may ask for a key's passphrase or confirm github.com's
  * host key; it asks on `/dev/tty`, not on stderr, so stderr stays piped and
@@ -53,19 +62,24 @@ const STDERR_FLUSH_MS = 200
  * every prompt. Never throws and never hangs: the child is killed at the
  * deadline, and the answer never waits on `'close'`.
  */
-export async function detectGithubSsh(opts: {
+export interface DetectOptions {
   interactive: boolean
   /** Tests: a fake executable, called by path. */
   command?: string
   timeoutMs?: number
-}): Promise<SshAccess> {
+}
+
+export async function detectSsh(
+  host: HostSpec,
+  opts: DetectOptions
+): Promise<SshAccess> {
   const timeoutMs = opts.timeoutMs ?? (opts.interactive ? 120_000 : 10_000)
   const args = [
     '-T',
     '-o',
     'ConnectTimeout=5',
     ...(opts.interactive ? [] : ['-o', 'BatchMode=yes']),
-    'git@github.com',
+    `git@${host.host}`,
   ]
   return new Promise<SshAccess>((resolve) => {
     const child = spawn(opts.command ?? 'ssh', args, {
@@ -92,7 +106,7 @@ export async function detectGithubSsh(opts: {
     child.on('exit', (code) => {
       const finish = (): void => {
         const stderr = chunks.join('')
-        const login = parseSshGreeting(stderr)
+        const login = parseSshGreeting(stderr, host)
         settle(
           login !== null
             ? { ok: true, login }
@@ -117,10 +131,17 @@ export async function detectGithubSsh(opts: {
   })
 }
 
-export const defaultTransport: Transport = {
-  hosts: GITHUB_HOSTS,
-  detect: detectGithubSsh,
+/** `ssh -T git@github.com`, as `detectSsh` runs it. */
+export function detectGithubSsh(opts: DetectOptions): Promise<SshAccess> {
+  return detectSsh(HOSTS.github, opts)
 }
+
+/** The bases and the SSH test of a host. */
+export function transportFor(spec: HostSpec): Transport {
+  return { hosts: hostsOf(spec), detect: (o) => detectSsh(spec, o) }
+}
+
+export const defaultTransport: Transport = transportFor(HOSTS.github)
 
 export interface SshTest {
   access: SshAccess
@@ -154,11 +175,12 @@ const loggedInAs = (login?: string | null): string =>
 /** The outcome of the SSH test as a sentence, for the session look. */
 export function usingSentence(
   access: SshAccess,
-  login?: string | null
+  login?: string | null,
+  host: HostSpec = HOSTS.github
 ): string {
   return access.ok
-    ? `SSH works for github.com (as ${access.login}): repositories are cloned over SSH`
-    : `No SSH access to github.com (${access.reason}): repositories are cloned over HTTPS${loggedInAs(login)}`
+    ? `SSH works for ${host.host} (as ${access.login}): repositories are cloned over SSH`
+    : `No SSH access to ${host.host} (${access.reason}): repositories are cloned over HTTPS${loggedInAs(login)}`
 }
 
 /** Is `url` written with the SSH base? */
@@ -166,24 +188,36 @@ export function isSshUrl(url: string, hosts: Hosts): boolean {
   return url.startsWith(hosts.ssh)
 }
 
-/** Printed in a terminal before the test, which may ask for a passphrase. */
-export const CHECKING_LINE = status('checking', 'ssh access to github.com…')
-/** The same as `[verb, rest, sentence]`, for a `Ui`. */
-export const CHECKING = [
-  'checking',
-  'ssh access to github.com…',
-  'Checking SSH access to github.com: ssh may ask for your passphrase',
-] as const
+/** `[verb, rest, sentence]` for a `Ui`, before the test, which may ask for a passphrase. */
+export function checking(host: HostSpec): readonly [string, string, string] {
+  return [
+    'checking',
+    `ssh access to ${host.host}…`,
+    `Checking SSH access to ${host.host}: ssh may ask for your passphrase`,
+  ]
+}
+/** GitHub's `checking` lines. */
+export const CHECKING = checking(HOSTS.github)
+/** Printed in a terminal before GitHub's test. */
+export const CHECKING_LINE = status(CHECKING[0], CHECKING[1])
 
 /** `login`: who rness is logged in as, which is what makes HTTPS reach private repositories. */
-export function usingRest(access: SshAccess, login?: string | null): string {
+export function usingRest(
+  access: SshAccess,
+  login?: string | null,
+  host: HostSpec = HOSTS.github
+): string {
   return access.ok
-    ? `ssh (github.com as ${access.login})`
-    : `https (ssh to github.com unavailable: ${access.reason}${loggedInAs(login)})`
+    ? `ssh (${host.host} as ${access.login})`
+    : `https (ssh to ${host.host} unavailable: ${access.reason}${loggedInAs(login)})`
 }
 
-export function usingLine(access: SshAccess, login?: string | null): string {
-  return status('using', usingRest(access, login))
+export function usingLine(
+  access: SshAccess,
+  login?: string | null,
+  host: HostSpec = HOSTS.github
+): string {
+  return status('using', usingRest(access, login, host))
 }
 
 /** Why an SSH workspace cannot be served, and how to fix it. */
@@ -216,18 +250,25 @@ export function passphraseHint(
   ].join('\n')
 }
 
-export function sshWorkspaceLines(reason: string): [string, string] {
+export function sshWorkspaceLines(
+  reason: string,
+  host: HostSpec = HOSTS.github
+): [string, string] {
   return [
-    `this workspace clones over SSH (rness.json) but ssh to github.com fails: ${reason}`,
-    'set up an SSH key: https://docs.github.com/authentication/connecting-to-github-with-ssh',
+    `this workspace clones over SSH (rness.json) but ssh to ${host.host} fails: ${reason}`,
+    `set up an SSH key: ${host.sshDocs}`,
   ]
 }
 
 /** The user-side escape hatch where `rness.json` is not negotiable. */
-export const INSTEAD_OF_LINES: [string, string] = [
-  'or make git use HTTPS for github.com on this machine:',
-  '  git config --global url."https://github.com/".insteadOf git@github.com:',
-]
+export function insteadOfLines(host: HostSpec): [string, string] {
+  return [
+    `or make git use HTTPS for ${host.host} on this machine:`,
+    `  git config --global url."${host.https}".insteadOf ${host.ssh}`,
+  ]
+}
+/** GitHub's escape hatch. */
+export const INSTEAD_OF_LINES = insteadOfLines(HOSTS.github)
 
 export function httpsFlagLine(spec: string): string {
   return `or clone this repository over HTTPS: ${rnessCommand()} add ${spec} --https`

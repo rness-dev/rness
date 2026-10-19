@@ -119,3 +119,19 @@ test('rness pulse <command> runs its new command, said once on stderr; mark exit
   const mark = await as(['pulse', 'mark', '--session', 's', '--path', 'a.md'])
   assert.deepEqual(mark, { code: 0, out: '', err: '' })
 })
+
+test('login and logout take --provider; the test API bases stay hidden (spec 0037 §3)', async () => {
+  for (const command of ['login', 'logout']) {
+    const c = capture()
+    const code = await run([command, '--help'])
+    c.restore()
+    assert.equal(code, 0)
+    assert.match(c.out(), /--provider <name>/, command)
+    assert.doesNotMatch(c.out(), /--gitlab-api|--github-api/, command)
+  }
+  const c = capture()
+  const code = await run(['logout', '--provider', 'nope'])
+  c.restore()
+  assert.equal(code, 2)
+  assert.equal(c.err(), 'unknown provider "nope" (github, gitlab, atlassian)\n')
+})

@@ -1,4 +1,5 @@
 import { resolveToken } from '../core/auth.ts'
+import { hostNamed } from '../core/hosts.ts'
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = []
@@ -8,9 +9,10 @@ async function readStdin(): Promise<string> {
 
 /**
  * `rness git-credential <get|store|erase>`: git's credential-helper protocol
- * (spec 0004 §5). Only `get` for https://github.com is answered, with the
- * token of this machine; everything else is silence, which tells git to look
- * elsewhere. `input` is what git writes on stdin.
+ * (spec 0004 §5, spec 0037 §3). Only `get` for a host rness logs in to over
+ * HTTPS (github.com, gitlab.com) is answered, with that host's token of this
+ * machine and its username; everything else is silence, which tells git to
+ * look elsewhere. `input` is what git writes on stdin.
  */
 export async function gitCredentialCommand(
   operation: string,
@@ -22,10 +24,13 @@ export async function gitCredentialCommand(
     const eq = line.indexOf('=')
     if (eq > 0) fields.set(line.slice(0, eq), line.slice(eq + 1).trimEnd())
   }
-  if (fields.get('protocol') !== 'https' || fields.get('host') !== 'github.com')
-    return 0
-  const resolved = await resolveToken().catch(() => null)
+  if (fields.get('protocol') !== 'https') return 0
+  const host = hostNamed(fields.get('host') ?? '')
+  if (host === null) return 0
+  const resolved = await resolveToken({}, host).catch(() => null)
   if (resolved === null) return 0
-  process.stdout.write(`username=x-access-token\npassword=${resolved.token}\n`)
+  process.stdout.write(
+    `username=${host.username}\npassword=${resolved.token}\n`
+  )
   return 0
 }

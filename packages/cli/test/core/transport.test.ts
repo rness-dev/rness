@@ -4,15 +4,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
+import { HOSTS } from '../../src/core/hosts.ts'
 import {
+  CHECKING,
   GITHUB_HOSTS,
   INSTEAD_OF_LINES,
+  checking,
   detectGithubSsh,
+  detectSsh,
   httpsFlagLine,
+  insteadOfLines,
   isSshUrl,
   parseSshGreeting,
   sshWorkspaceLines,
+  transportFor,
   usingLine,
+  usingSentence,
 } from '../../src/core/transport.ts'
 
 const GREETING =
@@ -161,4 +168,86 @@ test('the lines, verbatim', () => {
     httpsFlagLine('api'),
     'or clone this repository over HTTPS: rness add api --https'
   )
+})
+
+// GitLab (spec 0037 §5.2), as plan 0049 task 1 saw gitlab.com answer.
+test("GitLab's greeting is SSH access; each host reads its own greeting only", async (t) => {
+  const welcome = 'Welcome to GitLab, @cedricmagne!\n'
+  assert.equal(parseSshGreeting(welcome, HOSTS.gitlab), 'cedricmagne')
+  assert.equal(parseSshGreeting(welcome), null)
+  assert.equal(parseSshGreeting(`${GREETING}\n`, HOSTS.gitlab), null)
+
+  const ssh = await fakeSsh(
+    t,
+    `process.stderr.write(${JSON.stringify(welcome)}); process.exit(0)`
+  )
+  assert.deepEqual(
+    await detectSsh(HOSTS.gitlab, {
+      interactive: false,
+      command: ssh.command,
+    }),
+    { ok: true, login: 'cedricmagne' }
+  )
+  assert.deepEqual(await ssh.argv(), [
+    '-T',
+    '-o',
+    'ConnectTimeout=5',
+    '-o',
+    'BatchMode=yes',
+    'git@gitlab.com',
+  ])
+
+  const unknownHost = await fakeSsh(
+    t,
+    `process.stderr.write('Host key verification failed.\\n'); process.exit(255)`
+  )
+  assert.deepEqual(
+    await detectSsh(HOSTS.gitlab, {
+      interactive: false,
+      command: unknownHost.command,
+    }),
+    { ok: false, reason: 'Host key verification failed.' }
+  )
+})
+
+test('a transport for GitLab: its bases, and the lines name gitlab.com', () => {
+  assert.deepEqual(transportFor(HOSTS.gitlab).hosts, {
+    ssh: 'git@gitlab.com:',
+    https: 'https://gitlab.com/',
+  })
+  assert.deepEqual(transportFor(HOSTS.github).hosts, GITHUB_HOSTS)
+  assert.equal(
+    usingLine({ ok: true, login: 'cedricmagne' }, null, HOSTS.gitlab),
+    'using    ssh (gitlab.com as cedricmagne)'
+  )
+  assert.equal(
+    usingLine(
+      { ok: false, reason: 'Permission denied (publickey).' },
+      'cedricmagne',
+      HOSTS.gitlab
+    ),
+    'using    https (ssh to gitlab.com unavailable: Permission denied (publickey)., logged in as cedricmagne)'
+  )
+  assert.equal(
+    usingSentence({ ok: true, login: 'cedricmagne' }, null, HOSTS.gitlab),
+    'SSH works for gitlab.com (as cedricmagne): repositories are cloned over SSH'
+  )
+  assert.deepEqual(
+    sshWorkspaceLines('Permission denied (publickey).', HOSTS.gitlab),
+    [
+      'this workspace clones over SSH (rness.json) but ssh to gitlab.com fails: Permission denied (publickey).',
+      'set up an SSH key: https://docs.gitlab.com/user/ssh/',
+    ]
+  )
+  assert.deepEqual(insteadOfLines(HOSTS.gitlab), [
+    'or make git use HTTPS for gitlab.com on this machine:',
+    '  git config --global url."https://gitlab.com/".insteadOf git@gitlab.com:',
+  ])
+  assert.deepEqual(checking(HOSTS.gitlab), [
+    'checking',
+    'ssh access to gitlab.com…',
+    'Checking SSH access to gitlab.com: ssh may ask for your passphrase',
+  ])
+  assert.deepEqual(checking(HOSTS.github), CHECKING)
+  assert.deepEqual(insteadOfLines(HOSTS.github), INSTEAD_OF_LINES)
 })

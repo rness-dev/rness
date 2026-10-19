@@ -8,7 +8,9 @@ import {
   refreshTokenSet,
   requestDeviceCode,
 } from '../../src/core/device-flow.ts'
+import { HOSTS } from '../../src/core/hosts.ts'
 import { type Reply, fakeGithub, withEnv } from '../helpers/fake-github.ts'
+import { fakeGitlab } from '../helpers/fake-gitlab.ts'
 
 const DEVICE = {
   device_code: 'dev-123',
@@ -142,4 +144,130 @@ test('a refresh needs no secret; a refused one is RefreshRejected, a dead networ
     assert.match((e as Error).message, /cannot reach github\.com/)
     return true
   })
+})
+
+// GitLab (spec 0037 §3), as plan 0049 task 1 saw gitlab.com answer.
+const GL_DEVICE = {
+  device_code: 'gl-dev',
+  user_code: 'KH2NN95U',
+  verification_uri: 'https://gitlab.com/oauth/device',
+  verification_uri_complete:
+    'https://gitlab.com/oauth/device?user_code=KH2NN95U',
+  expires_in: 300,
+  interval: 5,
+}
+const GL_TOKENS = {
+  access_token: 'gl_access',
+  token_type: 'Bearer',
+  expires_in: 7200,
+  refresh_token: 'gl_refresh',
+  scope: 'api write_repository',
+  created_at: 1792403018,
+}
+
+test('GitLab: the device code is asked at /oauth/authorize_device for api and write_repository; the page with the code is kept', async (t) => {
+  withEnv(t, { RNESS_GITLAB_CLIENT_ID: 'gl-client' })
+  const gl = await fakeGitlab(t, () => ({ json: GL_DEVICE }))
+  assert.deepEqual(await requestDeviceCode(HOSTS.gitlab), {
+    deviceCode: 'gl-dev',
+    userCode: 'KH2NN95U',
+    verificationUri: 'https://gitlab.com/oauth/device',
+    verificationUriComplete:
+      'https://gitlab.com/oauth/device?user_code=KH2NN95U',
+    expiresIn: 300,
+    interval: 5,
+  })
+  assert.equal(gl.requests[0]?.path, '/oauth/authorize_device')
+  assert.deepEqual(gl.requests[0]?.form, {
+    client_id: 'gl-client',
+    scope: 'api write_repository',
+  })
+})
+
+test('GitLab: an application without the device grant, and a missing client ID, are said in one line', async (t) => {
+  withEnv(t, { RNESS_GITLAB_CLIENT_ID: 'gl-client' })
+  // What gitlab.com answers while the application's "Device authorization
+  // grant" box is unchecked, whatever the scope.
+  await fakeGitlab(t, () => ({ status: 400, json: { error: 'access_denied' } }))
+  await assert.rejects(requestDeviceCode(HOSTS.gitlab), (e: unknown) => {
+    assert.ok(e instanceof LoginError)
+    assert.equal(
+      e.message,
+      'the device flow is not enabled on the rness GitLab app'
+    )
+    return true
+  })
+  withEnv(t, { RNESS_GITLAB_CLIENT_ID: undefined })
+  await assert.rejects(
+    requestDeviceCode(HOSTS.gitlab),
+    /rness has no GitLab client ID yet; set RNESS_GITLAB_CLIENT_ID/
+  )
+})
+
+test('GitLab: polling posts the device grant to /oauth/token; a refusal names gitlab.com', async (t) => {
+  withEnv(t, { RNESS_GITLAB_CLIENT_ID: 'gl-client' })
+  const replies: Reply[] = [
+    { status: 400, json: { error: 'authorization_pending' } },
+    { json: GL_TOKENS },
+  ]
+  const gl = await fakeGitlab(t, () => replies.shift() ?? { json: {} })
+  const code = {
+    deviceCode: 'gl-dev',
+    userCode: 'KH2NN95U',
+    verificationUri: 'https://gitlab.com/oauth/device',
+    expiresIn: 300,
+    interval: 5,
+  }
+  const sleep = async (): Promise<void> => undefined
+  const tokens = await pollForToken(
+    code,
+    { sleep, now: () => 1_000_000 },
+    HOSTS.gitlab
+  )
+  assert.deepEqual(tokens, {
+    accessToken: 'gl_access',
+    expiresAt: 1_000_000 + 7200 * 1000,
+    refreshToken: 'gl_refresh',
+    refreshExpiresAt: null,
+    scopes: 'api write_repository',
+  })
+  assert.equal(gl.requests[0]?.path, '/oauth/token')
+  assert.deepEqual(gl.requests[0]?.form, {
+    client_id: 'gl-client',
+    device_code: 'gl-dev',
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+  })
+
+  replies.push({ status: 400, json: { error: 'access_denied' } })
+  await assert.rejects(
+    pollForToken(code, { sleep }, HOSTS.gitlab),
+    /the login was cancelled on gitlab\.com/
+  )
+})
+
+test('GitLab: a refresh with client_id alone; invalid_grant is RefreshRejected, a dead network names gitlab.com', async (t) => {
+  withEnv(t, { RNESS_GITLAB_CLIENT_ID: 'gl-client' })
+  let reply: Reply = { json: GL_TOKENS }
+  const gl = await fakeGitlab(t, () => reply)
+  const tokens = await refreshTokenSet('gl_old', () => 0, HOSTS.gitlab)
+  assert.equal(tokens.accessToken, 'gl_access')
+  assert.equal(gl.requests[0]?.path, '/oauth/token')
+  assert.deepEqual(gl.requests[0]?.form, {
+    client_id: 'gl-client',
+    grant_type: 'refresh_token',
+    refresh_token: 'gl_old',
+  })
+
+  // A refresh token already used: gitlab.com answers 400 invalid_grant.
+  reply = { status: 400, json: { error: 'invalid_grant' } }
+  await assert.rejects(
+    refreshTokenSet('gl_old', () => 0, HOSTS.gitlab),
+    RefreshRejected
+  )
+
+  withEnv(t, { RNESS_GITLAB_WEB: 'http://127.0.0.1:1' })
+  await assert.rejects(
+    refreshTokenSet('gl_old', () => 0, HOSTS.gitlab),
+    /cannot reach gitlab\.com/
+  )
 })

@@ -13,7 +13,7 @@ import { docNewCommand } from './commands/doc.ts'
 import { gitCredentialCommand } from './commands/git-credential.ts'
 import { hookCommand } from './commands/hook.ts'
 import { type LoginOptions, loginCommand } from './commands/login.ts'
-import { logoutCommand } from './commands/logout.ts'
+import { type LogoutOptions, logoutCommand } from './commands/logout.ts'
 import { type McpOptions, mcpCommand } from './commands/mcp.ts'
 import { type StatusOptions, statusCommand } from './commands/status.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
@@ -298,19 +298,30 @@ function buildProgram(state: RunState): Command {
 
   program
     .command('login')
-    .description('Log in to GitHub, to list and clone private repositories')
-    .option('--setup-git', "make rness git's credential helper for github.com")
+    .description(
+      'Log in to GitHub or GitLab, to list and clone private repositories'
+    )
+    .option(
+      '--provider <name>',
+      "github or gitlab (default: the workspace's provider, else github)"
+    )
+    .option('--setup-git', "make rness git's credential helper for the host")
     .option('--no-setup-git', 'do not ask about git')
     .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--gitlab-api <base>').hideHelp())
     .action(async (opts: LoginOptions) => {
       state.code = await loginCommand(opts)
     })
 
   program
     .command('logout')
-    .description('Forget the GitHub login of this machine')
-    .action(async () => {
-      state.code = await logoutCommand()
+    .description('Forget the login of this machine for one provider')
+    .option(
+      '--provider <name>',
+      "github or gitlab (default: the workspace's provider, else github)"
+    )
+    .action(async (opts: LogoutOptions) => {
+      state.code = await logoutCommand(opts)
     })
 
   // What git runs once `rness login` made rness its credential helper.

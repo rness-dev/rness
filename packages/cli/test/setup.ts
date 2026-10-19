@@ -14,11 +14,12 @@ delete process.env['NO_COLOR']
 // `rness`), so every test starts without one and sets it when it cares.
 delete process.env['npm_config_user_agent']
 
-// The developer's own GitHub token must not reach a test: with a real one the
-// CLI is logged in, asks api.github.com who it is, and prints it. Tests that
-// want a token set one themselves.
+// The developer's own GitHub or GitLab token must not reach a test: with a
+// real one the CLI is logged in, asks the host who it is, and prints it.
+// Tests that want a token set one themselves.
 delete process.env['GITHUB_TOKEN']
 delete process.env['GH_TOKEN']
+delete process.env['GITLAB_TOKEN']
 
 // Run from a Claude Code session, the tests inherit its AI_AGENT and
 // CLAUDE_CODE_ENTRYPOINT: an older Claude Code would add its line to every

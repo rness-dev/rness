@@ -17,12 +17,15 @@ import { gitCredentialCommand } from '../../src/commands/git-credential.ts'
 import { loginCommand } from '../../src/commands/login.ts'
 import { logoutCommand } from '../../src/commands/logout.ts'
 import { readAuth, writeAuth } from '../../src/core/auth.ts'
+import { HOSTS } from '../../src/core/hosts.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import { capture } from '../helpers/capture.ts'
 import { type Recorded, fakeGithub, withEnv } from '../helpers/fake-github.ts'
+import { fakeGitlab } from '../helpers/fake-gitlab.ts'
 
 const execFileP = promisify(execFile)
 const HELPER_KEY = 'credential.https://github.com.helper'
+const GITLAB_HELPER_KEY = 'credential.https://gitlab.com.helper'
 const BIN = '/usr/local/lib/node_modules/@rness/cli/dist/bin/rness.js'
 
 /** A private config directory and a private global git config. */
@@ -43,15 +46,19 @@ async function machine(t: TestContext) {
     GIT_CONFIG_GLOBAL: gitConfig,
     GITHUB_TOKEN: undefined,
     GH_TOKEN: undefined,
+    GITLAB_TOKEN: undefined,
     SSH_CONNECTION: undefined,
     RNESS_GITHUB_CLIENT_ID: 'client-test',
+    RNESS_GITLAB_CLIENT_ID: 'gl-client',
   })
-  const helpers = async (): Promise<string[]> =>
-    execFileP('git', ['config', '--global', '--get-all', HELPER_KEY]).then(
+  const helpersOf = async (key: string): Promise<string[]> =>
+    execFileP('git', ['config', '--global', '--get-all', key]).then(
       (r) => r.stdout.replace(/\n$/, '').split('\n'),
       () => []
     )
-  return { dir, helpers }
+  const helpers = (): Promise<string[]> => helpersOf(HELPER_KEY)
+  const gitlabHelpers = (): Promise<string[]> => helpersOf(GITLAB_HELPER_KEY)
+  return { dir, helpers, gitlabHelpers }
 }
 
 const github = (r: Recorded) => {
@@ -453,7 +460,7 @@ test('an environment token is kept as it is, whatever scopes are needed', async 
 test('login refuses a workspace whose written provider is unavailable', async (t) => {
   await machine(t)
   const gh = await fakeGithub(t, github)
-  const root = await workspace(t, { provider: 'gitlab' })
+  const root = await workspace(t, { provider: 'atlassian' })
   const r = await run(() =>
     loginCommand(
       { githubApi: gh.base },
@@ -461,7 +468,260 @@ test('login refuses a workspace whose written provider is unavailable', async (t
     )
   )
   assert.equal(r.code, 1)
-  assert.match(r.err, /^rness\.json: provider "gitlab" is not supported/)
+  assert.match(r.err, /^rness\.json: provider "atlassian" is not supported/)
   assert.equal(gh.requests.length, 0)
   assert.equal(await readAuth(), null)
+})
+
+// GitLab (spec 0037 §3), as plan 0049 task 1 saw gitlab.com answer.
+const gitlab = (r: Recorded) => {
+  if (r.path === '/oauth/authorize_device')
+    return {
+      json: {
+        device_code: 'gl-dev',
+        user_code: 'KH2NN95U',
+        verification_uri: 'https://gitlab.com/oauth/device',
+        verification_uri_complete:
+          'https://gitlab.com/oauth/device?user_code=KH2NN95U',
+        expires_in: 300,
+        interval: 5,
+      },
+    }
+  if (r.path === '/oauth/token')
+    return {
+      json: {
+        access_token: 'gl_access',
+        token_type: 'Bearer',
+        expires_in: 7200,
+        refresh_token: 'gl_refresh',
+        scope: 'api write_repository',
+      },
+    }
+  if (r.path === '/api/v4/user')
+    return { json: { id: 859189, username: 'cedricmagne' } }
+  return { status: 404, json: {} }
+}
+
+const octo = {
+  login: 'octo',
+  tokens: {
+    accessToken: 'ghu_stored',
+    expiresAt: null,
+    refreshToken: null,
+    refreshExpiresAt: null,
+    scopes: 'repo',
+  },
+}
+
+test('login --provider gitlab: the code, the page with the code opened, the name; stored beside the GitHub login', async (t) => {
+  await machine(t)
+  await writeAuth(octo)
+  const gl = await fakeGitlab(t, gitlab)
+  const opened: string[] = []
+  const term = terminal([false])
+  const r = await run(() =>
+    loginCommand(
+      { provider: 'gitlab', gitlabApi: `${gl.base}/api/v4` },
+      {
+        cwd: NOWHERE,
+        terminal: term.t,
+        sleep,
+        open: (u) => opened.push(u),
+        bin: BIN,
+      }
+    )
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.equal(
+    r.out,
+    [
+      'open     https://gitlab.com/oauth/device',
+      'code     KH2NN95U',
+      'waiting  for you to approve rness on gitlab.com…',
+      'logged in as cedricmagne (gitlab.com)',
+      '',
+    ].join('\n')
+  )
+  assert.deepEqual(opened, [
+    'https://gitlab.com/oauth/device?user_code=KH2NN95U',
+  ])
+  assert.deepEqual(term.asked, [
+    'Use rness to authenticate git over HTTPS for gitlab.com?',
+  ])
+  const device = gl.requests.find((q) => q.path === '/oauth/authorize_device')
+  assert.deepEqual(device?.form, {
+    client_id: 'gl-client',
+    scope: 'api write_repository',
+  })
+  const user = gl.requests.find((q) => q.path === '/api/v4/user')
+  assert.equal(user?.headers['authorization'], 'Bearer gl_access')
+  assert.ok(!`${r.out}${r.err}`.includes('gl_access'))
+  assert.equal((await readAuth(HOSTS.gitlab))?.login, 'cedricmagne')
+  assert.equal((await readAuth())?.login, 'octo')
+
+  // Again: nothing is asked of gitlab.com.
+  const before = gl.requests.length
+  const again = await run(() =>
+    loginCommand(
+      { provider: 'gitlab', gitlabApi: `${gl.base}/api/v4`, setupGit: false },
+      { cwd: NOWHERE, terminal: NO_TTY, sleep, bin: BIN }
+    )
+  )
+  assert.equal(
+    again.out,
+    'logged in as cedricmagne (gitlab.com); rness logout --provider gitlab to switch\n'
+  )
+  assert.equal(gl.requests.length, before)
+})
+
+test('inside a workspace rness.json names the provider, the flag wins over it; GitLab is never asked for the project scope', async (t) => {
+  await machine(t)
+  const gl = await fakeGitlab(t, gitlab)
+  const gh = await fakeGithub(t, github)
+  const root = await workspace(t, {
+    provider: 'gitlab',
+    boards: { 'agent-pulse': { preset: 'agent-pulse' } },
+  })
+  const fromManifest = await run(() =>
+    loginCommand(
+      { gitlabApi: `${gl.base}/api/v4`, setupGit: false, project: true },
+      { cwd: root, terminal: NO_TTY, sleep, bin: BIN }
+    )
+  )
+  assert.equal(fromManifest.code, 0, fromManifest.err)
+  assert.match(fromManifest.out, /^logged in as cedricmagne \(gitlab\.com\)$/m)
+  assert.equal(
+    gl.requests.find((q) => q.path === '/oauth/authorize_device')?.form[
+      'scope'
+    ],
+    'api write_repository'
+  )
+  assert.equal(gh.requests.length, 0)
+
+  const flag = await run(() =>
+    loginCommand(
+      { provider: 'github', githubApi: gh.base, setupGit: false },
+      { cwd: root, terminal: NO_TTY, sleep, bin: BIN }
+    )
+  )
+  assert.equal(flag.code, 0, flag.err)
+  assert.match(flag.out, /^logged in as octo \(github\.com\)$/m)
+})
+
+test('login refuses a provider it cannot log in to, and an unknown one, exit 2', async (t) => {
+  await machine(t)
+  const gh = await fakeGithub(t, github)
+  const atlassian = await run(() =>
+    loginCommand(
+      { provider: 'atlassian' },
+      { cwd: NOWHERE, terminal: NO_TTY, sleep, bin: BIN }
+    )
+  )
+  assert.equal(atlassian.code, 2)
+  assert.equal(
+    atlassian.err,
+    'rness cannot log in to atlassian yet (github, gitlab)\n'
+  )
+  const unknown = await run(() =>
+    loginCommand(
+      { provider: 'nope' },
+      { cwd: NOWHERE, terminal: NO_TTY, sleep, bin: BIN }
+    )
+  )
+  assert.equal(unknown.code, 2)
+  assert.equal(
+    unknown.err,
+    'unknown provider "nope" (github, gitlab, atlassian)\n'
+  )
+  assert.equal(gh.requests.length, 0)
+})
+
+test('setup-git for gitlab.com is a block of its own; logout --provider gitlab undoes it and that login only', async (t) => {
+  const { helpers, gitlabHelpers } = await machine(t)
+  const gh = await fakeGithub(t, github)
+  const gl = await fakeGitlab(t, gitlab)
+  const ours = `!'${process.execPath}' '${BIN}' git-credential`
+  await run(() =>
+    loginCommand(
+      { githubApi: gh.base, setupGit: true },
+      { cwd: NOWHERE, terminal: NO_TTY, sleep, bin: BIN }
+    )
+  )
+  const r = await run(() =>
+    loginCommand(
+      { provider: 'gitlab', gitlabApi: `${gl.base}/api/v4`, setupGit: true },
+      { cwd: NOWHERE, terminal: NO_TTY, sleep, bin: BIN }
+    )
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^updated {2}git: rness answers for https:\/\/gitlab\.com/m
+  )
+  assert.deepEqual(await helpers(), ['', ours])
+  assert.deepEqual(await gitlabHelpers(), ['', ours])
+
+  const out = await run(() =>
+    logoutCommand({ provider: 'gitlab', cwd: NOWHERE })
+  )
+  assert.equal(out.code, 0, out.err)
+  assert.equal(
+    out.out,
+    [
+      'logged out cedricmagne (gitlab.com)',
+      'updated  git: rness no longer answers for https://gitlab.com',
+      'revoke rness on GitLab: https://gitlab.com/-/user_settings/applications',
+      '',
+    ].join('\n')
+  )
+  assert.deepEqual(await gitlabHelpers(), [])
+  assert.deepEqual(await helpers(), ['', ours])
+  assert.equal(await readAuth(HOSTS.gitlab), null)
+  assert.equal((await readAuth())?.login, 'octo')
+  assert.equal(
+    (await run(() => logoutCommand({ provider: 'gitlab', cwd: NOWHERE }))).out,
+    'not logged in\n'
+  )
+})
+
+test('git-credential answers https://gitlab.com with oauth2 and the GitLab login; github.com keeps x-access-token', async (t) => {
+  await machine(t)
+  await writeAuth(octo)
+  await writeAuth(
+    {
+      login: 'cedricmagne',
+      tokens: {
+        accessToken: 'gl_stored',
+        expiresAt: null,
+        refreshToken: null,
+        refreshExpiresAt: null,
+        scopes: 'api write_repository',
+      },
+    },
+    HOSTS.gitlab
+  )
+  const ask = (input: string) => run(() => gitCredentialCommand('get', input))
+  assert.equal(
+    (await ask('protocol=https\nhost=gitlab.com\n\n')).out,
+    'username=oauth2\npassword=gl_stored\n'
+  )
+  assert.equal(
+    (await ask('protocol=https\nhost=github.com\n\n')).out,
+    'username=x-access-token\npassword=ghu_stored\n'
+  )
+  for (const input of [
+    'protocol=http\nhost=gitlab.com\n',
+    'protocol=https\nhost=gitlab.com.evil.example\n',
+  ])
+    assert.equal((await ask(input)).out, '', input)
+
+  withEnv(t, { GITLAB_TOKEN: 'glpat_env' })
+  assert.equal(
+    (await ask('protocol=https\nhost=gitlab.com\n')).out,
+    'username=oauth2\npassword=glpat_env\n'
+  )
+  assert.match(
+    (await ask('protocol=https\nhost=github.com\n')).out,
+    /password=ghu_stored/
+  )
 })

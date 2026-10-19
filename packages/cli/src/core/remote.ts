@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
 
 import { positional, withCredentials } from './git.ts'
+import { HOSTS } from './hosts.ts'
 import type { GitCredentials } from './provider.ts'
 
-export const DEFAULT_HOST = 'https://github.com/'
-export const SSH_HOST = 'git@github.com:'
+/** GitHub's two bases (spec 0005); another host's are in its row of `HOSTS`. */
+export const DEFAULT_HOST = HOSTS.github.https
+export const SSH_HOST = HOSTS.github.ssh
 
 /** `<host><org>/<repo>.git`; `host` ends with `/` (https, file) or `:` (ssh). */
 export function repoUrl(host: string, org: string, repo: string): string {

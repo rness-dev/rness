@@ -1,16 +1,23 @@
-// GitHub's OAuth device flow (spec 0004 §2): no client secret, no redirect,
-// and it works where there is no local browser. Refreshing a token obtained
-// this way needs no secret either (GitHub documentation, read 2026-09-19).
+import {
+  HOSTS,
+  type HostSpec,
+  clientIdOf,
+  revokeUrl,
+  webBase as webOf,
+} from './hosts.ts'
 
-/** The OAuth App "Rness" of the rness-dev organization. Public by nature. */
-const GITHUB_CLIENT_ID = 'Ov23liv1ia2UWeWttsOK'
-const GITHUB_WEB = 'https://github.com'
-export const SCOPES = 'repo read:org'
+// The OAuth device flow (spec 0004 §2; GitLab's, spec 0037 §3): no client
+// secret, no redirect, and it works where there is no local browser.
+// Refreshing a token obtained this way needs no secret either (GitHub
+// documentation, read 2026-09-19; gitlab.com, plan 0049 task 1).
+
+export const SCOPES = HOSTS.github.scopes
 /** The extra scope boards need to read a GitHub Project. */
 export const BOARD_SCOPE = 'project'
 
+/** GitHub's client ID; `RNESS_GITHUB_CLIENT_ID` overrides it. */
 export function clientId(): string {
-  return process.env['RNESS_GITHUB_CLIENT_ID'] ?? GITHUB_CLIENT_ID
+  return clientIdOf(HOSTS.github)
 }
 
 /**
@@ -20,18 +27,20 @@ export function clientId(): string {
  * it by API needs the client secret.
  */
 export function approvalUrl(): string {
-  return `https://github.com/settings/connections/applications/${clientId()}`
+  return revokeUrl(HOSTS.github)
 }
 
 /** `https://github.com`; `RNESS_GITHUB_WEB` overrides it in tests. */
 export function webBase(): string {
-  return (process.env['RNESS_GITHUB_WEB'] ?? GITHUB_WEB).replace(/\/+$/, '')
+  return webOf(HOSTS.github)
 }
 
 export interface DeviceCode {
   deviceCode: string
   userCode: string
   verificationUri: string
+  /** The same page with the code filled in, where the host gives one (GitLab). */
+  verificationUriComplete?: string
   /** Seconds. */
   expiresIn: number
   interval: number
@@ -46,9 +55,9 @@ export interface TokenSet {
   scopes: string
 }
 
-/** GitHub said no: the message is one line for the user. */
+/** The host said no: the message is one line for the user. */
 export class LoginError extends Error {}
-/** GitHub refused the refresh token: the login is over. Not a network error. */
+/** The host refused the refresh token: the login is over. Not a network error. */
 export class RefreshRejected extends Error {}
 
 function reason(e: unknown): string {
@@ -59,12 +68,13 @@ function reason(e: unknown): string {
 }
 
 async function post(
+  host: HostSpec,
   path: string,
   params: Record<string, string>
 ): Promise<Record<string, unknown>> {
   let res: Response
   try {
-    res = await fetch(`${webBase()}${path}`, {
+    res = await fetch(`${webOf(host)}${path}`, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
@@ -75,18 +85,20 @@ async function post(
       signal: AbortSignal.timeout(15_000),
     })
   } catch (e) {
-    throw new Error(`cannot reach github.com: ${reason(e)}`, { cause: e })
+    throw new Error(`cannot reach ${host.host}: ${reason(e)}`, { cause: e })
   }
+  // GitLab answers its OAuth errors with a 400 and a JSON body, GitHub with
+  // a 200: the body decides, whatever the status.
   let body: unknown
   try {
     body = await res.json()
   } catch (e) {
-    throw new Error(`github.com answered ${res.status} for ${path}`, {
+    throw new Error(`${host.host} answered ${res.status} for ${path}`, {
       cause: e,
     })
   }
   if (body === null || typeof body !== 'object')
-    throw new Error(`github.com answered an unexpected body for ${path}`)
+    throw new Error(`${host.host} answered an unexpected body for ${path}`)
   return body as Record<string, unknown>
 }
 
@@ -109,14 +121,15 @@ function tokenSet(body: Record<string, unknown>, now: number): TokenSet | null {
 }
 
 export async function requestDeviceCode(
-  scopes: string = SCOPES
+  host: HostSpec = HOSTS.github,
+  scopes: string = host.scopes
 ): Promise<DeviceCode> {
-  const id = clientId()
+  const id = clientIdOf(host)
   if (id === '')
     throw new LoginError(
-      'rness has no GitHub client ID yet; set RNESS_GITHUB_CLIENT_ID'
+      `rness has no ${host.label} client ID yet; set ${host.clientIdEnv}`
     )
-  const body = await post('/login/device/code', {
+  const body = await post(host, host.deviceCodePath, {
     client_id: id,
     scope: scopes,
   })
@@ -126,15 +139,17 @@ export async function requestDeviceCode(
   if (deviceCode === null || userCode === null || verificationUri === null) {
     const error = str(body['error'])
     throw new LoginError(
-      error === 'device_flow_disabled'
-        ? 'the device flow is not enabled on the rness GitHub app'
-        : `github.com refused to start the login${error === null ? '' : ` (${error})`}`
+      error === host.deviceFlowDisabled
+        ? `the device flow is not enabled on the rness ${host.label} app`
+        : `${host.host} refused to start the login${error === null ? '' : ` (${error})`}`
     )
   }
+  const complete = str(body['verification_uri_complete'])
   return {
     deviceCode,
     userCode,
     verificationUri,
+    ...(complete === null ? {} : { verificationUriComplete: complete }),
     expiresIn: num(body['expires_in']) ?? 900,
     interval: num(body['interval']) ?? 5,
   }
@@ -148,7 +163,8 @@ export interface PollDeps {
 /** Ask every `interval` seconds until the user approved, refused, or the code expired. */
 export async function pollForToken(
   code: DeviceCode,
-  deps: PollDeps = {}
+  deps: PollDeps = {},
+  host: HostSpec = HOSTS.github
 ): Promise<TokenSet> {
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
@@ -157,8 +173,8 @@ export async function pollForToken(
   let interval = code.interval
   for (;;) {
     await sleep(interval * 1000)
-    const body = await post('/login/oauth/access_token', {
-      client_id: clientId(),
+    const body = await post(host, host.tokenPath, {
+      client_id: clientIdOf(host),
       device_code: code.deviceCode,
       grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
     })
@@ -177,18 +193,21 @@ export async function pollForToken(
     if (error === 'expired_token')
       throw new LoginError('the code expired before it was approved')
     if (error === 'access_denied')
-      throw new LoginError('the login was cancelled on github.com')
-    throw new LoginError(`github.com refused the login (${error ?? 'unknown'})`)
+      throw new LoginError(`the login was cancelled on ${host.host}`)
+    throw new LoginError(
+      `${host.host} refused the login (${error ?? 'unknown'})`
+    )
   }
 }
 
-/** A new token set for a refresh token. `RefreshRejected` when GitHub says the login is over. */
+/** A new token set for a refresh token. `RefreshRejected` when the host says the login is over. */
 export async function refreshTokenSet(
   refreshToken: string,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  host: HostSpec = HOSTS.github
 ): Promise<TokenSet> {
-  const body = await post('/login/oauth/access_token', {
-    client_id: clientId(),
+  const body = await post(host, host.tokenPath, {
+    client_id: clientIdOf(host),
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
   })

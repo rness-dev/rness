@@ -31,6 +31,18 @@ export async function fakeGithub(
   t: TestContext,
   route: Route
 ): Promise<{ base: string; requests: Recorded[] }> {
+  return fakeHost(t, route, 'RNESS_GITHUB_WEB')
+}
+
+/**
+ * A host on 127.0.0.1 that records every request and answers it with
+ * `route`; `webEnv` points at it for the test.
+ */
+export async function fakeHost(
+  t: TestContext,
+  route: Route,
+  webEnv: string
+): Promise<{ base: string; requests: Recorded[] }> {
   const requests: Recorded[] = []
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = []
@@ -71,11 +83,11 @@ export async function fakeGithub(
   )
   const { port } = server.address() as AddressInfo
   const base = `http://127.0.0.1:${port}`
-  const saved = process.env['RNESS_GITHUB_WEB']
-  process.env['RNESS_GITHUB_WEB'] = base
+  const saved = process.env[webEnv]
+  process.env[webEnv] = base
   t.after(() => {
-    if (saved === undefined) delete process.env['RNESS_GITHUB_WEB']
-    else process.env['RNESS_GITHUB_WEB'] = saved
+    if (saved === undefined) delete process.env[webEnv]
+    else process.env[webEnv] = saved
   })
   return { base, requests }
 }

@@ -11,7 +11,9 @@ import {
   resolveToken,
   writeAuth,
 } from '../../src/core/auth.ts'
+import { HOSTS } from '../../src/core/hosts.ts'
 import { fakeGithub, withEnv } from '../helpers/fake-github.ts'
+import { fakeGitlab } from '../helpers/fake-gitlab.ts'
 
 const HOUR = 3_600_000
 const NOW = 1_800_000_000_000
@@ -24,7 +26,9 @@ async function home(t: TestContext): Promise<string> {
     XDG_CONFIG_HOME: dir,
     GITHUB_TOKEN: undefined,
     GH_TOKEN: undefined,
+    GITLAB_TOKEN: undefined,
     RNESS_GITHUB_CLIENT_ID: 'client-test',
+    RNESS_GITLAB_CLIENT_ID: 'gl-client',
   })
   return dir
 }
@@ -126,4 +130,94 @@ test('GitHub refusing the refresh ends the login; a dead network does not', asyn
     await readFile(join(dir, 'rness', 'auth.json'), 'utf8'),
     /ghu_old/
   )
+})
+
+const gitlabLogin = (expiresAt: number | null) => ({
+  login: 'cedric',
+  tokens: {
+    accessToken: 'gl_old',
+    expiresAt,
+    refreshToken: 'gl_refresh_old',
+    refreshExpiresAt: null,
+    scopes: 'api write_repository',
+  },
+})
+
+test('two hosts in one file: a GitLab login beside the GitHub one, each cleared alone', async (t) => {
+  const dir = await home(t)
+  const file = join(dir, 'rness', 'auth.json')
+  await writeAuth(login(null))
+  await writeAuth(gitlabLogin(null), HOSTS.gitlab)
+  assert.deepEqual(await readAuth(), login(null))
+  assert.deepEqual(await readAuth(HOSTS.gitlab), gitlabLogin(null))
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(file, 'utf8'))), [
+    'github.com',
+    'gitlab.com',
+  ])
+  assert.equal((await stat(file)).mode & 0o777, 0o600)
+
+  await clearAuth(HOSTS.gitlab)
+  assert.equal(await readAuth(HOSTS.gitlab), null)
+  assert.deepEqual(await readAuth(), login(null))
+  // The last login cleared, the file goes.
+  await clearAuth()
+  await assert.rejects(stat(file), { code: 'ENOENT' })
+})
+
+test('GITLAB_TOKEN wins over the stored GitLab login; GitHub variables never reach gitlab.com', async (t) => {
+  await home(t)
+  withEnv(t, { GITHUB_TOKEN: 'github-env', GH_TOKEN: 'gh-env' })
+  assert.equal(await resolveToken({}, HOSTS.gitlab), null)
+  await writeAuth(gitlabLogin(null), HOSTS.gitlab)
+  assert.deepEqual(await resolveToken({}, HOSTS.gitlab), {
+    token: 'gl_old',
+    source: 'login',
+    login: 'cedric',
+  })
+  withEnv(t, { GITLAB_TOKEN: 'glpat-env' })
+  assert.deepEqual(await resolveToken({}, HOSTS.gitlab), {
+    token: 'glpat-env',
+    source: 'GITLAB_TOKEN',
+    login: null,
+  })
+  // And GITLAB_TOKEN never answers for github.com.
+  withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
+  assert.equal(await resolveToken(), null)
+})
+
+test('a GitLab token about to expire is refreshed at gitlab.com and stored there only; a refusal clears that host only', async (t) => {
+  await home(t)
+  let reply: { status?: number; json: unknown } = {
+    json: {
+      access_token: 'gl_new',
+      token_type: 'Bearer',
+      expires_in: 7200,
+      refresh_token: 'gl_refresh_new',
+      scope: 'api write_repository',
+    },
+  }
+  const gl = await fakeGitlab(t, () => reply)
+  await writeAuth(login(null))
+  await writeAuth(gitlabLogin(NOW + 60_000), HOSTS.gitlab)
+  const now = (): number => NOW
+  assert.equal((await resolveToken({ now }, HOSTS.gitlab))?.token, 'gl_new')
+  assert.equal(gl.requests[0]?.path, '/oauth/token')
+  assert.equal(gl.requests[0]?.form['refresh_token'], 'gl_refresh_old')
+  const stored = await readAuth(HOSTS.gitlab)
+  assert.equal(stored?.tokens.refreshToken, 'gl_refresh_new')
+  assert.equal(stored?.tokens.expiresAt, NOW + 7200 * 1000)
+  assert.deepEqual(await readAuth(), login(null))
+
+  reply = { status: 400, json: { error: 'invalid_grant' } }
+  await writeAuth(gitlabLogin(NOW - HOUR), HOSTS.gitlab)
+  const said: string[] = []
+  assert.equal(
+    await resolveToken({ now, notify: (l) => said.push(l) }, HOSTS.gitlab),
+    null
+  )
+  assert.deepEqual(said, [
+    'your GitLab login expired; run rness login --provider gitlab',
+  ])
+  assert.equal(await readAuth(HOSTS.gitlab), null)
+  assert.deepEqual(await readAuth(), login(null))
 })
