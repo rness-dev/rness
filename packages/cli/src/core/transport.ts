@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import type { Readable } from 'node:stream'
 
 import { HOSTS, type HostSpec } from './hosts.ts'
 import { rnessCommand } from './pm.ts'
@@ -48,16 +49,16 @@ function firstLine(text: string): string | null {
   )
 }
 
-/** As in `probeRemote`: what the pipe may still deliver after `'exit'`. */
-const STDERR_FLUSH_MS = 200
+/** As in `probeRemote`: what the pipes may still deliver after `'exit'`. */
+const FLUSH_MS = 200
 
 /**
  * `ssh -T git@<host>`: does the host accept one of the user's keys? GitHub
- * greets an accepted key and exits 1, so the greeting, not the exit code, is
- * the answer.
+ * greets an accepted key on stderr and exits 1, GitLab on stdout and exits 0,
+ * so the greeting, read on both, not the exit code, is the answer.
  *
- * In a terminal `ssh` may ask for a key's passphrase or confirm github.com's
- * host key; it asks on `/dev/tty`, not on stderr, so stderr stays piped and
+ * In a terminal `ssh` may ask for a key's passphrase or confirm the host's
+ * key; it asks on `/dev/tty`, not on stdout or stderr, so both stay piped and
  * the greeting is still read. Without a terminal `BatchMode=yes` forbids
  * every prompt. Never throws and never hangs: the child is killed at the
  * deadline, and the answer never waits on `'close'`.
@@ -83,18 +84,24 @@ export async function detectSsh(
   ]
   return new Promise<SshAccess>((resolve) => {
     const child = spawn(opts.command ?? 'ssh', args, {
-      stdio: [opts.interactive ? 'inherit' : 'ignore', 'ignore', 'pipe'],
+      stdio: [opts.interactive ? 'inherit' : 'ignore', 'pipe', 'pipe'],
     })
-    const chunks: string[] = []
-    child.stderr?.setEncoding('utf8')
-    child.stderr?.on('data', (chunk: string) => chunks.push(chunk))
+    const read = (stream: Readable): (() => string) => {
+      const chunks: string[] = []
+      stream.setEncoding('utf8')
+      stream.on('data', (chunk: string) => chunks.push(chunk))
+      return () => chunks.join('')
+    }
+    const stdout = read(child.stdout)
+    const stderr = read(child.stderr)
 
     let settled = false
     const settle = (access: SshAccess): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      child.stderr?.destroy()
+      child.stdout.destroy()
+      child.stderr.destroy()
       resolve(access)
     }
     const timer = setTimeout(() => {
@@ -105,28 +112,38 @@ export async function detectSsh(
     child.on('error', (e: Error) => settle({ ok: false, reason: e.message }))
     child.on('exit', (code) => {
       const finish = (): void => {
-        const stderr = chunks.join('')
-        const login = parseSshGreeting(stderr, host)
+        const login =
+          parseSshGreeting(stderr(), host) ?? parseSshGreeting(stdout(), host)
         settle(
           login !== null
             ? { ok: true, login }
             : {
                 ok: false,
                 reason:
-                  firstLine(stderr) ?? `ssh exited with code ${code ?? '?'}`,
+                  firstLine(stderr()) ??
+                  firstLine(stdout()) ??
+                  `ssh exited with code ${code ?? '?'}`,
               }
         )
       }
-      const stderr = child.stderr
-      if (stderr === null || stderr.readableEnded || stderr.destroyed)
-        return finish()
-      const flush = setTimeout(finish, STDERR_FLUSH_MS)
-      const done = (): void => {
-        clearTimeout(flush)
-        finish()
+      const open = [child.stdout, child.stderr].filter(
+        (s) => !s.readableEnded && !s.destroyed
+      )
+      if (open.length === 0) return finish()
+      const flush = setTimeout(finish, FLUSH_MS)
+      let pending = open.length
+      for (const stream of open) {
+        let ended = false
+        const done = (): void => {
+          if (ended) return
+          ended = true
+          if (--pending > 0) return
+          clearTimeout(flush)
+          finish()
+        }
+        stream.once('end', done)
+        stream.once('error', done)
       }
-      stderr.once('end', done)
-      stderr.once('error', done)
     })
   })
 }
@@ -153,7 +170,7 @@ export interface SshTest {
  * The SSH test, unattended first (`BatchMode=yes`): when that passes, ssh
  * never asks anything and a progress line may animate while git runs. Only
  * when it fails, and in a terminal, the test runs again letting ssh ask for a
- * passphrase — `announce` says so first.
+ * passphrase; `announce` says so first.
  */
 export async function testGithubSsh(
   transport: Transport,

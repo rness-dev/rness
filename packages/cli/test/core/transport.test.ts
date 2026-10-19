@@ -170,7 +170,8 @@ test('the lines, verbatim', () => {
   )
 })
 
-// GitLab (spec 0037 §5.2), as plan 0049 task 1 saw gitlab.com answer.
+// GitLab (spec 0037 §5.2), as plan 0049 task 1 saw gitlab.com answer: the
+// greeting on stdout, exit 0 (GitHub: stderr, exit 1).
 test("GitLab's greeting is SSH access; each host reads its own greeting only", async (t) => {
   const welcome = 'Welcome to GitLab, @cedricmagne!\n'
   assert.equal(parseSshGreeting(welcome, HOSTS.gitlab), 'cedricmagne')
@@ -179,7 +180,7 @@ test("GitLab's greeting is SSH access; each host reads its own greeting only", a
 
   const ssh = await fakeSsh(
     t,
-    `process.stderr.write(${JSON.stringify(welcome)}); process.exit(0)`
+    `process.stdout.write(${JSON.stringify(welcome)}); process.exit(0)`
   )
   assert.deepEqual(
     await detectSsh(HOSTS.gitlab, {
