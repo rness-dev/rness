@@ -30,7 +30,7 @@ export interface HostSpec {
   tokenPath: string
   /** What `rness login` asks for. */
   scopes: string
-  /** The shipped OAuth application; empty until one exists. Public by nature. */
+  /** The client ID of the shipped OAuth application. Public by nature. */
   clientId: string
   clientIdEnv: string
   /** The error the device-code request answers when the application cannot do the device flow. */
@@ -75,9 +75,9 @@ export const HOSTS = {
     deviceCodePath: '/oauth/authorize_device',
     tokenPath: '/oauth/token',
     scopes: 'api write_repository',
-    // The shipped application waits for the group that owns it (spec 0037,
-    // Open questions); until then RNESS_GITLAB_CLIENT_ID names one.
-    clientId: '',
+    // The application "Rness" of the group rness-dev (spec 0037 §3).
+    clientId:
+      '8b3fb7faf4ba06b5352dbe5d3c90b3206ef5e7a9734a578429ab145e10917103',
     clientIdEnv: 'RNESS_GITLAB_CLIENT_ID',
     // gitlab.com, while the application's "Device authorization grant" box
     // is unchecked (plan 0049 task 1).

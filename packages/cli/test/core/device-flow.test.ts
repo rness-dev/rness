@@ -197,11 +197,22 @@ test('GitLab: an application without the device grant, and a missing client ID, 
     )
     return true
   })
-  withEnv(t, { RNESS_GITLAB_CLIENT_ID: undefined })
+  withEnv(t, { RNESS_GITLAB_CLIENT_ID: '' })
   await assert.rejects(
     requestDeviceCode(HOSTS.gitlab),
     /rness has no GitLab client ID yet; set RNESS_GITLAB_CLIENT_ID/
   )
+})
+
+test('GitLab: without RNESS_GITLAB_CLIENT_ID, the client is the shipped application, Rness of the group rness-dev', async (t) => {
+  withEnv(t, { RNESS_GITLAB_CLIENT_ID: undefined })
+  const gl = await fakeGitlab(t, () => ({ json: GL_DEVICE }))
+  await requestDeviceCode(HOSTS.gitlab)
+  assert.deepEqual(gl.requests[0]?.form, {
+    client_id:
+      '8b3fb7faf4ba06b5352dbe5d3c90b3206ef5e7a9734a578429ab145e10917103',
+    scope: 'api write_repository',
+  })
 })
 
 test('GitLab: polling posts the device grant to /oauth/token; a refusal names gitlab.com', async (t) => {
