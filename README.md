@@ -45,9 +45,9 @@ npm create rness
   `rness mcp` serves the same context to any MCP client.
 - **Where everything stands.** `rness status` shows every decision,
   specification and plan and its status, in a terminal or as Markdown.
-  `rness board push` puts them on the boards `rness.json` declares — GitHub
-  Projects today — first Agent Pulse: one issue per document, the card an
-  agent is working on marked while it works.
+  `rness board push` puts them on the boards `rness.json` declares (a
+  GitHub Project, or GitLab issue boards), first Agent Pulse: one issue per
+  document, the card an agent is working on marked while it works.
 - **Upgrades without surprises.** The CLI version is pinned in
   `.rness/package.json`; every `rness` in the workspace delegates to it.
   `rness upgrade` moves the pin and merges the scaffold's changes with git.
@@ -55,7 +55,7 @@ npm create rness
 ## Quick start
 
 ```bash
-npm create rness           # asks for your GitHub organization, or a blank workspace
+npm create rness           # asks where your organization lives (GitHub or GitLab), or a blank workspace
 cd <your-org>
 rness add <repo>           # clone a repository of the organization into org/<repo>
 rness sync                 # write the generated block into each clone
@@ -71,7 +71,7 @@ starts one. A workspace is a directory per person:
 └── org/<repo>/    one clone per repository, each with its generated AGENTS.md block
 ```
 
-No GitHub organization yet? `npm create rness <name> --blank` makes a
+No organization yet? `npm create rness <name> --blank` makes a
 workspace without one; bring repositories in with `rness add <owner>/<repo>`
 or a git URL.
 

@@ -614,10 +614,31 @@ a sub-issue across repositories, and `Closes` on a pull request merged
   documents, 2026-09-30): the migration from 0.12.0 took 169 s with no
   wait; a sync with nothing to change, 4 s; the listing, one page of
   852 KB in about 1 s.
-- **Not yet**: GitLab and Atlassian, and their own boards. `create` lists
-  them, disabled; a workspace whose `rness.json` names one is refused by
-  `board push`. `Waiting` and `Review` statuses, several agents on one
-  board and hooks for agents other than Claude Code are not built.
+- **On GitLab** (the Free tier's shape): the cards are the issues of the
+  context project `<group>/rness`. Each `board` view is an issue board of
+  that project, `<title> · <view>`, its lists the labels of its columns
+  (`ADR status::Accepted`), in the declared order, the Open and Closed
+  lists hidden. A select is a label `Key::value` (`Status::Draft`,
+  `Collection::ADR`, `Agent::working`), kept exclusive by rness: a status
+  that changes swaps the label, and a card moved by hand between lists is
+  written back at the next push. A text, date or number field
+  (`Working session`, `Session history`) is a line of a footer at the end
+  of the description, below the digest, so a mark never makes the body look
+  changed. `rness.json` names the board by `ids`, one issue board id per
+  view, written when `push` creates them; `number` is refused on GitLab,
+  `ids` on GitHub. A `table` view has no object on GitLab: `push` prints its
+  issue list once (`view All: a table is not a board on GitLab - …`); a
+  `roadmap` view neither. A README, a short description and status updates
+  are not written. References in a document (`#4`, `!5`, `@name`, an
+  entity that decodes to one) are escaped, so a card notifies no one. The
+  link of `rness status` is the first view's board. `rness note` posts to
+  the plan's card; an implementation issue in a member project is linked
+  `relates_to` (Free has no sub-issues), and the session summary names the
+  merge request.
+- **Not yet**: Atlassian (Bitbucket + Jira); GitLab's Premium features
+  (status lists, scoped boards, custom fields). `Waiting` and `Review`
+  statuses, several agents on one board and hooks for agents other than
+  Claude Code are not built.
 - **`rness pulse`**, the name of all this until 0.21: hidden, each of its
   commands still runs as its new one and says so once on stderr
   (`rness pulse sync is now rness board push`); `rness pulse create
@@ -634,9 +655,10 @@ credentials), and the provider's API the rest (organizations, creating a
 repository, the board).
 
 - `rness create` asks `Where does your organization live?` first: GitHub,
-  GitLab and Atlassian (Bitbucket + Jira) shown disabled, coming later, and
+  GitLab, Atlassian (Bitbucket + Jira) shown disabled, coming later, and
   `No organization yet: a blank local workspace` (the `--blank` of
-  "Blank workspace"). `--provider github` answers it off a terminal;
+  "Blank workspace"). `--provider github` or `--provider gitlab` answers it
+  off a terminal;
   `--org`, `--repos` and `--blank` settle it unasked. Joining an
   organization asks first as well, then takes the provider its `rness.json`
   names.
@@ -650,11 +672,25 @@ repository, the board).
   of them at once is refused. A board in `boards` is written whole, on
   several lines, once created; a number still reads, as its preset, until
   `rness sync` writes it whole.
+- **GitLab**: the organization is a top-level group, by its path
+  (letters, digits, `_`, `-`, `.`; a subgroup is not a workspace). The
+  wizard asks `Which GitLab group?`, your own namespace last, and lists
+  the group's projects, its subgroups' included: each by its path, the
+  subgroup as the hint (`platform/mobile`), cloned under `org/<path>`;
+  `internal` wears the padlock with its word; a second project with a path
+  already offered is left out and named once; archived projects and those
+  scheduled for deletion are not offered. The member line names your role
+  (`member   acme (as cedric, Owner)`). The context repository is the
+  project `<group>/rness`, since a GitLab slug starts with a letter or a
+  digit; it is still cloned as `.rness/`. Declined or refused, the manual
+  steps name `git`, then `glab repo create <group>/rness --private
+--skipGitInit`. `rness add` takes a subgroup's project by its full path
+  (`rness add acme/platform/mobile`).
 - A provider _written_ in `rness.json` that this version cannot talk to
-  (`gitlab`) is refused by `validate`, `create`, `login` and `board`:
-  `provider "gitlab" is not supported by @rness/cli 0.17.1 (supported:
-github)`. `add`, `sync` and the local commands never refuse. `null` is not a
-  value: an absent key means none.
+  (`atlassian`) is refused by `validate`, `create`, `login` and `board`:
+  `provider "atlassian" is not supported by @rness/cli <version>
+(supported: github, gitlab)`. `add`, `sync` and the local commands never
+  refuse. `null` is not a value: an absent key means none.
 
 ### MCP server
 
@@ -745,12 +781,24 @@ anonymously.
   a version manager (mise, nvm), run `rness login --setup-git` again.
 - `rness logout` forgets the login; revoke the authorization itself in
   GitHub's settings (the command prints the link).
+- **GitLab**: `rness login --provider gitlab` (inside a GitLab workspace,
+  the flag is not needed) runs gitlab.com's device flow with rness's
+  application "Rness" of the group `rness-dev`, scopes `api` and
+  `write_repository`: the access token lives 2 hours and is renewed on its
+  own, beside the GitHub login in the same `auth.json`. `GITLAB_TOKEN` wins
+  over it (a personal access token works). Over HTTPS git sends the
+  username `oauth2`; `--setup-git` writes the helper for gitlab.com, one
+  block per host. `rness logout --provider gitlab` forgets that login only
+  and names `https://gitlab.com/-/user_settings/applications`, where the
+  authorization is revoked. `RNESS_GITLAB_CLIENT_ID` points at another
+  application (a fork, a self-managed instance's).
 
 ### SSH or HTTPS
 
-`create` and `add` test your SSH access to github.com once
-(`ssh -T git@github.com`) and write `git@github.com:` URLs when GitHub accepts
-your key, `https://github.com/` ones otherwise; `--ssh` and `--https` decide
+`create` and `add` test your SSH access to the workspace's host once
+(`ssh -T git@github.com`, `git@gitlab.com` on GitLab, whose greeting comes on
+stdout) and write `git@<host>:` URLs when the host accepts your key,
+`https://<host>/` ones otherwise; `--ssh` and `--https` decide
 without the test. In a terminal `ssh` may ask for your key's passphrase;
 without one (`--yes`, CI) it never prompts, so a key that needs a passphrase
 counts as no access unless an agent holds it.
@@ -847,6 +895,19 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## Unreleased
+
+- **GitLab as a provider** (spec 0037): `rness login --provider gitlab`
+  (gitlab.com's device flow, the application "Rness", `GITLAB_TOKEN`,
+  `oauth2` over HTTPS, `--setup-git` per host); `create` on a top-level
+  group, its subgroups' projects included, the context project
+  `<group>/rness`; `add` by full path; `sync` leaves `org/rness` alone on
+  GitLab; the boards as issue boards of `<group>/rness`, one per view
+  (`ids`), the selects as scoped labels kept exclusive, the other fields in
+  a footer; `rness note` and the session summary on GitLab.
+- The SSH test reads the greeting on stdout as well as stderr.
+- `create --help` names GitLab; `--ssh` and `--https` say `<host>`.
 
 ## 0.22.2 - repository names in any case
 
