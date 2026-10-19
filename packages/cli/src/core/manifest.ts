@@ -125,11 +125,12 @@ const GITLAB_GROUP = /^(?!-)[A-Za-z0-9_.-]{1,255}(?<!\.)(?<!\.git)(?<!\.atom)$/
 /** The rule `org` follows on a provider, and how its message names it. */
 export function orgNameRule(provider: ProviderName | null): {
   pattern: RegExp
-  word: string
+  /** `GitHub organization name`, for "a …" or "a valid …". */
+  noun: string
 } {
   return provider === 'gitlab'
-    ? { pattern: GITLAB_GROUP, word: 'a GitLab group path' }
-    : { pattern: ORG_NAME, word: 'a GitHub organization name' }
+    ? { pattern: GITLAB_GROUP, noun: 'GitLab group path' }
+    : { pattern: ORG_NAME, noun: 'GitHub organization name' }
 }
 
 /** Every top-level key contract 1 defines. */
@@ -169,7 +170,7 @@ function readOrg(value: unknown, provider: ProviderName | null): string | null {
   if (value === undefined || value === null) return null
   const rule = orgNameRule(provider)
   if (typeof value !== 'string' || !rule.pattern.test(value))
-    fail(`"org" must be ${rule.word} (got ${JSON.stringify(value)})`)
+    fail(`"org" must be a ${rule.noun} (got ${JSON.stringify(value)})`)
   return value
 }
 
@@ -495,7 +496,9 @@ const FULL_URL = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/
 export function parseRepoSpec(
   spec: string,
   org: string | null,
-  host: string
+  host: string,
+  /** On GitLab, a project of a subgroup goes by its full path (spec 0037 §5.2). */
+  provider: ProviderName | null = null
 ): { name: string; url: string } {
   let url: string
   if (FULL_URL.test(spec)) {
@@ -506,7 +509,9 @@ export function parseRepoSpec(
       // A blank workspace has no owner to expand a bare name with (spec 0012).
       if (org === null)
         throw new Error(
-          'this workspace has no GitHub organization: give <owner>/<repo> or a git URL'
+          provider === 'gitlab'
+            ? 'this workspace has no GitLab group: give <group>/<project> or a git URL'
+            : 'this workspace has no GitHub organization: give <owner>/<repo> or a git URL'
         )
       url = repoUrl(host, org, spec)
     } else if (
@@ -515,6 +520,8 @@ export function parseRepoSpec(
       parts[1] !== undefined
     )
       url = repoUrl(host, parts[0], parts[1])
+    else if (provider === 'gitlab' && parts.every((p) => p !== ''))
+      url = `${host}${spec}.git`
     else
       throw new Error(
         `repository name "${spec}" is not a name (use <repo>, <owner>/<repo>, or a URL)`

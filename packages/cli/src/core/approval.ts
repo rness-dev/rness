@@ -45,7 +45,11 @@ export async function checkAccess(input: {
   const { org, provider, ui } = input
   if (!provider.authenticated) return 'unknown'
   const login = (await provider.identity())?.login
-  const as = login === undefined ? '' : ` (as ${login})`
+  const role = (await provider.organizationRole?.(org)) ?? null
+  const as =
+    login === undefined
+      ? ''
+      : ` (as ${login}${role === null ? '' : `, ${role}`})`
   const member = (): void =>
     ui.line('member', `${org}${as}`, `You are a member of ${org}${as}`)
   const access = await provider.organizationAccess(org)

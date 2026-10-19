@@ -286,9 +286,9 @@ function buildProgram(state: RunState): Command {
     )
     .option(
       '--ssh',
-      'force git@github.com: (default: SSH when it works, else HTTPS)'
+      'force SSH, git@<host>: (default: SSH when it works, else HTTPS)'
     )
-    .option('--https', 'force https://github.com/')
+    .option('--https', 'force HTTPS, https://<host>/')
     .option('-y, --yes', 'do not ask for confirmation')
     .addOption(new Option('--host <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
@@ -367,15 +367,15 @@ function buildProgram(state: RunState): Command {
   program
     .command('create')
     .description(
-      "Create or join a GitHub organization's workspace, or a blank one with --blank"
+      "Create or join an organization's workspace (a GitHub organization, a GitLab group), or a blank one with --blank"
     )
     .argument(
       '[name]',
-      'the GitHub organization, same as --org; with --blank, the workspace directory'
+      'the organization, same as --org; with --blank, the workspace directory'
     )
     .option(
       '--org <name>',
-      'the GitHub organization, exact name (github.com/<name>)'
+      'the organization, exact name (github.com/<name>, gitlab.com/<group>)'
     )
     .option(
       '--repos <list>',
@@ -383,7 +383,7 @@ function buildProgram(state: RunState): Command {
     )
     .option(
       '--provider <name>',
-      'where the organization lives: github (gitlab, atlassian later)'
+      'where the organization lives: github or gitlab (atlassian later)'
     )
     .option(
       '--pm <name>',
@@ -391,9 +391,9 @@ function buildProgram(state: RunState): Command {
     )
     .option(
       '--ssh',
-      'force git@github.com: (default: SSH when it works, else HTTPS)'
+      'force SSH, git@<host>: (default: SSH when it works, else HTTPS)'
     )
-    .option('--https', 'force https://github.com/')
+    .option('--https', 'force HTTPS, https://<host>/')
     .option(
       '--blank',
       'a local workspace with no GitHub organization: .rness/, an empty org/, the root files'
@@ -408,6 +408,7 @@ function buildProgram(state: RunState): Command {
     .option('--template <name>', 'reserved')
     .addOption(new Option('--host <base>').hideHelp())
     .addOption(new Option('--github-api <base>').hideHelp())
+    .addOption(new Option('--gitlab-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (orgArg: string | undefined, opts: CreateOptions) => {
       // Blank, the positional names the directory; --org is refused there.

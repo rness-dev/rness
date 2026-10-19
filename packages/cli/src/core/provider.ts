@@ -56,6 +56,8 @@ export interface Provider {
   /** The organizations of the identity; empty when anonymous. */
   listOrganizations(): Promise<Organization[]>
   organizationAccess(org: string): Promise<OrganizationAccess>
+  /** The identity's role in `org` as the provider names it (`Owner`), when it says one: GitLab does, GitHub's listing already did. */
+  organizationRole?(org: string): Promise<string | null>
   /** Where a person approves rness for an organization (spec 0028 §3); null when the provider has no such page. */
   approvalUrl(): string | null
   listRepositories(owner: string): Promise<RepositoryListing>

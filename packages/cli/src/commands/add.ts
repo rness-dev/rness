@@ -1,10 +1,13 @@
 import { basename, join } from 'node:path'
 
 import type { CommandDeps } from '../core/deps.ts'
+import { HOSTS, hostFor } from '../core/hosts.ts'
 import {
   CONTEXT_REPO,
+  contextRepo,
   loadManifest,
   parseRepoSpec,
+  providerOf,
   workspaceName,
 } from '../core/manifest.ts'
 import type { GitCredentials } from '../core/provider.ts'
@@ -16,13 +19,13 @@ import {
 } from '../core/repos.ts'
 import { defaultTerminal } from '../core/terminal.ts'
 import {
-  CHECKING,
-  defaultTransport,
+  checking,
   httpsFlagLine,
   isSshUrl,
   passphraseHint,
   sshWorkspaceLines,
   testGithubSsh,
+  transportFor,
   usingRest,
   usingSentence,
 } from '../core/transport.ts'
@@ -76,7 +79,6 @@ export async function addCommand(
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
   const terminal = deps.terminal ?? defaultTerminal
-  const transport = deps.transport ?? defaultTransport
   let provider = deps.provider
   const credentialsFor = async (
     manifest: Manifest,
@@ -95,11 +97,15 @@ export async function addCommand(
     const manifest = await loadManifest(ws.rnessDir)
     // The owner of a bare `<repo>`; a blank workspace has none (spec 0012).
     const org = manifest.org
+    // The workspace's host: its SSH test, its URL bases, its words.
+    const providerName = providerOf(manifest)
+    const hostSpec = hostFor(providerName) ?? HOSTS.github
+    const transport = deps.transport ?? transportFor(hostSpec)
 
     // The name is checked before anything else runs; the host comes later.
     let parsed: { name: string; url: string }
     try {
-      parsed = parseRepoSpec(spec, org, transport.hosts.https)
+      parsed = parseRepoSpec(spec, org, transport.hosts.https, providerName)
     } catch (e) {
       process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`)
       return 2
@@ -110,9 +116,10 @@ export async function addCommand(
     // generated member block next to the shared one (spec 0009). The name
     // decides, whatever organization it came from: every spelling lands on
     // the same directory and the same catalogue key.
-    if (parsed.name === CONTEXT_REPO) {
+    const context = contextRepo(providerName)
+    if (parsed.name === context) {
       process.stderr.write(
-        `${CONTEXT_REPO} is the workspace context, not a member repository: it is already cloned at ${basename(ws.root)}/${CONTEXT_REPO}\n`
+        `${context} is the workspace context, not a member repository: it is already cloned at ${basename(ws.root)}/${CONTEXT_REPO}\n`
       )
       return 2
     }
@@ -141,7 +148,7 @@ export async function addCommand(
       const { access, unattended } = await testGithubSsh(
         transport,
         interactive,
-        () => ui.line(...CHECKING)
+        () => ui.line(...checking(hostSpec))
       )
       if (unattended || !access.ok) ui.gitIsSilent = true
       else ui.hint(passphraseHint(), 'stderr')
@@ -149,12 +156,16 @@ export async function addCommand(
         isSshUrl(r.url, transport.hosts)
       )
       if (access.ok || !overSsh) {
-        ui.line('using', usingRest(access), usingSentence(access))
+        ui.line(
+          'using',
+          usingRest(access, undefined, hostSpec),
+          usingSentence(access, undefined, hostSpec)
+        )
         host = access.ok ? transport.hosts.ssh : transport.hosts.https
       } else {
         // An SSH workspace never falls back silently: say why, then let the
         // user choose HTTPS for this one repository.
-        const lines = sshWorkspaceLines(access.reason)
+        const lines = sshWorkspaceLines(access.reason, hostSpec)
         if (!interactive) {
           process.stderr.write(
             `${[...lines, httpsFlagLine(spec)].join('\n')}\n`
@@ -172,7 +183,7 @@ export async function addCommand(
         host = transport.hosts.https
       }
     }
-    parsed = parseRepoSpec(spec, org, host)
+    parsed = parseRepoSpec(spec, org, host, providerName)
 
     const scopes = (opts.scopes ?? '')
       .split(',')

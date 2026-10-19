@@ -3,7 +3,13 @@ import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 
 import { exists } from './fs.ts'
 import { clone, originUrl } from './git.ts'
-import { NAME, NAME_RULE, parseRepoSpec, writeManifest } from './manifest.ts'
+import {
+  NAME,
+  NAME_RULE,
+  parseRepoSpec,
+  providerOf,
+  writeManifest,
+} from './manifest.ts'
 import type { GitCredentials } from './provider.ts'
 import { sameRemote } from './remote.ts'
 import type { Manifest, ScopeEntry } from './types.ts'
@@ -39,7 +45,12 @@ export interface AddRepositoryResult {
 export async function addRepository(
   input: AddRepositoryInput
 ): Promise<AddRepositoryResult> {
-  const { name, url } = parseRepoSpec(input.spec, input.org, input.host)
+  const { name, url } = parseRepoSpec(
+    input.spec,
+    input.org,
+    input.host,
+    providerOf(input.manifest)
+  )
   const orgDir = join(input.root, 'org')
   const dir = join(orgDir, name)
 

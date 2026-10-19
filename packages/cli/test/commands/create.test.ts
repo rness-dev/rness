@@ -852,7 +852,8 @@ const NAME_Q = 'What should the workspace be called?'
 const ORG_Q = 'What is your GitHub organization named?'
 const LOGIN_Q =
   'Log in to GitHub to list your organizations and private repositories?'
-const PUBLISH_Q = /^Create \S+\/\.rness on GitHub \(private\) and push it\?$/
+const PUBLISH_Q =
+  /^Create \S+\/\.?rness on (?:GitHub|GitLab) \(private\) and push it\?$/
 const REPOS_Q = 'Which repositories do you want in your workspace?'
 const NO_TOKEN_NOTE =
   'only public repositories are listed; rness login lists the private ones you can access\n'
@@ -1598,6 +1599,174 @@ test('joining a workspace pinned to an older @rness/cli says nothing about versi
 
   assert.doesNotMatch((await join('^0.0.1')).out, /pins @rness\/cli/)
   assert.doesNotMatch((await join('99.0.0')).out, /pins @rness\/cli/)
+})
+
+// --- GitLab (spec 0037 §4, §5; plan 0049 task 4) -----------------------------
+
+const GITLAB_PUBLISH_Q = 'Create acme/rness on GitLab (private) and push it?'
+
+/** A logged-in GitLab provider over a local remote: acme's projects, rness created on demand. */
+async function gitlabFixture(t: Parameters<typeof scratch>[0]) {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  await remote.addRepo('platform/mobile', { 'README.md': '# mobile\n' })
+  const gl = fakeProvider({
+    login: 'cedric',
+    organizations: [{ login: 'acme', approved: true, canGrant: null }],
+    access: 'member',
+    role: 'Owner',
+    approvalUrl: null,
+    repositories: [
+      { name: 'api', private: true, archived: false, path: 'acme/api' },
+      {
+        name: 'mobile',
+        private: true,
+        archived: false,
+        path: 'acme/platform/mobile',
+        hint: 'platform/mobile',
+      },
+      {
+        name: 'web',
+        private: true,
+        archived: false,
+        path: 'acme/web',
+        hint: 'internal',
+      },
+    ],
+    notes: ['api and legacy/api share the name api: legacy/api is left out'],
+    create: async (_owner, name) => {
+      await remote.addRepo(name, {})
+      return { kind: 'created' }
+    },
+  })
+  return { remote, gl }
+}
+
+test('GitLab wizard: its words, the group then the account, the subgroup hint, the duplicate said, rness created and pushed, provider written', async (t) => {
+  const { remote, gl } = await gitlabFixture(t)
+  const cwd = await scratch(t)
+  const term = terminal({
+    provider: 'gitlab',
+    select: ['acme'],
+    pick: [['api', 'mobile']],
+    publish: true,
+  })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    gl.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    PROVIDER_Q,
+    'Which GitLab group?',
+    'Which projects do you want in your workspace?',
+    GITLAB_PUBLISH_Q,
+  ])
+  // The group, the user's own namespace, then a group typed by hand.
+  assert.deepEqual(term.offered[0], ['acme', 'cedric', ''])
+  const picker = term.offered[1] as { value: string; hint?: string }[]
+  assert.deepEqual(
+    picker.map((o) => [o.value, o.hint ?? null]),
+    [
+      ['api', null],
+      ['mobile', 'platform/mobile'],
+      ['web', 'internal'],
+    ]
+  )
+  assert.match(r.out, /^member {3}acme \(as cedric, Owner\)$/m)
+  assert.match(
+    r.out,
+    /^not found acme\/rness \(or not visible to you\) - starting a new workspace$/m
+  )
+  // The plain look announces the listing in the provider's word.
+  assert.match(r.out, /^listing {2}acme projects…$/m)
+  assert.match(
+    r.out + r.err,
+    /api and legacy\/api share the name api: legacy\/api is left out/
+  )
+  assert.deepEqual(gl.created, ['acme/rness'])
+  assert.match(
+    r.out,
+    /^created {2}gitlab\.com\/acme\/rness \(private\)\npushed {3}acme\/rness$/m
+  )
+  const m = await loadManifest(join(cwd, 'acme', '.rness'))
+  assert.equal(m.provider, 'gitlab')
+  assert.deepEqual(m.repos, {
+    api: { url: `${remote.host}acme/api.git` },
+    mobile: { url: `${remote.host}acme/platform/mobile.git` },
+  })
+  await access(join(cwd, 'acme', 'org', 'mobile', 'README.md'))
+  assert.match(
+    r.out,
+    / {2}# then, for every teammate: npm create rness -- acme --provider gitlab\n/
+  )
+})
+
+test('GitLab, not published: the manual steps name the project rness, git first, glab second', async (t) => {
+  const { remote, gl } = await gitlabFixture(t)
+  const r = await wizard(
+    {
+      org: 'acme',
+      provider: 'gitlab',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote.host,
+      repos: '',
+      cwd: await scratch(t),
+    },
+    terminal({ publish: false, confirm: [true] }).deps,
+    undefined,
+    gl.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(gl.created, [])
+  assert.ok(
+    r.out.includes(
+      [
+        '  # create the empty private project acme/rness on gitlab.com, then:',
+        `  git remote add origin ${remote.host}acme/rness.git && git push -u origin main`,
+        '  # or, with the GitLab CLI (glab) installed:',
+        '  glab repo create acme/rness --private --skipGitInit && git push -u origin main',
+      ].join('\n')
+    ),
+    r.out
+  )
+})
+
+test("GitLab: --org follows the group path rule; the typed group is asked in GitLab's words", async (t) => {
+  const bad = await create([
+    'acme.',
+    '--provider',
+    'gitlab',
+    '--cwd',
+    await scratch(t),
+  ])
+  assert.equal(bad.code, 2)
+  assert.equal(
+    bad.err,
+    'organization name "acme." is not a valid GitLab group path\n'
+  )
+  const anonymous = fakeProvider({ login: null, approvalUrl: null })
+  const term = terminal({
+    provider: 'gitlab',
+    confirm: [false],
+    text: ['acme.', CANCEL],
+  })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', cwd: await scratch(t) },
+    term.deps,
+    undefined,
+    anonymous.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    PROVIDER_Q,
+    'Log in to GitLab to list your groups and private projects?',
+    'What is your GitLab group named?',
+  ])
+  assert.deepEqual(term.refused, ['"acme." is not a valid GitLab group path'])
 })
 
 // --- publishing a new workspace (spec 0004 §3b) ------------------------------

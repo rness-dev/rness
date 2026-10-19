@@ -123,13 +123,22 @@ test('access: member at any level, a stranger, unknown otherwise or anonymously'
   )
   const provider = new GitLabOAuthProvider({ token: LOGIN })
   assert.equal(await provider.organizationAccess('acme'), 'member')
-  assert.ok(
-    gl.requests.some((r) => r.path === '/api/v4/groups/acme/members/all/42')
+  // The role reads the same answer: one call per group.
+  assert.equal(await provider.organizationRole('acme'), 'Developer')
+  assert.equal(
+    gl.requests.filter((r) => r.path === '/api/v4/groups/acme/members/all/42')
+      .length,
+    1
   )
   membership = { status: 404, json: {} }
-  assert.equal(await provider.organizationAccess('acme'), 'not-member')
+  const stranger = new GitLabOAuthProvider({ token: LOGIN })
+  assert.equal(await stranger.organizationAccess('acme'), 'not-member')
+  assert.equal(await stranger.organizationRole('acme'), null)
   membership = { status: 500, json: {} }
-  assert.equal(await provider.organizationAccess('acme'), 'unknown')
+  assert.equal(
+    await new GitLabOAuthProvider({ token: LOGIN }).organizationAccess('acme'),
+    'unknown'
+  )
   assert.equal(
     await new GitLabOAuthProvider({ token: null }).organizationAccess('acme'),
     'unknown'

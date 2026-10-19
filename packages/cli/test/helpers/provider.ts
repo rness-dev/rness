@@ -19,6 +19,10 @@ export function fakeProvider(spec: {
   approvalUrl?: string | null
   repositories?: OrgRepository[]
   owner?: 'org' | 'user' | 'self'
+  /** Lines the listing asks to print (GitLab's duplicate paths). */
+  notes?: string[]
+  /** The identity's role in any organization, when the provider says it (GitLab). */
+  role?: string
   /** What `createRepository` does and answers; default: refused. */
   create?: (owner: string, name: string) => Promise<CreateRepositoryResult>
 }): {
@@ -57,6 +61,9 @@ export function fakeProvider(spec: {
         if (!Array.isArray(a)) return a
         return a[Math.min(accessCalls.length, a.length) - 1] ?? 'unknown'
       },
+      ...(spec.role === undefined
+        ? {}
+        : { organizationRole: async () => spec.role ?? null }),
       approvalUrl: () =>
         spec.approvalUrl === undefined
           ? 'https://github.test/settings/connections/applications/rness'
@@ -68,6 +75,7 @@ export function fakeProvider(spec: {
           repositories: spec.repositories ?? [],
           owner: spec.owner ?? 'org',
           truncated: false,
+          ...(spec.notes === undefined ? {} : { notes: spec.notes }),
         }
       },
       createRepository: async (owner, name) => {

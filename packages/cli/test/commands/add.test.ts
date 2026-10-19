@@ -453,6 +453,61 @@ test('add refuses the context repository, whatever organization it is named with
   }
 })
 
+test('on GitLab, a project of a subgroup is added by its full path: the key its last segment, lowercase', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('platform/Mobile', { 'README.md': '# mobile\n' })
+  const root = await makeWorkspace(t, {
+    provider: 'gitlab',
+    org: 'acme',
+    dirs: ['org'],
+  })
+  const r = await add([
+    '--yes',
+    '--cwd',
+    root,
+    '--host',
+    remote.host,
+    'acme/platform/Mobile',
+  ])
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {
+    mobile: { url: `${remote.host}acme/platform/Mobile.git` },
+  })
+  await access(join(root, 'org', 'mobile', 'README.md'))
+})
+
+test('on GitLab, add refuses rness, the context project, and says where it is cloned', async (t) => {
+  const root = await makeWorkspace(t, {
+    provider: 'gitlab',
+    org: 'acme',
+    dirs: ['org'],
+  })
+  for (const spec of ['rness', 'acme/rness', 'RNESS']) {
+    const r = await add(['--yes', '--cwd', root, spec])
+    assert.equal(r.code, 2, `${spec} must be refused`)
+    assert.match(
+      r.err,
+      /^rness is the workspace context, not a member repository: it is already cloned at [^/]+\/\.rness$/m
+    )
+  }
+})
+
+test('on GitLab, the SSH test and its line name gitlab.com', async (t) => {
+  const ok = await fakeTransport(t, 'acme', SSH_OK)
+  await ok.ssh.addRepo('api', { 'README.md': '# api\n' })
+  const root = await makeWorkspace(t, {
+    provider: 'gitlab',
+    org: 'acme',
+    dirs: ['org'],
+  })
+  const r = await addWith('api', { yes: true, cwd: root }, NO_TTY, ok.transport)
+  assert.equal(r.code, 0, r.err)
+  assert.ok(
+    r.out.startsWith('using    ssh (gitlab.com as octo)\ncloned   org/api\n'),
+    r.out
+  )
+})
+
 test('in a workspace that declares claude, add writes the new clone its Claude settings', async (t) => {
   const url = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {

@@ -9,12 +9,15 @@ import { BLANK, askProvider } from '../core/ask-provider.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { clone, publish } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
-import { MAX_PAGES, PER_PAGE } from '../core/github.ts'
+import { MAX_PAGES, type OrgRepository, PER_PAGE } from '../core/github.ts'
+import { gitlabProvider } from '../core/gitlab-oauth-provider.ts'
+import { HOSTS, type HostSpec, hostFor, providerFlag } from '../core/hosts.ts'
 import {
   NAME,
-  ORG_NAME,
+  contextRepo,
   isMemberRepo,
   loadManifest,
+  orgNameRule,
   parseRepoSpec,
 } from '../core/manifest.ts'
 import {
@@ -48,15 +51,17 @@ import {
   defaultTerminal,
 } from '../core/terminal.ts'
 import {
-  CHECKING,
-  INSTEAD_OF_LINES,
   type SshAccess,
   type SshTest,
+  type Transport,
+  checking,
   defaultTransport,
+  insteadOfLines,
   isSshUrl,
   passphraseHint,
   sshWorkspaceLines,
   testGithubSsh,
+  transportFor,
   usingRest,
   usingSentence,
 } from '../core/transport.ts'
@@ -101,6 +106,78 @@ export interface CreateOptions {
   cwd?: string
   /** Internal (tests): GitHub REST API base. */
   githubApi?: string
+  /** Internal (tests): GitLab REST API base. */
+  gitlabApi?: string
+}
+
+/** What the wizard says and makes, per provider (spec 0037 §4, §5.4). */
+interface Words {
+  /** `GitHub`, as the lines name the provider. */
+  label: string
+  /** The organization's word: `organization`, `group`. */
+  org: string
+  repos: readonly [string, string]
+  login: string
+  otherLabel: string
+  otherHint: string
+}
+
+const WORDS: Readonly<Record<'github' | 'gitlab', Words>> = {
+  github: {
+    label: 'GitHub',
+    org: 'organization',
+    repos: ['repository', 'repositories'],
+    login:
+      'Log in to GitHub to list your organizations and private repositories?',
+    otherLabel: 'an organization not listed here…',
+    otherHint: 'not a member, or it has not approved rness yet',
+  },
+  gitlab: {
+    label: 'GitLab',
+    org: 'group',
+    repos: ['project', 'projects'],
+    login: 'Log in to GitLab to list your groups and private projects?',
+    otherLabel: 'a group not listed here…',
+    otherHint: 'not a member',
+  },
+}
+
+const wordsOf = (provider: ProviderName): Words =>
+  provider === 'gitlab' ? WORDS.gitlab : WORDS.github
+
+/**
+ * What to type when the context repository is not published: git first,
+ * everyone has it; the provider's CLI second, for those who do (spec 0004
+ * §3b, spec 0037 §5.4).
+ */
+function manualSteps(
+  provider: ProviderName,
+  org: string,
+  context: string,
+  url: string
+): string[] {
+  if (provider === 'gitlab')
+    return [
+      `# create the empty private project ${org}/${context} on gitlab.com, then:`,
+      `git remote add origin ${url} && git push -u origin main`,
+      '# or, with the GitLab CLI (glab) installed:',
+      `glab repo create ${org}/${context} --private --skipGitInit && git push -u origin main`,
+    ]
+  return [
+    `# create the empty private repository ${org}/${context} on github.com, then:`,
+    `git remote add origin ${url} && git push -u origin main`,
+    // git first: everyone has it. The GitHub CLI second, for those who do: it
+    // creates the repository and pushes in one step.
+    '# or, with the GitHub CLI (gh) installed, in one step:',
+    `gh repo create ${org}/${context} --private --source . --push`,
+  ]
+}
+
+/** How a teammate joins: `--provider` past GitHub, behind npm's `--`. */
+function joinCommand(provider: ProviderName, org: string): string {
+  const pm = detectPackageManager()
+  if (provider === 'github') return `${pm} create rness ${org}`
+  return `${pm} create rness ${pm === 'npm' ? '-- ' : ''}${org} --provider ${provider}`
 }
 
 export type { Prompts }
@@ -142,41 +219,48 @@ function cancelled(ui: Ui): number {
 async function pickRepositories(input: {
   org: string
   provider: Provider
+  providerName: ProviderName
   prompts: Prompts
   ui: Ui
   catalogue: Readonly<Record<string, unknown>>
 }): Promise<{ picked: string[]; prompted: boolean } | null> {
-  const { org, prompts, provider, ui } = input
-  let listed: { name: string; private: boolean; archived: boolean }[] = []
+  const { org, prompts, provider, providerName, ui } = input
+  const words = wordsOf(providerName)
+  const [one, many] = words.repos
+  const member = (r: { name: string; archived: boolean }): boolean =>
+    isMemberRepo(r, providerName)
+  let listed: OrgRepository[] = []
   let failed = false
   // The plain look announces the listing; the session look spins on it.
-  if (!ui.session) ui.line('listing', `${org} repositories…`)
+  if (!ui.session) ui.line('listing', `${org} ${many}…`)
   try {
     const listing = await ui.step(
       {
-        doing: `listing  ${org} repositories`,
-        sentence: `Listing the repositories of ${org}`,
+        doing: `listing  ${org} ${many}`,
+        sentence: `Listing the ${many} of ${org}`,
         quiet: true,
       },
       () => provider.listRepositories(org),
-      // What the listing offers, not what GitHub returned: the count and the
-      // list below it must agree (spec 0009).
+      // What the listing offers, not what the provider returned: the count
+      // and the list below it must agree (spec 0009).
       (l) => [
         'listed',
-        `${count(l.repositories.filter((r) => isMemberRepo(r)).length, ['repository', 'repositories'])} of ${org}`,
+        `${count(l.repositories.filter(member).length, [one, many])} of ${org}`,
       ]
     )
     listed = listing.repositories
+    for (const note of listing.notes ?? []) ui.hint(note)
+    const login = `${rnessCommand()} login${providerFlag(hostFor(providerName) ?? HOSTS.github)}`
     if (listing.owner === 'user')
       ui.hint(
-        `only public repositories of ${org} are listed; add private ones later with ${rnessCommand()} add <repo>`
+        `only public ${many} of ${org} are listed; add private ones later with ${rnessCommand()} add <repo>`
       )
     else if (!provider.authenticated)
       ui.hint(
-        `only public repositories are listed; ${rnessCommand()} login lists the private ones you can access`
+        `only public ${many} are listed; ${login} lists the private ones you can access`
       )
     if (listing.truncated)
-      ui.hint(`listed the first ${MAX_PAGES * PER_PAGE} repositories of ${org}`)
+      ui.hint(`listed the first ${MAX_PAGES * PER_PAGE} ${many} of ${org}`)
   } catch (e) {
     failed = true
     ui.warn(firstLine(e instanceof Error ? e.message : String(e)))
@@ -195,20 +279,34 @@ async function pickRepositories(input: {
   // any other name is shown but cannot be picked yet.
   const byLabel = (a: { label: string }, b: { label: string }): number =>
     a.label.localeCompare(b.label, 'en', { sensitivity: 'base' })
-  const candidates = listed.filter((r) => isMemberRepo(r))
+  const candidates = listed.filter(member)
   // A private repository wears a padlock next to its name — visible on every
   // line, where a hint shows on the focused one only. A terminal that cannot
-  // draw it falls back to the word, as a hint.
+  // draw it falls back to the word, as a hint. The provider's own hint (a
+  // GitLab subgroup, `internal`) comes first.
   const padlock = unicode()
-  const hint = (isPrivate: boolean, catalogued: boolean): string | null =>
-    [isPrivate && !padlock ? 'private' : null, catalogued ? 'in .rness' : null]
+  const hint = (
+    own: string | undefined,
+    isPrivate: boolean,
+    catalogued: boolean
+  ): string | null =>
+    [
+      own ?? null,
+      isPrivate && !padlock ? 'private' : null,
+      catalogued ? 'in .rness' : null,
+    ]
       .filter((h) => h !== null)
       .join(' · ') || null
+  // A project of a GitLab subgroup is cloned from its full path; the picker
+  // offers it by its name, the key it gets.
+  const specOf = new Map<string, string>()
   const declarable = candidates
     .filter((r) => NAME.test(r.name.toLowerCase()))
     .map((r) => {
       const value = r.name.toLowerCase()
-      const h = hint(r.private, inCatalogue(value))
+      if (r.path !== undefined && r.path !== `${org}/${r.name}`)
+        specOf.set(value, r.path)
+      const h = hint(r.hint, r.private, inCatalogue(value))
       const label = r.private && padlock ? `${r.name} ${PRIVATE_MARK}` : r.name
       return { value, label, ...(h === null ? {} : { hint: h }) }
     })
@@ -241,14 +339,14 @@ async function pickRepositories(input: {
   }
   if (declarable.length === 0) {
     // After a failed listing its own warning already says why.
-    if (!failed) ui.warn(`no repositories to list for ${org}`)
+    if (!failed) ui.warn(`no ${many} to list for ${org}`)
     return { picked: [], prompted: false }
   }
   const initialValues = Object.keys(input.catalogue)
   // Disabled options go last: clack focuses the first option before any key
   // is pressed, and Tab would select it even when it is disabled.
   const answer = await prompts.autocompleteMultiselect<string>({
-    message: 'Which repositories do you want in your workspace?',
+    message: `Which ${many} do you want in your workspace?`,
     options: [...declarable, ...unsupported],
     ...(initialValues.length > 0 ? { initialValues } : {}),
     required: false,
@@ -257,7 +355,9 @@ async function pickRepositories(input: {
   if (prompts.isCancel(answer)) return null
   const allowed = new Set(declarable.map((o) => o.value))
   return {
-    picked: Array.isArray(answer) ? answer.filter((v) => allowed.has(v)) : [],
+    picked: Array.isArray(answer)
+      ? answer.filter((v) => allowed.has(v)).map((v) => specOf.get(v) ?? v)
+      : [],
     prompted: true,
   }
 }
@@ -285,6 +385,7 @@ async function cloneSelection(input: {
   provider: Provider
   ui: Ui
 }): Promise<Failure[]> {
+  const providerName = input.manifest.provider
   const { ui } = input
   let manifest = input.manifest
   const failures: Failure[] = []
@@ -292,7 +393,7 @@ async function cloneSelection(input: {
     try {
       let name: string | null = null
       try {
-        name = parseRepoSpec(spec, input.org, input.host).name
+        name = parseRepoSpec(spec, input.org, input.host, providerName).name
       } catch {
         // `addRepository` reports the malformed spec below.
       }
@@ -380,9 +481,9 @@ function providerFlagError(value: string): string | null {
 }
 
 const OTHER = Symbol('another organization')
-export const OTHER_LABEL = 'an organization not listed here…'
+export const OTHER_LABEL = WORDS.github.otherLabel
 /** Why one may be missing: the list is the approved organizations of the login (plan 0037, task 1). */
-export const OTHER_HINT = 'not a member, or it has not approved rness yet'
+export const OTHER_HINT = WORDS.github.otherHint
 export const NOT_APPROVED = 'rness not approved'
 
 /**
@@ -396,8 +497,10 @@ export const NOT_APPROVED = 'rness not approved'
  */
 async function chooseOrganization(
   provider: Provider,
-  prompts: Prompts
+  prompts: Prompts,
+  providerName: ProviderName
 ): Promise<{ org: string; canGrant: boolean | null } | typeof OTHER | null> {
+  const words = wordsOf(providerName)
   if (!provider.authenticated) return OTHER
   let organizations: Organization[]
   let self: string | undefined
@@ -417,9 +520,9 @@ async function chooseOrganization(
     }))
   if (self !== undefined)
     options.push({ value: self, label: self, hint: 'your account' })
-  options.push({ value: '', label: OTHER_LABEL, hint: OTHER_HINT })
+  options.push({ value: '', label: words.otherLabel, hint: words.otherHint })
   const answer = await prompts.select<string>({
-    message: 'Which GitHub organization?',
+    message: `Which ${words.label} ${words.org}?`,
     options,
   })
   if (prompts.isCancel(answer)) return null
@@ -437,37 +540,41 @@ async function publishContext(input: {
   ui: Ui
   prompts: Prompts
   provider: Provider
+  host: HostSpec
   org: string
+  /** The context repository's name there: `.rness`, `rness` on GitLab. */
+  context: string
   rnessDir: string
   url: string
 }): Promise<boolean | null> {
-  const { ui, prompts, provider, org } = input
+  const { ui, prompts, provider, org, host } = input
+  const where = `${org}/${input.context}`
   if (!provider.authenticated) return false
   const ok = await prompts.confirm({
-    message: `Create ${org}/.rness on GitHub (private) and push it?`,
+    message: `Create ${where} on ${host.label} (private) and push it?`,
     initialValue: true,
   })
   if (prompts.isCancel(ok)) return null
   if (ok !== true) return false
   try {
     const result = await ui.step(
-      { doing: `creating ${org}/.rness on GitHub` },
-      () => provider.createRepository(org, '.rness')
+      { doing: `creating ${where} on ${host.label}` },
+      () => provider.createRepository(org, input.context)
     )
     if (result.kind === 'exists') {
-      ui.warn(`${org}/.rness already exists on GitHub; nothing was pushed`)
+      ui.warn(`${where} already exists on ${host.label}; nothing was pushed`)
       return false
     }
     if (result.kind === 'refused') {
-      ui.warn(`GitHub did not create ${org}/.rness: ${result.reason}`)
+      ui.warn(`${host.label} did not create ${where}: ${result.reason}`)
       return false
     }
-    ui.line('created', `github.com/${org}/.rness (private)`)
+    ui.line('created', `${host.host}/${where} (private)`)
     await ui.step(
-      { doing: `pushing  ${org}/.rness`, git: true },
+      { doing: `pushing  ${where}`, git: true },
       () =>
         publish(input.rnessDir, input.url, provider.credentialsFor(input.url)),
-      () => ['pushed', `${org}/.rness`]
+      () => ['pushed', where]
     )
     return true
   } catch (e) {
@@ -489,7 +596,10 @@ export async function createCommand(
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
   const terminal = deps.terminal ?? defaultTerminal
-  const transport = deps.transport ?? defaultTransport
+  // GitHub's until the provider is known (the wizard's first question).
+  let transport: Transport = deps.transport ?? defaultTransport
+  let chosenProvider: ProviderName = 'github'
+  let hostSpec: HostSpec = HOSTS.github
   const clock = {
     ...(deps.open === undefined ? {} : { open: deps.open }),
     ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
@@ -497,8 +607,11 @@ export async function createCommand(
   }
   // Built on first use: it reads the stored login, which most paths never need.
   let provider = deps.provider
-  const getProvider = async (): Promise<Provider> =>
-    (provider ??= await githubProvider(opts.githubApi))
+  const open = (): Promise<Provider> =>
+    chosenProvider === 'gitlab'
+      ? gitlabProvider(opts.gitlabApi)
+      : githubProvider(opts.githubApi)
+  const getProvider = async (): Promise<Provider> => (provider ??= await open())
   const cwd = opts.cwd ?? process.cwd()
   if (opts.template !== undefined) {
     process.stderr.write('--template is reserved for a later version\n')
@@ -538,10 +651,15 @@ export async function createCommand(
       return 2
     }
   }
-  // A malformed flag is refused before any question is asked about the rest.
-  if (opts.org !== undefined && !ORG_NAME.test(opts.org)) {
+  // A malformed flag is refused before any question is asked about the rest;
+  // an organization on the command line means no question names the provider.
+  const flagged =
+    opts.provider !== undefined && isProviderName(opts.provider)
+      ? opts.provider
+      : 'github'
+  if (opts.org !== undefined && !orgNameRule(flagged).pattern.test(opts.org)) {
     process.stderr.write(
-      `organization name "${opts.org}" is not a valid GitHub organization name\n`
+      `organization name "${opts.org}" is not a valid ${orgNameRule(flagged).noun}\n`
     )
     return 2
   }
@@ -557,7 +675,7 @@ export async function createCommand(
   const testSsh = async (): Promise<SshAccess> => {
     if (sshTest === undefined) {
       sshTest = await testGithubSsh(transport, interactive, () =>
-        ui.line(...CHECKING)
+        ui.line(...checking(hostSpec))
       )
       // Unattended SSH never asks anything: git steps may animate.
       if (sshTest.unattended) ui.gitIsSilent = true
@@ -580,7 +698,11 @@ export async function createCommand(
     const login = github?.authenticated
       ? (await github.identity())?.login
       : undefined
-    ui.line('using', usingRest(access, login), usingSentence(access, login))
+    ui.line(
+      'using',
+      usingRest(access, login, hostSpec),
+      usingSentence(access, login, hostSpec)
+    )
     if (!access.ok) ui.gitIsSilent = true
     return access.ok ? transport.hosts.ssh : transport.hosts.https
   }
@@ -604,7 +726,6 @@ export async function createCommand(
     // last answer of the first question (spec 0028 §2). The flag, an
     // organization or repositories on the command line settle it unasked.
     let blank = opts.blank === true
-    let chosenProvider: ProviderName = 'github'
     if (opts.provider !== undefined && isProviderName(opts.provider))
       chosenProvider = opts.provider
     else if (
@@ -618,6 +739,12 @@ export async function createCommand(
       if (answer === BLANK) blank = true
       else chosenProvider = answer
     }
+    // The host, its SSH test and its words follow the provider.
+    hostSpec = hostFor(chosenProvider) ?? HOSTS.github
+    if (deps.transport === undefined) transport = transportFor(hostSpec)
+    const words = wordsOf(chosenProvider)
+    const context = contextRepo(chosenProvider)
+    const rule = orgNameRule(chosenProvider)
     if (blank)
       return await createBlank({
         name: opts.name,
@@ -646,18 +773,25 @@ export async function createCommand(
     ) {
       const p = await prompts()
       const login = await p.confirm({
-        message:
-          'Log in to GitHub to list your organizations and private repositories?',
+        message: words.login,
         initialValue: true,
       })
       if (p.isCancel(login)) return cancelled(ui)
       if (login === true) {
         const code = await loginCommand(
-          opts.githubApi === undefined ? {} : { githubApi: opts.githubApi },
+          {
+            provider: chosenProvider,
+            ...(opts.githubApi === undefined
+              ? {}
+              : { githubApi: opts.githubApi }),
+            ...(opts.gitlabApi === undefined
+              ? {}
+              : { gitlabApi: opts.gitlabApi }),
+          },
           { terminal, ui, ...clock }
         )
         if (code !== 0) return code
-        provider = await githubProvider(opts.githubApi)
+        provider = await open()
       }
     }
     // What the listing knew of the identity's role there (spec 0028 §3).
@@ -665,7 +799,8 @@ export async function createCommand(
     if (org === undefined) {
       const chosen = await chooseOrganization(
         await getProvider(),
-        await prompts()
+        await prompts(),
+        chosenProvider
       )
       if (chosen === null) return cancelled(ui)
       if (chosen !== OTHER) {
@@ -677,13 +812,13 @@ export async function createCommand(
     if (org === undefined) {
       const p = await prompts()
       const answer = await p.text({
-        message: 'What is your GitHub organization named?',
+        message: `What is your ${words.label} ${words.org} named?`,
         placeholder: 'acme',
         validate: (value) => {
           const v = value?.trim() ?? ''
-          return ORG_NAME.test(v)
+          return rule.pattern.test(v)
             ? undefined
-            : `"${v}" is not a valid GitHub organization name`
+            : `"${v}" is not a valid ${rule.noun}`
         },
       })
       if (p.isCancel(answer) || typeof answer !== 'string') return cancelled(ui)
@@ -721,7 +856,7 @@ export async function createCommand(
     if (outcome === 'cancelled') return cancelled(ui)
 
     const host = await chooseHost()
-    const contextUrl = repoUrl(host, org, '.rness')
+    const contextUrl = repoUrl(host, org, context)
     let gitProvider = await getProvider()
     const probe = await probeRemote(
       contextUrl,
@@ -737,20 +872,20 @@ export async function createCommand(
     // its rness.json, made from inside the workspace (spec 0011 §3.2).
     if (joining && agentFlags.length > 0) {
       process.stderr.write(
-        `${org}/.rness exists: --agent only applies to a new workspace; after joining, run ${rnessCommand()} sync${agentFlags.map((a) => ` --agent ${a}`).join('')}\n`
+        `${org}/${context} exists: --agent only applies to a new workspace; after joining, run ${rnessCommand()} sync${agentFlags.map((a) => ` --agent ${a}`).join('')}\n`
       )
       return 2
     }
     if (joining)
       ui.line(
         'found',
-        `${org}/.rness - joining`,
+        `${org}/${context} - joining`,
         `${org} has a workspace - joining it`
       )
     else
       ui.line(
         'not found',
-        `${org}/.rness (or not visible to you) - starting a new workspace`,
+        `${org}/${context} (or not visible to you) - starting a new workspace`,
         `${org} has no workspace yet (or none you can see) - starting one`
       )
 
@@ -773,7 +908,7 @@ export async function createCommand(
       const stagedDir = await staged()
       await ui.step(
         {
-          doing: `cloning  ${org}/.rness`,
+          doing: `cloning  ${org}/${context}`,
           sentence: `Reading the catalogue of ${org}`,
           git: true,
         },
@@ -787,6 +922,9 @@ export async function createCommand(
       if (deps.provider === undefined)
         gitProvider = await openProvider(catalogue, {
           ...(opts.githubApi === undefined ? {} : { apiBase: opts.githubApi }),
+          ...(opts.gitlabApi === undefined
+            ? {}
+            : { gitlabApi: opts.gitlabApi }),
         })
       // An SSH workspace is not negotiable: without SSH access its
       // repositories cannot be cloned, so stop before any question or write.
@@ -798,7 +936,7 @@ export async function createCommand(
         const access = await testSsh()
         if (!access.ok) {
           process.stderr.write(
-            `${[...sshWorkspaceLines(access.reason), ...INSTEAD_OF_LINES].join('\n')}\n`
+            `${[...sshWorkspaceLines(access.reason, hostSpec), ...insteadOfLines(hostSpec)].join('\n')}\n`
           )
           return 1
         }
@@ -811,6 +949,7 @@ export async function createCommand(
       const result = await pickRepositories({
         org,
         provider: gitProvider,
+        providerName: chosenProvider,
         ui,
         prompts: await prompts(),
         catalogue: catalogue.repos,
@@ -884,7 +1023,7 @@ export async function createCommand(
       if (code !== 0) return code
       // What is left to do, never what just scrolled past: the `cloned` lines
       // are right above (spec 0009 §6).
-      const cloned = await clonesIn(root)
+      const cloned = await clonesIn(root, chosenProvider)
       const remaining = Object.keys(catalogue.repos).filter(
         (name) => !cloned.has(name)
       )
@@ -956,7 +1095,9 @@ export async function createCommand(
           ui,
           prompts: await prompts(),
           provider: gitProvider,
+          host: hostSpec,
           org: name,
+          context,
           rnessDir,
           url: contextUrl,
         })
@@ -970,17 +1111,10 @@ export async function createCommand(
       ...failures.map((f) => `${rness} add ${f.spec}   # failed: ${f.message}`),
       ...(published
         ? []
-        : [
-            `# create the empty private repository ${org}/.rness on github.com, then:`,
-            `git remote add origin ${contextUrl} && git push -u origin main`,
-            // git first: everyone has it. The GitHub CLI second, for those
-            // who do — it creates the repository and pushes in one step.
-            '# or, with the GitHub CLI (gh) installed, in one step:',
-            `gh repo create ${org}/.rness --private --source . --push`,
-          ]),
+        : manualSteps(chosenProvider, org, context, contextUrl)),
       // How this command was launched (npm when rness was typed directly),
       // whatever --pm installed with.
-      `# then, for every teammate: ${detectPackageManager()} create rness ${org}`,
+      `# then, for every teammate: ${joinCommand(chosenProvider, org)}`,
     ]
     if (ui.session) {
       ui.note('Next steps', next)

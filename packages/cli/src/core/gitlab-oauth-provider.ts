@@ -28,6 +28,16 @@ import type {
   Provider,
 } from './provider.ts'
 
+/** GitLab's access levels, as its UI names them (spec 0037 §4). */
+const ROLES: Readonly<Record<number, string>> = {
+  50: 'Owner',
+  40: 'Maintainer',
+  30: 'Developer',
+  20: 'Reporter',
+  15: 'Planner',
+  10: 'Guest',
+}
+
 /** Said by the board and journal methods until plan 0049 tasks 5 and 6 bring them. */
 const NOT_YET = (what: string): Error =>
   new Error(`${what} on GitLab are not available in this version of rness`)
@@ -42,6 +52,10 @@ export class GitLabOAuthProvider implements Provider {
   readonly #apiBase: string | undefined
   readonly #wait: RateWait | undefined
   #user: Promise<{ login: string; id: number | null } | null> | undefined
+  readonly #standing = new Map<
+    string,
+    Promise<{ accessLevel: number } | 'not-member' | 'unknown'>
+  >()
 
   get authenticated(): boolean {
     return this.#token !== null
@@ -101,16 +115,37 @@ export class GitLabOAuthProvider implements Provider {
     return null
   }
 
-  async organizationAccess(org: string): Promise<OrganizationAccess> {
-    if (this.#token === null) return 'unknown'
-    try {
-      const id = (await this.#me())?.id ?? null
-      if (id === null) return 'unknown'
-      const standing = await groupMembership(org, id, this.#api())
-      return typeof standing === 'object' ? 'member' : standing
-    } catch {
-      return 'unknown'
+  /** The membership call, once per group: the access and the role read the same answer. */
+  #standingIn(
+    org: string
+  ): Promise<{ accessLevel: number } | 'not-member' | 'unknown'> {
+    let standing = this.#standing.get(org)
+    if (standing === undefined) {
+      standing = (async () => {
+        if (this.#token === null) return 'unknown' as const
+        try {
+          const id = (await this.#me())?.id ?? null
+          if (id === null) return 'unknown' as const
+          return await groupMembership(org, id, this.#api())
+        } catch {
+          return 'unknown' as const
+        }
+      })()
+      this.#standing.set(org, standing)
     }
+    return standing
+  }
+
+  async organizationAccess(org: string): Promise<OrganizationAccess> {
+    const standing = await this.#standingIn(org)
+    return typeof standing === 'object' ? 'member' : standing
+  }
+
+  async organizationRole(org: string): Promise<string | null> {
+    const standing = await this.#standingIn(org)
+    return typeof standing === 'object'
+      ? (ROLES[standing.accessLevel] ?? null)
+      : null
   }
 
   async listRepositories(owner: string): Promise<RepositoryListing> {

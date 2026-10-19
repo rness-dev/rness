@@ -776,6 +776,36 @@ test('parseRepoSpec accepts repo, owner/repo and full URLs, and validates the na
   assert.throws(() => parseRepoSpec('a/b/c', 'acme', host), /repository name/)
 })
 
+test('parseRepoSpec on GitLab: a full path of three segments or more; the key its last segment', () => {
+  const host = 'git@gitlab.com:'
+  assert.deepEqual(parseRepoSpec('api', 'acme', host, 'gitlab'), {
+    name: 'api',
+    url: 'git@gitlab.com:acme/api.git',
+  })
+  assert.deepEqual(parseRepoSpec('other/api', 'acme', host, 'gitlab'), {
+    name: 'api',
+    url: 'git@gitlab.com:other/api.git',
+  })
+  assert.deepEqual(
+    parseRepoSpec('acme/platform/Mobile', 'acme', host, 'gitlab'),
+    { name: 'mobile', url: 'git@gitlab.com:acme/platform/Mobile.git' }
+  )
+  // GitHub has no third segment.
+  assert.throws(
+    () => parseRepoSpec('acme/platform/mobile', 'acme', 'https://github.com/'),
+    /is not a name \(use <repo>, <owner>\/<repo>, or a URL\)/
+  )
+  // A blank workspace: the provider's word.
+  assert.throws(
+    () => parseRepoSpec('api', null, host, 'gitlab'),
+    /^Error: this workspace has no GitLab group: give <group>\/<project> or a git URL$/
+  )
+  assert.throws(
+    () => parseRepoSpec('api', null, 'https://github.com/'),
+    /^Error: this workspace has no GitHub organization: give <owner>\/<repo> or a git URL$/
+  )
+})
+
 test('parseRepoSpec takes a name in any case: the key is lowercase, the URL as typed', () => {
   // GitHub resolves names case-insensitively, a file:// remote on Linux does
   // not: the URL keeps the spelling the user typed, the key and the directory
