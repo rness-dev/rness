@@ -457,7 +457,7 @@ test('an environment token is kept as it is, whatever scopes are needed', async 
   assert.equal(gh.requests.length, 0)
 })
 
-test('login refuses a workspace whose written provider is unavailable', async (t) => {
+test("login in an Atlassian workspace is Atlassian's: off a terminal, its variables named; GitHub never asked", async (t) => {
   await machine(t)
   const gh = await fakeGithub(t, github)
   const root = await workspace(t, { provider: 'atlassian' })
@@ -468,7 +468,10 @@ test('login refuses a workspace whose written provider is unavailable', async (t
     )
   )
   assert.equal(r.code, 1)
-  assert.match(r.err, /^rness\.json: provider "atlassian" is not supported/)
+  assert.match(
+    r.err,
+    /needs a terminal: set BITBUCKET_TOKEN, JIRA_EMAIL and JIRA_API_TOKEN instead/
+  )
   assert.equal(gh.requests.length, 0)
   assert.equal(await readAuth(), null)
 })
@@ -608,20 +611,9 @@ test('inside a workspace rness.json names the provider, the flag wins over it; G
   assert.match(flag.out, /^logged in as octo \(github\.com\)$/m)
 })
 
-test('login refuses a provider it cannot log in to, and an unknown one, exit 2', async (t) => {
+test('login refuses an unknown provider, exit 2', async (t) => {
   await machine(t)
   const gh = await fakeGithub(t, github)
-  const atlassian = await run(() =>
-    loginCommand(
-      { provider: 'atlassian' },
-      { cwd: NOWHERE, terminal: NO_TTY, sleep, bin: BIN }
-    )
-  )
-  assert.equal(atlassian.code, 2)
-  assert.equal(
-    atlassian.err,
-    'rness cannot log in to atlassian yet (github, gitlab)\n'
-  )
   const unknown = await run(() =>
     loginCommand(
       { provider: 'nope' },

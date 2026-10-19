@@ -8,6 +8,7 @@ import type {
   multiselect,
   note,
   outro,
+  password,
   select,
   spinner,
   text,
@@ -16,6 +17,8 @@ import type {
 /** The `@clack/prompts` functions the interactive commands use. */
 export interface Prompts {
   text: typeof text
+  /** A masked input (an API token); a scripted terminal may lack it. */
+  password?: typeof password
   confirm: typeof confirm
   multiselect: typeof multiselect
   select: typeof select

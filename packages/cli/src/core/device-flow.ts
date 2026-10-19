@@ -124,6 +124,10 @@ export async function requestDeviceCode(
   host: HostSpec = HOSTS.github,
   scopes: string = host.scopes
 ): Promise<DeviceCode> {
+  if (host.loginKind === 'token')
+    throw new LoginError(
+      `${host.label} logs in with an API token, not a device flow`
+    )
   const id = clientIdOf(host)
   if (id === '')
     throw new LoginError(

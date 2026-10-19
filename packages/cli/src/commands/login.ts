@@ -1,6 +1,19 @@
 import { realpath } from 'node:fs/promises'
 
-import { envToken, readAuth, resolveToken, writeAuth } from '../core/auth.ts'
+import {
+  envToken,
+  readAuth,
+  readAuthAt,
+  resolveToken,
+  storedHosts,
+  writeAuth,
+  writeAuthAt,
+} from '../core/auth.ts'
+import {
+  TokenRefused,
+  getUser as getBitbucketUser,
+  primaryEmail,
+} from '../core/bitbucket.ts'
 import { canOpenBrowser, openInBrowser } from '../core/browser.ts'
 import {
   BOARD_SCOPE,
@@ -13,12 +26,14 @@ import {
 import { DEFAULT_GITHUB_API, getUser } from '../core/github.ts'
 import { defaultGitlabApi, getUser as getGitlabUser } from '../core/gitlab.ts'
 import {
+  ATLASSIAN_TOKENS,
   HOSTS,
   type HostSpec,
   hostFor,
   httpsOrigin,
   providerFlag,
 } from '../core/hosts.ts'
+import { JIRA_SITE, myself } from '../core/jira.ts'
 import { loadManifest, providerOf } from '../core/manifest.ts'
 import { rnessCommand } from '../core/pm.ts'
 import {
@@ -42,6 +57,8 @@ export interface LoginOptions {
   githubApi?: string
   /** Internal (tests): GitLab REST API base. */
   gitlabApi?: string
+  /** Internal (tests): Bitbucket REST API origin. */
+  bitbucketApi?: string
   /** Ask for the `project` scope even where no board is declared (`board push` creating one). */
   project?: boolean
 }
@@ -158,6 +175,10 @@ export async function loginCommand(
       return chosen.code
     }
     const { host, manifest } = chosen
+    if (host.loginKind === 'token') {
+      if (own) ui.intro('Log in to Atlassian')
+      return await tokenLogin(opts, deps, terminal, ui, own)
+    }
     if (own) ui.intro(`Log in to ${host.label}`)
     // GitHub's boards need the `project` scope; GitLab's `api` covers its
     // boards (spec 0037 §3).
@@ -243,4 +264,157 @@ export async function loginCommand(
     }
     return reportError(e)
   }
+}
+
+/** The Jira sites this machine has a login for. */
+const storedSites = async (): Promise<string[]> =>
+  (await storedHosts()).filter((h) => JIRA_SITE.test(h))
+
+/**
+ * `rness login --provider atlassian` (spec 0039 §3): no device flow on
+ * either product, so two API tokens typed into masked prompts: a Bitbucket
+ * one with scopes, then the Jira site, the account's email and a classic
+ * Jira token. A refused token is asked again; nothing is stored until both
+ * answer, and then both are.
+ */
+async function tokenLogin(
+  opts: LoginOptions,
+  deps: LoginDeps,
+  terminal: Terminal,
+  ui: Ui,
+  own: boolean
+): Promise<number> {
+  const host = HOSTS.bitbucket
+  const bin =
+    deps.bin ?? (await realpath(process.argv[1] ?? '').catch(() => ''))
+  const env = envToken(host)
+  if (env !== null) ui.hint(`${env.source} is set and wins over a stored login`)
+  const stored = await readAuthAt(host.host)
+  const sites = await storedSites()
+  if (stored !== null && sites.length > 0) {
+    ui.line(
+      'logged in',
+      `as ${stored.login} (${host.host}), ${sites.join(', ')}; ${rnessCommand()} logout --provider atlassian to switch`
+    )
+    await offerSetupGit(opts, terminal, bin, ui, host)
+    if (own) ui.outro('Nothing to do', 'idle')
+    return 0
+  }
+  if (!terminal.isTty()) {
+    ui.error(
+      `${rnessCommand()} login --provider atlassian needs a terminal: set BITBUCKET_TOKEN, JIRA_EMAIL and JIRA_API_TOKEN instead`
+    )
+    return 1
+  }
+  const p = await terminal.prompts()
+  const secret = p.password ?? p.text
+  ui.line('tokens', `two API tokens, made at ${ATLASSIAN_TOKENS}`)
+  ui.line(
+    'bitbucket',
+    `Create API token with scopes, app Bitbucket: ${host.scopes}`
+  )
+  ui.line('jira', 'Create API token (without scopes)')
+
+  let bitbucket: { token: string; login: string; accountId: string | null }
+  for (;;) {
+    const token = await secret({ message: 'Bitbucket API token' })
+    if (p.isCancel(token) || typeof token !== 'string' || token.trim() === '')
+      return cancelledLogin(ui, own)
+    try {
+      const user = await getBitbucketUser({
+        token: token.trim(),
+        apiBase: opts.bitbucketApi,
+      })
+      bitbucket = { token: token.trim(), ...user }
+      break
+    } catch (e) {
+      if (!(e instanceof TokenRefused)) throw e
+      ui.warn(e.message)
+    }
+  }
+  ui.line('logged in', `as ${bitbucket.login} (${host.host})`)
+
+  const site = await p.text({
+    message: 'Jira site',
+    placeholder: 'acme.atlassian.net',
+    validate: (v) =>
+      JIRA_SITE.test((v ?? '').trim())
+        ? undefined
+        : 'a Jira site is <name>.atlassian.net',
+  })
+  if (p.isCancel(site) || typeof site !== 'string')
+    return cancelledLogin(ui, own)
+  const offered = await primaryEmail({
+    token: bitbucket.token,
+    apiBase: opts.bitbucketApi,
+  }).catch(() => null)
+  const email = await p.text({
+    message: 'Atlassian account email',
+    ...(offered === null
+      ? {}
+      : { defaultValue: offered, placeholder: offered }),
+    validate: (v) =>
+      /^[^\s@]+@[^\s@]+$/.test((v ?? offered ?? '').trim())
+        ? undefined
+        : 'an email address',
+  })
+  if (p.isCancel(email) || typeof email !== 'string')
+    return cancelledLogin(ui, own)
+  const address = (email.trim() === '' ? (offered ?? '') : email).trim()
+
+  let jira: { token: string; login: string; accountId: string | null }
+  for (;;) {
+    const token = await secret({ message: 'Jira API token' })
+    if (p.isCancel(token) || typeof token !== 'string' || token.trim() === '')
+      return cancelledLogin(ui, own)
+    try {
+      const user = await myself({
+        site: site.trim(),
+        email: address,
+        token: token.trim(),
+      })
+      jira = { token: token.trim(), ...user }
+      break
+    } catch (e) {
+      if (!(e instanceof TokenRefused)) throw e
+      ui.warn(e.message)
+    }
+  }
+  // A token lives until it expires or is revoked: no refresh token.
+  const tokens = (token: string) => ({
+    accessToken: token,
+    expiresAt: null,
+    refreshToken: null,
+    refreshExpiresAt: null,
+    scopes: '',
+  })
+  await writeAuthAt(
+    host.host,
+    {
+      login: bitbucket.login,
+      tokens: tokens(bitbucket.token),
+      ...(bitbucket.accountId === null
+        ? {}
+        : { accountId: bitbucket.accountId }),
+    },
+    [
+      site.trim(),
+      {
+        login: jira.login,
+        tokens: tokens(jira.token),
+        email: address,
+        ...(jira.accountId === null ? {} : { accountId: jira.accountId }),
+      },
+    ]
+  )
+  ui.line('logged in', `as ${jira.login} (${site.trim()})`)
+  await offerSetupGit(opts, terminal, bin, ui, host)
+  if (own) ui.outro(`You are logged in as ${bitbucket.login}`)
+  return 0
+}
+
+/** A prompt cancelled: nothing stored, exit 0 (the user's choice). */
+function cancelledLogin(ui: Ui, own: boolean): number {
+  if (own) ui.cancelled()
+  return 0
 }

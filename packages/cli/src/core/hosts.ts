@@ -7,7 +7,12 @@ import type { ProviderName } from './types.ts'
  * the code reads the row instead of naming the host.
  */
 export interface HostSpec {
-  provider: 'github' | 'gitlab'
+  provider: 'github' | 'gitlab' | 'atlassian'
+  /**
+   * How `rness login` gets a token: the OAuth device flow (GitHub, GitLab),
+   * or an API token typed in (Bitbucket: no device flow, spec 0039 §3).
+   */
+  loginKind: 'device' | 'token'
   /** How the user calls it: `GitHub`. */
   label: string
   /** The host git and `auth.json` know it by: `github.com`. */
@@ -19,7 +24,7 @@ export interface HostSpec {
   /** The two bases a repository URL is written with (spec 0005). */
   https: string
   ssh: string
-  /** The login in what `ssh -T git@<host>` prints for an accepted key. */
+  /** What `ssh -T git@<host>` prints for an accepted key; its first group, when there is one, the login. */
   greeting: RegExp
   /** The username git sends with the token over HTTPS. */
   username: string
@@ -42,6 +47,7 @@ export interface HostSpec {
 export const HOSTS = {
   github: {
     provider: 'github',
+    loginKind: 'device',
     label: 'GitHub',
     host: 'github.com',
     web: 'https://github.com',
@@ -63,6 +69,7 @@ export const HOSTS = {
   },
   gitlab: {
     provider: 'gitlab',
+    loginKind: 'device',
     label: 'GitLab',
     host: 'gitlab.com',
     web: 'https://gitlab.com',
@@ -84,10 +91,41 @@ export const HOSTS = {
     deviceFlowDisabled: 'access_denied',
     sshDocs: 'https://docs.gitlab.com/user/ssh/',
   },
+  // Atlassian's git host (spec 0039): an API token with scopes, typed in;
+  // Jira is no row, its host is the workspace's site.
+  bitbucket: {
+    provider: 'atlassian',
+    loginKind: 'token',
+    label: 'Bitbucket',
+    host: 'bitbucket.org',
+    web: 'https://bitbucket.org',
+    webEnv: 'RNESS_BITBUCKET_WEB',
+    https: 'https://bitbucket.org/',
+    // SSH on bitbucket.org is refused after 2026-11-12 (spec 0039 §1).
+    ssh: 'git@ssh.bitbucket.org:',
+    // No login in Bitbucket's greeting.
+    greeting: /^authenticated via ssh key\./m,
+    username: 'x-bitbucket-api-token-auth',
+    tokenEnv: ['BITBUCKET_TOKEN'],
+    deviceCodePath: '',
+    tokenPath: '',
+    scopes:
+      'read:user:bitbucket read:workspace:bitbucket read:project:bitbucket read:repository:bitbucket write:repository:bitbucket admin:repository:bitbucket read:pullrequest:bitbucket',
+    clientId: '',
+    clientIdEnv: '',
+    deviceFlowDisabled: '',
+    sshDocs:
+      'https://support.atlassian.com/bitbucket-cloud/docs/configure-ssh-and-two-step-verification/',
+  },
 } as const satisfies Record<string, HostSpec>
+
+/** Where the tokens of a token login are made, and revoked (spec 0039 §3). */
+export const ATLASSIAN_TOKENS =
+  'https://id.atlassian.com/manage-profile/security/api-tokens'
 
 /** The row of a provider, or null for one rness cannot log in to. */
 export function hostFor(provider: ProviderName): HostSpec | null {
+  if (provider === 'atlassian') return HOSTS.bitbucket
   return provider === 'github' || provider === 'gitlab' ? HOSTS[provider] : null
 }
 
@@ -112,6 +150,7 @@ export function clientIdOf(spec: HostSpec): string {
  * 0037 §3).
  */
 export function revokeUrl(spec: HostSpec): string {
+  if (spec.loginKind === 'token') return ATLASSIAN_TOKENS
   return spec.provider === 'github'
     ? `${spec.web}/settings/connections/applications/${clientIdOf(spec)}`
     : `${spec.web}/-/user_settings/applications`

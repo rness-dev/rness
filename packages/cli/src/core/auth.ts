@@ -18,6 +18,10 @@ import { rnessCommand } from './pm.ts'
 export interface StoredLogin {
   login: string
   tokens: TokenSet
+  /** A Jira site's login: the Atlassian account's email its API token goes with (spec 0039 §3). */
+  email?: string
+  /** A Jira site's login: the account's id there. */
+  accountId?: string
 }
 
 /** `$XDG_CONFIG_HOME/rness`, else `~/.config/rness`; `%APPDATA%\rness` on Windows. */
@@ -57,10 +61,15 @@ async function readEntries(): Promise<Record<string, unknown>> {
 export async function readAuth(
   host: HostSpec = HOSTS.github
 ): Promise<StoredLogin | null> {
+  return readAuthAt(host.host)
+}
+
+/** The login stored under a host name: a row's host, or a Jira site. */
+export async function readAuthAt(name: string): Promise<StoredLogin | null> {
   try {
-    const entry = (await readEntries())[host.host]
+    const entry = (await readEntries())[name]
     if (entry === null || typeof entry !== 'object') return null
-    const { login, tokens } = entry as Record<string, unknown>
+    const { login, tokens, email, accountId } = entry as Record<string, unknown>
     if (typeof login !== 'string' || !isTokenSet(tokens)) return null
     return {
       login,
@@ -71,10 +80,17 @@ export async function readAuth(
         refreshExpiresAt: tokens.refreshExpiresAt ?? null,
         scopes: tokens.scopes ?? '',
       },
+      ...(typeof email === 'string' ? { email } : {}),
+      ...(typeof accountId === 'string' ? { accountId } : {}),
     }
   } catch {
     return null
   }
+}
+
+/** The host names of every stored login. */
+export async function storedHosts(): Promise<string[]> {
+  return Object.keys(await readEntries())
 }
 
 async function writeEntries(entries: Record<string, unknown>): Promise<void> {
@@ -93,16 +109,41 @@ export async function writeAuth(
   login: StoredLogin,
   host: HostSpec = HOSTS.github
 ): Promise<void> {
-  await writeEntries({ ...(await readEntries()), [host.host]: login })
+  await writeAuthAt(host.host, login)
+}
+
+/** Store the logins of several hosts at once (Atlassian's two, both or neither). */
+export async function writeAuthAt(
+  name: string,
+  login: StoredLogin,
+  ...more: [string, StoredLogin][]
+): Promise<void> {
+  await writeEntries({
+    ...(await readEntries()),
+    [name]: login,
+    ...Object.fromEntries(more),
+  })
 }
 
 /** Forget the login for `host`; the file goes with the last one. */
 export async function clearAuth(host: HostSpec = HOSTS.github): Promise<void> {
-  const { [host.host]: _gone, ...kept } = await readEntries()
+  await clearAuthAt(host.host)
+}
+
+/** Forget the logins stored under these host names. */
+export async function clearAuthAt(...names: string[]): Promise<void> {
+  const kept = { ...(await readEntries()) }
+  for (const name of names) delete kept[name]
   await writeEntries(kept)
 }
 
-export type TokenSource = 'GITHUB_TOKEN' | 'GH_TOKEN' | 'GITLAB_TOKEN' | 'login'
+export type TokenSource =
+  | 'GITHUB_TOKEN'
+  | 'GH_TOKEN'
+  | 'GITLAB_TOKEN'
+  | 'BITBUCKET_TOKEN'
+  | 'JIRA_API_TOKEN'
+  | 'login'
 
 export interface ResolvedToken {
   token: string
@@ -220,4 +261,51 @@ export async function resolveToken(
     }
   })
   return refreshed === null ? null : answer(refreshed)
+}
+
+/** A Jira site's credentials: Basic `email:token` (spec 0039 §3). */
+export interface JiraLogin {
+  email: string
+  token: string
+  source: 'JIRA_API_TOKEN' | 'login'
+}
+
+/**
+ * The credentials for a Jira site: `JIRA_EMAIL` with `JIRA_API_TOKEN` (CI,
+ * scripts), else the login stored for that site; null when there is none.
+ * A classic API token is never refreshed: it lives until it expires or is
+ * revoked.
+ */
+export async function jiraLogin(site: string): Promise<JiraLogin | null> {
+  const email = process.env['JIRA_EMAIL']
+  const token = process.env['JIRA_API_TOKEN']
+  if (
+    email !== undefined &&
+    email !== '' &&
+    token !== undefined &&
+    token !== ''
+  )
+    return { email, token, source: 'JIRA_API_TOKEN' }
+  const stored = await readAuthAt(site)
+  if (stored === null || stored.email === undefined) return null
+  return {
+    email: stored.email,
+    token: stored.tokens.accessToken,
+    source: 'login',
+  }
+}
+
+/**
+ * A token the host refused (401): a token login is not refreshed, so it is
+ * over. That host's entry is cleared, and one line says how to log in again.
+ */
+export async function tokenRefused(
+  name: string,
+  label: string,
+  notify: (line: string) => void = (l) => process.stderr.write(`${l}\n`)
+): Promise<void> {
+  await clearAuthAt(name)
+  notify(
+    `your ${label} token was refused (expired or revoked); run ${rnessCommand()} login --provider atlassian`
+  )
 }

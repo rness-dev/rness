@@ -299,16 +299,17 @@ function buildProgram(state: RunState): Command {
   program
     .command('login')
     .description(
-      'Log in to GitHub or GitLab, to list and clone private repositories'
+      'Log in to GitHub, GitLab or Atlassian, to list and clone private repositories'
     )
     .option(
       '--provider <name>',
-      "github or gitlab (default: the workspace's provider, else github)"
+      "github, gitlab or atlassian (default: the workspace's provider, else github)"
     )
     .option('--setup-git', "make rness git's credential helper for the host")
     .option('--no-setup-git', 'do not ask about git')
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--gitlab-api <base>').hideHelp())
+    .addOption(new Option('--bitbucket-api <base>').hideHelp())
     .action(async (opts: LoginOptions) => {
       state.code = await loginCommand(opts)
     })
@@ -318,7 +319,7 @@ function buildProgram(state: RunState): Command {
     .description('Forget the login of this machine for one provider')
     .option(
       '--provider <name>',
-      "github or gitlab (default: the workspace's provider, else github)"
+      "github, gitlab or atlassian (default: the workspace's provider, else github)"
     )
     .action(async (opts: LogoutOptions) => {
       state.code = await logoutCommand(opts)
