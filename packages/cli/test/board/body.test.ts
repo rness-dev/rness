@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import {
   BODY_LIMIT,
   type BodySource,
+  bodyLimit,
   digestOf,
   headerOf,
   issueBody,
@@ -278,4 +279,51 @@ test('a mention or a reference wrapped in emphasis is neutralized; an email and 
     ),
     `_\\@octocat_ __\\@octocat__ __#${ZWSP}12__ *\\@a* **#${ZWSP}13** a@b.c C#8`
   )
+})
+
+// GitLab (spec 0037 §6; plan 0049 task 5): the project `rness`, its paths,
+// its references escaped with the backslash task 1 saw render as text.
+
+const GL = 'https://gitlab.com/acme/rness'
+
+test('on GitLab: the header names GitLab, links go to /-/blob/main/, /-/raw/main/ for an image, /-/issues/ for a document on the board', () => {
+  const b = body(
+    '# B\n\nSee [A](../adr/0001-a.md), [the readme](../README.md#setup) and ![board](../docs/img/board.png).\n',
+    { provider: 'gitlab' }
+  )
+  const lines = b.split('\n')
+  assert.equal(
+    lines[0],
+    `\`specs/0002-b.md\` · [on GitLab](${GL}/-/blob/main/specs/0002-b.md)`
+  )
+  assert.equal(lines[0], headerOf('specs/0002-b.md', 'acme', 'gitlab'))
+  assert.equal(
+    content(b),
+    `See [A](${GL}/-/issues/12), [the readme](${GL}/-/blob/main/README.md#setup) and ![board](${GL}/-/raw/main/docs/img/board.png).`
+  )
+})
+
+test('on GitLab, every reference GitLab makes is escaped outside code; code, URLs and emails are left alone', () => {
+  const b = body(
+    '# B\n\nIssue #4, MR !5, epic &6, snippet $7, label ~bug, milestone %v1, @cedric and @all.\n\n`#4 !5 @cedric` and https://gitlab.com/acme/api/-/issues/4 and dev@acme.io.\n\n~~struck~~ and C#8.\n',
+    { provider: 'gitlab' }
+  )
+  assert.equal(
+    content(b),
+    [
+      'Issue \\#4, MR \\!5, epic \\&6, snippet \\$7, label \\~bug, milestone \\%v1, \\@cedric and \\@all.',
+      '`#4 !5 @cedric` and https://gitlab.com/acme/api/-/issues/4 and dev@acme.io.',
+      '~~struck~~ and C#8.',
+    ].join('\n\n')
+  )
+  assert.doesNotMatch(b, new RegExp(ZWSP))
+})
+
+test('on GitLab, the limit is 1,048,576 characters', () => {
+  const long = `# B\n\n${'word '.repeat(20_000)}\n`
+  assert.ok(long.length > BODY_LIMIT)
+  const b = body(long, { provider: 'gitlab' })
+  assert.doesNotMatch(b, /The rest:/)
+  assert.equal(bodyLimit('gitlab'), 1_048_576)
+  assert.equal(bodyLimit('github'), BODY_LIMIT)
 })

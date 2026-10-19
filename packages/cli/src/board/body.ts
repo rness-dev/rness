@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 
 import { stripFrontMatter } from '../core/frontmatter.ts'
-import { blobUrl, issueUrl } from './urls.ts'
+import { type BodyProvider, contextUrls } from './urls.ts'
 
 /**
  * A document of `.rness/` as its issue's body (spec 0018 §3): the same
@@ -12,6 +12,10 @@ import { blobUrl, issueUrl } from './urls.ts'
 
 /** GitHub's limit for an issue body, in characters (spec 0018 §3.5). */
 export const BODY_LIMIT = 65_536
+
+/** An issue body's limit on the provider: GitLab's description takes 1,048,576 characters (spec 0037 §6). */
+export const bodyLimit = (provider: BodyProvider = 'github'): number =>
+  provider === 'gitlab' ? 1_048_576 : BODY_LIMIT
 
 export interface BodySource {
   /** The document's path in `.rness/`, with `/`: `specs/0016-cli-status.md`. */
@@ -23,11 +27,18 @@ export interface BodySource {
   numbers: ReadonlyMap<string, number>
   /** Every file of `.rness/`, by path. */
   files: ReadonlySet<string>
+  /** Where the issue lives; GitHub when absent. */
+  provider?: BodyProvider
 }
 
 /** A body's first line (spec 0018 §3.1); the whole body of an issue whose document is not written yet. */
-export function headerOf(path: string, org: string): string {
-  return `\`${path}\` · [on GitHub](${blobUrl(org, path)})`
+export function headerOf(
+  path: string,
+  org: string,
+  provider: BodyProvider = 'github'
+): string {
+  const where = provider === 'gitlab' ? 'GitLab' : 'GitHub'
+  return `\`${path}\` · [on ${where}](${contextUrls(provider).blob(org, path)})`
 }
 
 const digest = (text: string): string =>
@@ -125,10 +136,13 @@ function target(dest: string, s: BodySource): string {
         : posix.join(posix.dirname(s.path), pathPart)
     )
   )
+  const urls = contextUrls(s.provider ?? 'github')
   const number = s.numbers.get(file)
-  if (number !== undefined) return issueUrl(s.org, number)
+  if (number !== undefined) return urls.issue(s.org, number)
   if (!s.files.has(file)) return dest
-  return `${blobUrl(s.org, file)}${IMAGE.test(file) ? '?raw=true' : ''}${anchor}`
+  return IMAGE.test(file)
+    ? `${urls.image(s.org, file)}${anchor}`
+    : `${urls.blob(s.org, file)}${anchor}`
 }
 
 /**
@@ -152,16 +166,43 @@ const MENTION = /(^|[^A-Za-z0-9`\\])@([A-Za-z0-9][A-Za-z0-9-]*)/g
 const REFERENCE = /(^|[^A-Za-z0-9&#/])#(\d+)(?![A-Za-z0-9])/g
 const ZWSP = '\u200B'
 
+/**
+ * GitLab's references, each escaped by the backslash its Markdown documents
+ * and plan 0049 task 1 saw render as text: an issue `#4`, a merge request
+ * `!5`, an epic `&6`, a snippet `$7`, a label `~bug`, a milestone `%v1`, a
+ * user `@name` (spec 0037 §6). The character before keeps an email, `C#8`,
+ * `50%`, `~~struck~~` and an escaped one as they are.
+ */
+const GITLAB_REFERENCES: readonly RegExp[] = [
+  /(^|[^A-Za-z0-9&#/\\])(#)(?=\d)/g,
+  /(^|[^A-Za-z0-9!\\])(!)(?=\d)/g,
+  /(^|[^A-Za-z0-9&\\])(&)(?=\d)/g,
+  /(^|[^A-Za-z0-9$\\])(\$)(?=\d)/g,
+  /(^|[^A-Za-z0-9~\\])(~)(?=[A-Za-z0-9"])/g,
+  /(^|[^A-Za-z0-9%\\])(%)(?=[A-Za-z0-9"])/g,
+  /(^|[^A-Za-z0-9`\\])(@)(?=[A-Za-z0-9])/g,
+]
+
 /** Prose made harmless (spec 0018 §3.4): it mentions no one and names no issue. */
-const neutral = (text: string): string =>
-  text.replace(MENTION, '$1\\@$2').replace(REFERENCE, `$1#${ZWSP}$2`)
+const neutral = (text: string, provider: BodyProvider): string =>
+  provider === 'gitlab'
+    ? GITLAB_REFERENCES.reduce(
+        (t, re) =>
+          t.replace(
+            re,
+            (_m, before: string, mark: string) => `${before}\\${mark}`
+          ),
+        text
+      )
+    : text.replace(MENTION, '$1\\@$2').replace(REFERENCE, `$1#${ZWSP}$2`)
 
 function inline(text: string, s: BodySource): string {
+  const provider = s.provider ?? 'github'
   let out = ''
   let from = 0
   for (const m of text.matchAll(PROTECTED)) {
     const at = m.index ?? 0
-    out += neutral(text.slice(from, at))
+    out += neutral(text.slice(from, at), provider)
     const dest = m.groups?.['dest'] ?? m.groups?.['def']
     out +=
       dest === undefined
@@ -169,7 +210,7 @@ function inline(text: string, s: BodySource): string {
         : `${m[0].slice(0, m[0].length - dest.length)}${target(dest, s)}`
     from = at + m[0].length
   }
-  return out + neutral(text.slice(from))
+  return out + neutral(text.slice(from), provider)
 }
 
 /** Links rewritten and prose neutralized a paragraph at a time; fenced blocks as they are. */
@@ -196,8 +237,8 @@ function rewrite(lines: readonly string[], s: BodySource): string[] {
  * `rest` and the digest (spec 0018 §3.5). The blank line after the first
  * line always qualifies.
  */
-function cut(text: string, rest: string): string {
-  const room = BODY_LIMIT - TAIL - 2 - rest.length
+function cut(text: string, rest: string, limit: number): string {
+  const room = limit - TAIL - 2 - rest.length
   const lines = text.split('\n')
   const code = fenced(lines)
   let length = -1
@@ -218,11 +259,17 @@ export function issueBody(s: BodySource): string {
     .join('\n')
     .replace(/^(?:[ \t]*\n)+/, '')
     .trimEnd()
-  const header = headerOf(s.path, s.org)
+  const provider = s.provider ?? 'github'
+  const header = headerOf(s.path, s.org, provider)
   const whole = content === '' ? header : `${header}\n\n${content}`
+  const limit = bodyLimit(provider)
   const text =
-    whole.length + TAIL <= BODY_LIMIT
+    whole.length + TAIL <= limit
       ? whole
-      : cut(whole, `The rest: ${blobUrl(s.org, s.path)}`)
+      : cut(
+          whole,
+          `The rest: ${contextUrls(provider).blob(s.org, s.path)}`,
+          limit
+        )
   return `${text}\n\n${comment(digest(text))}`
 }

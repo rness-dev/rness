@@ -61,14 +61,14 @@ function reason(e: unknown): string {
   return String(e)
 }
 
-interface Answer {
+export interface Answer {
   status: number
   headers: Headers
   body: unknown
 }
 
 async function request(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   url: string,
   options: GitlabApiOptions,
   payload?: unknown
@@ -104,16 +104,25 @@ async function request(
   }
 }
 
-function failure(answer: Answer, path: string): Error {
+export function failure(answer: Answer, path: string): Error {
   const cause = { status: answer.status, path }
   if (answer.status === 401)
     return new Error('GitLab rejected the token (401)', { cause })
-  return new Error(`GitLab API answered ${answer.status} for ${path}`, {
-    cause,
-  })
+  // GitLab says why in `message`, a string or a field's list.
+  const message = field(answer.body, 'message')
+  const why =
+    typeof message === 'string'
+      ? message
+      : message === undefined
+        ? ''
+        : JSON.stringify(message)
+  return new Error(
+    `GitLab API answered ${answer.status} for ${path}${why === '' ? '' : `: ${why}`}`,
+    { cause }
+  )
 }
 
-const field = (body: unknown, key: string): unknown =>
+export const field = (body: unknown, key: string): unknown =>
   body !== null && typeof body === 'object'
     ? (body as Record<string, unknown>)[key]
     : undefined
@@ -123,7 +132,7 @@ const field = (body: unknown, key: string): unknown =>
  * `MAX_PAGES`. Null when the first page is a 404: no such group or user, or
  * not visible to the token.
  */
-async function pages(
+export async function pages(
   path: string,
   query: Record<string, string>,
   options: GitlabApiOptions
@@ -180,7 +189,21 @@ const projectsOf = (
         truncated: listed.truncated,
       }
 
-const segment = (path: string): string => encodeURIComponent(path)
+/** A group's or a project's path as one segment of an API path: `acme%2Frness`. */
+export const segment = (path: string): string => encodeURIComponent(path)
+
+/**
+ * One call to the API: `path` under `/api/v4`, a JSON `payload` for a write.
+ * The answer as it came; a 429 is waited out first.
+ */
+export function gitlabCall(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  options: GitlabApiOptions,
+  payload?: unknown
+): Promise<Answer> {
+  return request(method, `${apiBase(options)}${path}`, options, payload)
+}
 
 /** The user a token belongs to: `username` as `login`, and the numeric id the membership call takes. */
 export async function getUser(

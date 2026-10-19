@@ -1,10 +1,13 @@
 import { type ResolvedToken, resolveToken } from './auth.ts'
+import type { JournalIssue } from './github-journal.ts'
 import type {
   CreateRepositoryResult,
   OrgRepository,
   RateWait,
   RepositoryListing,
 } from './github.ts'
+import * as gi from './gitlab-issues.ts'
+import * as gj from './gitlab-journal.ts'
 import {
   type GitlabApiOptions,
   type GitlabProjects,
@@ -197,8 +200,15 @@ export class GitLabOAuthProvider implements Provider {
   async board(): Promise<Board | null> {
     throw NOT_YET('boards')
   }
-  async checkIssues(): Promise<void> {
-    throw NOT_YET('boards')
+  async checkIssues(org: string): Promise<void> {
+    const project = `${org}/${contextRepo('gitlab')}`
+    const known = await gi.projectOf(project, this.#write())
+    if (known === null)
+      throw new Error(`${project} is not on GitLab (or not visible to you)`)
+    if (!known.issues)
+      throw new Error(
+        `the boards need Issues on ${project}: turn them on in its Settings > General > Visibility, project features, permissions`
+      )
   }
   async ensureLayout(): Promise<string[]> {
     throw NOT_YET('boards')
@@ -218,23 +228,60 @@ export class GitLabOAuthProvider implements Provider {
   async postUpdates(): Promise<string[]> {
     throw NOT_YET('boards')
   }
-  async journalIssue(): Promise<null> {
-    throw NOT_YET('the journal issues')
+  /** The API with a login: the boards and the journal write. */
+  #write(): GitlabApiOptions {
+    if (this.#token === null)
+      throw new Error(
+        'the boards and the journal need a GitLab login: run rness login --provider gitlab'
+      )
+    return this.#api()
   }
-  async createJournalIssue(): Promise<never> {
-    throw NOT_YET('the journal issues')
+
+  // The journal's methods are async so that a missing login rejects, never throws.
+  async journalIssue(
+    owner: string,
+    repo: string,
+    planPath: string
+  ): Promise<JournalIssue | null> {
+    return gj.journalIssue(`${owner}/${repo}`, planPath, this.#write())
   }
-  async issueOf(): Promise<null> {
-    throw NOT_YET('the journal issues')
+
+  async createJournalIssue(
+    owner: string,
+    repo: string,
+    planPath: string,
+    issue: { title: string; body: string }
+  ): Promise<JournalIssue> {
+    return gj.createJournalIssue(
+      `${owner}/${repo}`,
+      planPath,
+      issue,
+      this.#write()
+    )
   }
-  async addSubIssue(): Promise<void> {
-    throw NOT_YET('the journal issues')
+
+  async issueOf(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<{ id: string; number: number; open: boolean } | null> {
+    return gj.issueOf(`${owner}/${repo}`, number, this.#write())
   }
-  async comment(): Promise<void> {
-    throw NOT_YET('the journal issues')
+
+  async addSubIssue(parentId: string, childId: string): Promise<void> {
+    return gj.addSubIssue(parentId, childId, this.#write())
   }
-  async pullRequestFor(): Promise<null> {
-    throw NOT_YET('the journal issues')
+
+  async comment(issueId: string, body: string): Promise<void> {
+    return gj.comment(issueId, body, this.#write())
+  }
+
+  async pullRequestFor(
+    owner: string,
+    repo: string,
+    branch: string
+  ): Promise<{ number: number; state: string } | null> {
+    return gj.pullRequestFor(`${owner}/${repo}`, branch, this.#write())
   }
 }
 
