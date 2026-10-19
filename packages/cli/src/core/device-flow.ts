@@ -194,7 +194,8 @@ export async function pollForToken(
       interval = (num(body['interval']) ?? interval) + 5
       continue
     }
-    if (error === 'expired_token')
+    // gitlab.com drops a code left unapproved, then answers invalid_grant.
+    if (error === 'expired_token' || error === 'invalid_grant')
       throw new LoginError('the code expired before it was approved')
     if (error === 'access_denied')
       throw new LoginError(`the login was cancelled on ${host.host}`)

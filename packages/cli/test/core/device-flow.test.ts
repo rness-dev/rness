@@ -254,6 +254,14 @@ test('GitLab: polling posts the device grant to /oauth/token; a refusal names gi
     pollForToken(code, { sleep }, HOSTS.gitlab),
     /the login was cancelled on gitlab\.com/
   )
+
+  // gitlab.com drops a code left unapproved for its five minutes, then
+  // answers invalid_grant, not expired_token (plan 0049 task 7).
+  replies.push({ status: 400, json: { error: 'invalid_grant' } })
+  await assert.rejects(
+    pollForToken(code, { sleep }, HOSTS.gitlab),
+    /the code expired before it was approved/
+  )
 })
 
 test('GitLab: a refresh with client_id alone; invalid_grant is RefreshRejected, a dead network names gitlab.com', async (t) => {
