@@ -688,6 +688,19 @@ test('an excluded directory under org/ is not taken for an undeclared clone', as
   assert.doesNotMatch(r.out, /not in rness\.json|not read/)
 })
 
+test("on GitLab, org/rness is the context project's name: neither undeclared nor unread", async (t) => {
+  const root = await makeWorkspace(t, {
+    provider: 'gitlab',
+    org: 'acme',
+    scopes: { web: { path: 'org/web' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org/web', 'org/rness'],
+  })
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.out, /not in rness\.json|not read/)
+})
+
 test('a directory under org/ that is no name rness.json can hold is named, not skipped silently', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',

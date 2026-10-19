@@ -287,13 +287,13 @@ test('a board not created yet, named after no collection: refused before GitHub 
 
 test('a written provider that is not available is refused first', async (t) => {
   await machine(t)
-  const cwd = await makeWorkspace(t, { provider: 'gitlab', org: 'acme' })
+  const cwd = await makeWorkspace(t, { provider: 'atlassian', org: 'acme' })
   const r = await run(() => boardPushCommand({ cwd }, { terminal: NO_TTY }))
   assert.equal(r.code, 1)
-  assert.match(r.err, /provider "gitlab" is not supported/)
+  assert.match(r.err, /provider "atlassian" is not supported/)
 })
 
-test('a board to create where the repositories look like an unavailable provider: refused before GitHub is asked anything', async (t) => {
+test('a board to create where the repositories look like another provider, none written: refused before GitHub is asked anything', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo, read:org, project') })
   const cwd = await makeWorkspace(t, {
@@ -313,7 +313,7 @@ test('a board to create where the repositories look like an unavailable provider
   assert.equal(r.out, '')
   assert.equal(
     r.err.trim(),
-    'boards need a GitHub organization, and this workspace\'s repositories look like gitlab (detected): write "provider": "github" in rness.json if the organization is on GitHub'
+    'boards need the organization\'s provider, and this workspace\'s repositories look like gitlab (detected): write "provider": "gitlab" in rness.json, or "github" if the organization is on GitHub'
   )
   assert.deepEqual(g.requests, [], 'no GitHub call at all')
   assert.equal(

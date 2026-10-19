@@ -6,6 +6,7 @@ import { test } from 'node:test'
 
 import {
   EXCLUDED_NAMES,
+  contextRepo,
   isMemberRepo,
   isWorkspaceClone,
   loadManifest,
@@ -814,6 +815,56 @@ test('parseRepoSpec without an organization: owner/repo and URLs only', () => {
     name: 'sdk',
     url: 'git@github.com:acme/sdk.git',
   })
+})
+
+test('org on GitLab is a group path: dots and underscores, no subgroup, the message names GitLab', async (t) => {
+  const org = async (value: string, provider = 'gitlab') => {
+    const d = await fixture({
+      contract: 1,
+      provider,
+      org: value,
+      repos: {},
+      scopes: {},
+    })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    return loadManifest(d)
+  }
+  for (const good of ['acme', 'acme.io', 'acme_corp', 'Acme-Dev', '_acme'])
+    assert.equal((await org(good)).org, good)
+  for (const bad of [
+    '-acme',
+    'acme.',
+    'acme.git',
+    'acme.atom',
+    'acme/platform',
+    'ac me',
+  ]) {
+    await assert.rejects(
+      () => org(bad),
+      /^Error: rness\.json: "org" must be a GitLab group path \(got "/,
+      bad
+    )
+  }
+  // GitHub's rule is unchanged.
+  await assert.rejects(
+    () => org('acme.io', 'github'),
+    /"org" must be a GitHub organization name/
+  )
+})
+
+test('the context repository is .rness, rness on GitLab: excluded there only', () => {
+  assert.equal(contextRepo('github'), '.rness')
+  assert.equal(contextRepo(null), '.rness')
+  assert.equal(contextRepo('gitlab'), 'rness')
+  assert.equal(isMemberRepo({ name: 'rness', archived: false }), true)
+  assert.equal(
+    isMemberRepo({ name: 'rness', archived: false }, 'gitlab'),
+    false
+  )
+  assert.equal(isMemberRepo({ name: 'web', archived: false }, 'gitlab'), true)
+  assert.equal(isWorkspaceClone('rness'), true)
+  assert.equal(isWorkspaceClone('rness', 'gitlab'), false)
+  assert.equal(isWorkspaceClone('web', 'gitlab'), true)
 })
 
 test('isMemberRepo: everything active but the context repository', () => {

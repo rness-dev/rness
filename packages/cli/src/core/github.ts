@@ -16,6 +16,13 @@ export interface OrgRepository {
   name: string
   private: boolean
   archived: boolean
+  /**
+   * From the host's root, when it is not `<owner>/<name>`: a GitLab
+   * project of a subgroup (`acme/platform/mobile`, spec 0037 §5.1).
+   */
+  path?: string
+  /** A word the picker shows beside the name: the subgroup, `internal`. */
+  hint?: string
 }
 
 export interface RepositoryListing {
@@ -28,6 +35,8 @@ export interface RepositoryListing {
   owner: 'org' | 'user' | 'self'
   /** `MAX_PAGES` stopped the listing while GitHub still announced a next page. */
   truncated: boolean
+  /** Lines the provider asks to print once: a project left out, and why. */
+  notes?: string[]
 }
 
 export interface ListRepositoriesOptions {
@@ -294,10 +303,20 @@ export function rateDelay(
 }
 
 /** Sleeps `ms` (a second at least) out of the budget, or throws when the budget cannot cover it. */
-export async function waitOut(options: ApiOptions, ms: number): Promise<void> {
+export async function waitOut(
+  options: { wait?: RateWait | undefined },
+  ms: number,
+  /** Whose rate limit, in the message. */
+  host = 'GitHub'
+): Promise<void> {
   const wait = options.wait ?? PROCESS_WAIT
   const spent = Math.max(ms, MIN_WAIT_MS)
-  if (spent > wait.left) throw new RateLimitError(RATE_LIMIT_OUTLASTED)
+  if (spent > wait.left)
+    throw new RateLimitError(
+      host === 'GitHub'
+        ? RATE_LIMIT_OUTLASTED
+        : `${host}'s rate limit outlasted the 10 minutes rness waits`
+    )
   wait.left -= spent
   await wait.sleep(spent)
 }

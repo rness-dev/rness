@@ -1,11 +1,15 @@
 import { VERSION } from '../version.ts'
 import { githubProvider } from './github-oauth-provider.ts'
 import type { RateWait } from './github.ts'
+import { gitlabProvider } from './gitlab-oauth-provider.ts'
 import type { Provider } from './provider.ts'
 import type { Manifest, ProviderName } from './types.ts'
 
 export interface OpenOptions {
+  /** GitHub's API (`--github-api`). */
   apiBase?: string
+  /** GitLab's API (`--gitlab-api`); default: gitlab.com's, or `RNESS_GITLAB_WEB`'s. */
+  gitlabApi?: string
   wait?: RateWait
 }
 
@@ -25,7 +29,12 @@ export const PROVIDERS: Readonly<Record<ProviderName, ProviderEntry>> = {
     available: true,
     open: ({ apiBase, wait }) => githubProvider(apiBase, wait),
   },
-  gitlab: { name: 'gitlab', label: 'GitLab', available: false },
+  gitlab: {
+    name: 'gitlab',
+    label: 'GitLab',
+    available: true,
+    open: ({ gitlabApi, wait }) => gitlabProvider(gitlabApi, wait),
+  },
   atlassian: {
     name: 'atlassian',
     label: 'Atlassian (Bitbucket + Jira)',

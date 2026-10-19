@@ -38,6 +38,15 @@ export const NAME = /^(?!\.{1,2}$)[a-z0-9._][a-z0-9._-]*$/
 export const CONTEXT_REPO = '.rness'
 
 /**
+ * The context repository's name on the host of `provider`: `.rness`, but
+ * `rness` on GitLab, whose project slugs start with a letter or a digit
+ * (spec 0037 §5.4). The directory is `.rness/` on every host.
+ */
+export function contextRepo(provider: ProviderName | null): string {
+  return provider === 'gitlab' ? 'rness' : CONTEXT_REPO
+}
+
+/**
  * Names that are never a repository of the workspace, whatever they look like
  * (spec 0009). A leading dot is an ordinary first character — `.github`
  * carries an organization's profile, its templates and its shared workflows —
@@ -62,11 +71,19 @@ export const EXCLUDED_NAMES: ReadonlySet<string> = new Set([
  * pushed back. `create` filters its listing with this, and counts with it, so
  * the number it announces and the list it offers cannot disagree.
  */
-export function isMemberRepo(repo: {
-  name: string
-  archived: boolean
-}): boolean {
-  return !repo.archived && !EXCLUDED_NAMES.has(repo.name.toLowerCase())
+export function isMemberRepo(
+  repo: {
+    name: string
+    archived: boolean
+  },
+  provider: ProviderName | null = null
+): boolean {
+  const name = repo.name.toLowerCase()
+  return (
+    !repo.archived &&
+    !EXCLUDED_NAMES.has(name) &&
+    name !== contextRepo(provider)
+  )
 }
 
 /**
@@ -75,8 +92,15 @@ export function isMemberRepo(repo: {
  * `sync` names it on a `not read:` line, pointing at `rness add`, which
  * renames it (plan 0052).
  */
-export function isWorkspaceClone(name: string): boolean {
-  return NAME.test(name) && !EXCLUDED_NAMES.has(name)
+export function isWorkspaceClone(
+  name: string,
+  provider: ProviderName | null = null
+): boolean {
+  return (
+    NAME.test(name) &&
+    !EXCLUDED_NAMES.has(name) &&
+    name !== contextRepo(provider)
+  )
 }
 /** How the rule reads in an error message. */
 export const NAME_RULE =
@@ -89,6 +113,24 @@ export const NAME_RULE =
  * spelling the user chose.
  */
 export const ORG_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/
+
+/**
+ * A GitLab top-level group path (spec 0037 §2, `path_regex.rb` read
+ * 2026-10-08): letters, digits, `_`, `-` and `.`, not starting with `-`,
+ * not ending in `.`, `.git` or `.atom`. No `/`: a subgroup is not a
+ * workspace.
+ */
+const GITLAB_GROUP = /^(?!-)[A-Za-z0-9_.-]{1,255}(?<!\.)(?<!\.git)(?<!\.atom)$/
+
+/** The rule `org` follows on a provider, and how its message names it. */
+export function orgNameRule(provider: ProviderName | null): {
+  pattern: RegExp
+  word: string
+} {
+  return provider === 'gitlab'
+    ? { pattern: GITLAB_GROUP, word: 'a GitLab group path' }
+    : { pattern: ORG_NAME, word: 'a GitHub organization name' }
+}
 
 /** Every top-level key contract 1 defines. */
 const KEYS = [
@@ -123,13 +165,11 @@ function checkPath(scope: string, path: unknown): string {
   return path
 }
 
-function readOrg(value: unknown): string | null {
+function readOrg(value: unknown, provider: ProviderName | null): string | null {
   if (value === undefined || value === null) return null
-  if (typeof value !== 'string' || !ORG_NAME.test(value)) {
-    fail(
-      `"org" must be a GitHub organization name (got ${JSON.stringify(value)})`
-    )
-  }
+  const rule = orgNameRule(provider)
+  if (typeof value !== 'string' || !rule.pattern.test(value))
+    fail(`"org" must be ${rule.word} (got ${JSON.stringify(value)})`)
   return value
 }
 
@@ -356,10 +396,11 @@ export function parseManifest(raw: string): Manifest {
     if (!KEYS.includes(key)) fail(`unknown key ${JSON.stringify(key)}`)
   }
   const { boards, refused, formerKey } = readBoardsOrFormer(data)
+  const provider = readProvider(data.provider)
   return {
     contract: 1,
-    provider: readProvider(data.provider),
-    org: readOrg(data.org),
+    provider,
+    org: readOrg(data.org, provider),
     agents: readAgents(data.agents),
     boards,
     ...(refused.length === 0 ? {} : { refused }),

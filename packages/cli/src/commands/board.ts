@@ -59,7 +59,7 @@ import {
 import { declaredBoard, presetSource } from '../core/preset-board.ts'
 import { labelOf } from '../core/presets.ts'
 import type { Board, MarkFields, Provider } from '../core/provider.ts'
-import { PROVIDERS, openProvider } from '../core/providers.ts'
+import { openProvider } from '../core/providers.ts'
 import { type StatusTab, documentsIn, statusTabs } from '../core/status.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import type { Manifest } from '../core/types.ts'
@@ -701,13 +701,13 @@ async function createBoards(
   wait: RateWait
 ): Promise<{ c: Context; made: string[]; left: string[] }> {
   for (const b of boards) await checkBoardName(c.rnessDir, b.name)
-  // A written provider was already refused by `context`; a detected one is
-  // what this writes, so it is refused here, before GitHub is asked
-  // anything (spec 0017 §2.2).
+  // A written provider was already refused by `context`. Without one, GitHub
+  // is opened; repositories that look like another host are refused here,
+  // before GitHub is asked anything (spec 0017 §2.2).
   const detected = providerOf(c.manifest)
-  if (!PROVIDERS[detected].available)
+  if (c.manifest.provider === null && detected !== 'github')
     throw new Error(
-      `boards need a GitHub organization, and this workspace's repositories look like ${detected} (detected): write "provider": "github" in rness.json if the organization is on GitHub`
+      `boards need the organization's provider, and this workspace's repositories look like ${detected} (detected): write "provider": "${detected}" in rness.json, or "github" if the organization is on GitHub`
     )
   const names = boards.map((b) => b.name)
   if (opts.confirmed !== true && opts.yes !== true) {

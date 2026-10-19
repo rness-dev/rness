@@ -835,7 +835,7 @@ const ORG_LIST_Q = 'Which GitHub organization?'
 const APPROVE_Q = /^Open github\.com to approve rness for \S+ now\?$/
 const PROVIDER_OPTIONS = [
   { value: 'github', label: 'GitHub', disabled: false },
-  { value: 'gitlab', label: 'GitLab (coming later)', disabled: true },
+  { value: 'gitlab', label: 'GitLab', disabled: false },
   {
     value: 'atlassian',
     label: 'Atlassian (Bitbucket + Jira) (coming later)',
@@ -2346,11 +2346,17 @@ test('without a terminal and without --provider, a new workspace is GitHub', asy
 
 test('--provider: an unavailable or unknown provider exits 2 before anything else', async (t) => {
   const cwd = await scratch(t)
-  const gitlab = await create(['acme', '--provider', 'gitlab', '--cwd', cwd])
-  assert.equal(gitlab.code, 2)
+  const atlassian = await create([
+    'acme',
+    '--provider',
+    'atlassian',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(atlassian.code, 2)
   assert.equal(
-    gitlab.err,
-    'provider "gitlab" is not available yet (available: github)\n'
+    atlassian.err,
+    'provider "atlassian" is not available yet (available: github, gitlab)\n'
   )
   const svn = await create(['acme', '--provider', 'svn', '--cwd', cwd])
   assert.equal(svn.code, 2)

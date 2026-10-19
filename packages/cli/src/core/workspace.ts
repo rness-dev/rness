@@ -2,8 +2,8 @@ import { readdir } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
 
 import { exists } from './fs.ts'
-import { EXCLUDED_NAMES, isWorkspaceClone } from './manifest.ts'
-import type { Workspace } from './types.ts'
+import { EXCLUDED_NAMES, contextRepo, isWorkspaceClone } from './manifest.ts'
+import type { ProviderName, Workspace } from './types.ts'
 
 /** Walk up from `startDir`: a directory holding `.rness/rness.json` is the root. Only when none exists anywhere above does a directory that itself holds `rness.json` count — a standalone checkout of the context repository (CI): that directory is `.rness/`, its parent the root. */
 export async function findWorkspace(startDir: string): Promise<Workspace> {
@@ -59,7 +59,9 @@ export async function entryFor(
  * silently.
  */
 export async function orgDirs(
-  root: string
+  root: string,
+  /** On GitLab, `org/rness` is the context project's name, left out as `.rness` is. */
+  provider: ProviderName | null = null
 ): Promise<{ clones: Set<string>; unread: string[] }> {
   let dirs: string[]
   try {
@@ -69,16 +71,22 @@ export async function orgDirs(
     return { clones: new Set(), unread: [] }
   }
   return {
-    clones: new Set(dirs.filter(isWorkspaceClone)),
+    clones: new Set(dirs.filter((d) => isWorkspaceClone(d, provider))),
     unread: dirs
       .filter(
-        (d) => !isWorkspaceClone(d) && !EXCLUDED_NAMES.has(d.toLowerCase())
+        (d) =>
+          !isWorkspaceClone(d, provider) &&
+          !EXCLUDED_NAMES.has(d.toLowerCase()) &&
+          d.toLowerCase() !== contextRepo(provider)
       )
       .sort(),
   }
 }
 
 /** The repositories cloned under `<root>/org`, by name (spec 0009 §3). */
-export async function clonesIn(root: string): Promise<Set<string>> {
-  return (await orgDirs(root)).clones
+export async function clonesIn(
+  root: string,
+  provider: ProviderName | null = null
+): Promise<Set<string>> {
+  return (await orgDirs(root, provider)).clones
 }

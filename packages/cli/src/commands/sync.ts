@@ -26,6 +26,7 @@ import {
   NAME,
   NAME_RULE,
   loadManifest,
+  providerOf,
   workspaceName,
   writeManifest,
 } from '../core/manifest.ts'
@@ -318,7 +319,7 @@ export async function syncCommand(
         ui.hint('rness.json changed: commit it in .rness, for the whole team')
     }
 
-    const { clones, unread } = await orgDirs(ws.root)
+    const { clones, unread } = await orgDirs(ws.root, providerOf(manifest))
     // A declared repository whose directory differs only by case (`org/dApp`
     // for `dapp`) is not missing: cloning `org/dapp` would fail where the file
     // system ignores case and make a second copy where it does not. It gets

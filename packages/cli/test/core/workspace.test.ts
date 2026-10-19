@@ -88,6 +88,18 @@ test('a bare rness.json below a real workspace never shadows it (e.g. the shippe
   })
 })
 
+test('orgDirs on GitLab: org/rness is neither a clone nor unread; on GitHub it is a clone', async (t) => {
+  const root = await workspace()
+  t.after(() => rm(root, { recursive: true, force: true }))
+  for (const d of ['web', 'rness'])
+    await mkdir(join(root, 'org', d), { recursive: true })
+  assert.deepEqual(await orgDirs(root, 'gitlab'), {
+    clones: new Set(['web']),
+    unread: [],
+  })
+  assert.deepEqual([...(await orgDirs(root)).clones].sort(), ['rness', 'web'])
+})
+
 test('orgDirs: the clones, and the directories that are not, an excluded name left out', async (t) => {
   const root = await workspace()
   t.after(() => rm(root, { recursive: true, force: true }))

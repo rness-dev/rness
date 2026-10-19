@@ -163,7 +163,7 @@ async function pickRepositories(input: {
       // list below it must agree (spec 0009).
       (l) => [
         'listed',
-        `${count(l.repositories.filter(isMemberRepo).length, ['repository', 'repositories'])} of ${org}`,
+        `${count(l.repositories.filter((r) => isMemberRepo(r)).length, ['repository', 'repositories'])} of ${org}`,
       ]
     )
     listed = listing.repositories
@@ -195,7 +195,7 @@ async function pickRepositories(input: {
   // any other name is shown but cannot be picked yet.
   const byLabel = (a: { label: string }, b: { label: string }): number =>
     a.label.localeCompare(b.label, 'en', { sensitivity: 'base' })
-  const candidates = listed.filter(isMemberRepo)
+  const candidates = listed.filter((r) => isMemberRepo(r))
   // A private repository wears a padlock next to its name — visible on every
   // line, where a hint shows on the focused one only. A terminal that cannot
   // draw it falls back to the word, as a hint.
