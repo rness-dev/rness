@@ -120,6 +120,11 @@ export type BoardHooks = Partial<Record<HookEvent, BoardAction[]>>
 export interface BoardDeclaration {
   /** The project on the provider; null until `board push` creates it (spec 0033 §4). */
   number: number | null
+  /**
+   * On GitLab, one issue board per `board` view, by the view's name, in view
+   * order (spec 0037 §2); null on GitHub, and until `board push` creates it.
+   */
+  ids: Record<string, number> | null
   /** The preset and revision it was made from, `agent-pulse/1`; null: none. */
   preset: string | null
   title: string | null
@@ -165,6 +170,7 @@ const SHOWN_FIELDS: readonly string[] = [
 
 const BOARD_KEYS = [
   'number',
+  'ids',
   'preset',
   'title',
   'description',
@@ -603,6 +609,25 @@ export function readPresetEntry(
 }
 
 /**
+ * How the provider knows a created board: GitHub's project number, else
+ * GitLab's first view's issue board; null until `board push` creates it.
+ */
+export const boardNumber = (d: BoardDeclaration): number | null =>
+  d.number ?? (d.ids === null ? null : (Object.values(d.ids)[0] ?? null))
+
+/** `ids`: view names to GitLab board ids, positive integers, in the order written; null when absent. */
+function readIds(value: unknown, at: string): Record<string, number> | null {
+  if (value === undefined || value === null) return null
+  const ok =
+    isRecord(value) &&
+    Object.values(value).every(
+      (id) => typeof id === 'number' && Number.isInteger(id) && id > 0
+    )
+  if (!ok) throw new BoardRefused(at, 'must map view names to board ids')
+  return { ...(value as Record<string, number>) }
+}
+
+/**
  * One entry of `boards` that is an object: the board, read whole, or
  * {@link BoardRefused}; without `number` until `board push` creates it.
  * `knows` says which preset revisions there are: this rness's, unless a
@@ -626,6 +651,12 @@ export function parseBoard(
     (typeof number !== 'number' || !Number.isInteger(number) || number < 1)
   )
     throw new BoardRefused(`${at}.number`, 'must be a project number')
+  const ids = readIds(value['ids'], `${at}.ids`)
+  if (number !== null && ids !== null)
+    throw new BoardRefused(
+      at,
+      'names its board by "number" or by "ids", not both'
+    )
   const preset = value['preset']
   if (
     preset !== undefined &&
@@ -716,6 +747,7 @@ export function parseBoard(
   }
   return {
     number,
+    ids,
     preset: (preset as string | undefined) ?? null,
     title: optionalText(value, 'title', at),
     description: optionalText(value, 'description', at),

@@ -5,12 +5,13 @@ import {
   notesPosted,
   recordNotice,
 } from '../board/journal-state.ts'
-import { blobUrl, issueUrl } from '../board/urls.ts'
+import { contextUrls } from '../board/urls.ts'
 import type { BoardAction } from '../core/board-declaration.ts'
 import { parseFrontMatter } from '../core/frontmatter.ts'
 import { branchOf, headOf } from '../core/git.ts'
 import { JournalRefused } from '../core/github-journal.ts'
 import type { JournalIssue } from '../core/github-journal.ts'
+import { contextRepo, providerOf } from '../core/manifest.ts'
 import { cloneHolding } from '../core/repos.ts'
 import { resolveScope } from '../core/scope.ts'
 import { plansInProgress, statusTabs } from '../core/status.ts'
@@ -119,6 +120,42 @@ export function journalOf(
 }
 
 /** `git@github.com:acme/api.git` or `https://github.com/acme/api` → `acme`, `api`; null on another host. */
+const isGitlab = (c: Context): boolean => providerOf(c.manifest) === 'gitlab'
+
+/** The context repository's name on the workspace's provider: `.rness`, `rness` on GitLab. */
+const contextOf = (c: Context): string => contextRepo(providerOf(c.manifest))
+
+/** `acme/platform/mobile` off a gitlab.com URL: its owner the group path, its name the last segment. */
+export function gitlabRepo(
+  url: string
+): { owner: string; name: string } | null {
+  const m =
+    /^(?:git@gitlab\.com:|ssh:\/\/git@gitlab\.com\/|https:\/\/gitlab\.com\/)(.+)\/([^/]+?)(?:\.git)?\/?$/.exec(
+      url.trim()
+    )
+  return m === null || m[1] === undefined || m[2] === undefined
+    ? null
+    : { owner: m[1], name: m[2] }
+}
+
+/**
+ * A clone's repository when it is the workspace's: on its provider, under
+ * its organization (a GitLab subgroup's included, spec 0030 §3.4); null
+ * otherwise.
+ */
+export function workspaceRepo(
+  c: Context,
+  url: string
+): { owner: string; name: string } | null {
+  const repo = isGitlab(c) ? gitlabRepo(url) : githubRepo(url)
+  if (repo === null) return null
+  const owner = repo.owner.toLowerCase()
+  const org = c.org.toLowerCase()
+  return owner === org || (isGitlab(c) && owner.startsWith(`${org}/`))
+    ? repo
+    : null
+}
+
 export function githubRepo(
   url: string
 ): { owner: string; name: string } | null {
@@ -178,13 +215,13 @@ export async function planIssue(
   const found =
     number === undefined
       ? null
-      : await fromGithub(c.provider.issueOf(c.org, '.rness', number))
+      : await fromGithub(c.provider.issueOf(c.org, contextOf(c), number))
   if (found === null)
     throw new NoteRefused(`${plan} has no issue yet: rness board push`)
   return {
     id: found.id,
     number: found.number,
-    repository: `${c.org}/.rness`,
+    repository: `${c.org}/${contextOf(c)}`,
   }
 }
 
@@ -199,8 +236,9 @@ async function implementationBody(
   plan: string,
   planNumber: number
 ): Promise<string> {
+  const urls = contextUrls(isGitlab(c) ? 'gitlab' : 'github')
   const lines = [
-    `Plan [\`${plan}\`](${blobUrl(c.org, plan)}) · [plan issue](${issueUrl(c.org, planNumber)})`,
+    `Plan [\`${plan}\`](${urls.blob(c.org, plan)}) · [plan issue](${urls.issue(c.org, planNumber)})`,
   ]
   try {
     const { readFile } = await import('node:fs/promises')
@@ -212,7 +250,7 @@ async function implementationBody(
       String(front['spec'] ?? '')
     )
     if (spec?.[1] !== undefined)
-      lines.push(`Specification [\`${spec[1]}\`](${blobUrl(c.org, spec[1])})`)
+      lines.push(`Specification [\`${spec[1]}\`](${urls.blob(c.org, spec[1])})`)
   } catch {
     // No specification named: the plan alone.
   }
@@ -243,9 +281,8 @@ export async function postNote(input: NoteInput): Promise<Posted> {
   let target: JournalIssue = parent
   let why: string | null = null
   if (kept.journal.to === 'repo' && clone !== null) {
-    const repo = githubRepo(clone.url)
-    if (repo === null || repo.owner.toLowerCase() !== c.org.toLowerCase())
-      why = `${clone.name} is not on the workspace's provider`
+    const repo = workspaceRepo(c, clone.url)
+    if (repo === null) why = `${clone.name} is not on the workspace's provider`
     else
       try {
         const there = await fromGithub(
@@ -279,7 +316,7 @@ export async function postNote(input: NoteInput): Promise<Posted> {
           why =
             e.why === 'issues'
               ? `${repo.owner}/${repo.name} takes no issues`
-              : `${repo.owner}/${repo.name} is not on GitHub, or this login cannot see it`
+              : `${repo.owner}/${repo.name} is not on ${isGitlab(c) ? 'GitLab' : 'GitHub'}, or this login cannot see it`
         else if (refusedWrite(e))
           why = `${repo.owner}/${repo.name} refuses this login's write`
         else throw e

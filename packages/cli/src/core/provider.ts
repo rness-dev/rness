@@ -44,8 +44,13 @@ export interface MarkFields {
 
 export interface Board {
   org: string
+  /** GitHub's project number; on GitLab, the first view's issue board id. */
   number: number
   url: string
+  /** GitLab: one issue board per `board` view, by the view's name (spec 0037 §2); absent on GitHub. */
+  ids?: Record<string, number>
+  /** GitLab: the title its issue boards are named after, `<title> · <view>`. */
+  title?: string
 }
 
 export interface Provider {
@@ -83,9 +88,18 @@ export interface Provider {
    * new, empty one for `org`, so that the caller can declare it before
    * `ensureLayout` builds it. Anonymous: refused.
    */
-  createBoard(org: string, title?: string): Promise<Board>
-  /** The board `number` of `org`, or null when the provider has none. */
-  board(org: string, number: number): Promise<Board | null>
+  createBoard(
+    org: string,
+    title?: string,
+    /** The `board` views, by name: GitLab makes an issue board for each. */
+    views?: readonly string[]
+  ): Promise<Board>
+  /** The board `number` of `org` (GitLab: its `ids`), or null when the provider has none. */
+  board(
+    org: string,
+    number: number,
+    ids?: Readonly<Record<string, number>> | null
+  ): Promise<Board | null>
   /**
    * Refuses, before any write, a workspace whose organization's `.rness`
    * cannot hold the boards' issues (spec 0018 §2). The caller asks before

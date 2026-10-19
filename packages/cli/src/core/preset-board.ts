@@ -5,6 +5,7 @@ import { readShape } from '../board/collection.ts'
 import {
   type BoardDeclaration,
   PULSE,
+  boardNumber,
   parseBoard,
   presetFor,
 } from './board-declaration.ts'
@@ -156,7 +157,7 @@ export async function readBoards(rnessDir: string): Promise<NamedBoard[]> {
   for (const [name, entry] of Object.entries(declared))
     try {
       const declaration = await declaredBoard(name, entry, rnessDir)
-      if (declaration.number !== null) boards.push({ name, declaration })
+      if (boardNumber(declaration) !== null) boards.push({ name, declaration })
     } catch {
       // Refused: said elsewhere.
     }

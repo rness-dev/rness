@@ -122,11 +122,11 @@ test('an issue by its iid, or null; the issues of a label and a state, paged', a
 test("a project's labels, and a label made with its colour", async (t) => {
   const gl = await fakeGitlab(t, (r) =>
     r.method === 'POST'
-      ? { status: 201, json: {} }
+      ? { status: 201, json: { id: 2 } }
       : { json: [{ name: 'rness', color: '#5319e7', id: 1 }] }
   )
   assert.deepEqual(await labels('acme/rness', O), [
-    { name: 'rness', color: '#5319e7' },
+    { name: 'rness', color: '#5319e7', id: 1 },
   ])
   await createLabel(
     'acme/rness',

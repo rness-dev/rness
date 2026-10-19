@@ -31,6 +31,7 @@ import {
   type BoardAction,
   type BoardDeclaration,
   HOOK_EVENTS,
+  boardNumber,
   parseBoard,
   presetFor,
 } from '../core/board-declaration.ts'
@@ -62,7 +63,7 @@ import type { Board, MarkFields, Provider } from '../core/provider.ts'
 import { openProvider } from '../core/providers.ts'
 import { type StatusTab, documentsIn, statusTabs } from '../core/status.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
-import type { Manifest } from '../core/types.ts'
+import type { Manifest, ProviderName } from '../core/types.ts'
 import { type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
@@ -81,9 +82,17 @@ export interface BoardOptions {
   sleep?: (ms: number) => Promise<void>
 }
 
-const PROJECT_SCOPE = 'project'
-const NEEDS_LOGIN = 'boards need a GitHub login: run rness login'
-const NEEDS_SCOPE = 'boards need the project scope: run rness login'
+/** The scope a provider's login needs for boards: GitHub's `project`, GitLab's `api` (spec 0037 §3). */
+const boardScope = (p: ProviderName): string =>
+  p === 'gitlab' ? 'api' : 'project'
+const needsLogin = (p: ProviderName): string =>
+  p === 'gitlab'
+    ? 'boards need a GitLab login: run rness login --provider gitlab'
+    : 'boards need a GitHub login: run rness login'
+const needsScope = (p: ProviderName): string =>
+  p === 'gitlab'
+    ? 'boards need the api scope: run rness login --provider gitlab'
+    : 'boards need the project scope: run rness login'
 
 /**
  * GitHub's own words, named as GitHub's unless they already say so. rness's
@@ -106,6 +115,10 @@ export interface Context {
   org: string
   provider: Provider
 }
+
+/** Where a board's bodies and headers point: GitLab's project `rness`, else GitHub's `.rness`. */
+const bodyProviderOf = (c: Context): 'github' | 'gitlab' =>
+  providerOf(c.manifest) === 'gitlab' ? 'gitlab' : 'github'
 
 const apiOf = (opts: BoardOptions): { apiBase?: string } =>
   opts.githubApi === undefined ? {} : { apiBase: opts.githubApi }
@@ -149,16 +162,27 @@ const waitSaid = (opts: BoardOptions, ui: Ui): RateWait =>
  * null. Throws when GitHub cannot be asked: an offline machine or a rejected
  * token is never told that a scope is missing.
  */
-async function missingAccess(provider: Provider): Promise<string | null> {
-  if (!provider.authenticated) return NEEDS_LOGIN
+async function missingAccess(
+  provider: Provider,
+  name: ProviderName
+): Promise<string | null> {
+  if (!provider.authenticated) return needsLogin(name)
   const scopes = await fromGithub(provider.scopes())
-  return scopes?.includes(PROJECT_SCOPE) === true ? null : NEEDS_SCOPE
+  // GitLab names no scope for a token it cannot describe: it refuses a write itself.
+  if (scopes === null && name === 'gitlab') return null
+  return scopes?.includes(boardScope(name)) === true ? null : needsScope(name)
 }
 
-/** A board the provider has: its declaration names its project. */
-export type Created = BoardDeclaration & { number: number }
+/** A board the provider has: its declaration names its project (GitLab: its `ids`). */
+export type Created = BoardDeclaration
 
-const isCreated = (d: BoardDeclaration): d is Created => d.number !== null
+const isCreated = (d: BoardDeclaration): d is Created => boardNumber(d) !== null
+
+/** The words of a board the provider does not have: GitHub's project, GitLab's issue board. */
+const notFound = (c: Context, d: BoardDeclaration): string =>
+  d.ids !== null
+    ? `gitlab.com has no board ${boardNumber(d)} in ${c.org}/rness`
+    : `GitHub has no project ${d.number} in ${c.org}`
 
 /** A declared project, opened: its name in `boards`, its declaration, its board. */
 export interface Declared {
@@ -249,13 +273,14 @@ export async function declaredBoards(c: Context, ui?: Ui): Promise<Declared[]> {
   if (c.manifest.boards === null) throw noBoard(c)
   const { created } = await declarations(c, ui)
   if (created.length === 0) return []
-  const missing = await missingAccess(c.provider)
+  const missing = await missingAccess(c.provider, providerOf(c.manifest))
   if (missing !== null) throw new Error(missing)
   const declared: Declared[] = []
   for (const { name, declaration } of created) {
-    const board = await fromGithub(c.provider.board(c.org, declaration.number))
-    if (board === null)
-      throw new Error(`GitHub has no project ${declaration.number} in ${c.org}`)
+    const board = await fromGithub(
+      c.provider.board(c.org, boardNumber(declaration) ?? 0, declaration.ids)
+    )
+    if (board === null) throw new Error(notFound(c, declaration))
     declared.push({ name, declaration, board })
   }
   return declared
@@ -354,7 +379,14 @@ async function scopeOf(
         fronts.set(`${col.name}/${item.rel}`, item.fields ?? {})
       directories.set(col.name, await directoriesOf(dir))
     }
-  const want = desiredOf(declaration, collections, c.org, fronts, directories)
+  const want = desiredOf(
+    declaration,
+    collections,
+    c.org,
+    fronts,
+    directories,
+    bodyProviderOf(c)
+  )
   const text =
     declaration.readme === null && declaration.description === null
       ? null
@@ -518,7 +550,8 @@ async function syncBoard(
   board: Board,
   ui: Ui,
   sayLayout: SayLayout,
-  scope: Scope
+  scope: Scope,
+  declared: { name: string; declaration: BoardDeclaration }
 ): Promise<void> {
   await fromGithub(c.provider.checkIssues(c.org))
   const { want } = scope
@@ -532,6 +565,29 @@ async function syncBoard(
     ),
     scope.label
   )
+  // GitLab: an issue board the layout made for a view, declared at once
+  // (spec 0037 §7.2); an id is never removed by rness.
+  if (
+    board.ids !== undefined &&
+    JSON.stringify(board.ids) !== JSON.stringify(declared.declaration.ids ?? {})
+  ) {
+    const ids = { ...(declared.declaration.ids ?? {}), ...board.ids }
+    c.manifest = {
+      ...c.manifest,
+      boards: {
+        ...c.manifest.boards,
+        [declared.name]: parseBoard(declared.name, {
+          ...(declared.declaration.source as Record<string, unknown>),
+          ids,
+        }),
+      },
+    }
+    await writeManifest(c.rnessDir, c.manifest)
+    ui.line(
+      'declared',
+      `ids of ${declared.name} in .rness/rness.json - commit it: git -C .rness commit -am "chore: board ${declared.name}"`
+    )
+  }
   const have = await fromGithub(c.provider.items(board))
   // Gone is gone for this clone's git (spec 0018 §2): a path it never saw is
   // closed only on an issue this clone opened, as its record says. Git is
@@ -604,6 +660,7 @@ async function syncBoard(
           org: c.org,
           numbers,
           files,
+          provider: bodyProviderOf(c),
         })
       )
     writes = planBodies(bodies, issued)
@@ -659,7 +716,8 @@ async function syncAll(
       d.board,
       ui,
       sayLayout(d.name),
-      await scopeOf(c, d.name, d.declaration, tabs, owners)
+      await scopeOf(c, d.name, d.declaration, tabs, owners),
+      d
     )
   }
 }
@@ -710,28 +768,35 @@ async function createBoards(
       `boards need the organization's provider, and this workspace's repositories look like ${detected} (detected): write "provider": "${detected}" in rness.json, or "github" if the organization is on GitHub`
     )
   const names = boards.map((b) => b.name)
+  const gitlab = detected === 'gitlab'
+  // GitLab: one issue board per `board` view (spec 0037 §7.1).
+  const viewsOf = (b: NotCreated): string[] =>
+    b.declaration.views.filter((v) => v.layout === 'board').map((v) => v.name)
   if (opts.confirmed !== true && opts.yes !== true) {
     if (!terminal.isTty()) return { c, made: [], left: names }
     const p = await terminal.prompts()
     const ok = await p.confirm({
-      message: `Create ${boards.map((b) => `${titleOf(b)} (${b.name})`).join(', ')} on GitHub, in ${c.org}?`,
+      message: gitlab
+        ? `Create ${boards.map((b) => `${viewsOf(b).length} boards of ${titleOf(b)}`).join(', ')} on ${c.org}/rness?`
+        : `Create ${boards.map((b) => `${titleOf(b)} (${b.name})`).join(', ')} on GitHub, in ${c.org}?`,
     })
     if (p.isCancel(ok) || ok !== true) return { c, made: [], left: names }
   }
-  const missing = await missingAccess(c.provider)
+  const missing = await missingAccess(c.provider, detected)
   if (missing !== null) {
     if (opts.yes === true || !terminal.isTty()) throw new Error(missing)
     const p = await terminal.prompts()
     const ok = await p.confirm({
-      message:
-        missing === NEEDS_LOGIN
+      message: gitlab
+        ? 'Boards need a GitLab login. Log in now?'
+        : missing === needsLogin(detected)
           ? 'Boards need a GitHub login with the project scope. Log in now?'
           : 'Boards need the project scope of your GitHub login. Log in again to grant it?',
     })
     if (p.isCancel(ok) || ok !== true) throw new Error(missing)
     const code = await loginCommand(
       {
-        project: true,
+        ...(gitlab ? { provider: 'gitlab' } : { project: true }),
         // The git question is `rness login`'s own, not the board's to ask.
         setupGit: false,
         ...(opts.githubApi === undefined ? {} : { githubApi: opts.githubApi }),
@@ -743,7 +808,7 @@ async function createBoards(
       ...c,
       provider: await openProvider(c.manifest, providerOptions(opts, wait)),
     }
-    const still = await missingAccess(c.provider)
+    const still = await missingAccess(c.provider, detected)
     if (still !== null) throw new Error(still)
   }
   // Before anything is written: the items are issues of .rness (spec 0018 §2).
@@ -751,7 +816,9 @@ async function createBoards(
   const login = (await c.provider.identity())?.login ?? 'unknown'
   ui.line(
     'checked',
-    `${detected}, logged in as ${login}, scope ${PROJECT_SCOPE}`
+    gitlab
+      ? `gitlab.com, logged in as ${login}`
+      : `${detected}, logged in as ${login}, scope ${boardScope(detected)}`
   )
   const made: string[] = []
   for (const b of boards) {
@@ -767,7 +834,9 @@ async function createBoards(
         ? await readmeText(c.rnessDir, b.name)
         : null
     const title = titleOf(b)
-    const board = await fromGithub(c.provider.createBoard(c.org, title))
+    const board = await fromGithub(
+      c.provider.createBoard(c.org, title, gitlab ? viewsOf(b) : undefined)
+    )
     // Declared as soon as the project exists, before its layout: whatever
     // fails after this leaves a declared project that the next push
     // completes, not one nobody knows about (spec 0017 §3).
@@ -776,7 +845,12 @@ async function createBoards(
       provider: detected,
       boards: {
         ...c.manifest.boards,
-        [b.name]: parseBoard(b.name, { number: board.number, ...source }),
+        [b.name]: parseBoard(
+          b.name,
+          board.ids === undefined
+            ? { number: board.number, ...source }
+            : { ...source, ids: board.ids }
+        ),
       },
     }
     await writeManifest(c.rnessDir, manifest)

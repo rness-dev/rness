@@ -140,6 +140,7 @@ export class GitHubOAuthProvider implements Provider {
     return this.#boards().checkIssues(org)
   }
 
+  // GitHub's board is one project: its views are made by `ensureLayout`.
   async createBoard(org: string, title?: string): Promise<Board> {
     return this.#boards().createBoard(org, title)
   }

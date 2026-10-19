@@ -152,32 +152,33 @@ export async function listIssues(
   return listed.items.map(toIssue).filter((i): i is GitlabIssue => i !== null)
 }
 
-/** The project's labels, by name and colour. */
+/** The project's labels: name, colour, and the id a board's list takes. */
 export async function labels(
   path: string,
   o: GitlabApiOptions
-): Promise<{ name: string; color: string }[]> {
+): Promise<{ name: string; color: string; id: number }[]> {
   const listed = await pages(`/projects/${segment(path)}/labels`, {}, o)
   if (listed === null)
     throw new Error(
       `GitLab has no project ${path} (or it is not visible to you)`
     )
-  const out: { name: string; color: string }[] = []
+  const out: { name: string; color: string; id: number }[] = []
   for (const l of listed.items) {
     const name = field(l, 'name')
     const color = field(l, 'color')
-    if (typeof name === 'string')
-      out.push({ name, color: typeof color === 'string' ? color : '' })
+    const id = field(l, 'id')
+    if (typeof name === 'string' && typeof id === 'number')
+      out.push({ name, color: typeof color === 'string' ? color : '', id })
   }
   return out
 }
 
-/** A label of the project; `color` as hex, with or without its `#`. */
+/** A label of the project; `color` as hex, with or without its `#`. Its id. */
 export async function createLabel(
   path: string,
   label: { name: string; color: string; description?: string },
   o: GitlabApiOptions
-): Promise<void> {
+): Promise<number> {
   const at = `/projects/${segment(path)}/labels`
   const answer = await gitlabCall('POST', at, o, {
     name: label.name,
@@ -186,7 +187,9 @@ export async function createLabel(
       ? {}
       : { description: label.description }),
   })
-  if (answer.status !== 201) throw failure(answer, at)
+  const id = field(answer.body, 'id')
+  if (answer.status !== 201 || typeof id !== 'number') throw failure(answer, at)
+  return id
 }
 
 /** A note (GitLab's comment) on an issue. */

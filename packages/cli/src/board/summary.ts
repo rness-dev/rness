@@ -1,8 +1,9 @@
 import { resolve } from 'node:path'
 
 import { type Context, type Declared, fromGithub } from '../commands/board.ts'
-import { githubRepo, journalOf, planIssue } from '../commands/note.ts'
+import { journalOf, planIssue, workspaceRepo } from '../commands/note.ts'
 import { branchOf, commitsBetween } from '../core/git.ts'
+import { providerOf } from '../core/manifest.ts'
 import { plansInProgress } from '../core/status.ts'
 import {
   type NotedIssue,
@@ -85,12 +86,8 @@ export async function postSummary(input: SummaryInput): Promise<string[]> {
       dir === null || start === null
         ? []
         : await commitsBetween(dir, start.head).catch(() => [])
-    const found = url === undefined ? null : githubRepo(url)
     // A repository of another owner is not the workspace's (spec 0030 §3.4).
-    const repo =
-      found !== null && found.owner.toLowerCase() === c.org.toLowerCase()
-        ? found
-        : null
+    const repo = url === undefined ? null : workspaceRepo(c, url)
     const noted = await issuesNoted(c.rnessDir, session)
     const targets =
       noted.length > 0
@@ -119,7 +116,9 @@ export async function postSummary(input: SummaryInput): Promise<string[]> {
       ...(pr === null || repo === null
         ? []
         : [
-            `Pull request ${repo.owner}/${repo.name}#${pr.number} (${pr.state.toLowerCase()})`,
+            providerOf(c.manifest) === 'gitlab'
+              ? `Merge request ${repo.owner}/${repo.name}!${pr.number} (${pr.state.toLowerCase()})`
+              : `Pull request ${repo.owner}/${repo.name}#${pr.number} (${pr.state.toLowerCase()})`,
           ]),
     ]
     const body = [

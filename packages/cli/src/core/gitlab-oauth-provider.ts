@@ -1,3 +1,5 @@
+import type { Layout } from '../board/layout.ts'
+import type { BoardItem, Placed, Step } from '../board/plan.ts'
 import { type ResolvedToken, resolveToken } from './auth.ts'
 import type { JournalIssue } from './github-journal.ts'
 import type {
@@ -6,6 +8,7 @@ import type {
   RateWait,
   RepositoryListing,
 } from './github.ts'
+import { GitLabBoards } from './gitlab-boards.ts'
 import * as gi from './gitlab-issues.ts'
 import * as gj from './gitlab-journal.ts'
 import {
@@ -26,6 +29,7 @@ import { rnessCommand } from './pm.ts'
 import type {
   Board,
   GitCredentials,
+  MarkFields,
   Organization,
   OrganizationAccess,
   Provider,
@@ -41,10 +45,6 @@ const ROLES: Readonly<Record<number, string>> = {
   10: 'Guest',
 }
 
-/** Said by the board and journal methods until plan 0049 tasks 5 and 6 bring them. */
-const NOT_YET = (what: string): Error =>
-  new Error(`${what} on GitLab are not available in this version of rness`)
-
 /**
  * GitLab as a user (spec 0037): the token of `GITLAB_TOKEN` or `rness login
  * --provider gitlab`, or none, and then gitlab.com seen anonymously
@@ -55,6 +55,7 @@ export class GitLabOAuthProvider implements Provider {
   readonly #apiBase: string | undefined
   readonly #wait: RateWait | undefined
   #user: Promise<{ login: string; id: number | null } | null> | undefined
+  #boardClient: GitLabBoards | undefined
   readonly #standing = new Map<
     string,
     Promise<{ accessLevel: number } | 'not-member' | 'unknown'>
@@ -192,13 +193,26 @@ export class GitLabOAuthProvider implements Provider {
     return { username: HOSTS.gitlab.username, password: this.#token.token }
   }
 
-  // The boards (plan 0049 task 6) and the journal (task 5) come later; the
-  // methods reject, never throw.
-  async createBoard(): Promise<Board> {
-    throw NOT_YET('boards')
+  #boards(): GitLabBoards {
+    this.#boardClient ??= new GitLabBoards(this.#write())
+    return this.#boardClient
   }
-  async board(): Promise<Board | null> {
-    throw NOT_YET('boards')
+
+  // The board methods are async so that a missing login rejects, never throws.
+  async createBoard(
+    org: string,
+    title = 'Agent Pulse',
+    views: readonly string[] = []
+  ): Promise<Board> {
+    return this.#boards().createBoard(org, title, views)
+  }
+
+  async board(
+    org: string,
+    _number: number,
+    ids?: Readonly<Record<string, number>> | null
+  ): Promise<Board | null> {
+    return this.#boards().board(org, ids ?? {})
   }
   async checkIssues(org: string): Promise<void> {
     const project = `${org}/${contextRepo('gitlab')}`
@@ -210,23 +224,38 @@ export class GitLabOAuthProvider implements Provider {
         `the boards need Issues on ${project}: turn them on in its Settings > General > Visibility, project features, permissions`
       )
   }
-  async ensureLayout(): Promise<string[]> {
-    throw NOT_YET('boards')
+  async ensureLayout(board: Board, layout: Layout): Promise<string[]> {
+    return this.#boards().ensureLayout(board, layout)
   }
-  async items(): Promise<never[]> {
-    throw NOT_YET('boards')
+
+  async items(
+    board: Board,
+    options?: { bodies?: boolean }
+  ): Promise<BoardItem[]> {
+    return this.#boards().items(board, options)
   }
-  async apply(): Promise<null> {
-    throw NOT_YET('boards')
+
+  async apply(board: Board, step: Step): Promise<Placed | null> {
+    return this.#boards().apply(board, step)
   }
-  async mark(): Promise<void> {
-    throw NOT_YET('boards')
+
+  async mark(
+    board: Board,
+    itemIds: readonly string[],
+    session: string | null,
+    fields?: MarkFields
+  ): Promise<void> {
+    return this.#boards().mark(board, itemIds, session, fields)
   }
+
+  // A README, a short description and status updates have no place on an
+  // issue board on Free: nothing is written (spec 0037 §7.1).
   async describe(): Promise<string[]> {
-    throw NOT_YET('boards')
+    return []
   }
+
   async postUpdates(): Promise<string[]> {
-    throw NOT_YET('boards')
+    return []
   }
   /** The API with a login: the boards and the journal write. */
   #write(): GitlabApiOptions {

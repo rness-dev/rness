@@ -112,6 +112,24 @@ test('the board and its number; without one, not created yet (spec 0033 §4)', (
   )
 })
 
+test('ids: a GitLab board per view, by its name; never beside number', () => {
+  const { number: _, ...unnumbered } = MARKETING
+  assert.deepEqual(
+    parseBoard('marketing', { ...unnumbered, ids: { Board: 12 } }).ids,
+    { Board: 12 }
+  )
+  assert.equal(parseBoard('marketing', MARKETING).ids, null)
+  for (const ids of [{ Board: 0 }, { Board: 'twelve' }, [], 12])
+    refused(
+      { ...unnumbered, ids },
+      '"boards.marketing.ids" must map view names to board ids'
+    )
+  refused(
+    with_({ ids: { Board: 12 } }),
+    '"boards.marketing" names its board by "number" or by "ids", not both'
+  )
+})
+
 test('an unknown key, at any level, named in full', () => {
   refused(
     with_({ sort: 'Title' }),

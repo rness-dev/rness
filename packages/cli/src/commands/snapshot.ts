@@ -1,6 +1,9 @@
 import { type OptionColor, optionColor } from '../board/layout.ts'
-import { boardUrl, itemUrl } from '../board/urls.ts'
-import type { BoardDeclaration } from '../core/board-declaration.ts'
+import { boardUrl, gitlabBoardUrl, itemUrl } from '../board/urls.ts'
+import {
+  type BoardDeclaration,
+  boardNumber,
+} from '../core/board-declaration.ts'
 import { COLLECTIONS } from '../core/context.ts'
 import { PULSE, workspaceName } from '../core/manifest.ts'
 import { declaredBoard } from '../core/preset-board.ts'
@@ -151,12 +154,26 @@ function pulseOf(
   org: string | null,
   boards: readonly SnapshotBoard[]
 ): string | null {
-  const created = boards.filter((b) => b.declaration.number !== null)
+  const created = boards.filter((b) => boardNumber(b.declaration) !== null)
   const main =
     created.find((b) => b.declaration.collections === 'all') ?? created[0]
-  return org === null || main?.declaration.number == null
-    ? null
-    : boardUrl(org, main.declaration.number)
+  return org === null || main === undefined ? null : linkOf(org, main, null)
+}
+
+/**
+ * A board's link, or a row's on it: GitHub's project filtered on the
+ * document; on GitLab, the first view's issue board (decided 2026-10-19),
+ * which has no filter by document.
+ */
+function linkOf(
+  org: string,
+  board: SnapshotBoard,
+  path: string | null
+): string | null {
+  const number = boardNumber(board.declaration)
+  if (number === null) return null
+  if (board.declaration.ids !== null) return gitlabBoardUrl(org, number)
+  return path === null ? boardUrl(org, number) : itemUrl(org, number, path)
 }
 
 /**
@@ -181,9 +198,9 @@ export function snapshotTabs(
             ? 'red'
             : (optionColor(colors, 'status', row.status) ?? 'gray'),
         link:
-          org === null || holder?.declaration.number == null
+          org === null || holder === undefined
             ? null
-            : itemUrl(org, holder.declaration.number, row.path),
+            : linkOf(org, holder, row.path),
       })),
     }
   })

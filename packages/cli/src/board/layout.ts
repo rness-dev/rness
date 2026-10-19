@@ -10,6 +10,7 @@ import { type StatusTab, statusTone } from '../core/status.ts'
 import type { Fields } from '../core/types.ts'
 import { headerOf } from './body.ts'
 import { type DeclaredField, valuesOf } from './collection.ts'
+import type { BodyProvider } from './urls.ts'
 
 export type { OptionColor } from '../core/board-declaration.ts'
 
@@ -352,7 +353,9 @@ export function desiredOf(
   collections: readonly BoardCollection[],
   org: string,
   fronts: ReadonlyMap<string, Fields> = new Map(),
-  directories: ReadonlyMap<string, readonly string[]> = new Map()
+  directories: ReadonlyMap<string, readonly string[]> = new Map(),
+  /** Where the issues are: their first line names it (spec 0037 §6). */
+  provider: BodyProvider = 'github'
 ): Desired[] {
   const written = Object.entries(board.fields).filter(
     ([, f]) => !f.from.includes('$agent') && !f.from.includes('$session')
@@ -398,7 +401,7 @@ export function desiredOf(
       return {
         path: row.path,
         title: `${row.id} - ${row.title}`,
-        body: headerOf(row.path, org),
+        body: headerOf(row.path, org, provider),
         status,
         statusField: c.field,
         values,

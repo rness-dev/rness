@@ -47,7 +47,9 @@ test('a new implementation issue: the label made when missing, the marker last; 
   const gl = await fakeGitlab(t, (r) => {
     if (at(r) === '/api/v4/projects/acme%2Fapi') return project
     if (at(r).endsWith('/labels'))
-      return r.method === 'POST' ? { status: 201, json: {} } : { json: [] }
+      return r.method === 'POST'
+        ? { status: 201, json: { id: 9 } }
+        : { json: [] }
     return { status: 201, json: { iid: 4, state: 'opened' } }
   })
   assert.deepEqual(

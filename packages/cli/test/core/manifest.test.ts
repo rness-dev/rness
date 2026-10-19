@@ -365,6 +365,47 @@ test('boards: a name to a project number or a preset; absent is null', async (t)
   }
 })
 
+test('on GitLab a board is named by ids, in view order; number is refused there, ids elsewhere', async (t) => {
+  const load = async (provider: string, boards: unknown) => {
+    const d = await fixture({
+      contract: 1,
+      provider,
+      boards,
+      repos: {},
+      scopes: {},
+    })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    return loadManifest(d)
+  }
+  const ids = { ADR: 12, Specs: 13, Plans: 14 }
+  const ok = await load('gitlab', { pulse: { ...UNNUMBERED, ids } })
+  const pulse = ok.boards?.['pulse']
+  assert.ok(typeof pulse === 'object' && pulse !== null)
+  assert.deepEqual(pulse.ids, ids)
+  assert.deepEqual(Object.keys(pulse.ids ?? {}), ['ADR', 'Specs', 'Plans'])
+  const numbered = await load('gitlab', {
+    pulse: { ...UNNUMBERED, number: 4 },
+  })
+  assert.deepEqual(
+    numbered.refused?.map((r) => r.reason),
+    [
+      '"boards.pulse.number" is GitHub\'s: a GitLab board is named by "ids", one per view',
+    ]
+  )
+  const bare = await load('gitlab', { pulse: 4 })
+  assert.deepEqual(
+    bare.refused?.map((r) => r.reason),
+    [
+      '"boards.pulse.number" is GitHub\'s: a GitLab board is named by "ids", one per view',
+    ]
+  )
+  const github = await load('github', { pulse: { ...UNNUMBERED, ids } })
+  assert.deepEqual(
+    github.refused?.map((r) => r.reason),
+    ['"boards.pulse.ids" are GitLab\'s: a GitHub board is named by "number"']
+  )
+})
+
 test('boards keeps the order it is written in', async (t) => {
   const d = await fixture({
     contract: 1,

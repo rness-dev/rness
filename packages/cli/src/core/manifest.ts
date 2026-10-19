@@ -254,7 +254,36 @@ const isProjectNumber = (n: unknown): n is number =>
  * before 0.21.0) — the projects of those created distinct. A board refused
  * is set aside with its reason; the rest is read.
  */
-function readBoardEntries(value: unknown): {
+/**
+ * How a provider names a created board: GitHub by its project `number`,
+ * GitLab by `ids`, one issue board per view (spec 0037 §2). The other
+ * key on a provider is refused, naming it.
+ */
+function wrongKey(
+  name: string,
+  entry: BoardEntry,
+  provider: ProviderName | null
+): BoardRefused | null {
+  const numbered =
+    typeof entry === 'number' ||
+    (typeof entry === 'object' && entry.number !== null)
+  if (provider === 'gitlab' && numbered)
+    return new BoardRefused(
+      `boards.${name}.number`,
+      `is GitHub's: a GitLab board is named by "ids", one per view`
+    )
+  if (provider !== 'gitlab' && typeof entry === 'object' && entry.ids !== null)
+    return new BoardRefused(
+      `boards.${name}.ids`,
+      `are GitLab's: a GitHub board is named by "number"`
+    )
+  return null
+}
+
+function readBoardEntries(
+  value: unknown,
+  provider: ProviderName | null
+): {
   boards: Boards | null
   refused: RefusedBoard[]
 } {
@@ -277,15 +306,15 @@ function readBoardEntries(value: unknown): {
   const boards: Boards = {}
   const refused: RefusedBoard[] = []
   for (const [name, entry] of entries) {
-    if (isProjectNumber(entry)) {
-      boards[name] = entry
-      continue
-    }
     try {
-      boards[name] =
-        typeof entry === 'string'
+      const read: BoardEntry = isProjectNumber(entry)
+        ? entry
+        : typeof entry === 'string'
           ? readPresetEntry(name, entry)
           : parseBoard(name, entry)
+      const wrong = wrongKey(name, read, provider)
+      if (wrong !== null) throw wrong
+      boards[name] = read
     } catch (e) {
       if (!(e instanceof BoardRefused)) throw e
       refused.push({ name, reason: e.message, source: entry })
@@ -304,7 +333,10 @@ const HOLDERS = ['boards', 'projects', 'pulse'] as const
  * `boards`, else the former `projects` read as `boards`, else the former
  * `pulse` read as `boards.pulse`; more than one of them refused.
  */
-function readBoardsOrFormer(data: Record<string, unknown>): {
+function readBoardsOrFormer(
+  data: Record<string, unknown>,
+  provider: ProviderName | null
+): {
   boards: Boards | null
   refused: RefusedBoard[]
   formerKey?: 'projects' | 'pulse'
@@ -318,7 +350,7 @@ function readBoardsOrFormer(data: Record<string, unknown>): {
   if (key === undefined) return { boards: null, refused: [] }
   if (key === 'pulse')
     return { boards: readPulse(data.pulse), refused: [], formerKey: key }
-  const read = readBoardEntries(data[key])
+  const read = readBoardEntries(data[key], provider)
   return key === 'boards' ? read : { ...read, formerKey: key }
 }
 
@@ -396,8 +428,8 @@ export function parseManifest(raw: string): Manifest {
   for (const key of Object.keys(data)) {
     if (!KEYS.includes(key)) fail(`unknown key ${JSON.stringify(key)}`)
   }
-  const { boards, refused, formerKey } = readBoardsOrFormer(data)
   const provider = readProvider(data.provider)
+  const { boards, refused, formerKey } = readBoardsOrFormer(data, provider)
   return {
     contract: 1,
     provider,
