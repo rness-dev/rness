@@ -313,10 +313,21 @@ test('on GitLab, every reference GitLab makes is escaped outside code; code, URL
     [
       'Issue \\#4, MR \\!5, epic \\&6, snippet \\$7, label \\~bug, milestone \\%v1, \\@cedric and \\@all.',
       '`#4 !5 @cedric` and https://gitlab.com/acme/api/-/issues/4 and dev@acme.io.',
-      '~~struck~~ and C#8.',
+      '~~struck~~ and C\\#8.',
     ].join('\n\n')
   )
   assert.doesNotMatch(b, new RegExp(ZWSP))
+})
+
+test('on GitLab, a cross-project reference and an entity that decodes to a marker are escaped too', () => {
+  const b = body(
+    '# B\n\nSee api#4, acme/api!5, other&6 and US$7; &#64;cedric, &#x40;cedric, &commat;cedric, &#35;4, &num;4 and &amp;6; but AT&amp;T stays.\n',
+    { provider: 'gitlab' }
+  )
+  assert.equal(
+    content(b),
+    'See api\\#4, acme/api\\!5, other\\&6 and US\\$7; \\&#64;cedric, \\&#x40;cedric, \\&commat;cedric, \\&#35;4, \\&num;4 and \\&amp;6; but AT&amp;T stays.'
+  )
 })
 
 test('on GitLab, the limit is 1,048,576 characters', () => {

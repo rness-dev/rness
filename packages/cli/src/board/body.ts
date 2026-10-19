@@ -170,29 +170,31 @@ const ZWSP = '\u200B'
  * GitLab's references, each escaped by the backslash its Markdown documents
  * and plan 0049 task 1 saw render as text: an issue `#4`, a merge request
  * `!5`, an epic `&6`, a snippet `$7`, a label `~bug`, a milestone `%v1`, a
- * user `@name` (spec 0037 §6). The character before keeps an email, `C#8`,
- * `50%`, `~~struck~~` and an escaped one as they are.
+ * user `@name` (spec 0037 §6). A marker after a project's path (`api#4`,
+ * `acme/api!5`) is a cross-project reference: escaped too, since `C\#8`
+ * still reads `C#8`. Left as they are: a marker already escaped, an email's
+ * `@`, the `~` of `~~struck~~`. An HTML entity that decodes to a marker
+ * (`&#64;`, `&num;`) would become one once GitLab decodes it: its `&` is
+ * escaped first, and the entity reads as written.
  */
+const MARKER_ENTITY =
+  /(?<!\\)&(?=(?:(?:#(?:35|33|38|36|126|37|64)|#x(?:23|21|26|24|7e|25|40)|num|excl|dollar|tilde|percnt|commat);|amp;\d))/gi
 const GITLAB_REFERENCES: readonly RegExp[] = [
-  /(^|[^A-Za-z0-9&#/\\])(#)(?=\d)/g,
-  /(^|[^A-Za-z0-9!\\])(!)(?=\d)/g,
-  /(^|[^A-Za-z0-9&\\])(&)(?=\d)/g,
-  /(^|[^A-Za-z0-9$\\])(\$)(?=\d)/g,
-  /(^|[^A-Za-z0-9~\\])(~)(?=[A-Za-z0-9"])/g,
-  /(^|[^A-Za-z0-9%\\])(%)(?=[A-Za-z0-9"])/g,
-  /(^|[^A-Za-z0-9`\\])(@)(?=[A-Za-z0-9])/g,
+  /(?<![\\&])#(?=\d)/g,
+  /(?<!\\)!(?=\d)/g,
+  /(?<!\\)&(?=\d)/g,
+  /(?<!\\)\$(?=\d)/g,
+  /(?<![\\~])~(?=[A-Za-z0-9"])/g,
+  /(?<![A-Za-z0-9%\\])%(?=[A-Za-z0-9"])/g,
+  /(?<![A-Za-z0-9`\\])@(?=[A-Za-z0-9])/g,
 ]
 
 /** Prose made harmless (spec 0018 §3.4): it mentions no one and names no issue. */
 const neutral = (text: string, provider: BodyProvider): string =>
   provider === 'gitlab'
     ? GITLAB_REFERENCES.reduce(
-        (t, re) =>
-          t.replace(
-            re,
-            (_m, before: string, mark: string) => `${before}\\${mark}`
-          ),
-        text
+        (t, re) => t.replace(re, (mark) => `\\${mark}`),
+        text.replace(MARKER_ENTITY, '\\&')
       )
     : text.replace(MENTION, '$1\\@$2').replace(REFERENCE, `$1#${ZWSP}$2`)
 
