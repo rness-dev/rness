@@ -330,6 +330,17 @@ test('on GitLab, a cross-project reference and an entity that decodes to a marke
   )
 })
 
+test('on GitLab, an entity is judged by its value, and a marker after an escaped backslash is live', () => {
+  const b = body(
+    '# B\n\n&#064;cedric, &#x0040;cedric, &#0035;4, caf&#233; and &#xE9;t&eacute; stay; &#4 is no entity; \\\\@cedric and \\\\#4.\n',
+    { provider: 'gitlab' }
+  )
+  assert.equal(
+    content(b),
+    '\\&#064;cedric, \\&#x0040;cedric, \\&#0035;4, caf&#233; and &#xE9;t&eacute; stay; &\\#4 is no entity; \\\\\\@cedric and \\\\\\#4.'
+  )
+})
+
 test('on GitLab, the limit is 1,048,576 characters', () => {
   const long = `# B\n\n${'word '.repeat(20_000)}\n`
   assert.ok(long.length > BODY_LIMIT)

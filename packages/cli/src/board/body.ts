@@ -172,29 +172,86 @@ const ZWSP = '\u200B'
  * `!5`, an epic `&6`, a snippet `$7`, a label `~bug`, a milestone `%v1`, a
  * user `@name` (spec 0037 §6). A marker after a project's path (`api#4`,
  * `acme/api!5`) is a cross-project reference: escaped too, since `C\#8`
- * still reads `C#8`. Left as they are: a marker already escaped, an email's
- * `@`, the `~` of `~~struck~~`. An HTML entity that decodes to a marker
- * (`&#64;`, `&num;`) would become one once GitLab decodes it: its `&` is
- * escaped first, and the entity reads as written.
+ * still reads `C#8`. A marker is escaped already only after an odd run of
+ * backslashes: `\\@name` is a backslash, then a mention. Left as they are:
+ * an email's `@`, the `~` of `~~struck~~`, the `#` of a character reference.
  */
-const MARKER_ENTITY =
-  /(?<!\\)&(?=(?:(?:#(?:35|33|38|36|126|37|64)|#x(?:23|21|26|24|7e|25|40)|num|excl|dollar|tilde|percnt|commat);|amp;\d))/gi
+const UNESCAPED = String.raw`(?<!(?:^|[^\\])(?:\\\\)*\\)`
 const GITLAB_REFERENCES: readonly RegExp[] = [
-  /(?<![\\&])#(?=\d)/g,
-  /(?<!\\)!(?=\d)/g,
-  /(?<!\\)&(?=\d)/g,
-  /(?<!\\)\$(?=\d)/g,
-  /(?<![\\~])~(?=[A-Za-z0-9"])/g,
-  /(?<![A-Za-z0-9%\\])%(?=[A-Za-z0-9"])/g,
-  /(?<![A-Za-z0-9`\\])@(?=[A-Za-z0-9])/g,
+  // `#` of `&#233;` belongs to the reference; `&#4` is no reference.
+  new RegExp(
+    String.raw`${UNESCAPED}(?:(?<!&)#|(?<=&)#(?![0-9]{1,7};|[xX][0-9a-fA-F]{1,6};))(?=\d)`,
+    'g'
+  ),
+  new RegExp(String.raw`${UNESCAPED}!(?=\d)`, 'g'),
+  new RegExp(String.raw`${UNESCAPED}&(?=\d)`, 'g'),
+  new RegExp(String.raw`${UNESCAPED}\$(?=\d)`, 'g'),
+  new RegExp(String.raw`${UNESCAPED}(?<!~)~(?=[A-Za-z0-9"])`, 'g'),
+  new RegExp(String.raw`${UNESCAPED}(?<![A-Za-z0-9%])%(?=[A-Za-z0-9"])`, 'g'),
+  new RegExp(String.raw`${UNESCAPED}(?<![A-Za-z0-9\x60])@(?=[A-Za-z0-9])`, 'g'),
 ]
+
+/** The characters GitLab makes references of, and what must follow one for it to be a reference. */
+const MARKERS: ReadonlyMap<string, RegExp> = new Map([
+  ['#', /^\d/],
+  ['!', /^\d/],
+  ['&', /^\d/],
+  ['$', /^\d/],
+  ['~', /^[A-Za-z0-9"]/],
+  ['%', /^[A-Za-z0-9"]/],
+  ['@', /^[A-Za-z0-9]/],
+])
+const NAMED: Readonly<Record<string, string>> = {
+  num: '#',
+  excl: '!',
+  amp: '&',
+  dollar: '$',
+  percnt: '%',
+  commat: '@',
+}
+const CHARACTER_REFERENCE =
+  /&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]{1,31}));/g
+
+/**
+ * A character reference that decodes to a marker would become one once
+ * GitLab decodes it (`&#064;cedric`): judged by its value, its `&` escaped,
+ * and it reads as written. Any other (`&#233;`, `&eacute;`) is left alone.
+ */
+const escapedReferences = (text: string): string =>
+  text.replace(
+    CHARACTER_REFERENCE,
+    (
+      whole: string,
+      dec: string | undefined,
+      hex: string | undefined,
+      name: string | undefined,
+      at: number
+    ) => {
+      const code =
+        dec !== undefined
+          ? Number.parseInt(dec, 10)
+          : hex !== undefined
+            ? Number.parseInt(hex, 16)
+            : null
+      const char =
+        code !== null
+          ? code <= 0x10ffff
+            ? String.fromCodePoint(code)
+            : ''
+          : (NAMED[(name ?? '').toLowerCase()] ?? '')
+      const follows = MARKERS.get(char)
+      const live =
+        follows !== undefined && follows.test(text.slice(at + whole.length))
+      return live ? `\\${whole}` : whole
+    }
+  )
 
 /** Prose made harmless (spec 0018 §3.4): it mentions no one and names no issue. */
 const neutral = (text: string, provider: BodyProvider): string =>
   provider === 'gitlab'
     ? GITLAB_REFERENCES.reduce(
         (t, re) => t.replace(re, (mark) => `\\${mark}`),
-        text.replace(MARKER_ENTITY, '\\&')
+        escapedReferences(text)
       )
     : text.replace(MENTION, '$1\\@$2').replace(REFERENCE, `$1#${ZWSP}$2`)
 
