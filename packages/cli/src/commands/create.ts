@@ -13,6 +13,7 @@ import { MAX_PAGES, type OrgRepository, PER_PAGE } from '../core/github.ts'
 import { gitlabProvider } from '../core/gitlab-oauth-provider.ts'
 import { HOSTS, type HostSpec, hostFor, providerFlag } from '../core/hosts.ts'
 import {
+  GITLAB_CONTEXT_NAME,
   NAME,
   contextRepo,
   isMemberRepo,
@@ -158,10 +159,10 @@ function manualSteps(
 ): string[] {
   if (provider === 'gitlab')
     return [
-      `# create the empty private project ${org}/${context} on gitlab.com, then:`,
+      `# create the empty private project ${org}/${context}, named ${GITLAB_CONTEXT_NAME}, on gitlab.com, then:`,
       `git remote add origin ${url} && git push -u origin main`,
       '# or, with the GitLab CLI (glab) installed:',
-      `glab repo create ${org}/${context} --private --skipGitInit && git push -u origin main`,
+      `glab repo create ${org}/${context} --name ${GITLAB_CONTEXT_NAME} --private --skipGitInit && git push -u origin main`,
     ]
   return [
     `# create the empty private repository ${org}/${context} on github.com, then:`,

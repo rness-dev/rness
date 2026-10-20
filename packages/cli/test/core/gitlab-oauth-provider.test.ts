@@ -145,7 +145,7 @@ test('access: member at any level, a stranger, unknown otherwise or anonymously'
   )
 })
 
-test('rness is created private in the group by its id, or in the user namespace; refused anonymously or for a stranger', async (t) => {
+test('rness is created private, named _rness, in the group by its id, or in the user namespace; refused anonymously or for a stranger', async (t) => {
   const gl = await fakeGitlab(t, (r) =>
     pathOf(r) === '/api/v4/groups/acme'
       ? { json: { id: 7 } }
@@ -158,7 +158,7 @@ test('rness is created private in the group by its id, or in the user namespace;
     kind: 'created',
   })
   assert.deepEqual(gl.requests.at(-1)?.body, {
-    name: 'rness',
+    name: '_rness',
     path: 'rness',
     namespace_id: 7,
     visibility: 'private',
@@ -167,7 +167,7 @@ test('rness is created private in the group by its id, or in the user namespace;
     kind: 'created',
   })
   assert.deepEqual(gl.requests.at(-1)?.body, {
-    name: 'rness',
+    name: '_rness',
     path: 'rness',
     visibility: 'private',
   })

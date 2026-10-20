@@ -47,6 +47,14 @@ export function contextRepo(provider: ProviderName | null): string {
 }
 
 /**
+ * The context project's name on GitLab, as its pages list it; its path is
+ * `rness`. GitLab refuses `.rness` as a name and `_rness` as a path: the
+ * underscore sets the project apart from the group's others (spec 0037
+ * §5.4).
+ */
+export const GITLAB_CONTEXT_NAME = '_rness'
+
+/**
  * Names that are never a repository of the workspace, whatever they look like
  * (spec 0009). A leading dot is an ordinary first character — `.github`
  * carries an organization's profile, its templates and its shared workflows —

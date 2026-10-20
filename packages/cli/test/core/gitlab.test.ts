@@ -225,23 +225,26 @@ test("a group's id, or null", async (t) => {
   assert.equal(await groupId('acme', { token: 'tok' }), null)
 })
 
-test('a project created private, in a group or in the user namespace; taken; refused', async (t) => {
+test('a project created private at its path under its name, in a group or in the user namespace; taken; refused', async (t) => {
   let reply: { status: number; json: unknown } = { status: 201, json: {} }
   const gl = await fakeGitlab(t, () => reply)
-  assert.deepEqual(await createProject('rness', 7, { token: 'tok' }), {
-    kind: 'created',
-  })
+  assert.deepEqual(
+    await createProject('rness', '_rness', 7, { token: 'tok' }),
+    {
+      kind: 'created',
+    }
+  )
   assert.equal(gl.requests[0]?.method, 'POST')
   assert.equal(gl.requests[0]?.path, '/api/v4/projects')
   assert.deepEqual(gl.requests[0]?.body, {
-    name: 'rness',
+    name: '_rness',
     path: 'rness',
     namespace_id: 7,
     visibility: 'private',
   })
-  await createProject('rness', null, { token: 'tok' })
+  await createProject('rness', '_rness', null, { token: 'tok' })
   assert.deepEqual(gl.requests[1]?.body, {
-    name: 'rness',
+    name: '_rness',
     path: 'rness',
     visibility: 'private',
   })
@@ -254,14 +257,20 @@ test('a project created private, in a group or in the user namespace; taken; ref
       },
     },
   }
-  assert.deepEqual(await createProject('rness', 7, { token: 'tok' }), {
-    kind: 'exists',
-  })
+  assert.deepEqual(
+    await createProject('rness', '_rness', 7, { token: 'tok' }),
+    {
+      kind: 'exists',
+    }
+  )
   reply = { status: 403, json: { message: '403 Forbidden' } }
-  assert.deepEqual(await createProject('rness', 7, { token: 'tok' }), {
-    kind: 'refused',
-    reason: '403 Forbidden (403)',
-  })
+  assert.deepEqual(
+    await createProject('rness', '_rness', 7, { token: 'tok' }),
+    {
+      kind: 'refused',
+      reason: '403 Forbidden (403)',
+    }
+  )
 })
 
 test("the token's scopes: an OAuth token's, else a personal access token's, else none", async (t) => {

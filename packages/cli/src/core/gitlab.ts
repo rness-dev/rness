@@ -317,10 +317,11 @@ export async function groupId(
 }
 
 /**
- * The private project `name`, its name and path the same word, in the group
- * `namespaceId`, or in the user's own namespace when null (spec 0037 §5.4).
+ * The private project at `path`, named `name`, in the group `namespaceId`,
+ * or in the user's own namespace when null (spec 0037 §5.4).
  */
 export async function createProject(
+  path: string,
   name: string,
   namespaceId: number | null,
   options: GitlabApiOptions
@@ -331,7 +332,7 @@ export async function createProject(
     options,
     {
       name,
-      path: name,
+      path,
       ...(namespaceId === null ? {} : { namespace_id: namespaceId }),
       visibility: 'private',
     }

@@ -24,7 +24,7 @@ import {
   tokenScopes,
 } from './gitlab.ts'
 import { HOSTS } from './hosts.ts'
-import { contextRepo } from './manifest.ts'
+import { GITLAB_CONTEXT_NAME, contextRepo } from './manifest.ts'
 import { rnessCommand } from './pm.ts'
 import type {
   Board,
@@ -172,11 +172,13 @@ export class GitLabOAuthProvider implements Provider {
   ): Promise<CreateRepositoryResult> {
     if (this.#token === null)
       return { kind: 'refused', reason: 'not logged in' }
+    // `name` is the path; the context project shows as `_rness`.
+    const title = name === contextRepo('gitlab') ? GITLAB_CONTEXT_NAME : name
     const id = await groupId(owner, this.#api())
-    if (id !== null) return createProject(name, id, this.#api())
+    if (id !== null) return createProject(name, title, id, this.#api())
     const self = (await this.identity())?.login ?? null
     if (self !== null && self.toLowerCase() === owner.toLowerCase())
-      return createProject(name, null, this.#api())
+      return createProject(name, title, null, this.#api())
     return {
       kind: 'refused',
       reason: `GitLab has no group ${owner} (or it is not visible to you)`,

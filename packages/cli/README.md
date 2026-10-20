@@ -681,10 +681,10 @@ repository, the board).
   already offered is left out and named once; archived projects and those
   scheduled for deletion are not offered. The member line names your role
   (`member   acme (as cedric, Owner)`). The context repository is the
-  project `<group>/rness`, since a GitLab slug starts with a letter or a
-  digit; it is still cloned as `.rness/`. Declined or refused, the manual
-  steps name `git`, then `glab repo create <group>/rness --private
---skipGitInit`. `rness add` takes a subgroup's project by its full path
+  project `<group>/rness`, named `_rness`, since a GitLab slug starts with a
+  letter or a digit; it is still cloned as `.rness/`. Declined or refused,
+  the manual steps name `git`, then `glab repo create <group>/rness --name
+_rness --private --skipGitInit`. `rness add` takes a subgroup's project by its full path
   (`rness add acme/platform/mobile`).
 - A provider _written_ in `rness.json` that this version cannot talk to
   (`atlassian`) is refused by `validate`, `create`, `login` and `board`:

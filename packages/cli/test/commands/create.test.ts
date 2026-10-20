@@ -1704,7 +1704,7 @@ test('GitLab wizard: its words, the group then the account, the subgroup hint, t
   )
 })
 
-test('GitLab, not published: the manual steps name the project rness, git first, glab second', async (t) => {
+test('GitLab, not published: the manual steps name the project _rness at the path rness, git first, glab second', async (t) => {
   const { remote, gl } = await gitlabFixture(t)
   const r = await wizard(
     {
@@ -1725,10 +1725,10 @@ test('GitLab, not published: the manual steps name the project rness, git first,
   assert.ok(
     r.out.includes(
       [
-        '  # create the empty private project acme/rness on gitlab.com, then:',
+        '  # create the empty private project acme/rness, named _rness, on gitlab.com, then:',
         `  git remote add origin ${remote.host}acme/rness.git && git push -u origin main`,
         '  # or, with the GitLab CLI (glab) installed:',
-        '  glab repo create acme/rness --private --skipGitInit && git push -u origin main',
+        '  glab repo create acme/rness --name _rness --private --skipGitInit && git push -u origin main',
       ].join('\n')
     ),
     r.out
