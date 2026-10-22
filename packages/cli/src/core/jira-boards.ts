@@ -296,7 +296,9 @@ export class JiraBoards {
       )
     if (unmapped.length > 0)
       lines.push(
-        `unmapped ${unmapped.length === 1 ? 'a status has' : `${unmapped.length} statuses have`} no column, their cards hidden: ${unmapped.join(', ')}; map ${unmapped.length === 1 ? 'it' : 'each'} once in the board's column settings, ${board.url}`
+        unmapped.length === 1
+          ? `unmapped a status has no column, its cards hidden: ${unmapped.join(', ')}; map it once in the board's column settings, ${board.url}`
+          : `unmapped ${unmapped.length} statuses have no column, their cards hidden: ${unmapped.join(', ')}; map each once in the board's column settings, ${board.url}`
       )
     if (lines.length === 0)
       lines.push(
@@ -415,8 +417,12 @@ export class JiraBoards {
       for (const t of await ji.transitions(issue.key, o))
         this.#transitions.set(t.to, t.id)
     const id = this.#transitions.get(target)
-    // Jira lists no transition to the status an issue is in.
-    if (id === undefined) return
+    // A GLOBAL transition is listed from every status, its own included
+    // (task 1): none means the setup is not done.
+    if (id === undefined)
+      throw new Error(
+        `${this.#jira.space} has no transition to ${name}: rness board push sets it up`
+      )
     await ji.transition(issue.key, id, o)
     issue.statusId = target
   }

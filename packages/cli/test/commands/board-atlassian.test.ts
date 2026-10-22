@@ -219,7 +219,7 @@ test('Gone hidden by the team: the push checks every column; a status declared l
   const unmapped = await push(cwd)
   assert.match(
     unmapped.out,
-    /^unmapped +a status has no column, their cards hidden: Blocked; map it once in the board's column settings, https:\/\/acme\.atlassian\.net\/jira\/software\/projects\/RNESS\/boards\/3$/m
+    /^unmapped +a status has no column, its cards hidden: Blocked; map it once in the board's column settings, https:\/\/acme\.atlassian\.net\/jira\/software\/projects\/RNESS\/boards\/3$/m
   )
 })
 
@@ -367,4 +367,51 @@ test("the status link on Atlassian: the space's boards page, the board's id not 
     'https://acme.atlassian.net/jira/software/projects/RNESS/boards'
   )
   assert.equal(typeof statusSnapshot, 'function')
+})
+
+test('a session start on an Atlassian workspace set up: the plan in progress marked, no setup asked of the hook', async (t) => {
+  await machine(t)
+  const jira = await jiraSite(t)
+  const cwd = await workspace(t)
+  assert.equal((await push(cwd)).code, 0)
+  const { boardRunCommand } = await import('../../src/commands/board.ts')
+  const { takeFailure } = await import('../../src/board/detached.ts')
+  const code = await boardRunCommand({
+    cwd,
+    event: 'session-start',
+    session: 'claude · 1a2b3c4d',
+    paths: [],
+  })
+  assert.equal(code, 0)
+  assert.equal(await takeFailure(), null, 'no failure recorded')
+  const plan = jira.issues.find((i) => i.summary === '0002 - B')
+  assert.ok(
+    plan?.labels.includes('agent-working'),
+    JSON.stringify(plan?.labels)
+  )
+})
+
+test("a hook's sync on a space not set up records the refusal, sets nothing up", async (t) => {
+  await machine(t)
+  const jira = await jiraSite(t)
+  const cwd = await workspace(t)
+  const { boardRunCommand } = await import('../../src/commands/board.ts')
+  const { takeFailure } = await import('../../src/board/detached.ts')
+  assert.equal(
+    await boardRunCommand({
+      cwd,
+      event: 'session-start',
+      session: 'claude · 1a2b3c4d',
+      paths: [],
+    }),
+    0
+  )
+  assert.match(
+    String(await takeFailure()),
+    /RNESS is not set up for Agent Pulse/
+  )
+  assert.deepEqual(
+    jira.statuses.map((s) => s.name),
+    ['To Do', 'In Progress', 'In Review', 'Done']
+  )
 })
