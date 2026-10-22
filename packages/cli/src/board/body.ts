@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 
 import { stripFrontMatter } from '../core/frontmatter.ts'
+import type { JiraTarget } from '../core/types.ts'
 import { type BodyProvider, contextUrls } from './urls.ts'
 
 /**
@@ -13,9 +14,18 @@ import { type BodyProvider, contextUrls } from './urls.ts'
 /** GitHub's limit for an issue body, in characters (spec 0018 §3.5). */
 export const BODY_LIMIT = 65_536
 
-/** An issue body's limit on the provider: GitLab's description takes 1,048,576 characters (spec 0037 §6). */
+/**
+ * An issue body's limit on the provider: GitLab's description takes
+ * 1,048,576 characters (spec 0037 §6), Jira's 32,767 (spec 0039 §6). Jira
+ * counts the ADF's text (plan 0053 task 1); the Markdown, longer by its
+ * marks, is measured here: the stricter reading.
+ */
 export const bodyLimit = (provider: BodyProvider = 'github'): number =>
-  provider === 'gitlab' ? 1_048_576 : BODY_LIMIT
+  provider === 'gitlab'
+    ? 1_048_576
+    : provider === 'atlassian'
+      ? 32_767
+      : BODY_LIMIT
 
 export interface BodySource {
   /** The document's path in `.rness/`, with `/`: `specs/0016-cli-status.md`. */
@@ -29,6 +39,8 @@ export interface BodySource {
   files: ReadonlySet<string>
   /** Where the issue lives; GitHub when absent. */
   provider?: BodyProvider
+  /** Atlassian: the Jira space a document's issue is in. */
+  jira?: JiraTarget
 }
 
 /** A body's first line (spec 0018 §3.1); the whole body of an issue whose document is not written yet. */
@@ -37,7 +49,12 @@ export function headerOf(
   org: string,
   provider: BodyProvider = 'github'
 ): string {
-  const where = provider === 'gitlab' ? 'GitLab' : 'GitHub'
+  const where =
+    provider === 'gitlab'
+      ? 'GitLab'
+      : provider === 'atlassian'
+        ? 'Bitbucket'
+        : 'GitHub'
   return `\`${path}\` · [on ${where}](${contextUrls(provider).blob(org, path)})`
 }
 
@@ -136,7 +153,7 @@ function target(dest: string, s: BodySource): string {
         : posix.join(posix.dirname(s.path), pathPart)
     )
   )
-  const urls = contextUrls(s.provider ?? 'github')
+  const urls = contextUrls(s.provider ?? 'github', s.jira)
   const number = s.numbers.get(file)
   if (number !== undefined) return urls.issue(s.org, number)
   if (!s.files.has(file)) return dest
@@ -239,14 +256,19 @@ const escapedReferences = (text: string): string =>
     }
   )
 
-/** Prose made harmless (spec 0018 §3.4): it mentions no one and names no issue. */
+/**
+ * Prose made harmless (spec 0018 §3.4): it mentions no one and names no
+ * issue. Jira's ADF text never does (spec 0039 §6): left as it is.
+ */
 const neutral = (text: string, provider: BodyProvider): string =>
-  provider === 'gitlab'
-    ? GITLAB_REFERENCES.reduce(
-        (t, re) => t.replace(re, (mark) => `\\${mark}`),
-        escapedReferences(text)
-      )
-    : text.replace(MENTION, '$1\\@$2').replace(REFERENCE, `$1#${ZWSP}$2`)
+  provider === 'atlassian'
+    ? text
+    : provider === 'gitlab'
+      ? GITLAB_REFERENCES.reduce(
+          (t, re) => t.replace(re, (mark) => `\\${mark}`),
+          escapedReferences(text)
+        )
+      : text.replace(MENTION, '$1\\@$2').replace(REFERENCE, `$1#${ZWSP}$2`)
 
 function inline(text: string, s: BodySource): string {
   const provider = s.provider ?? 'github'

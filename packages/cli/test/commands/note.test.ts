@@ -11,7 +11,11 @@ import {
   takeNotices,
 } from '../../src/board/journal-state.ts'
 import { boardPushCommand, boardRunCommand } from '../../src/commands/board.ts'
-import { noteCommand, sessionFrom } from '../../src/commands/note.ts'
+import {
+  bitbucketRepo,
+  noteCommand,
+  sessionFrom,
+} from '../../src/commands/note.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
 import { serverTools } from '../../src/mcp/tools.ts'
 import { capture } from '../helpers/capture.ts'
@@ -506,4 +510,20 @@ test("a summary after notes costs GitHub the pull request query and its comment,
             : query.replace(/\s+/g, ' ').slice(0, 60)
   })
   assert.deepEqual(sent, ['login', 'board', 'pull request', 'comment'])
+})
+
+test('bitbucketRepo: a bitbucket.org URL on either SSH name, or HTTPS with a user, as its workspace and repository (plan 0053 task 5)', () => {
+  for (const url of [
+    'git@ssh.bitbucket.org:acme/api.git',
+    'git@bitbucket.org:acme/api.git',
+    'ssh://git@ssh.bitbucket.org/acme/api.git',
+    'https://bitbucket.org/acme/api.git',
+    'https://smarttdev@bitbucket.org/acme/api',
+  ])
+    assert.deepEqual(bitbucketRepo(url), { owner: 'acme', name: 'api' }, url)
+  for (const url of [
+    'git@github.com:acme/api.git',
+    'https://bitbucket.org.evil/acme/api.git',
+  ])
+    assert.equal(bitbucketRepo(url), null, url)
 })

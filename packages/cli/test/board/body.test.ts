@@ -360,3 +360,41 @@ test('on GitLab, the limit is 1,048,576 characters', () => {
   assert.equal(bodyLimit('gitlab'), 1_048_576)
   assert.equal(bodyLimit('github'), BODY_LIMIT)
 })
+
+// Atlassian (spec 0039 §6; plan 0053 task 5): the file on Bitbucket, the
+// issue in the workspace's Jira space.
+const BB = 'https://bitbucket.org/acme/.rness'
+const JIRA = { site: 'acme.atlassian.net', space: 'RNESS' }
+
+test('on Atlassian: the header names Bitbucket, links go to src/main/, raw/main/ for an image, the Jira issue for a document on the board', () => {
+  const b = body(
+    '# B\n\nSee [A](../adr/0001-a.md), [the readme](../README.md#setup) and ![board](../docs/img/board.png).\n',
+    { provider: 'atlassian', jira: JIRA }
+  )
+  const lines = b.split('\n')
+  assert.equal(
+    lines[0],
+    `\`specs/0002-b.md\` · [on Bitbucket](${BB}/src/main/specs/0002-b.md)`
+  )
+  assert.equal(lines[0], headerOf('specs/0002-b.md', 'acme', 'atlassian'))
+  assert.equal(
+    content(b),
+    `See [A](https://acme.atlassian.net/browse/RNESS-12), [the readme](${BB}/src/main/README.md#setup) and ![board](${BB}/raw/main/docs/img/board.png).`
+  )
+})
+
+test('on Atlassian, nothing is neutralized: ADF text mentions no one and names no issue', () => {
+  const b = body('# B\n\nIssue #4, @cedric and RNESS-3.\n', {
+    provider: 'atlassian',
+    jira: JIRA,
+  })
+  assert.equal(content(b), 'Issue #4, @cedric and RNESS-3.')
+})
+
+test('on Atlassian, the limit is 32,767 characters, the rest a link to the file', () => {
+  const long = `# B\n\n${'word '.repeat(4_000)}\n\n${'more '.repeat(4_000)}\n`
+  const b = body(long, { provider: 'atlassian', jira: JIRA })
+  assert.equal(bodyLimit('atlassian'), 32_767)
+  assert.ok(b.length <= 32_767, String(b.length))
+  assert.match(b, new RegExp(`The rest: ${BB}/src/main/specs/0002-b\\.md`))
+})

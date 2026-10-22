@@ -22,7 +22,13 @@ export interface JournalIssue {
   id: string
   number: number
   repository: string
+  /** How it is referred to, when not `<repository>#<number>`: a Jira key, `RNESS-12`. */
+  reference?: string
 }
+
+/** How a line refers to an issue: `acme/api#4`, or its own reference. */
+export const journalReference = (issue: JournalIssue): string =>
+  issue.reference ?? `${issue.repository}#${issue.number}`
 
 /** Why a repository takes no implementation issue: §3.4's fallback reads it. */
 export class JournalRefused extends Error {

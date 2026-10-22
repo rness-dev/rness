@@ -285,7 +285,7 @@ test('a board not created yet, named after no collection: refused before GitHub 
   assert.deepEqual(g.requests, [])
 })
 
-test('Atlassian: no login asks for the Atlassian one; logged in, the boards on Jira are said not to be there yet (plan 0053 task 6 brings them)', async (t) => {
+test('Atlassian: no login asks for the Atlassian one; logged in, a workspace without "jira" is told to declare it (spec 0039 §2)', async (t) => {
   await machine(t)
   withEnv(t, { BITBUCKET_TOKEN: undefined })
   const cwd = await makeWorkspace(t, {
@@ -306,7 +306,10 @@ test('Atlassian: no login asks for the Atlassian one; logged in, the boards on J
   withEnv(t, { BITBUCKET_TOKEN: 'bb' })
   const logged = await push()
   assert.equal(logged.code, 1)
-  assert.match(logged.err, /the boards on Jira are not implemented yet/)
+  assert.match(
+    logged.err,
+    /this workspace has no Jira space: add "jira" to rness\.json/
+  )
 })
 
 test('a board to create where the repositories look like another provider, none written: refused before GitHub is asked anything', async (t) => {

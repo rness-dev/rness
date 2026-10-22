@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { type Context, type Declared, fromGithub } from '../commands/board.ts'
 import { journalOf, planIssue, workspaceRepo } from '../commands/note.ts'
 import { branchOf, commitsBetween } from '../core/git.ts'
+import { journalReference } from '../core/github-journal.ts'
 import { providerOf } from '../core/manifest.ts'
 import { plansInProgress } from '../core/status.ts'
 import {
@@ -63,12 +64,10 @@ async function onePlan(
       c.provider.journalIssue(repo.owner, repo.name, plan)
     )
     if (there !== null)
-      return [
-        { id: there.id, reference: `${there.repository}#${there.number}` },
-      ]
+      return [{ id: there.id, reference: journalReference(there) }]
   }
   const issue = await planIssue(c, input.board, plan)
-  return [{ id: issue.id, reference: `${issue.repository}#${issue.number}` }]
+  return [{ id: issue.id, reference: journalReference(issue) }]
 }
 
 /** Posts the summary; the issues it went to, none when skipped. The session's records are forgotten either way. */

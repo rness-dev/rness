@@ -56,17 +56,18 @@ function reason(e: unknown): string {
   return String(e)
 }
 
-interface Answer {
+export interface JiraAnswer {
   status: number
   body: unknown
 }
 
-async function request(
-  method: 'GET' | 'POST',
+/** One call to the site's REST API: the answer as it came, a 429 waited out first; a 401 is `TokenRefused`. */
+export async function jiraRequest(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   o: JiraApiOptions,
   payload?: unknown
-): Promise<Answer> {
+): Promise<JiraAnswer> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'User-Agent': 'rness-cli',
@@ -103,7 +104,7 @@ async function request(
 }
 
 /** Jira's own words for an error: `errorMessages`, then each field's. */
-function said(body: unknown): string {
+export function jiraSaid(body: unknown): string {
   const messages = field(body, 'errorMessages')
   const errors = field(body, 'errors')
   return [
@@ -116,8 +117,13 @@ function said(body: unknown): string {
   ].join(' ')
 }
 
-function failure(o: JiraApiOptions, answer: Answer, path: string): Error {
-  const why = said(answer.body)
+/** One line for an answer rness cannot use, in Jira's words. */
+export function jiraFailure(
+  o: JiraApiOptions,
+  answer: JiraAnswer,
+  path: string
+): Error {
+  const why = jiraSaid(answer.body)
   return new Error(
     `${o.site} answered ${answer.status} for ${path}${why === '' ? '' : `: ${why}`}`,
     { cause: { status: answer.status, path } }
@@ -129,7 +135,7 @@ export async function myself(
   o: JiraApiOptions
 ): Promise<{ login: string; accountId: string | null }> {
   const path = '/rest/api/3/myself'
-  const answer = await request('GET', path, o)
+  const answer = await jiraRequest('GET', path, o)
   const name = str(field(answer.body, 'displayName'))
   if (answer.status !== 200 || name === null)
     throw new Error(`${o.site} answered ${answer.status} for ${path}`)
@@ -151,8 +157,8 @@ export async function listSpaces(o: JiraApiOptions): Promise<JiraSpace[]> {
       maxResults: '100',
       startAt: String(startAt),
     })
-    const answer = await request('GET', `${path}?${q}`, o)
-    if (answer.status !== 200) throw failure(o, answer, path)
+    const answer = await jiraRequest('GET', `${path}?${q}`, o)
+    if (answer.status !== 200) throw jiraFailure(o, answer, path)
     const values = field(answer.body, 'values')
     const page = Array.isArray(values) ? values : []
     for (const v of page) {
@@ -175,9 +181,9 @@ export async function keyFree(
   o: JiraApiOptions
 ): Promise<boolean> {
   const path = `/rest/api/3/projectvalidate/key?key=${encodeURIComponent(key)}`
-  const answer = await request('GET', path, o)
+  const answer = await jiraRequest('GET', path, o)
   if (answer.status !== 200)
-    throw failure(o, answer, '/rest/api/3/projectvalidate/key')
+    throw jiraFailure(o, answer, '/rest/api/3/projectvalidate/key')
   return str(field(field(answer.body, 'errors'), 'projectKey')) === null
 }
 
@@ -194,7 +200,7 @@ export async function createSpace(
   { kind: 'created' } | { kind: 'exists' } | { kind: 'refused'; reason: string }
 > {
   const path = '/rest/api/3/project'
-  const answer = await request('POST', path, o, {
+  const answer = await jiraRequest('POST', path, o, {
     key,
     name: 'rness',
     leadAccountId,
@@ -207,7 +213,7 @@ export async function createSpace(
     str(field(field(answer.body, 'errors'), 'projectKey')) !== null
   )
     return { kind: 'exists' }
-  const why = said(answer.body)
+  const why = jiraSaid(answer.body)
   return {
     kind: 'refused',
     reason:

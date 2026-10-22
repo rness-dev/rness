@@ -9,8 +9,11 @@ import { contextUrls } from '../board/urls.ts'
 import type { BoardAction } from '../core/board-declaration.ts'
 import { parseFrontMatter } from '../core/frontmatter.ts'
 import { branchOf, headOf } from '../core/git.ts'
-import { JournalRefused } from '../core/github-journal.ts'
-import type { JournalIssue } from '../core/github-journal.ts'
+import {
+  type JournalIssue,
+  JournalRefused,
+  journalReference,
+} from '../core/github-journal.ts'
 import { contextRepo, providerOf } from '../core/manifest.ts'
 import { cloneHolding } from '../core/repos.ts'
 import { resolveScope } from '../core/scope.ts'
@@ -121,6 +124,8 @@ export function journalOf(
 
 /** `git@github.com:acme/api.git` or `https://github.com/acme/api` → `acme`, `api`; null on another host. */
 const isGitlab = (c: Context): boolean => providerOf(c.manifest) === 'gitlab'
+const isAtlassian = (c: Context): boolean =>
+  providerOf(c.manifest) === 'atlassian'
 
 /** The context repository's name on the workspace's provider: `.rness`, `rness` on GitLab. */
 const contextOf = (c: Context): string => contextRepo(providerOf(c.manifest))
@@ -147,13 +152,30 @@ export function workspaceRepo(
   c: Context,
   url: string
 ): { owner: string; name: string } | null {
-  const repo = isGitlab(c) ? gitlabRepo(url) : githubRepo(url)
+  const repo = isGitlab(c)
+    ? gitlabRepo(url)
+    : isAtlassian(c)
+      ? bitbucketRepo(url)
+      : githubRepo(url)
   if (repo === null) return null
   const owner = repo.owner.toLowerCase()
   const org = c.org.toLowerCase()
   return owner === org || (isGitlab(c) && owner.startsWith(`${org}/`))
     ? repo
     : null
+}
+
+/** A bitbucket.org URL, on either SSH name, HTTPS with a user or not: its workspace and repository. */
+export function bitbucketRepo(
+  url: string
+): { owner: string; name: string } | null {
+  const m =
+    /^(?:git@(?:ssh\.)?bitbucket\.org:|ssh:\/\/git@(?:ssh\.)?bitbucket\.org\/|https:\/\/(?:[^@/]+@)?bitbucket\.org\/)([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(
+      url.trim()
+    )
+  return m === null || m[1] === undefined || m[2] === undefined
+    ? null
+    : { owner: m[1], name: m[2] }
 }
 
 export function githubRepo(
@@ -222,6 +244,8 @@ export async function planIssue(
     id: found.id,
     number: found.number,
     repository: `${c.org}/${contextOf(c)}`,
+    // A Jira issue goes by its key, which is its id (spec 0039 §6).
+    ...(isAtlassian(c) ? { reference: found.id } : {}),
   }
 }
 
@@ -236,7 +260,7 @@ async function implementationBody(
   plan: string,
   planNumber: number
 ): Promise<string> {
-  const urls = contextUrls(isGitlab(c) ? 'gitlab' : 'github')
+  const urls = contextUrls(providerOf(c.manifest), c.manifest.jira)
   const lines = [
     `Plan [\`${plan}\`](${urls.blob(c.org, plan)}) · [plan issue](${urls.issue(c.org, planNumber)})`,
   ]
@@ -306,15 +330,17 @@ export async function postNote(input: NoteInput): Promise<Posted> {
             await fromGithub(
               c.provider.comment(
                 parent.id,
-                `Implementation: ${target.repository}#${target.number}`
+                `Implementation: ${journalReference(target)}`
               )
             )
           }
         }
       } catch (e) {
         if (e instanceof JournalRefused)
-          why =
-            e.why === 'issues'
+          // On Atlassian the issue is the space's: Jira's words say why.
+          why = isAtlassian(c)
+            ? e.message
+            : e.why === 'issues'
               ? `${repo.owner}/${repo.name} takes no issues`
               : `${repo.owner}/${repo.name} is not on ${isGitlab(c) ? 'GitLab' : 'GitHub'}, or this login cannot see it`
         else if (refusedWrite(e))
@@ -346,7 +372,7 @@ export async function postNote(input: NoteInput): Promise<Posted> {
     `<!-- rness note ${id} -->`,
   ].join('\n')
   await fromGithub(c.provider.comment(target.id, body))
-  const reference = `${target.repository}#${target.number}`
+  const reference = journalReference(target)
   await notePosted(c.rnessDir, session, plan, { id: target.id, reference })
   return {
     reference,

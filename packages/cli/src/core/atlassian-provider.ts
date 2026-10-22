@@ -17,7 +17,7 @@ import {
   pullRequestFor,
   workspacePermission,
 } from './bitbucket.ts'
-import type { JournalIssue } from './github-journal.ts'
+import { type JournalIssue, JournalRefused } from './github-journal.ts'
 import type {
   CreateRepositoryResult,
   OrgRepository,
@@ -25,6 +25,8 @@ import type {
   RepositoryListing,
 } from './github.ts'
 import { HOSTS } from './hosts.ts'
+import * as ji from './jira-issues.ts'
+import * as jj from './jira-journal.ts'
 import {
   JIRA_SITE,
   JIRA_SPACE,
@@ -46,9 +48,9 @@ import type {
   Tracker,
   TrackerSpace,
 } from './provider.ts'
+import type { JiraTarget } from './types.ts'
 
 const NO_BOARDS = 'the boards on Jira are not implemented yet'
-const NO_JOURNAL = 'the journal on Jira is not implemented yet'
 
 /**
  * Atlassian as a user (spec 0039): Bitbucket for the repositories, with the
@@ -65,6 +67,8 @@ export class AtlassianProvider implements Provider {
   #refusalSaid = false
   readonly #permission = new Map<string, Promise<string | null | 'unknown'>>()
   readonly tracker: Tracker
+  readonly #jira: JiraTarget | undefined
+  readonly #session: JiraSession
 
   get authenticated(): boolean {
     return this.#token !== null
@@ -76,12 +80,31 @@ export class AtlassianProvider implements Provider {
     wait?: RateWait | undefined
     /** Where the line of a refused token goes; default stderr. */
     notify?: (line: string) => void
+    /** The workspace's Jira space (`jira` in rness.json): the journal's and the boards'. */
+    jira?: JiraTarget | undefined
   }) {
     this.#token = options.token
     this.#apiBase = options.apiBase
     this.#wait = options.wait
     this.#notify = options.notify
-    this.tracker = new JiraTracker(options.wait, options.notify)
+    this.#jira = options.jira
+    this.#session = new JiraSession(options.wait, options.notify)
+    this.tracker = new JiraTracker(this.#session)
+  }
+
+  /** A call to the workspace's Jira space; none declared refuses, in the journal's terms. */
+  #space<T>(
+    work: (space: string, o: JiraApiOptions) => Promise<T>
+  ): Promise<T> {
+    const jira = this.#jira
+    if (jira === undefined)
+      return Promise.reject(
+        new JournalRefused(
+          'missing',
+          'this workspace has no Jira space: add "jira" to rness.json'
+        )
+      )
+    return this.#session.call(jira.site, (o) => work(jira.space, o))
   }
 
   #api(): BitbucketApiOptions {
@@ -220,8 +243,26 @@ export class AtlassianProvider implements Provider {
     throw new Error(NO_BOARDS)
   }
 
+  /**
+   * The space is there and the login may create, edit and move its issues
+   * (spec 0039 §6); a missing one is refused before any write, named.
+   */
   async checkIssues(_org: string): Promise<void> {
-    throw new Error(NO_BOARDS)
+    await this.#space(async (space, o) => {
+      if ((await ji.space(space, o)) === null)
+        throw new Error(
+          `space ${space} not found on ${o.site} (or not visible to you)`
+        )
+      const missing = await ji.missingPermissions(
+        space,
+        ['CREATE_ISSUES', 'EDIT_ISSUES', 'TRANSITION_ISSUES'],
+        o
+      )
+      if (missing.length > 0)
+        throw new Error(
+          `the boards need ${missing.join(', ')} in ${space} on ${o.site}`
+        )
+    })
   }
 
   async ensureLayout(_board: Board, _layout: Layout): Promise<string[]> {
@@ -258,61 +299,79 @@ export class AtlassianProvider implements Provider {
     return []
   }
 
+  // The journal (spec 0039 §6): every repository's implementation issue in
+  // the workspace's space; an issue's id is its key.
   async journalIssue(
-    _owner: string,
-    _repo: string,
-    _planPath: string
+    owner: string,
+    repo: string,
+    planPath: string
   ): Promise<JournalIssue | null> {
-    throw new Error(NO_JOURNAL)
+    return this.#space((space, o) =>
+      jj.journalIssue(space, `${owner}/${repo}`, planPath, o)
+    )
   }
 
   async createJournalIssue(
-    _owner: string,
-    _repo: string,
-    _planPath: string,
-    _issue: { title: string; body: string }
+    owner: string,
+    repo: string,
+    planPath: string,
+    issue: { title: string; body: string }
   ): Promise<JournalIssue> {
-    throw new Error(NO_JOURNAL)
+    return this.#space((space, o) =>
+      jj.createJournalIssue(space, `${owner}/${repo}`, planPath, issue, o)
+    )
   }
 
+  /** An issue of the space by number, whatever repository is named: `.rness`'s cards are there. */
   async issueOf(
     _owner: string,
     _repo: string,
-    _number: number
+    number: number
   ): Promise<{
     id: string
     number: number
     open: boolean
   } | null> {
-    throw new Error(NO_JOURNAL)
+    return this.#space((space, o) => jj.issueOf(space, number, o))
   }
 
-  async addSubIssue(_parentId: string, _childId: string): Promise<void> {
-    throw new Error(NO_JOURNAL)
+  async addSubIssue(parentId: string, childId: string): Promise<void> {
+    return this.#space((_space, o) => jj.addSubIssue(parentId, childId, o))
   }
 
-  async comment(_issueId: string, _body: string): Promise<void> {
-    throw new Error(NO_JOURNAL)
+  async comment(issueId: string, body: string): Promise<void> {
+    return this.#space((_space, o) => jj.comment(issueId, body, o))
   }
 
+  /** Bitbucket's pull request of a branch, in the journal's words: opened, merged, closed (spec 0039 §6). */
   async pullRequestFor(
     owner: string,
     repo: string,
     branch: string
   ): Promise<{ number: number; state: string } | null> {
-    return this.#call((o) => pullRequestFor(owner, repo, branch, o))
+    const pr = await this.#call((o) => pullRequestFor(owner, repo, branch, o))
+    if (pr === null) return null
+    const state =
+      pr.state === 'OPEN'
+        ? 'opened'
+        : pr.state === 'MERGED'
+          ? 'merged'
+          : 'closed'
+    return { number: pr.number, state }
   }
 }
 
-/** The CLI's Atlassian provider: whatever Bitbucket token this machine has. */
+/** The CLI's Atlassian provider: whatever Bitbucket token this machine has, and the workspace's Jira space. */
 export async function atlassianProvider(
   apiBase?: string,
-  wait?: RateWait
+  wait?: RateWait,
+  jira?: JiraTarget
 ): Promise<Provider> {
   return new AtlassianProvider({
     token: await resolveToken({}, HOSTS.bitbucket),
     apiBase,
     wait,
+    jira,
   })
 }
 
@@ -336,44 +395,14 @@ class JiraTracker implements Tracker {
       `# (Jira > Spaces > Create space > Kanban > Team-managed), then: ${rnessCommand()} board push`,
     ]
   }
-  readonly #wait: RateWait | undefined
-  readonly #notify: ((line: string) => void) | undefined
-  readonly #said = new Set<string>()
+  readonly #session: JiraSession
 
-  constructor(
-    wait: RateWait | undefined,
-    notify: ((line: string) => void) | undefined
-  ) {
-    this.#wait = wait
-    this.#notify = notify
+  constructor(session: JiraSession) {
+    this.#session = session
   }
 
-  async #call<T>(
-    site: string,
-    work: (o: JiraApiOptions) => Promise<T>
-  ): Promise<T> {
-    const login = await jiraLogin(site)
-    if (login === null)
-      throw new Error(
-        `no Jira login for ${site}: run ${rnessCommand()} login --provider atlassian`
-      )
-    try {
-      return await work({
-        site,
-        email: login.email,
-        token: login.token,
-        wait: this.#wait,
-      })
-    } catch (e) {
-      if (!(e instanceof TokenRefused)) throw e
-      if (login.source !== 'login')
-        throw new TokenRefused(`JIRA_API_TOKEN was refused by ${site} (401)`)
-      if (!this.#said.has(site)) {
-        this.#said.add(site)
-        await tokenRefused(site, 'Jira', this.#notify)
-      }
-      throw e
-    }
+  #call<T>(site: string, work: (o: JiraApiOptions) => Promise<T>): Promise<T> {
+    return this.#session.call(site, work)
   }
 
   async sites(): Promise<string[]> {
@@ -401,5 +430,53 @@ class JiraTracker implements Tracker {
         }
       return createSpace(key, lead, o)
     })
+  }
+}
+
+/**
+ * The calls to Jira sites, with each site's credentials (`JIRA_EMAIL` with
+ * `JIRA_API_TOKEN`, else the stored login). A refused stored token is
+ * cleared and said once per site; a refused `JIRA_API_TOKEN` clears
+ * nothing.
+ */
+class JiraSession {
+  readonly #wait: RateWait | undefined
+  readonly #notify: ((line: string) => void) | undefined
+  readonly #said = new Set<string>()
+
+  constructor(
+    wait: RateWait | undefined,
+    notify: ((line: string) => void) | undefined
+  ) {
+    this.#wait = wait
+    this.#notify = notify
+  }
+
+  async call<T>(
+    site: string,
+    work: (o: JiraApiOptions) => Promise<T>
+  ): Promise<T> {
+    const login = await jiraLogin(site)
+    if (login === null)
+      throw new Error(
+        `no Jira login for ${site}: run ${rnessCommand()} login --provider atlassian`
+      )
+    try {
+      return await work({
+        site,
+        email: login.email,
+        token: login.token,
+        wait: this.#wait,
+      })
+    } catch (e) {
+      if (!(e instanceof TokenRefused)) throw e
+      if (login.source !== 'login')
+        throw new TokenRefused(`JIRA_API_TOKEN was refused by ${site} (401)`)
+      if (!this.#said.has(site)) {
+        this.#said.add(site)
+        await tokenRefused(site, 'Jira', this.#notify)
+      }
+      throw e
+    }
   }
 }

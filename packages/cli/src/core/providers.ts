@@ -4,7 +4,7 @@ import { githubProvider } from './github-oauth-provider.ts'
 import type { RateWait } from './github.ts'
 import { gitlabProvider } from './gitlab-oauth-provider.ts'
 import type { Provider } from './provider.ts'
-import type { Manifest, ProviderName } from './types.ts'
+import type { JiraTarget, Manifest, ProviderName } from './types.ts'
 
 export interface OpenOptions {
   /** GitHub's API (`--github-api`). */
@@ -13,6 +13,8 @@ export interface OpenOptions {
   gitlabApi?: string
   /** Bitbucket's API origin (`--bitbucket-api`); default: api.bitbucket.org, or `RNESS_BITBUCKET_API`. */
   bitbucketApi?: string
+  /** The workspace's Jira space, from `rness.json`: Atlassian's journal and boards. */
+  jira?: JiraTarget
   wait?: RateWait
 }
 
@@ -42,7 +44,8 @@ export const PROVIDERS: Readonly<Record<ProviderName, ProviderEntry>> = {
     name: 'atlassian',
     label: 'Atlassian (Bitbucket + Jira)',
     available: true,
-    open: ({ bitbucketApi, wait }) => atlassianProvider(bitbucketApi, wait),
+    open: ({ bitbucketApi, wait, jira }) =>
+      atlassianProvider(bitbucketApi, wait, jira),
   },
 }
 
@@ -71,7 +74,9 @@ export async function openProvider(
   const entry = PROVIDERS[name]
   if (entry.open === undefined)
     throw new Error(unsupportedProviderMessage(name))
-  return entry.open(options)
+  return entry.open(
+    manifest?.jira === undefined ? options : { ...options, jira: manifest.jira }
+  )
 }
 
 /**

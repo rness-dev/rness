@@ -229,26 +229,39 @@ test('a stored token refused (401) is cleared and said once; a refused BITBUCKET
   assert.deepEqual(await readAuthAt('bitbucket.org'), STORED)
 })
 
-test("a branch's pull request comes from Bitbucket; Jira's boards and journal are not there yet", async (t) => {
-  await fakeBitbucket(t, () => ({
-    json: { values: [{ id: 4, state: 'OPEN' }] },
-  }))
+test("a branch's pull request comes from Bitbucket, in the journal's words; the boards on Jira are not there yet", async (t) => {
+  let state = 'OPEN'
+  await fakeBitbucket(t, () => ({ json: { values: [{ id: 4, state }] } }))
   const provider = new AtlassianProvider({ token: LOGIN })
-  assert.deepEqual(await provider.pullRequestFor('acme', 'api', 'feat/x'), {
-    number: 4,
-    state: 'OPEN',
-  })
+  for (const [given, said] of [
+    ['OPEN', 'opened'],
+    ['MERGED', 'merged'],
+    ['DECLINED', 'closed'],
+    ['SUPERSEDED', 'closed'],
+  ]) {
+    state = given ?? ''
+    assert.deepEqual(await provider.pullRequestFor('acme', 'api', 'feat/x'), {
+      number: 4,
+      state: said,
+    })
+  }
   await assert.rejects(provider.createBoard('acme'), {
     message: 'the boards on Jira are not implemented yet',
   })
-  await assert.rejects(provider.checkIssues('acme'), {
-    message: 'the boards on Jira are not implemented yet',
-  })
-  await assert.rejects(provider.journalIssue('acme', '.rness', 'plans/x.md'), {
-    message: 'the journal on Jira is not implemented yet',
-  })
   assert.deepEqual(await provider.describe(), [])
   assert.deepEqual(await provider.postUpdates(), [])
+})
+
+test("the journal and the space checks need the workspace's jira: refused without it", async () => {
+  const provider = new AtlassianProvider({ token: LOGIN })
+  const refused = {
+    message: 'this workspace has no Jira space: add "jira" to rness.json',
+  }
+  await assert.rejects(provider.checkIssues('acme'), refused)
+  await assert.rejects(
+    provider.journalIssue('acme', 'api', 'plans/x.md'),
+    refused
+  )
 })
 
 // The tracker: Jira's spaces for the wizard (spec 0039 §4; plan 0053 task 4).
@@ -338,4 +351,80 @@ test('the tracker without a Jira login says how to get one; a refused stored tok
   assert.deepEqual(said, [
     'your Jira token was refused (expired or revoked); run rness login --provider atlassian',
   ])
+})
+
+test("the journal in the workspace's space: found, made, linked, commented; the space checked before a board writes", async (t) => {
+  await configDir(t)
+  withEnv(t, { JIRA_EMAIL: undefined, JIRA_API_TOKEN: undefined })
+  await writeAuthAt('acme.atlassian.net', JIRA_STORED)
+  let canEdit = true
+  const jira = await fakeJira(t, (r) => {
+    const path = pathOf(r)
+    if (path === '/rest/api/3/project/RNESS')
+      return { json: { id: '10002', key: 'RNESS' } }
+    if (path === '/rest/api/3/mypermissions')
+      return {
+        json: {
+          permissions: {
+            CREATE_ISSUES: { havePermission: true },
+            EDIT_ISSUES: { havePermission: canEdit },
+            TRANSITION_ISSUES: { havePermission: true },
+          },
+        },
+      }
+    if (path === '/rest/api/3/search/jql')
+      return { json: { issues: [], isLast: true } }
+    if (path === '/rest/api/3/issue/createmeta/RNESS/issuetypes')
+      return { json: { issueTypes: [{ id: '10012', hierarchyLevel: 0 }] } }
+    if (r.method === 'POST' && path === '/rest/api/3/issue')
+      return { status: 201, json: { key: 'RNESS-14' } }
+    if (path === '/rest/api/3/issue/RNESS-3')
+      return {
+        json: {
+          key: 'RNESS-3',
+          fields: { status: { statusCategory: { key: 'new' } } },
+        },
+      }
+    if (r.method === 'POST') return { status: 201, json: {} }
+    return { status: 404, json: {} }
+  })
+  const provider = new AtlassianProvider({
+    token: LOGIN,
+    jira: { site: 'acme.atlassian.net', space: 'RNESS' },
+  })
+  await provider.checkIssues('acme')
+  assert.equal(
+    await provider.journalIssue('acme', 'api', 'plans/0053-x.md'),
+    null
+  )
+  assert.deepEqual(
+    await provider.createJournalIssue('acme', 'api', 'plans/0053-x.md', {
+      title: 'Implement',
+      body: 'Plan',
+    }),
+    { id: 'RNESS-14', number: 14, repository: 'RNESS', reference: 'RNESS-14' }
+  )
+  assert.deepEqual(await provider.issueOf('acme', '.rness', 3), {
+    id: 'RNESS-3',
+    number: 3,
+    open: true,
+  })
+  await provider.addSubIssue('RNESS-3', 'RNESS-14')
+  await provider.comment('RNESS-14', 'A note')
+  assert.ok(
+    jira.requests.some(
+      (r) => r.method === 'POST' && pathOf(r) === '/rest/api/3/issueLink'
+    )
+  )
+  assert.ok(
+    jira.requests.some(
+      (r) =>
+        r.method === 'POST' &&
+        pathOf(r) === '/rest/api/3/issue/RNESS-14/comment'
+    )
+  )
+  canEdit = false
+  await assert.rejects(provider.checkIssues('acme'), {
+    message: 'the boards need EDIT_ISSUES in RNESS on acme.atlassian.net',
+  })
 })

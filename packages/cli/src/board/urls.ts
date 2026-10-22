@@ -1,3 +1,5 @@
+import type { JiraTarget } from '../core/types.ts'
+
 /**
  * Where the boards live on GitHub (spec 0017 §2, 0018 §3): the board, one
  * item of it, a document and an issue of `.rness`. Strings only: nothing
@@ -20,8 +22,8 @@ export const blobUrl = (org: string, path: string): string =>
 export const issueUrl = (org: string, number: number): string =>
   `https://github.com/${org}/.rness/issues/${number}`
 
-/** The providers a body is written for: GitHub's addresses above, GitLab's below. */
-export type BodyProvider = 'github' | 'gitlab'
+/** The providers a body is written for: GitHub's addresses above, GitLab's and Atlassian's below. */
+export type BodyProvider = 'github' | 'gitlab' | 'atlassian'
 
 /**
  * GitLab's addresses (spec 0037 §6, §7.4): the context project `rness`,
@@ -46,7 +48,33 @@ export interface ContextUrls {
   issue(org: string, number: number): string
 }
 
-export function contextUrls(provider: BodyProvider): ContextUrls {
+/**
+ * Atlassian's (spec 0039 §6): the context repository `.rness` on
+ * bitbucket.org, a document's issue in the workspace's Jira space.
+ */
+const BITBUCKET = 'https://bitbucket.org'
+
+export const bitbucketBlobUrl = (org: string, path: string): string =>
+  `${BITBUCKET}/${org}/.rness/src/main/${encodeURI(path)}`
+
+export const jiraIssueUrl = (jira: JiraTarget, number: number): string =>
+  `https://${jira.site}/browse/${jira.space}-${number}`
+
+/** The addresses on `provider`; Atlassian's issues need the workspace's Jira space, else they are the file's. */
+export function contextUrls(
+  provider: BodyProvider,
+  jira?: JiraTarget
+): ContextUrls {
+  if (provider === 'atlassian')
+    return {
+      blob: bitbucketBlobUrl,
+      image: (org, path) =>
+        `${BITBUCKET}/${org}/.rness/raw/main/${encodeURI(path)}`,
+      issue: (org, number) =>
+        jira === undefined
+          ? `${BITBUCKET}/${org}/.rness`
+          : jiraIssueUrl(jira, number),
+    }
   return provider === 'gitlab'
     ? {
         blob: gitlabBlobUrl,
