@@ -8,6 +8,7 @@ import {
   DEFAULT_HOST,
   SSH_HOST,
   classifyProbe,
+  currentSshUrl,
   probeRemote,
   repoUrl,
   sameRemote,
@@ -58,6 +59,42 @@ test('sameRemote: one repository whatever the transport, the case, a user or a t
     ),
     false
   )
+})
+
+test('Bitbucket: ssh.bitbucket.org and bitbucket.org are one host (spec 0039 §5.2)', () => {
+  const ssh = 'git@ssh.bitbucket.org:acme/api.git'
+  for (const other of [
+    'git@bitbucket.org:acme/api.git',
+    'https://bitbucket.org/acme/api.git',
+    'https://x-bitbucket-api-token-auth@bitbucket.org/acme/api.git',
+    'ssh://git@ssh.bitbucket.org/acme/api.git',
+    'ssh://git@bitbucket.org/acme/API',
+  ])
+    assert.equal(sameRemote(ssh, other), true, other)
+  for (const other of [
+    'git@ssh.bitbucket.org:other/api.git',
+    'git@gitlab.com:acme/api.git',
+    'https://ssh.bitbucket.org.evil/acme/api.git',
+  ])
+    assert.equal(sameRemote(ssh, other), false, other)
+})
+
+test('currentSshUrl: the old Bitbucket SSH host, as the API gives it, is rewritten; anything else is kept', () => {
+  assert.equal(
+    currentSshUrl('git@bitbucket.org:acme/api.git'),
+    'git@ssh.bitbucket.org:acme/api.git'
+  )
+  assert.equal(
+    currentSshUrl('ssh://git@bitbucket.org/acme/api.git'),
+    'ssh://git@ssh.bitbucket.org/acme/api.git'
+  )
+  for (const kept of [
+    'git@ssh.bitbucket.org:acme/api.git',
+    'https://bitbucket.org/acme/api.git',
+    'git@github.com:acme/api.git',
+    'git@bitbucket.org.evil:acme/api.git',
+  ])
+    assert.equal(currentSshUrl(kept), kept, kept)
 })
 
 test('classifyProbe: auth beats not-found; exit 2 is an empty but existing repository', () => {

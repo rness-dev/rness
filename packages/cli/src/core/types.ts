@@ -51,11 +51,21 @@ export interface RefusedBoard {
   source: unknown
 }
 
+/** Where an Atlassian workspace's cards live: a Jira site and a space on it (spec 0039 §2). */
+export interface JiraTarget {
+  /** `<name>.atlassian.net`. */
+  site: string
+  /** The space's key: `RNESS`. */
+  space: string
+}
+
 export interface Manifest {
   contract: 1
   /** Null when not written: `providerOf()` infers it. */
   provider: ProviderName | null
   org: string | null
+  /** Atlassian only; absent when not written. */
+  jira?: JiraTarget
   /** The team's agents (spec 0011 §3.1); null when never asked, [] for none. */
   agents: string[] | null
   /** Null when none is declared. */

@@ -28,11 +28,26 @@ function remoteKey(url: string): string {
     if (full !== null)
       rest = `${(full[1] ?? '').replace(/:\d+$/, '')}${full[2] ?? ''}`
   }
-  return rest
-    .replace(/\/+$/, '')
-    .replace(/\.git$/i, '')
-    .replace(/\/+$/, '')
-    .toLowerCase()
+  return (
+    rest
+      .replace(/\/+$/, '')
+      .replace(/\.git$/i, '')
+      .replace(/\/+$/, '')
+      .toLowerCase()
+      // Bitbucket's SSH moved to its own name; both reach one repository.
+      .replace(/^ssh\.bitbucket\.org\//, 'bitbucket.org/')
+  )
+}
+
+/**
+ * A Bitbucket SSH URL on the old host, as the API still gives it, on the
+ * new one: SSH to `bitbucket.org` is refused after 2026-11-12 (spec 0039
+ * §5.2). Any other URL is kept.
+ */
+export function currentSshUrl(url: string): string {
+  return url
+    .replace(/^git@bitbucket\.org:/i, 'git@ssh.bitbucket.org:')
+    .replace(/^ssh:\/\/git@bitbucket\.org\//i, 'ssh://git@ssh.bitbucket.org/')
 }
 
 /**

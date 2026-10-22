@@ -18,8 +18,9 @@ export function hostsOf(spec: HostSpec): Hosts {
 
 export const GITHUB_HOSTS: Hosts = hostsOf(HOSTS.github)
 
+/** `login`: the account the greeting names; null where it names none (Bitbucket). */
 export type SshAccess =
-  { ok: true; login: string } | { ok: false; reason: string }
+  { ok: true; login: string | null } | { ok: false; reason: string }
 
 export type DetectSsh = (opts: { interactive: boolean }) => Promise<SshAccess>
 
@@ -38,6 +39,21 @@ export function parseSshGreeting(
   host: HostSpec = HOSTS.github
 ): string | null {
   return host.greeting.exec(stderr)?.[1] ?? null
+}
+
+/** The host's greeting in `text`: the login it names, null when it names none; undefined when it is not there. */
+function greeted(text: string, host: HostSpec): string | null | undefined {
+  const match = host.greeting.exec(text)
+  return match === null ? undefined : (match[1] ?? null)
+}
+
+/**
+ * The host ssh is run against: the one the row's SSH base names
+ * (`git@ssh.bitbucket.org:` gives `ssh.bitbucket.org`), which is not always
+ * the host the API and HTTPS go to (spec 0039 §5.2).
+ */
+export function sshHostOf(host: HostSpec): string {
+  return host.ssh.replace(/^[^@]*@/, '').replace(/:$/, '')
 }
 
 function firstLine(text: string): string | null {
@@ -80,7 +96,7 @@ export async function detectSsh(
     '-o',
     'ConnectTimeout=5',
     ...(opts.interactive ? [] : ['-o', 'BatchMode=yes']),
-    `git@${host.host}`,
+    `git@${sshHostOf(host)}`,
   ]
   return new Promise<SshAccess>((resolve) => {
     const child = spawn(opts.command ?? 'ssh', args, {
@@ -112,10 +128,10 @@ export async function detectSsh(
     child.on('error', (e: Error) => settle({ ok: false, reason: e.message }))
     child.on('exit', (code) => {
       const finish = (): void => {
-        const login =
-          parseSshGreeting(stderr(), host) ?? parseSshGreeting(stdout(), host)
+        const err = greeted(stderr(), host)
+        const login = err === undefined ? greeted(stdout(), host) : err
         settle(
-          login !== null
+          login !== undefined
             ? { ok: true, login }
             : {
                 ok: false,
@@ -195,9 +211,10 @@ export function usingSentence(
   login?: string | null,
   host: HostSpec = HOSTS.github
 ): string {
+  const ssh = sshHostOf(host)
   return access.ok
-    ? `SSH works for ${host.host} (as ${access.login}): repositories are cloned over SSH`
-    : `No SSH access to ${host.host} (${access.reason}): repositories are cloned over HTTPS${loggedInAs(login)}`
+    ? `SSH works for ${ssh}${access.login === null ? '' : ` (as ${access.login})`}: repositories are cloned over SSH`
+    : `No SSH access to ${ssh} (${access.reason}): repositories are cloned over HTTPS${loggedInAs(login)}`
 }
 
 /** Is `url` written with the SSH base? */
@@ -209,8 +226,8 @@ export function isSshUrl(url: string, hosts: Hosts): boolean {
 export function checking(host: HostSpec): readonly [string, string, string] {
   return [
     'checking',
-    `ssh access to ${host.host}…`,
-    `Checking SSH access to ${host.host}: ssh may ask for your passphrase`,
+    `ssh access to ${sshHostOf(host)}…`,
+    `Checking SSH access to ${sshHostOf(host)}: ssh may ask for your passphrase`,
   ]
 }
 /** GitHub's `checking` lines. */
@@ -224,9 +241,10 @@ export function usingRest(
   login?: string | null,
   host: HostSpec = HOSTS.github
 ): string {
+  const ssh = sshHostOf(host)
   return access.ok
-    ? `ssh (${host.host} as ${access.login})`
-    : `https (ssh to ${host.host} unavailable: ${access.reason}${loggedInAs(login)})`
+    ? `ssh (${ssh}${access.login === null ? '' : ` as ${access.login}`})`
+    : `https (ssh to ${ssh} unavailable: ${access.reason}${loggedInAs(login)})`
 }
 
 export function usingLine(
@@ -272,7 +290,7 @@ export function sshWorkspaceLines(
   host: HostSpec = HOSTS.github
 ): [string, string] {
   return [
-    `this workspace clones over SSH (rness.json) but ssh to ${host.host} fails: ${reason}`,
+    `this workspace clones over SSH (rness.json) but ssh to ${sshHostOf(host)} fails: ${reason}`,
     `set up an SSH key: ${host.sshDocs}`,
   ]
 }

@@ -252,3 +252,84 @@ test('a transport for GitLab: its bases, and the lines name gitlab.com', () => {
   assert.deepEqual(checking(HOSTS.github), CHECKING)
   assert.deepEqual(insteadOfLines(HOSTS.github), INSTEAD_OF_LINES)
 })
+
+// Bitbucket (plan 0053 task 1): the greeting on stdout, exit 0, no login.
+const BITBUCKET_GREETING =
+  'authenticated via ssh key.\n\nYou can use git to connect to Bitbucket. Shell access is disabled\n'
+
+test("Bitbucket's greeting is SSH access with no login; the test goes to ssh.bitbucket.org", async (t) => {
+  assert.equal(parseSshGreeting(BITBUCKET_GREETING, HOSTS.bitbucket), null)
+  for (const stream of ['stdout', 'stderr']) {
+    const ssh = await fakeSsh(
+      t,
+      `process.${stream}.write(${JSON.stringify(BITBUCKET_GREETING)}); process.exit(0)`
+    )
+    assert.deepEqual(
+      await detectSsh(HOSTS.bitbucket, {
+        interactive: false,
+        command: ssh.command,
+      }),
+      { ok: true, login: null },
+      stream
+    )
+    assert.deepEqual(await ssh.argv(), [
+      '-T',
+      '-o',
+      'ConnectTimeout=5',
+      '-o',
+      'BatchMode=yes',
+      'git@ssh.bitbucket.org',
+    ])
+  }
+  // Another host's greeting is not Bitbucket's.
+  const github = await fakeSsh(
+    t,
+    `process.stderr.write(${JSON.stringify(`${GREETING}\n`)}); process.exit(1)`
+  )
+  assert.deepEqual(
+    await detectSsh(HOSTS.bitbucket, {
+      interactive: false,
+      command: github.command,
+    }),
+    { ok: false, reason: GREETING }
+  )
+})
+
+test('a transport for Bitbucket: its bases, and the lines name ssh.bitbucket.org without "as"', () => {
+  assert.deepEqual(transportFor(HOSTS.bitbucket).hosts, {
+    ssh: 'git@ssh.bitbucket.org:',
+    https: 'https://bitbucket.org/',
+  })
+  assert.equal(
+    usingLine({ ok: true, login: null }, 'smarttdev', HOSTS.bitbucket),
+    'using    ssh (ssh.bitbucket.org)'
+  )
+  assert.equal(
+    usingLine(
+      { ok: false, reason: 'Permission denied (publickey).' },
+      'smarttdev',
+      HOSTS.bitbucket
+    ),
+    'using    https (ssh to ssh.bitbucket.org unavailable: Permission denied (publickey)., logged in as smarttdev)'
+  )
+  assert.equal(
+    usingSentence({ ok: true, login: null }, null, HOSTS.bitbucket),
+    'SSH works for ssh.bitbucket.org: repositories are cloned over SSH'
+  )
+  assert.deepEqual(
+    sshWorkspaceLines('Permission denied (publickey).', HOSTS.bitbucket),
+    [
+      'this workspace clones over SSH (rness.json) but ssh to ssh.bitbucket.org fails: Permission denied (publickey).',
+      'set up an SSH key: https://support.atlassian.com/bitbucket-cloud/docs/configure-ssh-and-two-step-verification/',
+    ]
+  )
+  assert.deepEqual(insteadOfLines(HOSTS.bitbucket), [
+    'or make git use HTTPS for bitbucket.org on this machine:',
+    '  git config --global url."https://bitbucket.org/".insteadOf git@ssh.bitbucket.org:',
+  ])
+  assert.deepEqual(checking(HOSTS.bitbucket), [
+    'checking',
+    'ssh access to ssh.bitbucket.org…',
+    'Checking SSH access to ssh.bitbucket.org: ssh may ask for your passphrase',
+  ])
+})

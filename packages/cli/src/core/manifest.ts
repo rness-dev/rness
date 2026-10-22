@@ -12,6 +12,7 @@ import { repoUrl } from './remote.ts'
 import type {
   BoardEntry,
   Boards,
+  JiraTarget,
   Manifest,
   ProviderName,
   RefusedBoard,
@@ -130,15 +131,54 @@ export const ORG_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/
  */
 const GITLAB_GROUP = /^(?!-)[A-Za-z0-9_.-]{1,255}(?<!\.)(?<!\.git)(?<!\.atom)$/
 
+/**
+ * A Bitbucket workspace slug (spec 0039 §2): lowercase letters, digits, `-`
+ * and `_`, not starting with `-`. Atlassian's page says only "lowercase
+ * letters with no spaces or special characters" (read 2026-10-23), yet the
+ * workspace `rness-dev` exists: the rule is the specification's, not
+ * verified against Bitbucket's form.
+ */
+const BITBUCKET_WORKSPACE = /^[a-z0-9_][a-z0-9_-]*$/
+
 /** The rule `org` follows on a provider, and how its message names it. */
 export function orgNameRule(provider: ProviderName | null): {
   pattern: RegExp
   /** `GitHub organization name`, for "a …" or "a valid …". */
   noun: string
 } {
+  if (provider === 'atlassian')
+    return { pattern: BITBUCKET_WORKSPACE, noun: 'Bitbucket workspace slug' }
   return provider === 'gitlab'
     ? { pattern: GITLAB_GROUP, noun: 'GitLab group path' }
     : { pattern: ORG_NAME, noun: 'GitHub organization name' }
+}
+
+/** A Jira Cloud site, by its host, and a space key (spec 0039 §2). */
+const JIRA_SITE = /^[a-z0-9][a-z0-9-]*\.atlassian\.net$/
+const JIRA_SPACE = /^[A-Z][A-Z0-9]{1,9}$/
+
+/** `jira`, when present: Atlassian's only, a site and a space key, nothing else. */
+function readJira(
+  value: unknown,
+  provider: ProviderName | null
+): JiraTarget | undefined {
+  if (value === undefined) return undefined
+  if (provider !== 'atlassian')
+    fail(
+      '"jira" is for an Atlassian workspace: it needs "provider": "atlassian"'
+    )
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 2 ||
+    typeof value['site'] !== 'string' ||
+    !JIRA_SITE.test(value['site']) ||
+    typeof value['space'] !== 'string' ||
+    !JIRA_SPACE.test(value['space'])
+  )
+    fail(
+      `"jira" must be { "site": "<name>.atlassian.net", "space": "<KEY>" } (got ${JSON.stringify(value)})`
+    )
+  return { site: value['site'], space: value['space'] }
 }
 
 /** Every top-level key contract 1 defines. */
@@ -146,6 +186,7 @@ const KEYS = [
   'contract',
   'provider',
   'org',
+  'jira',
   'agents',
   'boards',
   // Former names of `boards`, still read: `sync` renames them (spec 0033 §3).
@@ -367,7 +408,10 @@ export function providerOf(manifest: Manifest): ProviderName {
   if (manifest.provider !== null) return manifest.provider
   const url = Object.values(manifest.repos)[0]?.url ?? ''
   const host = /^(?:[a-z+]+:\/\/(?:[^@/]*@)?|[^@/]+@)([^/:]+)/i.exec(url)?.[1]
-  if (host?.toLowerCase().includes('gitlab')) return 'gitlab'
+  const name = host?.toLowerCase()
+  if (name?.includes('gitlab')) return 'gitlab'
+  if (name === 'bitbucket.org' || name === 'ssh.bitbucket.org')
+    return 'atlassian'
   return 'github'
 }
 
@@ -438,10 +482,12 @@ export function parseManifest(raw: string): Manifest {
   }
   const provider = readProvider(data.provider)
   const { boards, refused, formerKey } = readBoardsOrFormer(data, provider)
+  const jira = readJira(data.jira, provider)
   return {
     contract: 1,
     provider,
     org: readOrg(data.org, provider),
+    ...(jira === undefined ? {} : { jira }),
     agents: readAgents(data.agents),
     boards,
     ...(refused.length === 0 ? {} : { refused }),
@@ -506,6 +552,10 @@ export async function writeManifest(
     lines.push(`  "provider": ${JSON.stringify(manifest.provider)},`)
   if (manifest.org !== null)
     lines.push(`  "org": ${JSON.stringify(manifest.org)},`)
+  if (manifest.jira !== undefined)
+    lines.push(
+      `  "jira": { "site": ${JSON.stringify(manifest.jira.site)}, "space": ${JSON.stringify(manifest.jira.space)} },`
+    )
   if (manifest.agents !== null)
     lines.push(
       `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`

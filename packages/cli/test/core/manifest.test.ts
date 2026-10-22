@@ -971,3 +971,137 @@ test('the exclusion list is one place, shared by both rules', () => {
     assert.equal(isMemberRepo({ name, archived: false }), false, name)
   }
 })
+
+// Atlassian (spec 0039 §2).
+test('org on Atlassian is a Bitbucket workspace slug: lowercase, digits, - and _; the message names Bitbucket', async (t) => {
+  const org = async (value: string) => {
+    const d = await fixture({
+      contract: 1,
+      provider: 'atlassian',
+      org: value,
+      repos: {},
+      scopes: {},
+    })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    return loadManifest(d)
+  }
+  for (const good of ['acme', 'rness-dev', 'acme_corp', 'acme2'])
+    assert.equal((await org(good)).org, good)
+  for (const bad of ['Acme', '-acme', 'acme.io', 'ac me', 'acme/api', ''])
+    await assert.rejects(
+      () => org(bad),
+      /^Error: rness\.json: "org" must be a Bitbucket workspace slug \(got "/,
+      bad
+    )
+})
+
+test('jira: read with provider atlassian only; a site on atlassian.net and a space key; written after org', async (t) => {
+  const jira = { site: 'rness-dev.atlassian.net', space: 'RNESS' }
+  const read = async (json: Record<string, unknown>) => {
+    const d = await fixture({ contract: 1, repos: {}, scopes: {}, ...json })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    return loadManifest(d)
+  }
+  assert.deepEqual(
+    (await read({ provider: 'atlassian', org: 'rness-dev', jira })).jira,
+    jira
+  )
+  assert.equal(
+    Object.hasOwn(
+      await read({ provider: 'atlassian', org: 'rness-dev' }),
+      'jira'
+    ),
+    false
+  )
+  for (const provider of ['github', 'gitlab', undefined])
+    await assert.rejects(
+      () => read({ provider, jira }),
+      new Error(
+        'rness.json: "jira" is for an Atlassian workspace: it needs "provider": "atlassian"'
+      ),
+      String(provider)
+    )
+  for (const bad of [
+    { site: 'rness-dev.example.com', space: 'RNESS' },
+    { site: 'https://rness-dev.atlassian.net', space: 'RNESS' },
+    { site: 'rness-dev.atlassian.net', space: 'rness' },
+    { site: 'rness-dev.atlassian.net', space: 'R' },
+    { site: 'rness-dev.atlassian.net', space: 'RNESS', board: 1 },
+    { site: 'rness-dev.atlassian.net' },
+    'RNESS',
+  ])
+    await assert.rejects(
+      () => read({ provider: 'atlassian', jira: bad }),
+      new Error(
+        `rness.json: "jira" must be { "site": "<name>.atlassian.net", "space": "<KEY>" } (got ${JSON.stringify(bad)})`
+      ),
+      JSON.stringify(bad)
+    )
+
+  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const manifest: Manifest = {
+    contract: 1,
+    provider: 'atlassian',
+    org: 'rness-dev',
+    jira,
+    agents: ['claude'],
+    boards: null,
+    repos: { cli: { url: 'git@ssh.bitbucket.org:rness-dev/cli.git' } },
+    scopes: {},
+  }
+  await writeManifest(d, manifest)
+  assert.equal(
+    await readFile(join(d, 'rness.json'), 'utf8'),
+    `{
+  "contract": 1,
+  "provider": "atlassian",
+  "org": "rness-dev",
+  "jira": { "site": "rness-dev.atlassian.net", "space": "RNESS" },
+  "agents": ["claude"],
+  "repos": {
+    "cli": { "url": "git@ssh.bitbucket.org:rness-dev/cli.git" }
+  },
+  "scopes": {
+  }
+}
+`
+  )
+  assert.deepEqual(await loadManifest(d), manifest)
+})
+
+test('providerOf: a Bitbucket URL, either SSH host, is Atlassian', () => {
+  const base: Manifest = {
+    contract: 1,
+    provider: null,
+    org: null,
+    agents: null,
+    boards: null,
+    repos: {},
+    scopes: {},
+  }
+  for (const url of [
+    'git@ssh.bitbucket.org:acme/api.git',
+    'git@bitbucket.org:acme/api.git',
+    'https://bitbucket.org/acme/api.git',
+    'https://x-bitbucket-api-token-auth@bitbucket.org/acme/api.git',
+  ])
+    assert.equal(
+      providerOf({ ...base, repos: { api: { url } } }),
+      'atlassian',
+      url
+    )
+})
+
+test('the context repository on Atlassian is .rness, excluded as on GitHub', () => {
+  assert.equal(contextRepo('atlassian'), '.rness')
+  assert.equal(
+    isMemberRepo({ name: '.rness', archived: false }, 'atlassian'),
+    false
+  )
+  assert.equal(
+    isMemberRepo({ name: 'rness', archived: false }, 'atlassian'),
+    true
+  )
+  assert.equal(isWorkspaceClone('rness', 'atlassian'), true)
+})
