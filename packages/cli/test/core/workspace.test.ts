@@ -100,6 +100,17 @@ test('orgDirs on GitLab: org/rness is neither a clone nor unread; on GitHub it i
   assert.deepEqual([...(await orgDirs(root)).clones].sort(), ['rness', 'web'])
 })
 
+test('orgDirs on Atlassian: the context is .rness, as on GitHub; org/rness is a clone (plan 0053 task 3)', async (t) => {
+  const root = await workspace()
+  t.after(() => rm(root, { recursive: true, force: true }))
+  for (const d of ['web', 'rness', '.rness'])
+    await mkdir(join(root, 'org', d), { recursive: true })
+  assert.deepEqual(await orgDirs(root, 'atlassian'), {
+    clones: new Set(['web', 'rness']),
+    unread: [],
+  })
+})
+
 test('orgDirs: the clones, and the directories that are not, an excluded name left out', async (t) => {
   const root = await workspace()
   t.after(() => rm(root, { recursive: true, force: true }))

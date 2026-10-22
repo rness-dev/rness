@@ -25,6 +25,8 @@ export interface Organization {
   approved: boolean
   /** The identity can approve rness there itself (an owner); false: it can only ask; null: the provider would not say. */
   canGrant: boolean | null
+  /** A word the picker shows beside the login: a Bitbucket workspace's name (spec 0039 §4). */
+  hint?: string
 }
 
 /**
