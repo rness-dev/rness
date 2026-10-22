@@ -39,6 +39,7 @@
   "dependencies": {
     "@clack/prompts": "1.8.1",
     "commander": "15.0.0",
+    "marklassian": "1.2.1",
     "yaml": "2.9.1"
   },
   "devDependencies": {
