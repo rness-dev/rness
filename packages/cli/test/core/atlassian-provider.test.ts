@@ -13,6 +13,7 @@ import {
 } from '../../src/core/auth.ts'
 import { fakeBitbucket } from '../helpers/fake-bitbucket.ts'
 import { type Recorded, type Reply, withEnv } from '../helpers/fake-github.ts'
+import { fakeJira } from '../helpers/fake-jira.ts'
 
 // The Atlassian adapter's Bitbucket reads (spec 0039 §4, §5; plan 0053
 // task 3). Jira's boards and journal come with tasks 5 and 6.
@@ -248,4 +249,87 @@ test("a branch's pull request comes from Bitbucket; Jira's boards and journal ar
   })
   assert.deepEqual(await provider.describe(), [])
   assert.deepEqual(await provider.postUpdates(), [])
+})
+
+// The tracker: Jira's spaces for the wizard (spec 0039 §4; plan 0053 task 4).
+const JIRA_STORED: StoredLogin = {
+  login: 'Cédric Magne',
+  email: 'me@acme.io',
+  accountId: 'acc-1',
+  tokens: {
+    accessToken: 'jira-tok',
+    expiresAt: null,
+    refreshToken: null,
+    refreshExpiresAt: null,
+    scopes: '',
+  },
+}
+
+test("the tracker: the sites the login holds, a site's spaces, a free key, a new space led by the user", async (t) => {
+  await configDir(t)
+  withEnv(t, { JIRA_EMAIL: undefined, JIRA_API_TOKEN: undefined })
+  await writeAuthAt('bitbucket.org', STORED, [
+    'acme.atlassian.net',
+    JIRA_STORED,
+  ])
+  const jira = await fakeJira(
+    t,
+    routes({
+      '/rest/api/3/project/search': {
+        json: { values: [{ key: 'OPS', name: 'Operations' }], isLast: true },
+      },
+      '/rest/api/3/projectvalidate/key': {
+        json: { errorMessages: [], errors: {} },
+      },
+      '/rest/api/3/myself': {
+        json: { displayName: 'Cédric Magne', accountId: 'acc-1' },
+      },
+      '/rest/api/3/project': { status: 201, json: { key: 'RNESS' } },
+    })
+  )
+  const tracker = new AtlassianProvider({ token: LOGIN }).tracker
+  assert.equal(tracker.label, 'Jira')
+  assert.deepEqual(await tracker.sites(), ['acme.atlassian.net'])
+  assert.deepEqual(await tracker.spaces('acme.atlassian.net'), [
+    { key: 'OPS', name: 'Operations' },
+  ])
+  assert.equal(await tracker.keyFree('acme.atlassian.net', 'RNESS'), true)
+  assert.deepEqual(await tracker.createSpace('acme.atlassian.net', 'RNESS'), {
+    kind: 'created',
+  })
+  const created = jira.requests.find((r) => r.method === 'POST')
+  assert.equal(
+    (created?.body as { leadAccountId?: string } | undefined)?.leadAccountId,
+    'acc-1'
+  )
+  assert.equal(
+    created?.headers['authorization'],
+    `Basic ${Buffer.from('me@acme.io:jira-tok').toString('base64')}`
+  )
+})
+
+test('the tracker without a Jira login says how to get one; a refused stored token is cleared and said once', async (t) => {
+  await configDir(t)
+  withEnv(t, { JIRA_EMAIL: undefined, JIRA_API_TOKEN: undefined })
+  const said: string[] = []
+  const tracker = new AtlassianProvider({
+    token: LOGIN,
+    notify: (l) => said.push(l),
+  }).tracker
+  assert.deepEqual(await tracker.sites(), [])
+  await assert.rejects(tracker.spaces('acme.atlassian.net'), {
+    message:
+      'no Jira login for acme.atlassian.net: run rness login --provider atlassian',
+  })
+
+  await writeAuthAt('acme.atlassian.net', JIRA_STORED)
+  await fakeJira(t, () => ({ status: 401, json: {} }))
+  await assert.rejects(tracker.spaces('acme.atlassian.net'), {
+    message: 'acme.atlassian.net refused this email and token (401)',
+  })
+  await assert.rejects(tracker.keyFree('acme.atlassian.net', 'RNESS'))
+  assert.equal(await readAuthAt('acme.atlassian.net'), null)
+  assert.deepEqual(said, [
+    'your Jira token was refused (expired or revoked); run rness login --provider atlassian',
+  ])
 })

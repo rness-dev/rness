@@ -55,7 +55,33 @@ export interface Board {
   title?: string
 }
 
+/** A space of a provider's tracker, as the wizard offers it. */
+export interface TrackerSpace {
+  key: string
+  name: string
+}
+
+/**
+ * Where the cards live when it is not the git host: Atlassian's Jira (spec
+ * 0039 §4). GitHub and GitLab have none: their issues live beside the
+ * repositories.
+ */
+export interface Tracker {
+  /** `Jira`, as the lines name it. */
+  readonly label: string
+  /** The sites the login holds; empty without one. */
+  sites(): Promise<string[]>
+  /** The spaces of `site` the user can put cards in, by key. */
+  spaces(site: string): Promise<TrackerSpace[]>
+  /** Whether no space of `site` holds `key`, those the user cannot see included. */
+  keyFree(site: string, key: string): Promise<boolean>
+  /** A new space `key` on `site`, the user its lead. */
+  createSpace(site: string, key: string): Promise<CreateRepositoryResult>
+}
+
 export interface Provider {
+  /** The cards' own host, when it is not the git host (Atlassian). */
+  readonly tracker?: Tracker
   /** False when rness sees GitHub anonymously: public repositories only. */
   readonly authenticated: boolean
   /** Who rness acts as; null when anonymous. */

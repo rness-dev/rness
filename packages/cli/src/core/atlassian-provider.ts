@@ -1,6 +1,12 @@
 import type { Layout } from '../board/layout.ts'
 import type { BoardItem, Placed, Step } from '../board/plan.ts'
-import { type ResolvedToken, resolveToken, tokenRefused } from './auth.ts'
+import {
+  type ResolvedToken,
+  jiraLogin,
+  resolveToken,
+  storedHosts,
+  tokenRefused,
+} from './auth.ts'
 import {
   type BitbucketApiOptions,
   TokenRefused,
@@ -19,6 +25,14 @@ import type {
   RepositoryListing,
 } from './github.ts'
 import { HOSTS } from './hosts.ts'
+import {
+  JIRA_SITE,
+  type JiraApiOptions,
+  createSpace,
+  keyFree,
+  listSpaces,
+  myself,
+} from './jira.ts'
 import { contextRepo } from './manifest.ts'
 import { rnessCommand } from './pm.ts'
 import type {
@@ -28,6 +42,8 @@ import type {
   Organization,
   OrganizationAccess,
   Provider,
+  Tracker,
+  TrackerSpace,
 } from './provider.ts'
 
 const NO_BOARDS = 'the boards on Jira are not implemented yet'
@@ -47,6 +63,7 @@ export class AtlassianProvider implements Provider {
   /** A refused stored token is cleared and said once, whatever asked. */
   #refusalSaid = false
   readonly #permission = new Map<string, Promise<string | null | 'unknown'>>()
+  readonly tracker: Tracker
 
   get authenticated(): boolean {
     return this.#token !== null
@@ -63,6 +80,7 @@ export class AtlassianProvider implements Provider {
     this.#apiBase = options.apiBase
     this.#wait = options.wait
     this.#notify = options.notify
+    this.tracker = new JiraTracker(options.wait, options.notify)
   }
 
   #api(): BitbucketApiOptions {
@@ -295,4 +313,80 @@ export async function atlassianProvider(
     apiBase,
     wait,
   })
+}
+
+/**
+ * Jira as the wizard asks it (spec 0039 §4): the sites the login stored,
+ * their spaces, a free key, a new space. Each call reads the site's
+ * credentials (`JIRA_EMAIL` with `JIRA_API_TOKEN`, else the stored login);
+ * a refused stored token is cleared and said once per site.
+ */
+class JiraTracker implements Tracker {
+  readonly label = 'Jira'
+  readonly #wait: RateWait | undefined
+  readonly #notify: ((line: string) => void) | undefined
+  readonly #said = new Set<string>()
+
+  constructor(
+    wait: RateWait | undefined,
+    notify: ((line: string) => void) | undefined
+  ) {
+    this.#wait = wait
+    this.#notify = notify
+  }
+
+  async #call<T>(
+    site: string,
+    work: (o: JiraApiOptions) => Promise<T>
+  ): Promise<T> {
+    const login = await jiraLogin(site)
+    if (login === null)
+      throw new Error(
+        `no Jira login for ${site}: run ${rnessCommand()} login --provider atlassian`
+      )
+    try {
+      return await work({
+        site,
+        email: login.email,
+        token: login.token,
+        wait: this.#wait,
+      })
+    } catch (e) {
+      if (!(e instanceof TokenRefused)) throw e
+      if (login.source !== 'login')
+        throw new TokenRefused(`JIRA_API_TOKEN was refused by ${site} (401)`)
+      if (!this.#said.has(site)) {
+        this.#said.add(site)
+        await tokenRefused(site, 'Jira', this.#notify)
+      }
+      throw e
+    }
+  }
+
+  async sites(): Promise<string[]> {
+    return (await storedHosts()).filter((h) => JIRA_SITE.test(h)).sort()
+  }
+
+  async spaces(site: string): Promise<TrackerSpace[]> {
+    return this.#call(site, listSpaces)
+  }
+
+  async keyFree(site: string, key: string): Promise<boolean> {
+    return this.#call(site, (o) => keyFree(key, o))
+  }
+
+  async createSpace(
+    site: string,
+    key: string
+  ): Promise<CreateRepositoryResult> {
+    return this.#call(site, async (o) => {
+      const lead = (await myself(o)).accountId
+      if (lead === null)
+        return {
+          kind: 'refused' as const,
+          reason: `${site} did not say who you are`,
+        }
+      return createSpace(key, lead, o)
+    })
+  }
 }
