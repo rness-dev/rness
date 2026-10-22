@@ -289,6 +289,12 @@ test("the tracker: the sites the login holds, a site's spaces, a free key, a new
   )
   const tracker = new AtlassianProvider({ token: LOGIN }).tracker
   assert.equal(tracker.label, 'Jira')
+  assert.equal(tracker.keyPattern.test('RNESS'), true)
+  assert.equal(tracker.keyPattern.test('rness'), false)
+  assert.deepEqual(tracker.manualSteps('acme.atlassian.net', 'RNESS'), [
+    '# create a team-managed Kanban space with the key RNESS on acme.atlassian.net',
+    '# (Jira > Spaces > Create space > Kanban > Team-managed), then: rness board push',
+  ])
   assert.deepEqual(await tracker.sites(), ['acme.atlassian.net'])
   assert.deepEqual(await tracker.spaces('acme.atlassian.net'), [
     { key: 'OPS', name: 'Operations' },

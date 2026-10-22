@@ -40,7 +40,7 @@ import {
 import { VERSION } from '../../src/version.ts'
 import { capture } from '../helpers/capture.ts'
 import { fakeGithub, withEnv as withTestEnv } from '../helpers/fake-github.ts'
-import { fakeProvider } from '../helpers/provider.ts'
+import { fakeProvider, fakeTracker } from '../helpers/provider.ts'
 import { makeRemoteOrg } from '../helpers/remote-org.ts'
 import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
@@ -730,6 +730,7 @@ function terminal(script: Script) {
   const preselected: unknown[] = []
   const providerOptions: unknown[] = []
   const orgOptions: unknown[] = []
+  const selects: { message: string; options: unknown }[] = []
   const next = <T>(queue: T[] | undefined, message: string): T => {
     const answer = queue?.shift()
     if (answer === undefined)
@@ -778,6 +779,7 @@ function terminal(script: Script) {
       }
       asked.push(opts.message)
       offered.push(opts.options.map((o) => o.value))
+      selects.push({ message: opts.message, options: opts.options })
       if (opts.message === ORG_LIST_Q) orgOptions.push(opts.options)
       return next(script.select, opts.message)
     },
@@ -802,6 +804,7 @@ function terminal(script: Script) {
     preselected,
     providerOptions,
     orgOptions,
+    selects,
   }
 }
 
@@ -838,8 +841,8 @@ const PROVIDER_OPTIONS = [
   { value: 'gitlab', label: 'GitLab', disabled: false },
   {
     value: 'atlassian',
-    label: 'Atlassian (Bitbucket + Jira) (coming later)',
-    disabled: true,
+    label: 'Atlassian (Bitbucket + Jira)',
+    disabled: false,
   },
   {
     value: 'blank',
@@ -853,7 +856,7 @@ const ORG_Q = 'What is your GitHub organization named?'
 const LOGIN_Q =
   'Log in to GitHub to list your organizations and private repositories?'
 const PUBLISH_Q =
-  /^Create \S+\/\.?rness on (?:GitHub|GitLab) \(private\) and push it\?$/
+  /^Create \S+\/\.?rness on (?:GitHub|GitLab|Bitbucket) \(private\) and push it\?$/
 const REPOS_Q = 'Which repositories do you want in your workspace?'
 const NO_TOKEN_NOTE =
   'only public repositories are listed; rness login lists the private ones you can access\n'
@@ -2412,7 +2415,7 @@ test('--agent: an unknown agent exits 2 before any question; a join refuses it b
   assert.deepEqual(await readdir(cwd), ['.git'])
 })
 
-test('wizard: the organization path asks where it lives, GitLab and Atlassian shown disabled; the answer is written', async (t) => {
+test('wizard: an organization on the command line settles where it lives, unasked; the answer is written', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   await remote.addRepo('api', { 'README.md': '# api\n' })
   const cwd = await scratch(t)
@@ -2513,20 +2516,8 @@ test('without a terminal and without --provider, a new workspace is GitHub', asy
   )
 })
 
-test('--provider: an unavailable or unknown provider exits 2 before anything else', async (t) => {
+test('--provider: an unknown provider exits 2 before anything else', async (t) => {
   const cwd = await scratch(t)
-  const atlassian = await create([
-    'acme',
-    '--provider',
-    'atlassian',
-    '--cwd',
-    cwd,
-  ])
-  assert.equal(atlassian.code, 2)
-  assert.equal(
-    atlassian.err,
-    'provider "atlassian" is not available yet (available: github, gitlab)\n'
-  )
   const svn = await create(['acme', '--provider', 'svn', '--cwd', cwd])
   assert.equal(svn.code, 2)
   assert.equal(svn.err, 'unknown provider "svn" (github, gitlab, atlassian)\n')
@@ -2771,5 +2762,273 @@ test('--org in a terminal still reaches the approval; --yes prints the page for 
   assert.match(
     r2.err,
     /^warning: acme has not approved rness, so its private repositories are hidden\nan owner approves it at https:\/\/github\.test\S+\n/m
+  )
+})
+
+// Atlassian (spec 0039 §4, §5; plan 0053 task 4): Bitbucket for the
+// repositories, Jira for the cards, both scripted.
+const BITBUCKET_PUBLISH_Q =
+  'Create acme/.rness on Bitbucket (private) and push it?'
+const SPACE_Q = 'Which Jira space for the cards and the journal?'
+
+async function atlassianFixture(
+  t: Parameters<typeof scratch>[0],
+  tracker: Parameters<typeof fakeTracker>[0] = {}
+) {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const jira = fakeTracker(tracker)
+  const bb = fakeProvider({
+    login: 'smarttdev',
+    organizations: [
+      { login: 'acme', approved: true, canGrant: null, hint: 'Acme' },
+      { login: 'smartt', approved: true, canGrant: null },
+    ],
+    access: 'member',
+    role: 'owner',
+    approvalUrl: null,
+    repositories: [
+      { name: 'api', private: true, archived: false, hint: 'Platform' },
+      { name: 'web', private: false, archived: false, hint: 'Platform' },
+    ],
+    create: async (_owner, name) => {
+      await remote.addRepo(name, {})
+      return { kind: 'created' }
+    },
+    tracker: jira.tracker,
+  })
+  return { remote, bb, jira }
+}
+
+test('Atlassian wizard: its words, the workspaces named and no account, the project hint, the Jira space after the repositories, .rness and RNESS created, jira written', async (t) => {
+  const { remote, bb, jira } = await atlassianFixture(t, {
+    spaces: [{ key: 'OPS', name: 'Operations' }],
+  })
+  const cwd = await scratch(t)
+  const term = terminal({
+    provider: 'atlassian',
+    select: ['acme', ''],
+    pick: [['api']],
+    publish: true,
+  })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    bb.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    PROVIDER_Q,
+    'Which Bitbucket workspace?',
+    REPOS_Q,
+    SPACE_Q,
+    BITBUCKET_PUBLISH_Q,
+  ])
+  // The workspaces with their names, then one typed: no personal namespace.
+  assert.deepEqual(
+    (term.selects[0]?.options as { value: string; hint?: string }[]).map(
+      (o) => [o.value, o.hint ?? null]
+    ),
+    [
+      ['acme', 'Acme'],
+      ['smartt', null],
+      ['', 'not a member'],
+    ]
+  )
+  assert.equal(
+    (term.selects[0]?.options as { label: string }[])[2]?.label,
+    'a workspace not listed here…'
+  )
+  const picker = term.offered[1] as { value: string; hint?: string }[]
+  assert.deepEqual(
+    picker.map((o) => [o.value, o.hint ?? null]),
+    [
+      ['api', 'Platform'],
+      ['web', 'Platform'],
+    ]
+  )
+  assert.deepEqual(
+    (
+      term.selects[1]?.options as {
+        value: string
+        label: string
+        hint?: string
+      }[]
+    ).map((o) => [o.value, o.label, o.hint ?? null]),
+    [
+      ['OPS', 'OPS', 'Operations'],
+      ['', 'a new space RNESS', 'acme.atlassian.net'],
+    ]
+  )
+  assert.match(r.out, /^member {3}acme \(as smarttdev, owner\)$/m)
+  assert.match(
+    r.out,
+    /^not found acme\/\.rness \(or not visible to you\) - starting a new workspace$/m
+  )
+  assert.match(r.out, /^listing {2}acme repositories…$/m)
+  assert.deepEqual(jira.created, ['acme.atlassian.net/RNESS'])
+  assert.match(
+    r.out,
+    /^created {2}space RNESS \(team-managed, Kanban\) on acme\.atlassian\.net$/m
+  )
+  assert.deepEqual(bb.created, ['acme/.rness'])
+  assert.match(
+    r.out,
+    /^created {2}bitbucket\.org\/acme\/\.rness \(private\)\npushed {3}acme\/\.rness$/m
+  )
+  const m = await loadManifest(join(cwd, 'acme', '.rness'))
+  assert.equal(m.provider, 'atlassian')
+  assert.deepEqual(m.jira, { site: 'acme.atlassian.net', space: 'RNESS' })
+  assert.deepEqual(m.repos, { api: { url: `${remote.host}acme/api.git` } })
+  assert.match(
+    r.out,
+    / {2}# then, for every teammate: npm create rness -- acme --provider atlassian\n/
+  )
+})
+
+test('Atlassian: an existing space is used as it is; several sites, the site asked first', async (t) => {
+  const { remote, bb, jira } = await atlassianFixture(t, {
+    sites: ['acme.atlassian.net', 'other.atlassian.net'],
+    spaces: [{ key: 'OPS', name: 'Operations' }],
+  })
+  const cwd = await scratch(t)
+  const term = terminal({
+    provider: 'atlassian',
+    select: ['acme', 'other.atlassian.net', 'OPS'],
+    pick: [[]],
+  })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    bb.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(term.asked, [
+    PROVIDER_Q,
+    'Which Bitbucket workspace?',
+    REPOS_Q,
+    'Which Jira site?',
+    SPACE_Q,
+  ])
+  assert.deepEqual(jira.created, [])
+  const m = await loadManifest(join(cwd, 'acme', '.rness'))
+  assert.deepEqual(m.jira, { site: 'other.atlassian.net', space: 'OPS' })
+})
+
+test('Atlassian: RNESS taken, a key typed; the space refused, its steps; not published, git alone', async (t) => {
+  const { remote, bb, jira } = await atlassianFixture(t, {
+    taken: ['RNESS', 'OPS2'],
+    create: {
+      kind: 'refused',
+      reason: 'You must have global administrator rights. (403)',
+    },
+  })
+  const cwd = await scratch(t)
+  const term = terminal({
+    provider: 'atlassian',
+    select: ['acme', ''],
+    pick: [[]],
+    text: ['ops', 'OPS2', 'TEAM'],
+    publish: false,
+  })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    bb.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  const newOption = (term.selects[1]?.options as { label: string }[]).at(-1)
+  assert.equal(newOption?.label, 'a new space…')
+  assert.deepEqual(term.refused, [
+    'a Jira space key: A to Z and digits, 2 to 10, a letter first',
+  ])
+  assert.match(r.err + r.out, /OPS2 is taken on acme\.atlassian\.net/)
+  assert.deepEqual(jira.created, ['acme.atlassian.net/TEAM'])
+  assert.match(
+    r.err + r.out,
+    /Jira did not create TEAM on acme\.atlassian\.net: You must have global administrator rights\. \(403\)/
+  )
+  const m = await loadManifest(join(cwd, 'acme', '.rness'))
+  assert.deepEqual(m.jira, { site: 'acme.atlassian.net', space: 'TEAM' })
+  assert.deepEqual(bb.created, [])
+  assert.ok(
+    r.out.includes(
+      [
+        '  # create the empty private repository acme/.rness on bitbucket.org, then:',
+        `  git remote add origin ${remote.host}acme/.rness.git && git push -u origin main`,
+        '  # create a team-managed Kanban space with the key TEAM on acme.atlassian.net',
+        '  # (Jira > Spaces > Create space > Kanban > Team-managed), then: rness board push',
+      ].join('\n')
+    ),
+    r.out
+  )
+  assert.doesNotMatch(r.out, /gh repo create|glab/)
+})
+
+test('Atlassian without a Jira login, or off a terminal: no space asked, jira left out, the line that declares it', async (t) => {
+  const { remote, bb } = await atlassianFixture(t, { sites: [] })
+  const cwd = await scratch(t)
+  const term = terminal({
+    provider: 'atlassian',
+    select: ['acme'],
+    pick: [[]],
+  })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    bb.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.equal(term.asked.includes(SPACE_Q), false)
+  assert.match(
+    r.err + r.out,
+    /no Jira login: rness login --provider atlassian lists your spaces/
+  )
+  assert.equal(
+    Object.hasOwn(await loadManifest(join(cwd, 'acme', '.rness')), 'jira'),
+    false
+  )
+  assert.match(
+    r.out,
+    /# for the cards: add "jira": \{ "site": "<name>\.atlassian\.net", "space": "<KEY>" \} to rness\.json/
+  )
+
+  const { remote: remote2, bb: bb2 } = await atlassianFixture(t)
+  const cwd2 = await scratch(t)
+  const quiet = await wizard(
+    {
+      org: 'acme',
+      provider: 'atlassian',
+      yes: true,
+      repos: '',
+      skipInstall: true,
+      pm: 'npm',
+      host: remote2.host,
+      cwd: cwd2,
+    },
+    terminal({}).deps,
+    undefined,
+    bb2.provider
+  )
+  assert.equal(quiet.code, 0, quiet.err)
+  assert.match(quiet.out, /# for the cards: add "jira"/)
+})
+
+test('Atlassian: --org follows the workspace slug rule; the typed workspace is asked in Bitbucket words', async (t) => {
+  const bad = await create([
+    'Acme',
+    '--provider',
+    'atlassian',
+    '--cwd',
+    await scratch(t),
+  ])
+  assert.equal(bad.code, 2)
+  assert.equal(
+    bad.err,
+    'organization name "Acme" is not a valid Bitbucket workspace slug\n'
   )
 })

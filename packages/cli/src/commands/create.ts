@@ -6,6 +6,7 @@ import { SUPPORTED_AGENTS, unsupportedAgents } from '../core/agents.ts'
 import { checkAccess } from '../core/approval.ts'
 import { askAgents } from '../core/ask-agents.ts'
 import { BLANK, askProvider } from '../core/ask-provider.ts'
+import { atlassianProvider } from '../core/atlassian-provider.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { clone, publish } from '../core/git.ts'
 import { githubProvider } from '../core/github-oauth-provider.ts'
@@ -40,6 +41,7 @@ import type {
   GitCredentials,
   Organization,
   Provider,
+  Tracker,
 } from '../core/provider.ts'
 import { PROVIDERS, isProviderName, openProvider } from '../core/providers.ts'
 import { probeRemote, repoUrl } from '../core/remote.ts'
@@ -109,6 +111,8 @@ export interface CreateOptions {
   githubApi?: string
   /** Internal (tests): GitLab REST API base. */
   gitlabApi?: string
+  /** Internal (tests): Bitbucket API origin. */
+  bitbucketApi?: string
 }
 
 /** What the wizard says and makes, per provider (spec 0037 §4, §5.4). */
@@ -123,7 +127,7 @@ interface Words {
   otherHint: string
 }
 
-const WORDS: Readonly<Record<'github' | 'gitlab', Words>> = {
+const WORDS: Readonly<Record<ProviderName, Words>> = {
   github: {
     label: 'GitHub',
     org: 'organization',
@@ -141,10 +145,19 @@ const WORDS: Readonly<Record<'github' | 'gitlab', Words>> = {
     otherLabel: 'a group not listed here…',
     otherHint: 'not a member',
   },
+  // Bitbucket's own words (spec 0039 §2).
+  atlassian: {
+    label: 'Bitbucket',
+    org: 'workspace',
+    repos: ['repository', 'repositories'],
+    login:
+      'Log in to Atlassian to list your workspaces and private repositories?',
+    otherLabel: 'a workspace not listed here…',
+    otherHint: 'not a member',
+  },
 }
 
-const wordsOf = (provider: ProviderName): Words =>
-  provider === 'gitlab' ? WORDS.gitlab : WORDS.github
+const wordsOf = (provider: ProviderName): Words => WORDS[provider]
 
 /**
  * What to type when the context repository is not published: git first,
@@ -157,6 +170,12 @@ function manualSteps(
   context: string,
   url: string
 ): string[] {
+  // Bitbucket has no CLI: git alone (spec 0039 §5.4).
+  if (provider === 'atlassian')
+    return [
+      `# create the empty private repository ${org}/${context} on bitbucket.org, then:`,
+      `git remote add origin ${url} && git push -u origin main`,
+    ]
   if (provider === 'gitlab')
     return [
       `# create the empty private project ${org}/${context}, named ${GITLAB_CONTEXT_NAME}, on gitlab.com, then:`,
@@ -517,9 +536,15 @@ async function chooseOrganization(
     organizations.map((o) => ({
       value: o.login,
       label: !o.approved && padlock ? `${o.login} ${PRIVATE_MARK}` : o.login,
-      ...(o.approved ? {} : { hint: NOT_APPROVED }),
+      ...(o.approved
+        ? o.hint === undefined
+          ? {}
+          : { hint: o.hint }
+        : { hint: NOT_APPROVED }),
     }))
-  if (self !== undefined)
+  // Bitbucket has no personal namespace apart from the workspaces (spec
+  // 0039 §4).
+  if (self !== undefined && providerName !== 'atlassian')
     options.push({ value: self, label: self, hint: 'your account' })
   options.push({ value: '', label: words.otherLabel, hint: words.otherHint })
   const answer = await prompts.select<string>({
@@ -584,6 +609,87 @@ async function publishContext(input: {
   }
 }
 
+/** The key a new space gets when it is free (spec 0039 §4). */
+const DEFAULT_SPACE = 'RNESS'
+/** The answer "a new space" to the space question. */
+const NEW_SPACE = ''
+
+/**
+ * Where a new workspace's cards live, when the provider keeps them apart
+ * from the repositories (Atlassian's Jira, spec 0039 §4), asked after the
+ * repositories: the site the login holds (asked among several), one of its
+ * spaces, or a new one, `RNESS` when free, else a key typed. Nothing is
+ * created here: every write comes after the last question. Null when it
+ * cannot be asked (no login there, a site that fails), said once; `cancel`
+ * on a cancel.
+ */
+async function chooseSpace(
+  tracker: Tracker,
+  prompts: Prompts,
+  ui: Ui
+): Promise<{ site: string; key: string; create: boolean } | null | 'cancel'> {
+  const label = tracker.label
+  try {
+    const sites = await tracker.sites()
+    if (sites.length === 0) {
+      ui.hint(
+        `no ${label} login: ${rnessCommand()} login --provider atlassian lists your spaces; declare one in rness.json later`
+      )
+      return null
+    }
+    let site = sites[0] ?? ''
+    if (sites.length > 1) {
+      const answer = await prompts.select<string>({
+        message: `Which ${label} site?`,
+        options: sites.map((s) => ({ value: s, label: s })),
+      })
+      if (prompts.isCancel(answer) || typeof answer !== 'string')
+        return 'cancel'
+      site = answer
+    }
+    const spaces = await tracker.spaces(site)
+    const listed = new Set(spaces.map((s) => s.key))
+    const free =
+      !listed.has(DEFAULT_SPACE) && (await tracker.keyFree(site, DEFAULT_SPACE))
+    const answer = await prompts.select<string>({
+      message: `Which ${label} space for the cards and the journal?`,
+      options: [
+        ...spaces.map((s) => ({ value: s.key, label: s.key, hint: s.name })),
+        {
+          value: NEW_SPACE,
+          label: free ? `a new space ${DEFAULT_SPACE}` : 'a new space…',
+          hint: site,
+        },
+      ],
+      initialValue: NEW_SPACE,
+    })
+    if (prompts.isCancel(answer) || typeof answer !== 'string') return 'cancel'
+    if (answer !== NEW_SPACE) return { site, key: answer, create: false }
+    if (free) return { site, key: DEFAULT_SPACE, create: true }
+    for (;;) {
+      const typed = await prompts.text({
+        message: `What key for the new ${label} space?`,
+        placeholder: 'TEAM',
+        validate: (value) => {
+          const v = value?.trim() ?? ''
+          if (!tracker.keyPattern.test(v))
+            return `a ${label} space key: ${tracker.keyRule}`
+          return listed.has(v) ? `${v} is a space already: pick it` : undefined
+        },
+      })
+      if (prompts.isCancel(typed) || typeof typed !== 'string') return 'cancel'
+      const key = typed.trim()
+      if (await tracker.keyFree(site, key)) return { site, key, create: true }
+      ui.warn(`${key} is taken on ${site}`)
+    }
+  } catch (e) {
+    ui.warn(
+      `${label}: ${firstLine(e instanceof Error ? e.message : String(e))}; declare the space in rness.json later`
+    )
+    return null
+  }
+}
+
 /**
  * `rness create`: join the organization's `.rness` or start a new one in
  * `./<org>` (spec 0003 §2.1). `rness.json` is the organization's catalogue;
@@ -609,9 +715,11 @@ export async function createCommand(
   // Built on first use: it reads the stored login, which most paths never need.
   let provider = deps.provider
   const open = (): Promise<Provider> =>
-    chosenProvider === 'gitlab'
-      ? gitlabProvider(opts.gitlabApi)
-      : githubProvider(opts.githubApi)
+    chosenProvider === 'atlassian'
+      ? atlassianProvider(opts.bitbucketApi)
+      : chosenProvider === 'gitlab'
+        ? gitlabProvider(opts.gitlabApi)
+        : githubProvider(opts.githubApi)
   const getProvider = async (): Promise<Provider> => (provider ??= await open())
   const cwd = opts.cwd ?? process.cwd()
   if (opts.template !== undefined) {
@@ -788,6 +896,9 @@ export async function createCommand(
             ...(opts.gitlabApi === undefined
               ? {}
               : { gitlabApi: opts.gitlabApi }),
+            ...(opts.bitbucketApi === undefined
+              ? {}
+              : { bitbucketApi: opts.bitbucketApi }),
           },
           { terminal, ui, ...clock }
         )
@@ -926,6 +1037,9 @@ export async function createCommand(
           ...(opts.gitlabApi === undefined
             ? {}
             : { gitlabApi: opts.gitlabApi }),
+          ...(opts.bitbucketApi === undefined
+            ? {}
+            : { bitbucketApi: opts.bitbucketApi }),
         })
       // An SSH workspace is not negotiable: without SSH access its
       // repositories cannot be cloned, so stop before any question or write.
@@ -961,6 +1075,18 @@ export async function createCommand(
     } else {
       // Scripts and CI: a join takes the whole catalogue, a new workspace nothing.
       specs = Object.keys(catalogue.repos)
+    }
+    // Where a new workspace's cards live, when not beside the repositories
+    // (Atlassian's Jira): asked now, the space made after the last write of
+    // the workspace (spec 0039 §4). A join reads it from the catalogue.
+    let space: { site: string; key: string; create: boolean } | null = null
+    const tracker = gitProvider.tracker
+    if (!joining && interactive && tracker !== undefined) {
+      const chosen = await chooseSpace(tracker, await prompts(), ui)
+      if (chosen === 'cancel') return cancelled(ui)
+      space = chosen
+      if (chosen !== null)
+        catalogue.jira = { site: chosen.site, space: chosen.key }
     }
     // A new workspace's agents: named, or asked with the other questions,
     // before the first write. They do not count as the confirmation.
@@ -1087,6 +1213,32 @@ export async function createCommand(
     )
     if (code !== 0) return code
 
+    // The space chosen above, now that the workspace is written: `jira`
+    // names it whatever Jira answers (spec 0039 §4).
+    const spaceSteps: string[] = []
+    if (space?.create === true && tracker !== undefined) {
+      const { site, key } = space
+      try {
+        const made = await ui.step(
+          { doing: `creating space ${key} on ${site}` },
+          () => tracker.createSpace(site, key)
+        )
+        if (made.kind === 'created')
+          ui.line('created', `space ${key} (${tracker.kind}) on ${site}`)
+        else if (made.kind === 'exists')
+          ui.line('found', `space ${key} on ${site}: used as it is`)
+        else {
+          ui.warn(
+            `${tracker.label} did not create ${key} on ${site}: ${made.reason}`
+          )
+          spaceSteps.push(...tracker.manualSteps(site, key))
+        }
+      } catch (e) {
+        ui.warn(firstLine(e instanceof Error ? e.message : String(e)))
+        spaceSteps.push(...tracker.manualSteps(site, key))
+      }
+    }
+
     // Teammates join once <org>/.rness is on GitHub. Logged in, in a
     // terminal, rness offers to put it there; otherwise it says how, with
     // nothing but git (spec 0004 §3b).
@@ -1113,6 +1265,11 @@ export async function createCommand(
       ...(published
         ? []
         : manualSteps(chosenProvider, org, context, contextUrl)),
+      ...spaceSteps,
+      // Off a terminal, or without a login there, no space was asked.
+      ...(tracker !== undefined && catalogue.jira === undefined
+        ? [tracker.declareLine]
+        : []),
       // How this command was launched (npm when rness was typed directly),
       // whatever --pm installed with.
       `# then, for every teammate: ${joinCommand(chosenProvider, org)}`,

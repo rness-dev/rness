@@ -285,12 +285,28 @@ test('a board not created yet, named after no collection: refused before GitHub 
   assert.deepEqual(g.requests, [])
 })
 
-test('a written provider that is not available is refused first', async (t) => {
+test('Atlassian: no login asks for the Atlassian one; logged in, the boards on Jira are said not to be there yet (plan 0053 task 6 brings them)', async (t) => {
   await machine(t)
-  const cwd = await makeWorkspace(t, { provider: 'atlassian', org: 'acme' })
-  const r = await run(() => boardPushCommand({ cwd }, { terminal: NO_TTY }))
-  assert.equal(r.code, 1)
-  assert.match(r.err, /provider "atlassian" is not supported/)
+  withEnv(t, { BITBUCKET_TOKEN: undefined })
+  const cwd = await makeWorkspace(t, {
+    provider: 'atlassian',
+    org: 'acme',
+    boards: { pulse: 'agent-pulse' },
+    files: FILES,
+  })
+  const push = () =>
+    run(() => boardPushCommand({ cwd, yes: true }, { terminal: NO_TTY }))
+  const anonymous = await push()
+  assert.equal(anonymous.code, 1)
+  assert.equal(
+    anonymous.err.trim(),
+    'boards need an Atlassian login: run rness login --provider atlassian'
+  )
+  // Bitbucket names no scope: nothing is asked of the token's.
+  withEnv(t, { BITBUCKET_TOKEN: 'bb' })
+  const logged = await push()
+  assert.equal(logged.code, 1)
+  assert.match(logged.err, /the boards on Jira are not implemented yet/)
 })
 
 test('a board to create where the repositories look like another provider, none written: refused before GitHub is asked anything', async (t) => {

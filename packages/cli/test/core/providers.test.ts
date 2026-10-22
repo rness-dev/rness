@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { AtlassianProvider } from '../../src/core/atlassian-provider.ts'
 import { GitHubOAuthProvider } from '../../src/core/github-oauth-provider.ts'
 import { GitLabOAuthProvider } from '../../src/core/gitlab-oauth-provider.ts'
 import {
@@ -22,24 +23,33 @@ const manifest = (provider: Manifest['provider']): Manifest => ({
   scopes: {},
 })
 
-test('the registry lists the three providers, GitHub and GitLab available', () => {
+test('the registry lists the three providers, each available', () => {
   assert.deepEqual(
     Object.values(PROVIDERS).map((p) => [p.name, p.label, p.available]),
     [
       ['github', 'GitHub', true],
       ['gitlab', 'GitLab', true],
-      ['atlassian', 'Atlassian (Bitbucket + Jira)', false],
+      ['atlassian', 'Atlassian (Bitbucket + Jira)', true],
     ]
   )
-  assert.equal(typeof PROVIDERS.github.open, 'function')
-  assert.equal(typeof PROVIDERS.gitlab.open, 'function')
-  assert.equal(PROVIDERS.atlassian.open, undefined)
+  for (const p of Object.values(PROVIDERS))
+    assert.equal(typeof p.open, 'function', p.name)
 })
 
-test('openProvider refuses a provider this copy does not support', async () => {
-  const message = `rness.json: provider "atlassian" is not supported by @rness/cli ${VERSION} (supported: github, gitlab)`
-  assert.equal(unsupportedProviderMessage('atlassian'), message)
-  await assert.rejects(openProvider(manifest('atlassian')), { message })
+test('the refusal of a provider this copy lacks names the ones it has', () => {
+  assert.equal(
+    unsupportedProviderMessage('atlassian'),
+    `rness.json: provider "atlassian" is not supported by @rness/cli ${VERSION} (supported: github, gitlab, atlassian)`
+  )
+})
+
+test('openProvider opens Atlassian for an Atlassian workspace (plan 0053 task 4)', async () => {
+  assert.ok(
+    (await openProvider(manifest('atlassian'))) instanceof AtlassianProvider
+  )
+  assert.ok(
+    (await openGitProvider(manifest('atlassian'))) instanceof AtlassianProvider
+  )
 })
 
 test('openProvider opens GitLab for a GitLab workspace', async () => {
@@ -67,8 +77,4 @@ test('a host detected from a repository URL still opens GitHub', async () => {
   }
   assert.ok((await openProvider(m)) instanceof GitHubOAuthProvider)
   assert.ok((await openGitProvider(m)) instanceof GitHubOAuthProvider)
-})
-
-test('openGitProvider gives none for a written provider it lacks', async () => {
-  assert.equal(await openGitProvider(manifest('atlassian')), null)
 })

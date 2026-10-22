@@ -1105,3 +1105,19 @@ test('the context repository on Atlassian is .rness, excluded as on GitHub', () 
   )
   assert.equal(isWorkspaceClone('rness', 'atlassian'), true)
 })
+
+test('parseRepoSpec: a URL on the old Bitbucket SSH host is written on the new one', () => {
+  assert.deepEqual(
+    parseRepoSpec(
+      'git@bitbucket.org:acme/api.git',
+      'acme',
+      'https://bitbucket.org/',
+      'atlassian'
+    ),
+    { name: 'api', url: 'git@ssh.bitbucket.org:acme/api.git' }
+  )
+  assert.deepEqual(
+    parseRepoSpec('api', 'acme', 'git@ssh.bitbucket.org:', 'atlassian'),
+    { name: 'api', url: 'git@ssh.bitbucket.org:acme/api.git' }
+  )
+})

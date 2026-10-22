@@ -6,6 +6,7 @@ import type {
   Organization,
   OrganizationAccess,
   Provider,
+  Tracker,
 } from '../../src/core/provider.ts'
 
 /** A scripted `Provider`; `asked` records every URL credentials were asked for. */
@@ -25,6 +26,8 @@ export function fakeProvider(spec: {
   role?: string
   /** What `createRepository` does and answers; default: refused. */
   create?: (owner: string, name: string) => Promise<CreateRepositoryResult>
+  /** Atlassian's tracker, scripted: no network. */
+  tracker?: Tracker
 }): {
   provider: Provider
   asked: string[]
@@ -47,6 +50,7 @@ export function fakeProvider(spec: {
     created,
     accessCalls,
     provider: {
+      ...(spec.tracker === undefined ? {} : { tracker: spec.tracker }),
       authenticated: login !== null,
       identity: async () => (login === null ? null : { login }),
       listOrganizations: async () =>
@@ -107,6 +111,38 @@ export function fakeProvider(spec: {
         return login === null
           ? null
           : { username: 'x-access-token', password: 'ghu_fake' }
+      },
+    },
+  }
+}
+
+/** A scripted Jira for the wizard: its sites, its spaces, the keys taken, what a creation answers. */
+export function fakeTracker(spec: {
+  sites?: string[]
+  spaces?: { key: string; name: string }[]
+  taken?: string[]
+  create?: CreateRepositoryResult
+}): { tracker: Tracker; created: string[] } {
+  const created: string[] = []
+  return {
+    created,
+    tracker: {
+      label: 'Jira',
+      keyPattern: /^[A-Z][A-Z0-9]{1,9}$/,
+      keyRule: 'A to Z and digits, 2 to 10, a letter first',
+      kind: 'team-managed, Kanban',
+      manualSteps: (site, key) => [
+        `# create a team-managed Kanban space with the key ${key} on ${site}`,
+        '# (Jira > Spaces > Create space > Kanban > Team-managed), then: rness board push',
+      ],
+      declareLine:
+        '# for the cards: add "jira": { "site": "<name>.atlassian.net", "space": "<KEY>" } to rness.json',
+      sites: async () => spec.sites ?? ['acme.atlassian.net'],
+      spaces: async () => spec.spaces ?? [],
+      keyFree: async (_site, key) => !(spec.taken ?? []).includes(key),
+      createSpace: async (site, key) => {
+        created.push(`${site}/${key}`)
+        return spec.create ?? { kind: 'created' }
       },
     },
   }

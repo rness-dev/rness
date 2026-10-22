@@ -1,4 +1,5 @@
 import { VERSION } from '../version.ts'
+import { atlassianProvider } from './atlassian-provider.ts'
 import { githubProvider } from './github-oauth-provider.ts'
 import type { RateWait } from './github.ts'
 import { gitlabProvider } from './gitlab-oauth-provider.ts'
@@ -10,6 +11,8 @@ export interface OpenOptions {
   apiBase?: string
   /** GitLab's API (`--gitlab-api`); default: gitlab.com's, or `RNESS_GITLAB_WEB`'s. */
   gitlabApi?: string
+  /** Bitbucket's API origin (`--bitbucket-api`); default: api.bitbucket.org, or `RNESS_BITBUCKET_API`. */
+  bitbucketApi?: string
   wait?: RateWait
 }
 
@@ -38,7 +41,8 @@ export const PROVIDERS: Readonly<Record<ProviderName, ProviderEntry>> = {
   atlassian: {
     name: 'atlassian',
     label: 'Atlassian (Bitbucket + Jira)',
-    available: false,
+    available: true,
+    open: ({ bitbucketApi, wait }) => atlassianProvider(bitbucketApi, wait),
   },
 }
 

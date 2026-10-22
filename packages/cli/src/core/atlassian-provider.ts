@@ -27,6 +27,7 @@ import type {
 import { HOSTS } from './hosts.ts'
 import {
   JIRA_SITE,
+  JIRA_SPACE,
   type JiraApiOptions,
   createSpace,
   keyFree,
@@ -323,6 +324,18 @@ export async function atlassianProvider(
  */
 class JiraTracker implements Tracker {
   readonly label = 'Jira'
+  readonly keyPattern = JIRA_SPACE
+  readonly keyRule = 'A to Z and digits, 2 to 10, a letter first'
+  readonly kind = 'team-managed, Kanban'
+  readonly declareLine =
+    '# for the cards: add "jira": { "site": "<name>.atlassian.net", "space": "<KEY>" } to rness.json'
+
+  manualSteps(site: string, key: string): string[] {
+    return [
+      `# create a team-managed Kanban space with the key ${key} on ${site}`,
+      `# (Jira > Spaces > Create space > Kanban > Team-managed), then: ${rnessCommand()} board push`,
+    ]
+  }
   readonly #wait: RateWait | undefined
   readonly #notify: ((line: string) => void) | undefined
   readonly #said = new Set<string>()

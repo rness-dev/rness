@@ -69,6 +69,15 @@ export interface TrackerSpace {
 export interface Tracker {
   /** `Jira`, as the lines name it. */
   readonly label: string
+  /** The rule a new space's key follows, and how a refusal says it. */
+  readonly keyPattern: RegExp
+  readonly keyRule: string
+  /** What a new space is: `team-managed, Kanban`. */
+  readonly kind: string
+  /** How to make the space `key` on `site` by hand, as next steps. */
+  manualSteps(site: string, key: string): string[]
+  /** How to declare the space when none was chosen, as a next step. */
+  readonly declareLine: string
   /** The sites the login holds; empty without one. */
   sites(): Promise<string[]>
   /** The spaces of `site` the user can put cards in, by key. */

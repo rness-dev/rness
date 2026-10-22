@@ -86,9 +86,11 @@ export interface BoardOptions {
 const boardScope = (p: ProviderName): string =>
   p === 'gitlab' ? 'api' : 'project'
 const needsLogin = (p: ProviderName): string =>
-  p === 'gitlab'
-    ? 'boards need a GitLab login: run rness login --provider gitlab'
-    : 'boards need a GitHub login: run rness login'
+  p === 'atlassian'
+    ? 'boards need an Atlassian login: run rness login --provider atlassian'
+    : p === 'gitlab'
+      ? 'boards need a GitLab login: run rness login --provider gitlab'
+      : 'boards need a GitHub login: run rness login'
 const needsScope = (p: ProviderName): string =>
   p === 'gitlab'
     ? 'boards need the api scope: run rness login --provider gitlab'
@@ -168,8 +170,9 @@ async function missingAccess(
 ): Promise<string | null> {
   if (!provider.authenticated) return needsLogin(name)
   const scopes = await fromGithub(provider.scopes())
-  // GitLab names no scope for a token it cannot describe: it refuses a write itself.
-  if (scopes === null && name === 'gitlab') return null
+  // GitLab names no scope for a token it cannot describe, Bitbucket none at
+  // all (spec 0039 §3): the provider refuses a write itself.
+  if (scopes === null && name !== 'github') return null
   return scopes?.includes(boardScope(name)) === true ? null : needsScope(name)
 }
 

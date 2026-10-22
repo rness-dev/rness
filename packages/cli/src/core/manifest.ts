@@ -8,7 +8,7 @@ import {
   readPresetEntry,
 } from './board-declaration.ts'
 import { writeFileAtomic } from './fs.ts'
-import { repoUrl } from './remote.ts'
+import { currentSshUrl, repoUrl } from './remote.ts'
 import type {
   BoardEntry,
   Boards,
@@ -592,7 +592,8 @@ export function parseRepoSpec(
 ): { name: string; url: string } {
   let url: string
   if (FULL_URL.test(spec)) {
-    url = spec
+    // Bitbucket's old SSH host, as its API still gives it (spec 0039 §5.2).
+    url = currentSshUrl(spec)
   } else {
     const parts = spec.split('/')
     if (parts.length === 1) {

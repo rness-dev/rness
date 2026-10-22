@@ -410,6 +410,7 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--host <base>').hideHelp())
     .addOption(new Option('--github-api <base>').hideHelp())
     .addOption(new Option('--gitlab-api <base>').hideHelp())
+    .addOption(new Option('--bitbucket-api <base>').hideHelp())
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (orgArg: string | undefined, opts: CreateOptions) => {
       // Blank, the positional names the directory; --org is refused there.

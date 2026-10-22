@@ -508,6 +508,57 @@ test('on GitLab, the SSH test and its line name gitlab.com', async (t) => {
   )
 })
 
+test('on Atlassian, a bare name is the workspace, owner/name another; .rness is refused (plan 0053 task 4)', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const other = await makeRemoteOrg(t, 'other')
+  await other.addRepo('tools', { 'README.md': '# tools\n' })
+  const root = await makeWorkspace(t, {
+    provider: 'atlassian',
+    org: 'acme',
+    dirs: ['org'],
+  })
+  const r = await add(['--yes', '--cwd', root, '--host', remote.host, 'api'])
+  assert.equal(r.code, 0, r.err)
+  const r2 = await add([
+    '--yes',
+    '--cwd',
+    root,
+    '--host',
+    other.host,
+    'other/tools',
+  ])
+  assert.equal(r2.code, 0, r2.err)
+  assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {
+    api: { url: `${remote.host}acme/api.git` },
+    tools: { url: `${other.host}other/tools.git` },
+  })
+  for (const spec of ['.rness', 'acme/.rness']) {
+    const refused = await add(['--yes', '--cwd', root, spec])
+    assert.equal(refused.code, 2, `${spec} must be refused`)
+    assert.match(
+      refused.err,
+      /^\.rness is the workspace context, not a member repository: it is already cloned at [^/]+\/\.rness$/m
+    )
+  }
+})
+
+test('on Atlassian, the SSH test and its line name ssh.bitbucket.org, with no login', async (t) => {
+  const ok = await fakeTransport(t, 'acme', { ok: true, login: null })
+  await ok.ssh.addRepo('api', { 'README.md': '# api\n' })
+  const root = await makeWorkspace(t, {
+    provider: 'atlassian',
+    org: 'acme',
+    dirs: ['org'],
+  })
+  const r = await addWith('api', { yes: true, cwd: root }, NO_TTY, ok.transport)
+  assert.equal(r.code, 0, r.err)
+  assert.ok(
+    r.out.startsWith('using    ssh (ssh.bitbucket.org)\ncloned   org/api\n'),
+    r.out
+  )
+})
+
 test('in a workspace that declares claude, add writes the new clone its Claude settings', async (t) => {
   const url = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {

@@ -391,16 +391,12 @@ test('a standalone checkout of .rness with claude declared validates: the root h
   assert.equal(c.out(), 'context ok\n')
 })
 
-test('reports a provider this copy does not support', async (t) => {
+test('an Atlassian workspace validates: the provider is supported (plan 0053 task 4)', async (t) => {
   const cwd = await makeWorkspace(t, { provider: 'atlassian' })
   const c = capture()
   const code = await run(['validate', '--cwd', cwd])
   c.restore()
-  assert.equal(code, 1)
-  assert.match(
-    c.err(),
-    /rness\.json: provider "atlassian" is not supported by @rness\/cli \S+ \(supported: github, gitlab\)/
-  )
+  assert.equal(code, 0, c.err())
 })
 
 test('a host detected from a repository URL is not a problem', async (t) => {
