@@ -1,11 +1,16 @@
 import { type OptionColor, optionColor } from '../board/layout.ts'
-import { boardUrl, gitlabBoardUrl, itemUrl } from '../board/urls.ts'
+import {
+  boardUrl,
+  gitlabBoardUrl,
+  itemUrl,
+  jiraBoardsUrl,
+} from '../board/urls.ts'
 import {
   type BoardDeclaration,
   boardNumber,
 } from '../core/board-declaration.ts'
 import { COLLECTIONS } from '../core/context.ts'
-import { PULSE, workspaceName } from '../core/manifest.ts'
+import { PULSE, providerOf, workspaceName } from '../core/manifest.ts'
 import { declaredBoard } from '../core/preset-board.ts'
 import { currentPreset, presetTemplate } from '../core/presets.ts'
 import { safetyNet } from '../core/safety-net.ts'
@@ -15,7 +20,12 @@ import {
   plansInProgress,
 } from '../core/status.ts'
 import { count } from '../core/style.ts'
-import type { CollectionName, Manifest, Workspace } from '../core/types.ts'
+import type {
+  CollectionName,
+  JiraTarget,
+  Manifest,
+  Workspace,
+} from '../core/types.ts'
 import { scopeSummary } from '../mcp/tools.ts'
 import { VERSION } from '../version.ts'
 
@@ -106,6 +116,10 @@ export interface StatusSnapshot {
   tabs: SnapshotTab[]
 }
 
+/** The workspace's Jira space, on Atlassian. */
+const jiraOf = (manifest: Manifest): JiraTarget | undefined =>
+  providerOf(manifest) === 'atlassian' ? manifest.jira : undefined
+
 /** A board of `boards`, read whole: its name and its declaration. */
 export interface SnapshotBoard {
   name: string
@@ -152,12 +166,18 @@ const SHIPPED_COLORS = presetTemplate(currentPreset('agent-pulse'), {
  */
 function pulseOf(
   org: string | null,
-  boards: readonly SnapshotBoard[]
+  boards: readonly SnapshotBoard[],
+  jira?: JiraTarget
 ): string | null {
-  const created = boards.filter((b) => boardNumber(b.declaration) !== null)
+  // On Atlassian every board is the space's: there with it (spec 0039 §7.1).
+  const created = boards.filter(
+    (b) => jira !== undefined || boardNumber(b.declaration) !== null
+  )
   const main =
     created.find((b) => b.declaration.collections === 'all') ?? created[0]
-  return org === null || main === undefined ? null : linkOf(org, main, null)
+  return org === null || main === undefined
+    ? null
+    : linkOf(org, main, null, jira)
 }
 
 /**
@@ -168,8 +188,12 @@ function pulseOf(
 function linkOf(
   org: string,
   board: SnapshotBoard,
-  path: string | null
+  path: string | null,
+  jira?: JiraTarget
 ): string | null {
+  // The space's board, by its page: its id is not in rness.json (spec 0039
+  // §2); the page leads to it (to confirm on a site, plan 0053 task 7).
+  if (jira !== undefined) return jiraBoardsUrl(jira)
   const number = boardNumber(board.declaration)
   if (number === null) return null
   if (board.declaration.ids !== null) return gitlabBoardUrl(org, number)
@@ -183,7 +207,8 @@ function linkOf(
 export function snapshotTabs(
   tabs: readonly StatusTab[],
   org: string | null,
-  boards: readonly SnapshotBoard[]
+  boards: readonly SnapshotBoard[],
+  jira?: JiraTarget
 ): SnapshotTab[] {
   return tabs.map((tab) => {
     const holder = holderOf(boards, tab.name)
@@ -200,7 +225,7 @@ export function snapshotTabs(
         link:
           org === null || holder === undefined
             ? null
-            : linkOf(org, holder, row.path),
+            : linkOf(org, holder, row.path, jira),
       })),
     }
   })
@@ -224,7 +249,7 @@ export async function statusSnapshot(
     statusLine: statusLine(scope, inProgress, notes),
     inProgress,
     notes: noteLines(notes),
-    pulse: pulseOf(manifest.org, boards),
-    tabs: snapshotTabs(tabs, manifest.org, boards),
+    pulse: pulseOf(manifest.org, boards, jiraOf(manifest)),
+    tabs: snapshotTabs(tabs, manifest.org, boards, jiraOf(manifest)),
   }
 }

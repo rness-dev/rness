@@ -316,6 +316,16 @@ function wrongKey(
   const numbered =
     typeof entry === 'number' ||
     (typeof entry === 'object' && entry.number !== null)
+  // On Atlassian the board is the space's own: nothing names it (spec 0039 §2).
+  if (provider === 'atlassian') {
+    const said =
+      "on Atlassian the board is the Jira space's own: nothing names it"
+    if (numbered)
+      return new BoardRefused(`boards.${name}.number`, `is GitHub's: ${said}`)
+    if (typeof entry === 'object' && entry.ids !== null)
+      return new BoardRefused(`boards.${name}.ids`, `are GitLab's: ${said}`)
+    return null
+  }
   if (provider === 'gitlab' && numbered)
     return new BoardRefused(
       `boards.${name}.number`,

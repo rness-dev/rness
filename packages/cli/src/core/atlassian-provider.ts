@@ -25,6 +25,7 @@ import type {
   RepositoryListing,
 } from './github.ts'
 import { HOSTS } from './hosts.ts'
+import { JiraBoards } from './jira-boards.ts'
 import * as ji from './jira-issues.ts'
 import * as jj from './jira-journal.ts'
 import {
@@ -50,8 +51,6 @@ import type {
 } from './provider.ts'
 import type { JiraTarget } from './types.ts'
 
-const NO_BOARDS = 'the boards on Jira are not implemented yet'
-
 /**
  * Atlassian as a user (spec 0039): Bitbucket for the repositories, with the
  * token of `BITBUCKET_TOKEN` or `rness login --provider atlassian`, or none,
@@ -69,6 +68,7 @@ export class AtlassianProvider implements Provider {
   readonly tracker: Tracker
   readonly #jira: JiraTarget | undefined
   readonly #session: JiraSession
+  #boardClient: JiraBoards | undefined
 
   get authenticated(): boolean {
     return this.#token !== null
@@ -226,21 +226,42 @@ export class AtlassianProvider implements Provider {
     return { username: HOSTS.bitbucket.username, password: this.#token.token }
   }
 
-  // The board and journal methods are async so that they reject, never throw.
+  /** The space's board, through the session of its site; no `jira` declared refuses. */
+  #boards(): JiraBoards {
+    const jira = this.#jira
+    if (jira === undefined)
+      throw new JournalRefused(
+        'missing',
+        'this workspace has no Jira space: add "jira" to rness.json'
+      )
+    this.#boardClient ??= new JiraBoards(jira, (work) =>
+      this.#session.call(jira.site, work)
+    )
+    return this.#boardClient
+  }
+
+  // The board methods are async so that a missing `jira` rejects, never throws.
+  /** Never called: the space's one board is there with the space (spec 0039 §7.1). */
   async createBoard(
     _org: string,
     _title?: string,
     _views?: readonly string[]
   ): Promise<Board> {
-    throw new Error(NO_BOARDS)
+    throw new Error(
+      "on Atlassian the board is the Jira space's own: rness never creates one"
+    )
   }
 
   async board(
-    _org: string,
+    org: string,
     _number: number,
     _ids?: Readonly<Record<string, number>> | null
   ): Promise<Board | null> {
-    throw new Error(NO_BOARDS)
+    return this.#boards().board(org)
+  }
+
+  async pendingSetup(_board: Board, layout: Layout): Promise<string | null> {
+    return this.#boards().pendingSetup(layout)
   }
 
   /**
@@ -265,28 +286,28 @@ export class AtlassianProvider implements Provider {
     })
   }
 
-  async ensureLayout(_board: Board, _layout: Layout): Promise<string[]> {
-    throw new Error(NO_BOARDS)
+  async ensureLayout(board: Board, layout: Layout): Promise<string[]> {
+    return this.#boards().ensureLayout(board, layout)
   }
 
   async items(
-    _board: Board,
-    _options?: { bodies?: boolean }
+    board: Board,
+    options?: { bodies?: boolean }
   ): Promise<BoardItem[]> {
-    throw new Error(NO_BOARDS)
+    return this.#boards().items(board, options)
   }
 
-  async apply(_board: Board, _step: Step): Promise<Placed | null> {
-    throw new Error(NO_BOARDS)
+  async apply(board: Board, step: Step): Promise<Placed | null> {
+    return this.#boards().apply(board, step)
   }
 
   async mark(
-    _board: Board,
-    _itemIds: readonly string[],
-    _session: string | null,
-    _fields?: MarkFields
+    board: Board,
+    itemIds: readonly string[],
+    session: string | null,
+    fields?: MarkFields
   ): Promise<void> {
-    throw new Error(NO_BOARDS)
+    return this.#boards().mark(board, itemIds, session, fields)
   }
 
   // A README, a short description and status updates have no place on a

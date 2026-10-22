@@ -1121,3 +1121,37 @@ test('parseRepoSpec: a URL on the old Bitbucket SSH host is written on the new o
     { name: 'api', url: 'git@ssh.bitbucket.org:acme/api.git' }
   )
 })
+
+test('on Atlassian a board names nothing: number and ids are refused, naming the key (spec 0039 §2)', async (t) => {
+  const load = async (boards: unknown) => {
+    const d = await fixture({
+      contract: 1,
+      provider: 'atlassian',
+      boards,
+      repos: {},
+      scopes: {},
+    })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    return loadManifest(d)
+  }
+  const plain = await load({ pulse: 'agent-pulse' })
+  assert.equal(plain.refused, undefined)
+  const said =
+    "on Atlassian the board is the Jira space's own: nothing names it"
+  assert.deepEqual(
+    (await load({ pulse: { ...UNNUMBERED, number: 4 } })).refused?.map(
+      (r) => r.reason
+    ),
+    [`"boards.pulse.number" is GitHub's: ${said}`]
+  )
+  assert.deepEqual(
+    (await load({ pulse: 4 })).refused?.map((r) => r.reason),
+    [`"boards.pulse.number" is GitHub's: ${said}`]
+  )
+  assert.deepEqual(
+    (await load({ pulse: { ...UNNUMBERED, ids: { ADR: 1 } } })).refused?.map(
+      (r) => r.reason
+    ),
+    [`"boards.pulse.ids" are GitLab's: ${said}`]
+  )
+})

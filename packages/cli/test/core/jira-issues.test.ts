@@ -138,6 +138,7 @@ test('an issue: created with its type, ADF description and labels; updated in on
     statusId: '10012',
     done: false,
     description: DOC,
+    properties: {},
   })
   assert.equal(await ji.issue('RNESS-99', SITE), null)
 })

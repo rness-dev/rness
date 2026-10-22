@@ -152,6 +152,13 @@ export interface Provider {
    */
   ensureLayout(board: Board, layout: Layout): Promise<string[]>
   /**
+   * What `ensureLayout` would set up in the provider's own configuration,
+   * as a question says it (`13 statuses, any-to-any transitions`), or null
+   * when nothing is pending. Atlassian alone: a Jira space's statuses and
+   * workflow are the team's, so rness asks first (spec 0039 §7.2).
+   */
+  pendingSetup?(board: Board, layout: Layout): Promise<string | null>
+  /**
    * The items of the board, not the archived ones. `bodies: false` lists
    * them without their issues' bodies (`body: null`): enough to mark them.
    */

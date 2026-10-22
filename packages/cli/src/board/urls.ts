@@ -60,6 +60,10 @@ export const bitbucketBlobUrl = (org: string, path: string): string =>
 export const jiraIssueUrl = (jira: JiraTarget, number: number): string =>
   `https://${jira.site}/browse/${jira.space}-${number}`
 
+/** The space's boards page, which shows its one board: where a link goes offline, without its id. */
+export const jiraBoardsUrl = (jira: JiraTarget): string =>
+  `https://${jira.site}/jira/software/projects/${jira.space}/boards`
+
 /** The addresses on `provider`; Atlassian's issues need the workspace's Jira space, else they are the file's. */
 export function contextUrls(
   provider: BodyProvider,

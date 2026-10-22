@@ -27,6 +27,7 @@ import {
   stillOpened,
   unwantedPaths,
 } from '../board/plan.ts'
+import type { BodyProvider } from '../board/urls.ts'
 import {
   type BoardAction,
   type BoardDeclaration,
@@ -118,9 +119,19 @@ export interface Context {
   provider: Provider
 }
 
-/** Where a board's bodies and headers point: GitLab's project `rness`, else GitHub's `.rness`. */
-const bodyProviderOf = (c: Context): 'github' | 'gitlab' =>
-  providerOf(c.manifest) === 'gitlab' ? 'gitlab' : 'github'
+/** Where a board's bodies and headers point: GitLab's project `rness`, Bitbucket's `.rness`, else GitHub's. */
+const bodyProviderOf = (c: Context): BodyProvider => providerOf(c.manifest)
+
+/** On Atlassian the board is the Jira space's own: there with the space, never created, nothing written back (spec 0039 §7.1). */
+const isAtlassian = (c: Context): boolean =>
+  providerOf(c.manifest) === 'atlassian'
+
+/**
+ * What the push answers when the provider would set something up first (a
+ * Jira space's statuses and workflow): asked unless `--yes`, refused off a
+ * terminal. Absent, a hook's sync: nothing is set up.
+ */
+export type Setup = (question: string) => Promise<boolean>
 
 const apiOf = (opts: BoardOptions): { apiBase?: string } =>
   opts.githubApi === undefined ? {} : { apiBase: opts.githubApi }
@@ -181,11 +192,13 @@ export type Created = BoardDeclaration
 
 const isCreated = (d: BoardDeclaration): d is Created => boardNumber(d) !== null
 
-/** The words of a board the provider does not have: GitHub's project, GitLab's issue board. */
+/** The words of a board the provider does not have: GitHub's project, GitLab's issue board, the Jira space's board. */
 const notFound = (c: Context, d: BoardDeclaration): string =>
-  d.ids !== null
-    ? `gitlab.com has no board ${boardNumber(d)} in ${c.org}/rness`
-    : `GitHub has no project ${d.number} in ${c.org}`
+  isAtlassian(c)
+    ? `the Jira space ${c.manifest.jira?.space ?? ''} has no board on ${c.manifest.jira?.site ?? 'its site'}`
+    : d.ids !== null
+      ? `gitlab.com has no board ${boardNumber(d)} in ${c.org}/rness`
+      : `GitHub has no project ${d.number} in ${c.org}`
 
 /** A declared project, opened: its name in `boards`, its declaration, its board. */
 export interface Declared {
@@ -249,7 +262,8 @@ async function declarations(
       )
       continue
     }
-    if (isCreated(declaration)) all.push({ name, declaration })
+    if (isCreated(declaration) || isAtlassian(c))
+      all.push({ name, declaration })
     else if (typeof entry !== 'number')
       notCreated.push({ name, entry, declaration })
   }
@@ -422,8 +436,21 @@ const plural = (n: number): string => `${n} item${n === 1 ? '' : 's'}`
 
 /** What the layout gained, as `sync` says it: `added view Plans`, a line each. */
 type SayLayout = (ui: Ui, added: readonly string[], project: string) => void
-/** What a layout line says, by its first word: `renamed …`, `updated …`, `deleted …`, `note …`, else added. */
-const VERBS = ['renamed', 'updated', 'deleted', 'note'] as const
+/**
+ * What a layout line says, by its first word: `renamed …`, `updated …`,
+ * `deleted …`, `note …`, Jira's `created …` and its columns check
+ * (`visible`, `unmapped`, `checked`), else added.
+ */
+const VERBS = [
+  'renamed',
+  'updated',
+  'deleted',
+  'note',
+  'created',
+  'visible',
+  'unmapped',
+  'checked',
+] as const
 const eachAdded: SayLayout = (ui, added) => {
   for (const a of added) {
     const verb = VERBS.find((v) => a.startsWith(`${v} `))
@@ -554,10 +581,21 @@ async function syncBoard(
   ui: Ui,
   sayLayout: SayLayout,
   scope: Scope,
-  declared: { name: string; declaration: BoardDeclaration }
+  declared: { name: string; declaration: BoardDeclaration },
+  setup?: Setup
 ): Promise<void> {
   await fromGithub(c.provider.checkIssues(c.org))
   const { want } = scope
+  // A Jira space's statuses and workflow are the team's: asked once, before
+  // `ensureLayout` sets them up (spec 0039 §7.2).
+  const pending = await c.provider.pendingSetup?.(board, scope.layout)
+  if (pending !== undefined && pending !== null) {
+    const question = `Set up ${board.title ?? declared.name} for ${scope.label}: ${pending}?`
+    if (setup === undefined || !(await setup(question)))
+      throw new Error(
+        `${board.title ?? declared.name} is not set up for ${scope.label} (${pending}): rness board push in a terminal, or with --yes, sets it up`
+      )
+  }
   // A note — a field or view no longer declared — is said once per clone.
   sayLayout(
     ui,
@@ -664,6 +702,7 @@ async function syncBoard(
           numbers,
           files,
           provider: bodyProviderOf(c),
+          ...(c.manifest.jira === undefined ? {} : { jira: c.manifest.jira }),
         })
       )
     writes = planBodies(bodies, issued)
@@ -706,7 +745,8 @@ async function syncAll(
   c: Context,
   declared: readonly Declared[],
   ui: Ui,
-  sayLayout: (name: string) => SayLayout
+  sayLayout: (name: string) => SayLayout,
+  setup?: Setup
 ): Promise<void> {
   const tabs = await statusTabs(c.rnessDir)
   for (const d of declared) {
@@ -720,7 +760,8 @@ async function syncAll(
       ui,
       sayLayout(d.name),
       await scopeOf(c, d.name, d.declaration, tabs, owners),
-      d
+      d,
+      setup
     )
   }
 }
@@ -895,11 +936,23 @@ export async function boardPushCommand(
         ui,
         wait
       ))
+    // A setup the provider asks for: `--yes` answers; off a terminal, none.
+    const setup: Setup = async (question) => {
+      if (opts.yes === true) return true
+      if (!terminal.isTty()) return false
+      const p = await terminal.prompts()
+      const ok = await p.confirm({ message: question, initialValue: true })
+      return !p.isCancel(ok) && ok === true
+    }
     try {
       // The lines of `declarations` were said above: not twice.
       const declared = await declaredBoards(c)
-      await syncAll(c, declared, ui, (n) =>
-        made.includes(n) ? createdByKind : eachAdded
+      await syncAll(
+        c,
+        declared,
+        ui,
+        (n) => (made.includes(n) ? createdByKind : eachAdded),
+        setup
       )
     } finally {
       if (made.length > 0)

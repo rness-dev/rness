@@ -145,6 +145,8 @@ export interface JiraIssue {
   /** Its status is of the category Done. */
   done: boolean
   description: AdfDocument | null
+  /** The issue properties a search asked for (`properties`), by key. */
+  properties: Record<string, unknown>
 }
 
 function toIssue(value: unknown): JiraIssue | null {
@@ -154,9 +156,14 @@ function toIssue(value: unknown): JiraIssue | null {
   const status = field(fields, 'status')
   const labels = field(fields, 'labels')
   const description = field(fields, 'description')
+  const properties = field(value, 'properties')
   return {
     key,
     number: issueNumber(key),
+    properties:
+      properties !== null && typeof properties === 'object'
+        ? { ...(properties as Record<string, unknown>) }
+        : {},
     summary: str(field(fields, 'summary')) ?? '',
     labels: Array.isArray(labels)
       ? labels.filter((l): l is string => typeof l === 'string')
@@ -239,11 +246,16 @@ export async function property(
   return field(answer.body, 'value') ?? null
 }
 
-/** The issues a JQL query finds, with `fields`, paged by `nextPageToken` up to `MAX_PAGES`. */
+/**
+ * The issues a JQL query finds, with `fields` and the issue properties
+ * named in `properties` (the digest, read with the cards in one search; to
+ * confirm on a site at task 7), paged by `nextPageToken` up to `MAX_PAGES`.
+ */
 export async function search(
   jql: string,
   fields: readonly string[],
-  o: JiraApiOptions
+  o: JiraApiOptions,
+  properties: readonly string[] = []
 ): Promise<JiraIssue[]> {
   const path = '/rest/api/3/search/jql'
   const found: JiraIssue[] = []
@@ -253,6 +265,7 @@ export async function search(
       jql,
       fields: fields.join(','),
       maxResults: '100',
+      ...(properties.length === 0 ? {} : { properties: properties.join(',') }),
       ...(token === null ? {} : { nextPageToken: token }),
     })
     const answer = await jiraRequest('GET', `${path}?${q}`, o)

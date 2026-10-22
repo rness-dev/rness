@@ -11,6 +11,12 @@ export interface ItemIssue {
   body: string | null
   /** Every label it carries, as GitHub names them. */
   labels: string[]
+  /**
+   * The digest of the body last written, where the provider keeps it apart
+   * from the body (Jira's issue property, spec 0039 §6): then it decides, and
+   * `body` only names the document by its first line.
+   */
+  digest?: string | null
 }
 
 /** An item of the board, as the provider reads it. */
@@ -262,6 +268,8 @@ export interface Issued {
   id: string
   number: number
   body: string | null
+  /** As `ItemIssue.digest`. */
+  digest?: string | null
 }
 
 /** Each document's issue after pass 1, by path: as the board listed it, or as pass 1 placed it. */
@@ -285,6 +293,9 @@ export function issuedAfter(
         id: item.id,
         number: item.issue.number,
         body: item.issue.body,
+        ...(item.issue.digest === undefined
+          ? {}
+          : { digest: item.issue.digest }),
       })
     }
   }
@@ -300,7 +311,13 @@ export function planBodies(
   for (const [path, body] of bodies) {
     const i = issued.get(path)
     if (i === undefined) continue
-    if (i.body === null || digestOf(i.body) !== digestOf(body))
+    const kept =
+      i.digest !== undefined
+        ? i.digest
+        : i.body === null
+          ? null
+          : digestOf(i.body)
+    if (kept === null || kept !== digestOf(body))
       steps.push({ kind: 'body', id: i.id, body })
   }
   return steps

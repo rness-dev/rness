@@ -229,7 +229,7 @@ test('a stored token refused (401) is cleared and said once; a refused BITBUCKET
   assert.deepEqual(await readAuthAt('bitbucket.org'), STORED)
 })
 
-test("a branch's pull request comes from Bitbucket, in the journal's words; the boards on Jira are not there yet", async (t) => {
+test("a branch's pull request comes from Bitbucket, in the journal's words; no board is ever created: the space has its own", async (t) => {
   let state = 'OPEN'
   await fakeBitbucket(t, () => ({ json: { values: [{ id: 4, state }] } }))
   const provider = new AtlassianProvider({ token: LOGIN })
@@ -246,7 +246,8 @@ test("a branch's pull request comes from Bitbucket, in the journal's words; the 
     })
   }
   await assert.rejects(provider.createBoard('acme'), {
-    message: 'the boards on Jira are not implemented yet',
+    message:
+      "on Atlassian the board is the Jira space's own: rness never creates one",
   })
   assert.deepEqual(await provider.describe(), [])
   assert.deepEqual(await provider.postUpdates(), [])

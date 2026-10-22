@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { issueBody } from '../../src/board/body.ts'
+import { digestOf, issueBody } from '../../src/board/body.ts'
 import type { Desired } from '../../src/board/layout.ts'
 import {
   type BoardItem,
@@ -412,6 +412,46 @@ test("pass 2: a body is written when the issue's does not carry its digest", () 
     planBodies(new Map([['x.md', now]]), issued(null)),
     [],
     'a document without an issue'
+  )
+})
+
+test("pass 2 on a provider that keeps the digest apart (Jira's property, spec 0039 §6): the digest read decides, the body only names the document", () => {
+  const now = bodyOf('# A\n\nText.\n')
+  const header = now.split('\n')[0] ?? ''
+  const bodies = new Map([['a.md', now]])
+  const kept = (digest: string | null) =>
+    new Map([['a.md', { id: 'i1', number: 1, body: header, digest }]])
+  const write = [{ kind: 'body', id: 'i1', body: now }]
+  assert.deepEqual(planBodies(bodies, kept(digestOf(now))), [], 'the same')
+  assert.deepEqual(planBodies(bodies, kept('0123456789ab')), write, 'another')
+  assert.deepEqual(planBodies(bodies, kept(null)), write, 'none yet')
+
+  // issuedAfter carries it from the item.
+  const item = {
+    id: 'i1',
+    path: 'a.md',
+    issue: {
+      number: 1,
+      open: true,
+      labelled: true,
+      body: header,
+      labels: ['rness'],
+      digest: digestOf(now),
+    },
+    title: 'A',
+    status: null,
+    collectionStatus: null,
+    type: null,
+    agent: null,
+    session: null,
+    sessions: null,
+    values: {},
+  }
+  assert.deepEqual(
+    issuedAfter([{ kind: 'unchanged', id: 'i1' }], [item], new Map()).get(
+      'a.md'
+    ),
+    { id: 'i1', number: 1, body: header, digest: digestOf(now) }
   )
 })
 
