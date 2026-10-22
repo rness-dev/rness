@@ -1,7 +1,7 @@
 # rness workspace member — scope: rness
 
 <!-- BEGIN rness -->
-<!-- rness · scope: rness · contract: 1 · hash: d2a2f0a6a881 · generated: run `rness sync`, never edit inside this block -->
+<!-- rness · scope: rness · contract: 1 · hash: f0b16e48e26c · generated: run `rness sync`, never edit inside this block -->
 This directory is scope `rness` of rness workspace `rness-dev`. Full context lives in
 `../../.rness/`: start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
 live: `rness context --scope rness`. If `.rness/` is not reachable, this is a
@@ -24,7 +24,9 @@ This standard is how to apply that day to day.
 - Keep `context` and `validate` lean: no prompt library and no network code
   on their path. Interactive or heavy modules load lazily (`import()`).
 - Current runtime dependencies of `@rness/cli`: `commander`, `yaml`,
-  `@clack/prompts`. Development: `typescript`, `tsup`, `@types/node`.
+  `@clack/prompts`, and `marklassian` (Markdown to Jira's ADF, loaded by
+  `import()` on the Jira path only, spec 0039 §6). Development:
+  `typescript`, `tsup`, `@types/node`.
 - The repository root owns the code-quality tooling for every package:
   `eslint` (`@eslint/js`, `typescript-eslint`, `eslint-config-prettier`) and
   `prettier` (with `@trivago/prettier-plugin-sort-imports`). `pnpm lint` and
