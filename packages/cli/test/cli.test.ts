@@ -135,3 +135,17 @@ test('login and logout take --provider; the test API bases stay hidden (spec 003
   assert.equal(code, 2)
   assert.equal(c.err(), 'unknown provider "nope" (github, gitlab, atlassian)\n')
 })
+
+test('create --help names the three providers and keeps the test API bases hidden (plan 0053 task 8)', async () => {
+  const c = capture()
+  const code = await run(['create', '--help'])
+  c.restore()
+  assert.equal(code, 0)
+  assert.match(
+    c.out(),
+    /a GitHub organization, a GitLab\s+group or a Bitbucket workspace/
+  )
+  assert.match(c.out(), /github, gitlab or atlassian/)
+  assert.doesNotMatch(c.out(), /atlassian later/)
+  assert.doesNotMatch(c.out(), /--bitbucket-api|--gitlab-api|--github-api/)
+})

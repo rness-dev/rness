@@ -368,7 +368,7 @@ function buildProgram(state: RunState): Command {
   program
     .command('create')
     .description(
-      "Create or join an organization's workspace (a GitHub organization, a GitLab group), or a blank one with --blank"
+      "Create or join an organization's workspace (a GitHub organization, a GitLab group or a Bitbucket workspace), or a blank one with --blank"
     )
     .argument(
       '[name]',
@@ -376,7 +376,7 @@ function buildProgram(state: RunState): Command {
     )
     .option(
       '--org <name>',
-      'the organization, exact name (github.com/<name>, gitlab.com/<group>)'
+      'the organization, exact name (github.com/<name>, gitlab.com/<group>, bitbucket.org/<workspace>)'
     )
     .option(
       '--repos <list>',
@@ -384,7 +384,7 @@ function buildProgram(state: RunState): Command {
     )
     .option(
       '--provider <name>',
-      'where the organization lives: github or gitlab (atlassian later)'
+      'where the organization lives: github, gitlab or atlassian'
     )
     .option(
       '--pm <name>',

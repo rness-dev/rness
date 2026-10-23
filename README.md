@@ -46,8 +46,9 @@ npm create rness
 - **Where everything stands.** `rness status` shows every decision,
   specification and plan and its status, in a terminal or as Markdown.
   `rness board push` puts them on the boards `rness.json` declares (a
-  GitHub Project, or GitLab issue boards), first Agent Pulse: one issue per
-  document, the card an agent is working on marked while it works.
+  GitHub Project, GitLab issue boards, or a Jira space's board), first
+  Agent Pulse: one issue per document, the card an agent is working on
+  marked while it works.
 - **Upgrades without surprises.** The CLI version is pinned in
   `.rness/package.json`; every `rness` in the workspace delegates to it.
   `rness upgrade` moves the pin and merges the scaffold's changes with git.
@@ -55,7 +56,7 @@ npm create rness
 ## Quick start
 
 ```bash
-npm create rness           # asks where your organization lives (GitHub or GitLab), or a blank workspace
+npm create rness           # asks where your organization lives (GitHub, GitLab or Atlassian), or a blank workspace
 cd <your-org>
 rness add <repo>           # clone a repository of the organization into org/<repo>
 rness sync                 # write the generated block into each clone

@@ -297,7 +297,8 @@ status, it received the problem. The `sh` line is not verified on Windows.
 A board is a view of the rules the agent applies: the documents of
 `.rness/` — decisions, specifications, plans, a team's own collections —
 and where an agent is at work on them. The provider supplies the tool:
-GitHub Projects today. Each board is declared in `rness.json`, under
+a GitHub Project, GitLab issue boards, or a Jira space's board. Each board
+is declared in `rness.json`, under
 `boards`: first **Agent Pulse** (`pulse`), where the team sees — and reads
 — every document of `.rness/`, and sees when an agent is at work on one.
 rness writes the boards; if it is not in rness, it does not belong there.
@@ -635,10 +636,56 @@ a sub-issue across repositories, and `Closes` on a pull request merged
   the plan's card; an implementation issue in a member project is linked
   `relates_to` (Free has no sub-issues), and the session summary names the
   merge request.
-- **Not yet**: Atlassian (Bitbucket + Jira); GitLab's Premium features
-  (status lists, scoped boards, custom fields). `Waiting` and `Review`
-  statuses, several agents on one board and hooks for agents other than
-  Claude Code are not built.
+- **On Atlassian** (a team-managed Jira space): the board is the space's
+  own one board, which every `board` view shares. rness never creates a
+  board and writes nothing back into `rness.json`, where `number` and `ids`
+  are refused. The first push asks
+  `Set up RNESS for Agent Pulse: 13 statuses, any-to-any transitions?`
+  (`--yes` answers; off a terminal without it, nothing is set up and the
+  push exits 1 saying how). In a
+  space as the template made it, the template's `To Do`, `In Progress` and
+  `Done` are renamed `Draft`, `In progress` and `Completed`; the other
+  statuses are created, `Gone` among them (category Done), each reachable
+  from any other by a `GLOBAL` transition. A card is an issue of the space
+  labelled `rness`, and its status is a real Jira status. A select is a
+  label `<field>-<option>`, lowercased, spaces as `-` (`collection-specs`,
+  `agent-working`); a text, date or number field is a line of a footer
+  below a rule in the description. The description is the Markdown
+  converted to Atlassian Document Format (ADF), its first line
+  `` `specs/0016-cli-status.md` · [on Bitbucket](https://bitbucket.org/<workspace>/.rness/src/main/…) ``,
+  a document's issue linked as `https://<site>/browse/<space>-<n>`,
+  nothing escaped (Jira's text mentions no one), 32,767 characters at
+  most; the body's digest is kept in the issue property `rness`. A gone
+  document's card moves to the status `Gone`, and back when the document
+  returns; a card moved by hand is moved back at the next push. Jira gives
+  each new status its own column on a fresh board (seen 2026-10-21), so
+  `Gone` has one, and `push` says
+  `visible  Gone has a column, so gone documents show on the board: hide it once, among the hidden statuses of the board's column settings, <board url>`.
+  Once it is hidden:
+  `checked  board RNESS: every status in a column, Gone hidden`. A
+  declared status in no column is said `unmapped`, with the same URL. The
+  views are said once per clone:
+  `note     views ADR, Specs, Plans share the board of RNESS: filter on collection-adr, collection-specs, collection-plans`;
+  a `table` view is the issue search URL `https://<site>/issues/?jql=…`; a
+  `roadmap` view has nothing. A README, a short description and status
+  updates are not written. On a site in another language Jira translates
+  the names
+  (`Draft` shows as `Brouillon`): rness works by ids. The hooks mark a card
+  with the label `agent-working` and a `Working session` footer line. The
+  link of `rness status` is the space's boards page,
+  `https://<site>/jira/software/projects/<space>/boards`. `rness note`
+  posts to the plan's card. Bitbucket has no issues, so each repository's
+  implementation issue lives in the space too, labelled `rness-plan`, its
+  last paragraph the marker `rness journal <owner>/<repo> <plan>`, linked
+  `Relates` to the plan's issue; notes are comments, an issue is named by
+  its key (`RNESS-12`), and the session summary names the branch's
+  Bitbucket pull request (opened, merged or closed). Not tried on a Jira
+  site yet (2026-10-23): the digest read back with the cards, and the
+  boards page leading to the board.
+- **Not yet**: GitLab's Premium features (status lists, scoped boards,
+  custom fields); on Jira, a board per view; Bitbucket and Jira Data
+  Center. `Waiting` and `Review` statuses, several agents on one board and
+  hooks for agents other than Claude Code are not built.
 - **`rness pulse`**, the name of all this until 0.21: hidden, each of its
   commands still runs as its new one and says so once on stderr
   (`rness pulse sync is now rness board push`); `rness pulse create
@@ -649,25 +696,27 @@ a sub-issue across repositories, and `Closes` on a pull request merged
 ### Provider
 
 `rness.json` records where the organization lives:
-`"provider": "github"`, between `contract` and `org`. Every command talks to
-it through one adapter; `git` still does what git does (clone, pull, push,
-credentials), and the provider's API the rest (organizations, creating a
-repository, the board).
+`"provider": "github"`, `"gitlab"` or `"atlassian"`, between `contract` and
+`org`. Every command talks to it through one adapter; `git` still does what
+git does (clone, pull, push, credentials), and the provider's API the rest
+(organizations, creating a repository, the board).
 
 - `rness create` asks `Where does your organization live?` first: GitHub,
-  GitLab, Atlassian (Bitbucket + Jira) shown disabled, coming later, and
+  GitLab, Atlassian (Bitbucket + Jira), and
   `No organization yet: a blank local workspace` (the `--blank` of
-  "Blank workspace"). `--provider github` or `--provider gitlab` answers it
-  off a terminal;
+  "Blank workspace"). `--provider github`, `gitlab` or `atlassian` answers
+  it off a terminal;
   `--org`, `--repos` and `--blank` settle it unasked. Joining an
   organization asks first as well, then takes the provider its `rness.json`
   names.
 - A workspace without the key is read from its first repository URL: a
-  GitLab host reads as `gitlab`, any other host — or no repository — as
-  `github`. Nothing to change: `board push` writes it when it creates a
-  board, and refuses a detected provider this version cannot talk to. The
-  order of keys is `contract`, `provider`, `org`, `agents`, `boards`,
-  `repos`, `scopes`. The former `projects` and
+  GitLab host reads as `gitlab`, `bitbucket.org` or `ssh.bitbucket.org` as
+  `atlassian`, any other host, or no repository, as `github`. Nothing to
+  change: `board push` writes it when it creates a board, and refuses to
+  create one while it detects a provider other than GitHub and the key is
+  absent (`write "provider": "<provider>" in rness.json`). The
+  order of keys is `contract`, `provider`, `org`, `jira`, `agents`,
+  `boards`, `repos`, `scopes`. The former `projects` and
   `"pulse": { "project": <number> }` still read, as `boards`; more than one
   of them at once is refused. A board in `boards` is written whole, on
   several lines, once created; a number still reads, as its preset, until
@@ -686,11 +735,47 @@ repository, the board).
   the manual steps name `git`, then `glab repo create <group>/rness --name
 _rness --private --skipGitInit`. `rness add` takes a subgroup's project by its full path
   (`rness add acme/platform/mobile`).
-- A provider _written_ in `rness.json` that this version cannot talk to
-  (`atlassian`) is refused by `validate`, `create`, `login` and `board`:
-  `provider "atlassian" is not supported by @rness/cli <version>
-(supported: github, gitlab)`. `add`, `sync` and the local commands never
-  refuse. `null` is not a value: an absent key means none.
+- **Atlassian**: the organization is a Bitbucket workspace, by its slug
+  (lowercase letters, digits, `-`, `_`, not starting with `-`). The wizard
+  asks `Which Bitbucket workspace?`, the workspaces listed with their names
+  as hints, then `a workspace not listed here…` (no personal account:
+  Bitbucket has no namespace apart from the workspaces). Then
+  `Which repositories do you want in your workspace?`: each by its slug,
+  its Bitbucket project as the hint, a private one padlocked. The member
+  line names your role as Bitbucket does (`member   acme (as smarttdev,
+owner)`). The context repository is `.rness` on Bitbucket, left out of
+  the list and cloned as `.rness/`; the wizard offers to create it,
+  private, and push it, else the manual steps are git alone
+  (`# create the empty private repository acme/.rness on bitbucket.org,
+then:` and `git remote add origin <url> && git push -u origin main`). The
+  teammate's line is `npm create rness -- acme --provider atlassian`.
+  After the repositories, a new workspace in a terminal asks
+  `Which Jira space for the cards and the journal?` on the Jira site the
+  login holds (`Which Jira site?` first when several are stored): the
+  spaces you can edit, by key with their names, then `a new space RNESS`
+  when the key RNESS is free, else `a new space…` and a key typed. `jira`
+  is written into `rness.json` at once. A new space (team-managed, Kanban)
+  is created once the workspace is built, before `.rness` is published
+  (`created  space RNESS (team-managed, Kanban) on acme.atlassian.net`);
+  refused by Jira, the next steps say how to make it by hand
+  (`# create a team-managed Kanban space with the key RNESS on <site>`,
+  `# (Jira > Spaces > Create space > Kanban > Team-managed), then: rness
+board push`). Without a Jira login, or off a terminal (`--yes`), no space
+  is asked and `jira` is not written: a next step says
+  `# for the cards: add "jira": { "site": "<name>.atlassian.net", "space":
+"<KEY>" } to rness.json`. `rness add api` takes `<workspace>/api`,
+  `rness add other/api` another workspace's; `.rness` is refused.
+- **`jira`**, Atlassian only:
+  `"jira": { "site": "<name>.atlassian.net", "space": "<KEY>" }`, the Jira
+  site and the key of the space that holds the cards and the journal. On
+  another provider it is refused (`"jira" is for an Atlassian workspace: it
+needs "provider": "atlassian"`), and so is a malformed value, naming the
+  key. `board push`, `rness note` and the hooks need it; without it they
+  say `this workspace has no Jira space: add "jira" to rness.json`.
+- `provider` names one of the three; any other value is refused when
+  `rness.json` is read (`"provider" must be one of github, gitlab,
+atlassian (got "bitbucket")`). `null` is not a value: an absent key means
+  none.
 
 ### MCP server
 
@@ -792,16 +877,44 @@ anonymously.
   and names `https://gitlab.com/-/user_settings/applications`, where the
   authorization is revoked. `RNESS_GITLAB_CLIENT_ID` points at another
   application (a fork, a self-managed instance's).
+- **Atlassian**: `rness login --provider atlassian` (inside an Atlassian
+  workspace, the flag is not needed) asks two API tokens, both made at
+  `https://id.atlassian.com/manage-profile/security/api-tokens`: neither
+  Bitbucket nor Jira has a device flow. First a Bitbucket token "with
+  scopes", app Bitbucket, scopes `read:user:bitbucket
+read:workspace:bitbucket read:project:bitbucket read:repository:bitbucket
+write:repository:bitbucket admin:repository:bitbucket
+read:pullrequest:bitbucket`; then the Jira site (`acme.atlassian.net`),
+  the account's email (Bitbucket's primary address offered) and a classic
+  Jira token "without scopes". The prompts are masked, a refused token is
+  asked again, and nothing is stored until both answer; then both are,
+  beside the other logins in `auth.json`. A token lives until it expires
+  or is revoked, with no refresh: refused later, its entry is cleared
+  (`your Bitbucket token was refused (expired or revoked); run rness login
+--provider atlassian`). `BITBUCKET_TOKEN`, and `JIRA_EMAIL` with
+  `JIRA_API_TOKEN`, win over the stored login; off a terminal, `login`
+  exits 1 naming the three. Over HTTPS git sends the username
+  `x-bitbucket-api-token-auth` with the Bitbucket token, never the Jira
+  one; `--setup-git` writes the helper for bitbucket.org. `rness logout
+--provider atlassian` forgets both logins (Bitbucket's and the Jira
+  sites') and names the tokens page, where they are revoked.
 
 ### SSH or HTTPS
 
 `create` and `add` test your SSH access to the workspace's host once
 (`ssh -T git@github.com`, `git@gitlab.com` on GitLab, whose greeting comes on
-stdout) and write `git@<host>:` URLs when the host accepts your key,
-`https://<host>/` ones otherwise; `--ssh` and `--https` decide
-without the test. In a terminal `ssh` may ask for your key's passphrase;
+stdout, `git@ssh.bitbucket.org` on Atlassian) and write `git@<host>:` URLs
+when the host accepts your key, `https://<host>/` ones otherwise; `--ssh`
+and `--https` decide without the test. In a terminal `ssh` may ask for your key's passphrase;
 without one (`--yes`, CI) it never prompts, so a key that needs a passphrase
 counts as no access unless an agent holds it.
+
+SSH to Bitbucket goes to `ssh.bitbucket.org`: Bitbucket refuses SSH on
+`bitbucket.org` after 2026-11-12 (its notice, read 2026-10-19). A URL on
+the old host, typed or as Bitbucket's API still gives it, is written on the
+new one, and a clone made with either name counts as the same repository.
+Bitbucket's greeting names no login, so the line reads
+`using    ssh (ssh.bitbucket.org)`, without `as`.
 
 `rness.json` is authoritative: a URL written there is cloned as written, never
 converted. In a workspace whose catalogue clones over SSH, `create` (joining)
@@ -906,8 +1019,25 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   GitLab; the boards as issue boards of `<group>/rness`, one per view
   (`ids`), the selects as scoped labels kept exclusive, the other fields in
   a footer; `rness note` and the session summary on GitLab.
+- **Atlassian as a provider** (spec 0039): Bitbucket for the repositories,
+  Jira for the cards. `rness login --provider atlassian` (two API tokens,
+  a scoped Bitbucket one and a classic Jira one; `BITBUCKET_TOKEN`,
+  `JIRA_EMAIL` with `JIRA_API_TOKEN`; `x-bitbucket-api-token-auth` over
+  HTTPS, `--setup-git` for bitbucket.org); `create` on a Bitbucket
+  workspace, the context repository `.rness` on Bitbucket, then the Jira
+  space, listed or created, written as `jira` in `rness.json`; `add`;
+  the boards as the space's one board, real Jira statuses set up at the
+  first push, the selects as labels, the other fields in a footer, `Gone`
+  hidden once by hand; `rness note` and the session summary on Jira, with
+  Bitbucket's pull request.
+- SSH to Bitbucket on `ssh.bitbucket.org`; a URL on the old SSH host is
+  written on the new one.
+- A new runtime dependency, `marklassian` 1.2.1 (MIT): Markdown to Jira's
+  ADF, loaded by `import()` on the Jira path only; `context` and
+  `validate` never load it.
 - The SSH test reads the greeting on stdout as well as stderr.
-- `create --help` names GitLab; `--ssh` and `--https` say `<host>`.
+- `create --help` names GitLab and Atlassian (a Bitbucket workspace); `--ssh`
+  and `--https` say `<host>`.
 
 ## 0.22.2 - repository names in any case
 

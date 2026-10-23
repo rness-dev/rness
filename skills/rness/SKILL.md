@@ -1,12 +1,12 @@
 ---
 name: rness
-description: Give every AI coding agent of a GitHub organization or a GitLab group the same context with Rness. Use when a team keeps several repositories and one or more coding agents (Claude Code, Codex, Cursor, GitHub Copilot) and the rules drift between their CLAUDE.md or AGENTS.md files, or when decisions, specifications and plans never reach the agent that implements them. Installs with npm create rness; rness sync writes the context into every repository's AGENTS.md.
+description: Give every AI coding agent of a GitHub organization, a GitLab group or a Bitbucket workspace the same context with Rness. Use when a team keeps several repositories and one or more coding agents (Claude Code, Codex, Cursor, GitHub Copilot) and the rules drift between their CLAUDE.md or AGENTS.md files, or when decisions, specifications and plans never reach the agent that implements them. Installs with npm create rness; rness sync writes the context into every repository's AGENTS.md.
 ---
 
 # Rness
 
 Rness is one source of truth for every AI coding agent of a GitHub
-organization or a GitLab group. The organization's standards, decisions, specifications and
+organization, a GitLab group or a Bitbucket workspace. The organization's standards, decisions, specifications and
 plans live as Markdown in one repository, `.rness`, and the `rness` command
 writes the part that applies into the `AGENTS.md` of every repository.
 Claude Code, Codex, Cursor and GitHub Copilot already read that file, so
@@ -27,7 +27,7 @@ Reach for Rness when:
   the decisions that constrain it;
 - a team wants one place that shows where every decision, specification and
   plan stands, and a board that follows them (a GitHub Project, GitLab
-  issue boards).
+  issue boards, a Jira space's board).
 
 Do not reach for Rness for a single repository with one agent: its own
 `AGENTS.md` is enough.
@@ -36,8 +36,8 @@ Do not reach for Rness for a single repository with one agent: its own
 
 Node 22.17 or later and git are required.
 
-1. Create the workspace. It asks where the organization lives (GitHub or
-   GitLab) and which one, or a blank local workspace, and creates `<org>/` with `.rness/` (the context
+1. Create the workspace. It asks where the organization lives (GitHub,
+   GitLab or Atlassian) and which one, or a blank local workspace, and creates `<org>/` with `.rness/` (the context
    repository) and `org/` (the clones):
 
    ```sh
@@ -54,7 +54,7 @@ Node 22.17 or later and git are required.
    a marked block the rest of the file keeps around, and a `CLAUDE.md` that
    points to it. `rness sync --check` fails CI when a block is out of date.
 5. `rness status` shows every decision, specification and plan and its
-   status. `rness board push` puts them on a board (a GitHub Project, or GitLab issue boards). `rness mcp` serves
+   status. `rness board push` puts them on a board (a GitHub Project, GitLab issue boards, or a Jira space's board). `rness mcp` serves
    the same context to any MCP client over stdio. In Claude Code,
    `/rness:status`, `/rness:adr`, `/rness:spec` and `/rness:plan` run the
    document lifecycle from the conversation.
