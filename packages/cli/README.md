@@ -1009,7 +1009,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.23.0 - GitLab and Atlassian as providers
 
 - **GitLab as a provider** (spec 0037): `rness login --provider gitlab`
   (gitlab.com's device flow, the application "Rness", `GITLAB_TOKEN`,
