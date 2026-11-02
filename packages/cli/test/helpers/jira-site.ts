@@ -54,11 +54,28 @@ const TEMPLATE: FakeStatus[] = [
   { id: '10010', name: 'Done', category: 'DONE' },
 ]
 
+/** The template's column order, global statuses included. */
+const ORDER = ['to do', 'in progress', 'in review', 'done']
+const order = (s: FakeStatus): number => {
+  const i = ORDER.indexOf(s.name.toLowerCase())
+  return i === -1 ? ORDER.length : i
+}
+
 const CATEGORY_KEY = { TODO: 'new', IN_PROGRESS: 'indeterminate', DONE: 'done' }
 
 export async function jiraSite(
   t: TestContext,
-  options: { space?: string; statuses?: FakeStatus[]; canEdit?: boolean } = {}
+  options: {
+    space?: string
+    statuses?: FakeStatus[]
+    /**
+     * Site-wide statuses the space's workflow uses: in the workflow and its
+     * read, not in the space's own listing, never renamed from the space.
+     * A space made in 2026-11 has the global `In Progress` (id 3).
+     */
+    globals?: FakeStatus[]
+    canEdit?: boolean
+  } = {}
 ): Promise<JiraSite> {
   const space = options.space ?? 'RNESS'
   const projectId = '10002'
@@ -66,6 +83,7 @@ export async function jiraSite(
   let nextTransition = 100
   const state = {
     statuses: (options.statuses ?? TEMPLATE).map((s) => ({ ...s })),
+    globals: (options.globals ?? []).map((s) => ({ ...s })),
     workflow: {
       version: 0,
       statuses: [] as string[],
@@ -77,13 +95,16 @@ export async function jiraSite(
     issues: [] as FakeJiraIssue[],
     links: [] as { inward: string; outward: string }[],
   }
-  for (const s of state.statuses) {
+  for (const s of [...state.globals, ...state.statuses].sort(
+    (a, b) => order(a) - order(b)
+  )) {
     state.workflow.statuses.push(s.id)
     state.workflow.global.set(s.id, String(nextTransition++))
     state.columns.push({ name: s.name, statuses: [s.id] })
   }
   const status = (id: string): FakeStatus | undefined =>
-    state.statuses.find((s) => s.id === id)
+    state.statuses.find((s) => s.id === id) ??
+    state.globals.find((s) => s.id === id)
   const taken = (name: string, except?: string): boolean =>
     state.statuses.some(
       (s) => s.id !== except && s.name.toLowerCase() === name.toLowerCase()
@@ -175,6 +196,14 @@ export async function jiraSite(
       }[]
       if (r.method === 'PUT') {
         for (const s of listed)
+          if (state.globals.some((g) => g.id === s.id))
+            return {
+              status: 400,
+              json: {
+                errorMessages: [`L'état ${s.id} est global au site.`],
+              },
+            }
+        for (const s of listed)
           if (taken(s.name, s.id))
             return {
               status: 400,
@@ -212,7 +241,7 @@ export async function jiraSite(
     if (path === '/rest/api/3/workflows')
       return {
         json: {
-          statuses: state.statuses.map((s) => ({
+          statuses: [...state.statuses, ...state.globals].map((s) => ({
             id: s.id,
             statusReference: s.id,
             name: s.name,
@@ -263,6 +292,16 @@ export async function jiraSite(
             ],
           },
         }
+      const seen = new Set<string>()
+      for (const top of tops) {
+        const name = status(top.statusReference)?.name ?? top.statusReference
+        if (seen.has(name.toLowerCase()))
+          return {
+            status: 400,
+            json: { errorMessages: [`« ${name} » apparaît deux fois.`] },
+          }
+        seen.add(name.toLowerCase())
+      }
       const w =
         ((body['workflows'] ?? []) as Record<string, unknown>[])[0] ?? {}
       const version = (w['version'] as { versionNumber?: number } | undefined)

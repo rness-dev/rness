@@ -202,6 +202,48 @@ test('a first push: the template renamed, the statuses made with GLOBAL transiti
   assert.doesNotMatch(again.out, /share the board/, 'a note is said once')
 })
 
+test("a space whose workflow uses the site's global In Progress: To Do and Done renamed, In Progress adopted as it is, none made twice", async (t) => {
+  // As rness-dev.atlassian.net made RNESS on 2026-11-02 (plan 0053 task 7):
+  // the workflow's In Progress is the site-wide status 3, absent from the
+  // space's own listing, which a push read alone and so made a second one.
+  await machine(t)
+  const jira = await jiraSite(t, {
+    statuses: [
+      { id: '10008', name: 'To Do', category: 'TODO' },
+      { id: '10011', name: 'In Review', category: 'IN_PROGRESS' },
+      { id: '10010', name: 'Done', category: 'DONE' },
+    ],
+    globals: [{ id: '3', name: 'In Progress', category: 'IN_PROGRESS' }],
+  })
+  const cwd = await workspace(t)
+  const r = await push(cwd)
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^renamed +the template's To Do, Done: Draft, Completed$/m
+  )
+  const all = [...jira.statuses.map((s) => s.name), 'In Progress']
+  assert.equal(
+    all.filter((n) => n.toLowerCase() === 'in progress').length,
+    1,
+    'the global In Progress is the one: no other made'
+  )
+  assert.ok(jira.workflow.global.has('3'), 'a GLOBAL transition to it')
+  const plan = jira.issues.find((i) => i.summary === '0002 - B')
+  assert.ok(plan !== undefined)
+  assert.equal(plan.statusId, '3', 'the plan in progress sits in status 3')
+
+  const writes = jira.issueWrites().length
+  const again = await push(cwd)
+  assert.equal(again.code, 0, again.err)
+  assert.equal(
+    jira.issueWrites().length,
+    writes,
+    'a second push writes no issue'
+  )
+  assert.doesNotMatch(again.out, /^(renamed|created) /m)
+})
+
 test('Gone hidden by the team: the push checks every column; a status declared later gets none and is said unmapped', async (t) => {
   await machine(t)
   const jira = await jiraSite(t)

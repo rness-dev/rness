@@ -124,7 +124,19 @@ export class JiraBoards {
     fresh = false
   ): Promise<jw.SpaceStatus[]> {
     if (this.#statuses !== undefined && !fresh) return this.#statuses
-    this.#statuses = await jw.spaceStatuses((await this.#projectOf(o)).id, o)
+    const project = await this.#projectOf(o)
+    this.#typeId ??= await ji.taskType(this.#jira.space, o)
+    const own = await jw.spaceStatuses(project.id, o)
+    const used = (await jw.workflowStatuses(project.id, this.#typeId, o))
+      .statuses
+    // The workflow's statuses first, a global one among them (the space's
+    // listing leaves it out), so a name is matched to the one in use; then
+    // the space's others.
+    const ownIds = new Set(own.map((s) => s.id))
+    this.#statuses = [
+      ...used.map((s) => (ownIds.has(s.id) ? s : { ...s, global: true })),
+      ...own.filter((s) => !used.some((u) => u.id === s.id)),
+    ]
     return this.#statuses
   }
 
@@ -159,9 +171,12 @@ export class JiraBoards {
         const s = byName(from)
         // A rename onto another status's name would fail: Jira's names are
         // unique whatever the case. `In Progress` to `In progress` is its own.
+        // A global status is adopted as it is: renamed, it would change for
+        // the whole site.
         const other = byName(to)
         if (
           s !== undefined &&
+          s.global !== true &&
           declared.includes(to) &&
           (other === undefined || other.id === s.id)
         )

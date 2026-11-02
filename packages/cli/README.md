@@ -1041,6 +1041,11 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   token) and 403 (no access) stop it with the code. Without a login it
   still asks git, which now reads a missing repository over SSH on
   Bitbucket and GitLab as absent, not as an error.
+- A Jira space whose workflow uses the site's global `In Progress` (a
+  space made since November 2026) is set up: the push reads the statuses
+  the workflow uses, whatever their scope, adopts the global one as it is
+  (never renamed: that would rename it for the whole site) and makes no
+  second `In progress`, which Jira refused in the workflow.
 - Joining a context repository that holds no `rness.json` says so:
   `acme/.rness exists but holds no rness.json: it is not a workspace.
 Delete it, or push a rness.json to it, then run rness create again`,

@@ -19,6 +19,12 @@ export interface SpaceStatus {
   id: string
   name: string
   category: StatusCategory
+  /**
+   * A site-wide status the space's workflow uses (a space made in 2026-11
+   * has the global `In Progress`): adopted as it is, never renamed from the
+   * space, which would rename it for the whole site.
+   */
+  global?: boolean
 }
 
 const category = (v: unknown): StatusCategory =>
@@ -94,7 +100,7 @@ export async function workflowStatuses(
   projectId: string,
   issueTypeId: string,
   o: JiraApiOptions
-): Promise<{ global: Set<string> }> {
+): Promise<{ global: Set<string>; statuses: SpaceStatus[] }> {
   const path = '/rest/api/3/workflows'
   const read = await jiraRequest('POST', path, o, {
     projectAndIssueTypes: [{ projectId, issueTypeId }],
@@ -103,7 +109,23 @@ export async function workflowStatuses(
   const workflows = field(read.body, 'workflows')
   const w = Array.isArray(workflows) ? workflows[0] : undefined
   const transitions = (field(w, 'transitions') as unknown[] | undefined) ?? []
+  const used = new Set(
+    ((field(w, 'statuses') as unknown[] | undefined) ?? []).flatMap((s) => {
+      const ref = str(field(s, 'statusReference'))
+      return ref === null ? [] : [ref]
+    })
+  )
+  const listed = (field(read.body, 'statuses') as unknown[] | undefined) ?? []
   return {
+    // The statuses the workflow uses, whatever their scope: the space's own
+    // listing leaves a global one out.
+    statuses: listed.flatMap((v) => {
+      const id = str(field(v, 'id'))
+      const name = str(field(v, 'name'))
+      return id === null || name === null || !used.has(id)
+        ? []
+        : [{ id, name, category: category(field(v, 'statusCategory')) }]
+    }),
     global: new Set(
       transitions.flatMap((t) =>
         field(t, 'type') === 'GLOBAL'
@@ -170,8 +192,12 @@ export async function addGlobalTransitions(
     if (id !== null && name !== null) names.set(id, name)
   }
   const add = missing.filter((id) => !inWorkflow.has(id))
+  // Only the statuses the workflow keeps or gains: Jira refuses a name twice,
+  // whatever its case, and a space may hold one the workflow does not use
+  // (a status made beside a global one of the same name).
+  const wanted = new Set([...inWorkflow, ...missing])
   const statuses = [
-    ...listed,
+    ...listed.filter((s) => wanted.has(str(field(s, 'id')) ?? '')),
     // A status the read does not list yet (made in this run): by reference alone.
     ...missing
       .filter((id) => !known.has(id))
