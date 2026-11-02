@@ -68,9 +68,15 @@ const AUTH = [
   /could not read username/i,
   /terminal prompts disabled/i,
 ]
+// Each host says a missing repository its own way; over SSH, Bitbucket and
+// GitLab answer with a sentence of their own rather than git's "not found".
+// Like GitHub's, both cover a repository the user cannot see, which the
+// probe reads as absent: the membership was checked before.
 const NOT_FOUND = [
   /repository .*not found/i,
   /does not appear to be a git repository/i,
+  /it no longer exists in this workspace/i,
+  /the project you were looking for could not be found/i,
 ]
 
 function firstLine(text: string): string {

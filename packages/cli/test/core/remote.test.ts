@@ -97,6 +97,26 @@ test('currentSshUrl: the old Bitbucket SSH host, as the API gives it, is rewritt
     assert.equal(currentSshUrl(kept), kept, kept)
 })
 
+test('classifyProbe: Bitbucket and GitLab over SSH say a missing repository their own way', () => {
+  // Read from both hosts on 2026-11-02, for a repository that does not exist.
+  assert.deepEqual(
+    classifyProbe(
+      'git@ssh.bitbucket.org:acme/.rness.git',
+      128,
+      'You may not have access to this repository or it no longer exists in this workspace. If you think this repository exists and you have access, make sure you are authenticated.\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.'
+    ),
+    { kind: 'not-found' }
+  )
+  assert.deepEqual(
+    classifyProbe(
+      'git@gitlab.com:acme/rness.git',
+      128,
+      "remote: \nremote: ========================================================================\nremote: \nremote: ERROR: The project you were looking for could not be found or you don't have permission to view it.\n\nremote: \nremote: ========================================================================\nremote: \nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists."
+    ),
+    { kind: 'not-found' }
+  )
+})
+
 test('classifyProbe: auth beats not-found; exit 2 is an empty but existing repository', () => {
   const url = 'https://github.com/acme/.rness.git'
   assert.deepEqual(classifyProbe(url, 0, ''), { kind: 'found' })
