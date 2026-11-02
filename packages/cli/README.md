@@ -1052,6 +1052,8 @@ Delete it, or push a rness.json to it, then run rness create again`,
   instead of `rness.json: not found`.
 - `create --help` names GitLab and Atlassian (a Bitbucket workspace); `--ssh`
   and `--https` say `<host>`.
+- The npm descriptions of `create-rness` and `@rness/create` name a GitLab
+  group and a Bitbucket workspace beside a GitHub organization.
 
 ## 0.22.2 - repository names in any case
 
