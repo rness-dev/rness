@@ -522,6 +522,29 @@ test('a probe that cannot access the remote exits 1 and creates nothing', async 
   await assert.rejects(access(join(cwd, 'acme')))
 })
 
+test('a .rness that holds no rness.json is said to be no workspace, and nothing is written', async (t) => {
+  withEnv(t, { GITHUB_TOKEN: undefined, GH_TOKEN: undefined })
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('.rness', { 'README.md': '# a test push\n' })
+  const cwd = await scratch(t)
+  const r = await create([
+    '--org',
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--host',
+    remote.host,
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /acme\/\.rness exists but holds no rness\.json: it is not a workspace\. Delete it, or push a rness\.json to it, then run .* create again/
+  )
+  await assert.rejects(access(join(cwd, 'acme')))
+})
+
 test('a repository that fails is reported and skipped; the workspace is still finished', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
   await remote.addRepo('api', { 'README.md': '# api\n' })

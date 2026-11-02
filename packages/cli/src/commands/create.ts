@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 
@@ -1051,9 +1051,21 @@ export async function createCommand(
         () =>
           clone(contextUrl, stagedDir, gitProvider.credentialsFor(contextUrl))
       )
+      // A repository of that name that is not a workspace context (a test
+      // push, someone else's) is said as such, not as a missing file.
+      const isWorkspace = await access(join(stagedDir, 'rness.json')).then(
+        () => true,
+        () => false
+      )
+      if (!isWorkspace) {
+        process.stderr.write(
+          `${org}/${context} exists but holds no rness.json: it is not a workspace. Delete it, or push a rness.json to it, then run ${rnessCommand()} create again\n`
+        )
+        return 1
+      }
       // Validates that the clone is a workspace context: throws on a
-      // malformed or absent rness.json.
-      catalogue = await loadManifest(await staged())
+      // malformed rness.json.
+      catalogue = await loadManifest(stagedDir)
       // The catalogue names the provider; the clone above had only GitHub.
       if (deps.provider === undefined)
         gitProvider = await openProvider(catalogue, {

@@ -1041,6 +1041,10 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   token) and 403 (no access) stop it with the code. Without a login it
   still asks git, which now reads a missing repository over SSH on
   Bitbucket and GitLab as absent, not as an error.
+- Joining a context repository that holds no `rness.json` says so:
+  `acme/.rness exists but holds no rness.json: it is not a workspace.
+Delete it, or push a rness.json to it, then run rness create again`,
+  instead of `rness.json: not found`.
 - `create --help` names GitLab and Atlassian (a Bitbucket workspace); `--ssh`
   and `--https` say `<host>`.
 
