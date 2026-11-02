@@ -10,6 +10,7 @@ import {
   listGroupProjects,
   listTopLevelGroups,
   listUserProjects,
+  projectStatus,
   tokenScopes,
 } from '../../src/core/gitlab.ts'
 import { fakeGitlab } from '../helpers/fake-gitlab.ts'
@@ -305,4 +306,26 @@ test('errors are one line: another status, an unreachable host', async (t) => {
     listTopLevelGroups({ token: 'tok', apiBase: 'http://127.0.0.1:1/api/v4' }),
     /^Error: cannot reach the GitLab API: /
   )
+})
+
+test('whether a project exists, by status code: 200, 404, and 401 an error', async (t) => {
+  let status = 200
+  const gl = await fakeGitlab(t, () => ({ status, json: {} }))
+  assert.deepEqual(await projectStatus('acme/rness', { token: 'tok' }), {
+    kind: 'found',
+  })
+  assert.equal(gl.requests[0]?.method, 'GET')
+  assert.equal(gl.requests[0]?.path, '/api/v4/projects/acme%2Frness')
+
+  status = 404
+  assert.deepEqual(await projectStatus('acme/rness', { token: 'tok' }), {
+    kind: 'not-found',
+  })
+
+  status = 401
+  assert.deepEqual(await projectStatus('acme/rness', { token: 'tok' }), {
+    kind: 'error',
+    status: 401,
+    message: 'GitLab refused the token (401)',
+  })
 })

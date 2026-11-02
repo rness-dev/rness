@@ -7,6 +7,7 @@ import {
   listRepositories,
   listWorkspaces,
   pullRequestFor,
+  repositoryStatus,
   workspacePermission,
 } from '../../src/core/bitbucket.ts'
 import { MAX_PAGES, type RateWait } from '../../src/core/github.ts'
@@ -284,5 +285,33 @@ test('errors are one line: a refused token, a missing scope named, another statu
   await assert.rejects(
     listRepositories('acme', { token: 'tok', apiBase: 'http://127.0.0.1:1' }),
     /^Error: cannot reach the Bitbucket API: /
+  )
+})
+
+test('whether a repository exists, by status code: 200, 404; 403 an error; 401 the refused token', async (t) => {
+  let status = 200
+  const bb = await fakeBitbucket(t, () => ({ status, json: {} }))
+  assert.deepEqual(await repositoryStatus('acme', '.rness', { token: 'tok' }), {
+    kind: 'found',
+  })
+  assert.equal(bb.requests[0]?.method, 'GET')
+  assert.equal(bb.requests[0]?.path, '/2.0/repositories/acme/.rness')
+
+  status = 404
+  assert.deepEqual(await repositoryStatus('acme', '.rness', { token: 'tok' }), {
+    kind: 'not-found',
+  })
+
+  status = 403
+  assert.deepEqual(await repositoryStatus('acme', '.rness', { token: 'tok' }), {
+    kind: 'error',
+    status: 403,
+    message: 'no access to acme/.rness on Bitbucket (403)',
+  })
+
+  status = 401
+  await assert.rejects(
+    repositoryStatus('acme', '.rness', { token: 'tok' }),
+    TokenRefused
   )
 })

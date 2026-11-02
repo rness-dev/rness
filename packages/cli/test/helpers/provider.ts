@@ -8,6 +8,7 @@ import type {
   Provider,
   Tracker,
 } from '../../src/core/provider.ts'
+import type { RepositoryStatus } from '../../src/core/repository-status.ts'
 
 /** A scripted `Provider`; `asked` records every URL credentials were asked for. */
 export function fakeProvider(spec: {
@@ -28,6 +29,8 @@ export function fakeProvider(spec: {
   create?: (owner: string, name: string) => Promise<CreateRepositoryResult>
   /** Atlassian's tracker, scripted: no network. */
   tracker?: Tracker
+  /** What the API says of a repository; absent, `create` probes with git. */
+  status?: (owner: string, name: string) => Promise<RepositoryStatus>
 }): {
   provider: Provider
   asked: string[]
@@ -51,6 +54,7 @@ export function fakeProvider(spec: {
     accessCalls,
     provider: {
       ...(spec.tracker === undefined ? {} : { tracker: spec.tracker }),
+      ...(spec.status === undefined ? {} : { repositoryStatus: spec.status }),
       authenticated: login !== null,
       identity: async () => (login === null ? null : { login }),
       listOrganizations: async () =>

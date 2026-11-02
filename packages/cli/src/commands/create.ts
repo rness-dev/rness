@@ -44,7 +44,7 @@ import type {
   Tracker,
 } from '../core/provider.ts'
 import { PROVIDERS, isProviderName, openProvider } from '../core/providers.ts'
-import { probeRemote, repoUrl } from '../core/remote.ts'
+import { type Probe, probeRemote, repoUrl } from '../core/remote.ts'
 import { addRepository } from '../core/repos.ts'
 import { PRIVATE_MARK, banner, count, unicode } from '../core/style.ts'
 import { syncBlocks } from '../core/sync-blocks.ts'
@@ -194,6 +194,34 @@ function manualSteps(
 }
 
 /** How a teammate joins: `--provider` past GitHub, behind npm's `--`. */
+/**
+ * Whether the organization's context repository exists. Through the
+ * provider's API when rness is logged in: a status code, read after the
+ * access check, so a 404 means absent (`RepositoryStatus`). Without a login,
+ * or with a provider that has no such read, `git ls-remote`, which over SSH
+ * has nothing but the host's words to go by.
+ */
+async function contextProbe(
+  provider: Provider,
+  org: string,
+  name: string,
+  url: string
+): Promise<Probe> {
+  if (!provider.authenticated || provider.repositoryStatus === undefined)
+    return probeRemote(url, undefined, provider.credentialsFor(url))
+  try {
+    const status = await provider.repositoryStatus(org, name)
+    return status.kind === 'error'
+      ? { kind: 'error', message: status.message }
+      : status
+  } catch (e) {
+    return {
+      kind: 'error',
+      message: e instanceof Error ? e.message : String(e),
+    }
+  }
+}
+
 function joinCommand(provider: ProviderName, org: string): string {
   const pm = detectPackageManager()
   if (provider === 'github') return `${pm} create rness ${org}`
@@ -970,11 +998,7 @@ export async function createCommand(
     const host = await chooseHost()
     const contextUrl = repoUrl(host, org, context)
     let gitProvider = await getProvider()
-    const probe = await probeRemote(
-      contextUrl,
-      undefined,
-      gitProvider.credentialsFor(contextUrl)
-    )
+    const probe = await contextProbe(gitProvider, org, context, contextUrl)
     if (probe.kind === 'error') {
       process.stderr.write(`${probe.message}\n`)
       return 1

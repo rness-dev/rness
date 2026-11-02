@@ -1045,7 +1045,12 @@ test('wizard: a personal account lists public repositories only, token or not; t
   const remote = await makeRemoteOrg(t, 'octo')
   const { base } = await githubApi(t, (req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
-    if (url.pathname.startsWith('/orgs/')) {
+    // No such organization, and no octo/.rness: create asks the API whether
+    // the context repository exists.
+    if (
+      url.pathname.startsWith('/orgs/') ||
+      url.pathname.startsWith('/repos/')
+    ) {
       res.writeHead(404)
       return res.end()
     }
@@ -1409,6 +1414,60 @@ test('logged in: the organization is picked from a list, access is stated, priva
     `${remote.host}acme/vault.git`,
   ])
   await access(join(cwd, 'acme', 'org', 'vault', 'README.md'))
+})
+
+test('logged in: the API says whether .rness exists, by status code; git is not asked', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('vault', { 'README.md': '# vault\n' })
+  const asked: string[] = []
+  const gh = fakeProvider({
+    login: 'octo',
+    organizations: ['acme'],
+    access: 'member',
+    repositories: [{ name: 'vault', private: true, archived: false }],
+    status: async (owner, name) => {
+      asked.push(`${owner}/${name}`)
+      return { kind: 'not-found' }
+    },
+  })
+  const cwd = await scratch(t)
+  const term = terminal({ select: ['acme'], pick: [['vault']] })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    gh.provider
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(asked, ['acme/.rness'])
+  assert.match(r.out, /^not found acme\/\.rness[^\n]*\n/m)
+  // Only the clone asked for credentials: no `git ls-remote` of .rness.
+  assert.deepEqual(gh.asked, [`${remote.host}acme/vault.git`])
+})
+
+test('logged in: an API refusal of .rness stops create with the code, before anything is written', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const gh = fakeProvider({
+    login: 'octo',
+    organizations: ['acme'],
+    access: 'member',
+    status: async () => ({
+      kind: 'error',
+      status: 403,
+      message: 'no access to acme/.rness on GitHub (403)',
+    }),
+  })
+  const cwd = await scratch(t)
+  const term = terminal({ select: ['acme'] })
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    term.deps,
+    undefined,
+    gh.provider
+  )
+  assert.equal(r.code, 1)
+  assert.match(r.err, /no access to acme\/\.rness on GitHub \(403\)/)
+  await assert.rejects(access(join(cwd, 'acme')))
 })
 
 test('"an organization not listed here…" and an empty list lead to the text prompt; a restricted organization is said, verbatim', async (t) => {

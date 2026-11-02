@@ -21,6 +21,7 @@ import {
   listGroupProjects,
   listTopLevelGroups,
   listUserProjects,
+  projectStatus,
   tokenScopes,
 } from './gitlab.ts'
 import { HOSTS } from './hosts.ts'
@@ -34,6 +35,7 @@ import type {
   OrganizationAccess,
   Provider,
 } from './provider.ts'
+import type { RepositoryStatus } from './repository-status.ts'
 
 /** GitLab's access levels, as its UI names them (spec 0037 §4). */
 const ROLES: Readonly<Record<number, string>> = {
@@ -164,6 +166,13 @@ export class GitLabOAuthProvider implements Provider {
       )
     const mine = self !== null && self.toLowerCase() === owner.toLowerCase()
     return listing(owner, user, mine ? 'self' : 'user')
+  }
+
+  async repositoryStatus(
+    owner: string,
+    name: string
+  ): Promise<RepositoryStatus> {
+    return projectStatus(`${owner}/${name}`, this.#api())
   }
 
   async createRepository(

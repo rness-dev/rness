@@ -7,7 +7,7 @@ import {
 import type { AddressInfo } from 'node:net'
 import { type TestContext, test } from 'node:test'
 
-import { listRepositories } from '../../src/core/github.ts'
+import { listRepositories, repositoryStatus } from '../../src/core/github.ts'
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void
 
@@ -242,4 +242,28 @@ test('a refused connection is unreachable, not a crash', async () => {
     }),
     /^Error: cannot reach the GitHub API: /
   )
+})
+
+test('whether a repository exists, by status code: 200, 404, and 403 an error', async (t) => {
+  let status = 200
+  const { base, requests } = await api(t, (_req, res) => json(res, status, {}))
+  const options = { token: 'tok', apiBase: base }
+  assert.deepEqual(await repositoryStatus('acme', '.rness', options), {
+    kind: 'found',
+  })
+  assert.equal(requests[0]?.method, 'GET')
+  assert.equal(requests[0]?.url, '/repos/acme/.rness')
+  assert.equal(requests[0]?.headers['authorization'], 'Bearer tok')
+
+  status = 404
+  assert.deepEqual(await repositoryStatus('acme', '.rness', options), {
+    kind: 'not-found',
+  })
+
+  status = 403
+  assert.deepEqual(await repositoryStatus('acme', '.rness', options), {
+    kind: 'error',
+    status: 403,
+    message: 'no access to acme/.rness on GitHub (403)',
+  })
 })

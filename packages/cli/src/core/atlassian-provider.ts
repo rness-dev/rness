@@ -15,6 +15,7 @@ import {
   listRepositories,
   listWorkspaces,
   pullRequestFor,
+  repositoryStatus,
   workspacePermission,
 } from './bitbucket.ts'
 import { type JournalIssue, JournalRefused } from './github-journal.ts'
@@ -49,6 +50,7 @@ import type {
   Tracker,
   TrackerSpace,
 } from './provider.ts'
+import type { RepositoryStatus } from './repository-status.ts'
 import type { JiraTarget } from './types.ts'
 
 /**
@@ -213,6 +215,13 @@ export class AtlassianProvider implements Provider {
     if (this.#token === null)
       return { kind: 'refused', reason: 'not logged in' }
     return this.#call((o) => createRepository(owner, name, o))
+  }
+
+  async repositoryStatus(
+    owner: string,
+    name: string
+  ): Promise<RepositoryStatus> {
+    return this.#call((o) => repositoryStatus(owner, name, o))
   }
 
   /** Null: nothing rness asks of a provider's scopes applies to Bitbucket (spec 0039 §3). */

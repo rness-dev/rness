@@ -68,6 +68,9 @@ const AUTH = [
   /could not read username/i,
   /terminal prompts disabled/i,
 ]
+// The fallback only: logged in, `create` asks the provider's API, which
+// answers with a status code (`repository-status.ts`). Without a login, git
+// is all there is, and over SSH it has no status code, only the host's words.
 // Each host says a missing repository its own way; over SSH, Bitbucket and
 // GitLab answer with a sentence of their own rather than git's "not found".
 // Like GitHub's, both cover a repository the user cannot see, which the

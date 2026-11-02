@@ -17,6 +17,7 @@ import {
   getUser,
   listRepositories,
   listUserMemberships,
+  repositoryStatus,
 } from './github.ts'
 import type {
   Board,
@@ -26,6 +27,7 @@ import type {
   OrganizationAccess,
   Provider,
 } from './provider.ts'
+import type { RepositoryStatus } from './repository-status.ts'
 
 const GITHUB_HTTPS = 'https://github.com/'
 
@@ -121,6 +123,13 @@ export class GitHubOAuthProvider implements Provider {
       ...this.#api(this.#token.token),
       self: (await this.identity())?.login ?? null,
     })
+  }
+
+  async repositoryStatus(
+    owner: string,
+    name: string
+  ): Promise<RepositoryStatus> {
+    return repositoryStatus(owner, name, this.#api(this.#token?.token ?? ''))
   }
 
   async scopes(): Promise<string[] | null> {

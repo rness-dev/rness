@@ -4,6 +4,10 @@ import {
   type RateWait,
   waitOut,
 } from './github.ts'
+import {
+  type RepositoryStatus,
+  repositoryStatusOf,
+} from './repository-status.ts'
 
 // The Bitbucket Cloud REST API (spec 0039 §1): 2.0, the API token in
 // `Authorization: Bearer` (since 2026-08-18), on api.bitbucket.org only
@@ -225,6 +229,23 @@ export async function workspacePermission(
   if (answer.status === 403 || answer.status === 404) return null
   if (answer.status !== 200) throw failure(answer, path)
   return str(field(answer.body, 'permission'))
+}
+
+/**
+ * Whether `workspace/slug` exists: `GET /repositories/{workspace}/{slug}`,
+ * read by its status code (`repositoryStatusOf`). A 401 is the token's
+ * refusal, thrown so the provider says it once; a 403, no access, stays an
+ * error, never a missing repository.
+ */
+export async function repositoryStatus(
+  workspace: string,
+  slug: string,
+  o: BitbucketApiOptions
+): Promise<RepositoryStatus> {
+  const path = `/repositories/${segment(workspace)}/${segment(slug)}`
+  const answer = await request('GET', `${rootOf(o)}${path}`, o)
+  if (answer.status === 401) throw failure(answer, path)
+  return repositoryStatusOf(answer.status, 'Bitbucket', `${workspace}/${slug}`)
 }
 
 /** A repository as rness reads it off a listing. */

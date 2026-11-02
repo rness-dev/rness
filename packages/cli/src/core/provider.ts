@@ -3,6 +3,7 @@ import type { Layout } from '../board/layout.ts'
 import type { BoardItem, Placed, Step } from '../board/plan.ts'
 import type { JournalIssue } from './github-journal.ts'
 import type { CreateRepositoryResult, RepositoryListing } from './github.ts'
+import type { RepositoryStatus } from './repository-status.ts'
 
 // The seam between the commands and the place the repositories live (spec
 // 0004 §6). The commands do not know how rness is authenticated: the CLI acts
@@ -108,6 +109,13 @@ export interface Provider {
    * `.rness` gets to GitHub (spec 0004 §3b). Anonymous: refused.
    */
   createRepository(owner: string, name: string): Promise<CreateRepositoryResult>
+  /**
+   * Whether `owner/name` exists, by the API's status code (see
+   * `RepositoryStatus`). Read after `organizationAccess`, so a 404 means
+   * absent. Absent from a provider, or not logged in: `create` falls back to
+   * `git ls-remote`, which over SSH has only the host's words.
+   */
+  repositoryStatus?(owner: string, name: string): Promise<RepositoryStatus>
   /**
    * The scopes the token holds; null when anonymous or when the provider
    * names none. Rejects when the provider cannot be asked (offline, a

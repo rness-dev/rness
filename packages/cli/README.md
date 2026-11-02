@@ -1036,6 +1036,11 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   ADF, loaded by `import()` on the Jira path only; `context` and
   `validate` never load it.
 - The SSH test reads the greeting on stdout as well as stderr.
+- `create` asks the provider's API whether the context repository exists,
+  by status code: 200 joins, 404 starts a new workspace, 401 (a refused
+  token) and 403 (no access) stop it with the code. Without a login it
+  still asks git, which now reads a missing repository over SSH on
+  Bitbucket and GitLab as absent, not as an error.
 - `create --help` names GitLab and Atlassian (a Bitbucket workspace); `--ssh`
   and `--https` say `<host>`.
 

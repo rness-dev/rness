@@ -7,6 +7,10 @@ import {
   waitOut,
 } from './github.ts'
 import { HOSTS, webBase } from './hosts.ts'
+import {
+  type RepositoryStatus,
+  repositoryStatusOf,
+} from './repository-status.ts'
 
 // The GitLab REST API (spec 0037 §1): v4, the token in `Authorization:
 // Bearer`, an OAuth token and a personal access token alike (plan 0049
@@ -300,6 +304,24 @@ export async function groupMembership(
   if (answer.status === 200 && typeof level === 'number')
     return { accessLevel: level }
   return 'unknown'
+}
+
+/**
+ * Whether the project at `path` (`group/name`) exists: `GET /projects/{path}`,
+ * read by its status code (`repositoryStatusOf`). GitLab answers 404 for a
+ * project the user cannot see; asked after the group's access is checked, a
+ * 404 means absent.
+ */
+export async function projectStatus(
+  path: string,
+  options: GitlabApiOptions
+): Promise<RepositoryStatus> {
+  const answer = await request(
+    'GET',
+    `${apiBase(options)}/projects/${segment(path)}`,
+    options
+  )
+  return repositoryStatusOf(answer.status, 'GitLab', path)
 }
 
 /** A group's numeric id, which `POST /projects` takes as `namespace_id`; null when GitLab knows no such group. */

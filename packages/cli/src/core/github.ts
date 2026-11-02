@@ -1,6 +1,10 @@
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { rnessCommand } from './pm.ts'
+import {
+  type RepositoryStatus,
+  repositoryStatusOf,
+} from './repository-status.ts'
 
 /** The public GitHub REST API; `--github-api` overrides it in tests. */
 export const DEFAULT_GITHUB_API = 'https://api.github.com'
@@ -536,6 +540,27 @@ export type CreateRepositoryResult =
   | { kind: 'exists' }
   /** Not allowed, in GitHub's words. */
   | { kind: 'refused'; reason: string }
+
+/**
+ * Whether `owner/name` exists: `GET /repos/{owner}/{name}`, read by its
+ * status code (`repositoryStatusOf`). GitHub answers 404 for a private
+ * repository the token cannot see; asked after the organization's access is
+ * checked, a 404 means absent.
+ */
+export async function repositoryStatus(
+  owner: string,
+  name: string,
+  options: ApiOptions
+): Promise<RepositoryStatus> {
+  const base = (options.apiBase ?? DEFAULT_GITHUB_API).replace(/\/+$/, '')
+  const path = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
+  const page = await getPage(
+    `${base}${path}`,
+    apiHeaders(options.token),
+    options.timeoutMs ?? 15_000
+  )
+  return repositoryStatusOf(page.status, 'GitHub', `${owner}/${name}`)
+}
 
 /**
  * Create the private repository `owner/name`: in the organization `owner`,
