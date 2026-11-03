@@ -252,8 +252,9 @@ workspace root's carry four Claude Code hooks, all run by the pinned copy:
   line of the block of an `AGENTS.md` or `CLAUDE.md` (the reason names the
   standard that line comes from, to edit instead), or a file of
   `.claude/skills/rness/` — or add a problem to a document of `.rness/` or
-  to `rness.json`. Only the problems the edit adds: a document already
-  broken stays editable. The `old_string` is found as Claude Code's `Edit`
+  to `rness.json`, or add a line an enabled `added-lines` policy refuses
+  (see "Policies", which also describes the `Bash` entry of this hook). Only
+  the problems the edit adds: a document already broken stays editable. The `old_string` is found as Claude Code's `Edit`
   finds it, straight quotes matching curly ones. Writes through Bash are
   not seen: the guard is best effort. About 0.07 s per edit, 0.11 s for a
   document of `.rness/` (measured 2026-10-04).
@@ -288,6 +289,108 @@ once too). See "Boards". Review a change to
 them like code. Verified with Claude Code 2.1.284 on 2026-09-29: in a clone
 and at the root, the model received the context; after an edit that broke a
 status, it received the problem. The `sh` line is not verified on Windows.
+
+### Policies
+
+A policy is a rule a machine answers yes or no, refused at the moment of an
+action. It is a document of `.rness/policy/<name>.md` (global) or
+`.rness/policy/<scope>/<name>.md` (one scope; a scoped policy only adds, and a
+name used both ways is refused by `validate`). The name is lowercase words
+joined by hyphens and is the policy's id; the title is the `#` heading; the
+body is the reason. Policies are not numbered (`rness doc new policy` is
+refused) and never become cards on a board.
+
+```markdown
+---
+status: Enabled
+standard: standards/documentation.md
+rules:
+  - check: commit-message
+    deny: '^co-authored-by: .*(claude|codex|cursor)'
+    fix: Remove the agent's Co-Authored-By trailer, then commit again.
+---
+
+# No agent trailers
+```
+
+Front matter: `status` (`Enabled` or `Disabled`) and `rules` (a non-empty
+list) are required; `standard` (the path of an existing standard that
+explains the rule), `date` and `updated` are optional; any other key is
+refused. Each rule has `check`, `deny` and `fix` (one line, what the agent
+reads), all required. A `deny` pattern is a JavaScript regular expression
+compiled with the flags `iu` and matched against one line at a time (`\u2014`
+names the em dash without writing it). `rness validate` checks the files,
+Disabled ones included, and refuses YAML anchors, aliases, custom tags, merge
+keys and duplicate keys, naming the line. The package publishes a JSON Schema
+of the front matter. `Enabled` policies are listed under `## Policies` in the
+generated block of the scope they apply to; with none enabled there is no
+section and the block is unchanged.
+
+The three checks, a fixed set:
+
+| `check`          | Reads                                                                             | `deny`                  | Run by                                                 |
+| ---------------- | --------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------ |
+| `commit-message` | each line of the message, up to git's scissors line, git's comment lines included | a pattern               | the `commit-msg` hook                                  |
+| `added-lines`    | each line a commit or an edit adds, never a line already there                    | a pattern               | the `pre-commit` hook; the guard on `Edit` and `Write` |
+| `push`           | each ref update of a push                                                         | `non-fast-forward` only | the `pre-push` hook                                    |
+
+`added-lines` does not check what rness writes itself: the files of
+`.claude/skills/rness/` and the lines inside a rness block. A new branch and
+a deletion pass `push`; a remote object missing locally counts as
+non-fast-forward, and the fix says to fetch first. In a clone with several
+scopes, `added-lines` applies each file's deepest scope; `commit-message` and
+`push` apply every scope of the clone.
+
+**Git hooks.** `create`, `add` and `sync` write `pre-commit`, `commit-msg` and
+`pre-push` in the hooks directory of every clone of `org/` (never `.rness`,
+whose scaffold `.githooks/` carries the same three, and never under
+`sync --check`), whatever the policies: each passes at once while no enabled
+policy uses its check, so an `Enabled` merged in `.rness` applies without a
+`sync`. They are local, never committed, mode 0755, carry a marker line and
+call the pinned CLI by its absolute path
+(`rness policy check <hook>`, a hidden command). `sync` rewrites a stale rness
+hook. A hook file without the marker is never touched, and a clone with
+`core.hooksPath` set (husky, lefthook) is left alone; `sync` reports each,
+once per clone until the cause changes, with the line to add to the team's
+own hook manager (`node '<ws>/.rness/node_modules/@rness/cli/dist/bin/rness.js' policy check <hook> "$@"`).
+
+**The guard.** The `PreToolUse` hook gains two entries. On `Edit` and `Write`
+it checks the lines the edit adds against the `added-lines` rules of the
+file's scope, anywhere in the workspace, before the file is written. On
+`Bash` it parses every command and refuses, while an enabled policy applies,
+a bypass of the hooks: `git commit --no-verify` or `-n`, `git push
+--no-verify`, `git merge` or `pull --no-verify`, `git -c core.hooksPath=...`,
+an alias that skips hooks, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
+`GIT_CONFIG`, a write of `core.hooksPath` or of an include, and, as a
+backstop, a git command holding a hook-skipping word the parser cannot read.
+Other commands pass at once. A refusal exits 2 with the reason on stderr. The
+guard never stops a session on its own failure.
+
+**The refusal.** Every failing rule of every policy comes in one message, so
+one correction passes:
+
+    rness: policy no-agent-trailers refused this commit
+      commit message, line 7: Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+      fix: Remove the agent's Co-Authored-By trailer, then commit again.
+      policy: .rness/policy/no-agent-trailers.md
+
+**Where refusals show.** Each refusal appends a line to
+`rness/refusals.jsonl` in the clone's git directory (never committed;
+`sync` prunes records older than 30 days). The session summary of a board
+journal gains `Policies: 3 refusals (no-em-dash 2, no-agent-trailers 1)`,
+and is posted when the session has at least one commit, note or refusal.
+`rness status policy` and the `/rness:status` pane have a Policies tab:
+every policy with its scope and status, then the refusals of the last 7 days
+across the clones, by policy.
+
+**Fail open.** A missing `node`, a missing pinned CLI, a `.rness` not
+reachable or an error of rness's own never blocks: the hook prints at most
+one line, `rness: policies not checked: <why>`, and exits 0. Only a refusal
+blocks: `rness policy check` exits 20 for it, and each hook maps 20 to 1;
+any other non-zero status becomes a one-line warning and exit 0. What
+policies do not cover (a write through Bash until it is committed,
+`--no-verify` outside Claude Code, cloud agents without the hooks) is in the
+enforcement matrix of the documentation.
 
 ### Boards
 
@@ -1008,6 +1111,18 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## Unreleased
+
+- **Policies as data** (spec 0040): a `policy/` collection of rules refused
+  at commit, at push and on edit, for every local agent. Three checks
+  (`commit-message`, `added-lines`, `push`), the `## Policies` section of the
+  block, git hooks written by `create`, `add` and `sync` in every clone
+  (reported when a foreign hook or `core.hooksPath` is left alone), the
+  Claude Code guard on `Edit`, `Write` and `Bash`, refusals on record in the
+  session summary and in a Policies tab of `rness status`. The scaffold gains
+  `policy/no-force-push.md` (Disabled) and the `.githooks/` `commit-msg` and
+  `pre-push`. See "Policies".
 
 ## 0.23.1 - a key on every element of a /rness:status row
 

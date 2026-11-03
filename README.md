@@ -31,7 +31,7 @@ npm create rness
 ## What you get
 
 - **One context repository.** `.rness/` holds the organization's
-  standards, ADRs, specifications and plans as Markdown, with a
+  standards, ADRs, specifications, plans and policies as Markdown, with a
   `rness.json` that maps them to the repositories they apply to.
 - **A generated block in every repository.** `rness sync` writes the rules
   that apply into each clone's `AGENTS.md` (and a `CLAUDE.md` that points
@@ -43,6 +43,9 @@ npm create rness
   the conversation, and the plugin's mod keeps the workspace in view: a
   band above the prompt, the status line, `/rness:status` in a pane;
   `rness mcp` serves the same context to any MCP client.
+- **Rules that refuse.** A policy in `.rness/policy/` is refused at commit,
+  at push and on edit, by git hooks in every clone and by the Claude Code
+  guard, so Codex, Cursor and people are blocked too. Off until enabled.
 - **Where everything stands.** `rness status` shows every decision,
   specification and plan and its status, in a terminal or as Markdown.
   `rness board push` puts them on the boards `rness.json` declares (a
@@ -68,7 +71,7 @@ starts one. A workspace is a directory per person:
 
 ```
 <your-org>/
-├── .rness/        standards, adr/, specs/, plans/, rness.json  (the context repository)
+├── .rness/        standards, adr/, specs/, plans/, policy/, rness.json  (the context repository)
 └── org/<repo>/    one clone per repository, each with its generated AGENTS.md block
 ```
 

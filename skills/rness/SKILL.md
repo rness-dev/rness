@@ -48,7 +48,8 @@ Node 22.17 or later and git are required.
 2. Bring repositories in: `rness add <repo>` clones one under `org/<repo>`
    and declares it in `.rness/rness.json`.
 3. Write the organization's context as Markdown in `.rness/`:
-   `standards/`, `adr/`, `specs/`, `plans/`. `rness.json` maps them to the
+   `standards/`, `adr/`, `specs/`, `plans/`, `policy/` (rules refused at
+   commit, push and edit). `rness.json` maps them to the
    repositories they apply to.
 4. `rness sync` writes what applies into each repository's `AGENTS.md`, as
    a marked block the rest of the file keeps around, and a `CLAUDE.md` that
