@@ -16,7 +16,8 @@ import { findWorkspace } from './workspace.ts'
  * clone, on every fetch: no delegation, no install and no warning there.
  * Claude Code runs `hook` at every session start and after every edit, and
  * it is already the pinned copy: a drift is reported, never installed (spec
- * 0015 §3).
+ * 0015 §3). The git hooks run `policy` by the pinned copy's path at every
+ * commit and push: an install there would run inside `git commit`.
  */
 export const OWN_COMMANDS: readonly string[] = [
   'create',
@@ -26,6 +27,7 @@ export const OWN_COMMANDS: readonly string[] = [
   'logout',
   'git-credential',
   'hook',
+  'policy',
 ]
 
 /**

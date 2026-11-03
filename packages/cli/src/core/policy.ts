@@ -18,6 +18,7 @@ import { type AssembleInput, assembleCollection } from './context.ts'
 import {
   extractTitle,
   frontMatterBlock,
+  parseFrontMatter,
   stripFrontMatter,
 } from './frontmatter.ts'
 import { scopeChain } from './scope.ts'
@@ -487,6 +488,22 @@ export function policiesOf(
   return policiesIn(files, options)
 }
 
+/** The policy files of a set of scopes, resolved as the other collections. */
+async function policyFilesFor(
+  context: Pick<AssembleInput, 'rnessDir' | 'manifest'>,
+  scopes: readonly string[]
+): Promise<ContextFile[]> {
+  const chain = [
+    ...new Set(scopes.flatMap((s) => scopeChain(context.manifest, s))),
+  ]
+  const { files } = await assembleCollection(
+    join(context.rnessDir, 'policy'),
+    'policy',
+    chain
+  )
+  return files
+}
+
 /**
  * The policies that apply to a set of scopes (spec 0040 §2.3), resolved as
  * the other collections: the global ones, each scope's and those of what it
@@ -498,13 +515,30 @@ export async function policiesFor(
   scopes: readonly string[],
   options: PolicyOptions = {}
 ): Promise<Policy[]> {
-  const chain = [
-    ...new Set(scopes.flatMap((s) => scopeChain(context.manifest, s))),
-  ]
-  const { files } = await assembleCollection(
-    join(context.rnessDir, 'policy'),
-    'policy',
-    chain
-  )
-  return policiesIn(files, options)
+  return policiesIn(await policyFilesFor(context, scopes), options)
+}
+
+/**
+ * The policy files of a set of scopes that `policiesFor` leaves out for a
+ * problem of their own, `.rness/`-relative, but those that say `Disabled`:
+ * each would apply once valid, and `validate` says why it is not. A hook
+ * names them rather than skip them in silence.
+ */
+export async function policiesNotApplied(
+  context: Pick<AssembleInput, 'rnessDir' | 'manifest'>,
+  scopes: readonly string[]
+): Promise<string[]> {
+  const rels: string[] = []
+  for (const file of await policyFilesFor(context, scopes)) {
+    const rel = `policy/${file.rel}`
+    if (readPolicy(rel, file.body).policy !== null) continue
+    let status: unknown
+    try {
+      status = parseFrontMatter(file.body)?.['status']
+    } catch {
+      status = undefined
+    }
+    if (status !== 'Disabled') rels.push(rel)
+  }
+  return rels
 }

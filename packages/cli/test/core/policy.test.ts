@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
@@ -12,6 +12,7 @@ import {
   POLICY_STATUSES,
   RULE_KEYS,
   policiesFor,
+  policiesNotApplied,
   policiesOf,
   readPolicy,
 } from '../../src/core/policy.ts'
@@ -472,6 +473,27 @@ test('policiesFor: several scopes at once, each policy once; the disabled ones o
       ['global-on', 'Enabled'],
     ]
   )
+})
+
+test('policiesNotApplied: the invalid files of the scopes, but those that say Disabled', async (t) => {
+  const ws = await scoped(t)
+  await writeFile(
+    join(ws.rnessDir, 'policy', 'web', 'broken-off.md'),
+    policy(`status: Disabled\n${RULE}x: 1\n`)
+  )
+  await writeFile(
+    join(ws.rnessDir, 'policy', 'unreadable.md'),
+    '---\nstatus: [\n---\n\n# Unreadable\n'
+  )
+  assert.deepEqual(await policiesNotApplied(ws, ['web']), [
+    'policy/web/broken.md',
+    'policy/unreadable.md',
+  ])
+  assert.deepEqual(await policiesNotApplied(ws, ['api']), [
+    'policy/unreadable.md',
+  ])
+  // The valid ones still apply.
+  assert.ok((await policiesFor(ws, ['web'])).some((p) => p.name === 'web-on'))
 })
 
 test('policiesOf: the policies of a context already assembled, as the block gets it', async (t) => {

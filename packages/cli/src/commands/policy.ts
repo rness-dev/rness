@@ -1,0 +1,449 @@
+import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { basename, dirname, posix, resolve } from 'node:path'
+import type { Readable, Writable } from 'node:stream'
+
+import { loadManifest } from '../core/manifest.ts'
+import {
+  type AddedLinesFile,
+  type Ancestry,
+  type CommitMessageOptions,
+  type PolicyAction,
+  type PolicyFailure,
+  type PushUpdate,
+  checkAddedLines,
+  checkCommitMessage,
+  checkPush,
+  refusalText,
+} from '../core/policy-check.ts'
+import {
+  type PolicyWorkspace,
+  placeOf,
+  policiesByPath,
+  rnessOutputProofs,
+  scopesOf,
+} from '../core/policy-workspace.ts'
+import {
+  type Policy,
+  type PolicyCheck,
+  policiesFor,
+  policiesNotApplied,
+} from '../core/policy.ts'
+import { recordRefusals, refusalsOf } from '../core/refusals.ts'
+import { findWorkspace } from '../core/workspace.ts'
+
+/**
+ * `rness policy check <hook>`: what the git hooks of every clone run (spec
+ * 0040 §4.2). It reads what git hands the hook, applies the enabled
+ * policies of the clone's scopes, and answers as a hook: 1 and the refusal
+ * on stderr, else 0. It fails open: anything that keeps it from checking
+ * (no workspace, a clone that is no scope, its own error) is 0 and one line,
+ * `rness: policies not checked: <why>`. Hidden: a person never runs it.
+ * Like `hook`, one of the launcher's own commands: never installs, never
+ * delegates.
+ */
+
+export const POLICY_HOOKS = ['pre-commit', 'commit-msg', 'pre-push'] as const
+export type PolicyHook = (typeof POLICY_HOOKS)[number]
+
+/** What a hook's refusal says it refused. */
+const ACTION: Readonly<Record<PolicyHook, PolicyAction>> = {
+  'pre-commit': 'commit',
+  'commit-msg': 'commit',
+  'pre-push': 'push',
+}
+
+export interface PolicyIo {
+  /** What git writes to the hook: the ref updates of a push. */
+  input: Readable & { isTTY?: boolean }
+  error: Writable
+  /** The hook's environment, handed to git untouched (`GIT_INDEX_FILE`). */
+  env: NodeJS.ProcessEnv
+  /** Where git started the hook: the root of the work tree. */
+  cwd: string
+}
+
+const defaultIo = (): PolicyIo => ({
+  input: process.stdin,
+  error: process.stderr,
+  env: process.env,
+  cwd: process.cwd(),
+})
+
+const NOT_CHECKED = 'rness: policies not checked: '
+const NOT_APPLIED = 'rness: policy not applied (invalid, run rness validate): '
+
+/** What pins git to one repository in a hook's environment. */
+const REPOSITORY_VARIABLES = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_COMMON_DIR',
+  'GIT_INDEX_FILE',
+] as const
+
+/** A large staged diff is still read whole; past this, the hook fails open. */
+const MAX_OUTPUT = 256 * 1024 * 1024
+
+interface GitRun {
+  code: number
+  stdout: string
+  stderr: string
+}
+
+/**
+ * `git <args>` where the hook runs, with its environment as git set it:
+ * resolved with the exit code, rejected only when git cannot run.
+ */
+function runGit(args: readonly string[], io: PolicyIo): Promise<GitRun> {
+  return new Promise((ok, fail) => {
+    execFile(
+      'git',
+      [...args],
+      { cwd: io.cwd, env: io.env, maxBuffer: MAX_OUTPUT, encoding: 'utf8' },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          ok({ code: 0, stdout, stderr })
+          return
+        }
+        const code = (error as { code?: unknown }).code
+        if (typeof code === 'number') ok({ code, stdout, stderr })
+        else fail(error)
+      }
+    )
+  })
+}
+
+/** `git <args>`'s output; its first line of error when it fails. */
+async function git(args: readonly string[], io: PolicyIo): Promise<string> {
+  const run = await runGit(args, io)
+  if (run.code === 0) return run.stdout
+  const first =
+    run.stderr.split('\n').find((l) => l.trim() !== '') ?? `exit ${run.code}`
+  throw new Error(`git ${args[0] ?? ''} failed: ${first.trim()}`)
+}
+
+/** A config value, or null when unset or unreadable. */
+async function gitConfig(
+  args: readonly string[],
+  io: PolicyIo
+): Promise<string | null> {
+  const run = await runGit(['config', ...args], io)
+  return run.code === 0 ? run.stdout.trim() : null
+}
+
+/**
+ * The work tree the hook runs in (`top`), and the clone it belongs to: the
+ * same, or for a linked worktree its main work tree, which `sync` knows
+ * and whose hooks git runs.
+ */
+async function workTree(io: PolicyIo): Promise<{ top: string; clone: string }> {
+  let out: string
+  try {
+    out = await git(
+      ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'],
+      io
+    )
+  } catch {
+    throw new Error('not in the work tree of a git repository')
+  }
+  const [top, gitDir, commonDir] = out.split('\n').map((l) => l.trim())
+  if (top === undefined || top === '' || gitDir === undefined)
+    throw new Error('not in the work tree of a git repository')
+  const common = resolve(io.cwd, commonDir ?? gitDir)
+  const linked =
+    resolve(io.cwd, gitDir) !== common && basename(common) === '.git'
+  return { top, clone: linked ? dirname(common) : top }
+}
+
+interface StagedFile {
+  /** Relative to the work tree. */
+  path: string
+  added: { line: number; text: string }[]
+}
+
+const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+
+/** The added lines of one file's `-U0` patch, numbered in the new file. */
+function addedLines(patch: readonly string[]): StagedFile['added'] {
+  const added: StagedFile['added'] = []
+  let next = 0
+  let inHunk = false
+  for (const line of patch) {
+    const hunk = HUNK.exec(line)
+    if (hunk !== null) {
+      next = Number(hunk[1])
+      inHunk = true
+      continue
+    }
+    // Before the first hunk: the header (`+++ b/x` among it).
+    if (!inHunk) continue
+    if (line.startsWith('+')) {
+      added.push({ line: next, text: line.slice(1).replace(/\r$/, '') })
+      next += 1
+    } else if (line.startsWith(' ')) next += 1
+    // `-` lines and `\ No newline at end of file` take no line of the new file.
+  }
+  return added
+}
+
+/**
+ * The staged changes, each file with the lines it adds: the patch git
+ * commits (`git diff --cached -U0`), deletions left out, renames detected
+ * (a moved line is not added), binary files and submodules adding none.
+ * The names come from `-z`, in the patch's order, so no quoted path is
+ * parsed; two outputs that disagree make the hook fail open, said.
+ */
+async function stagedChanges(io: PolicyIo): Promise<StagedFile[]> {
+  const common = [
+    'diff',
+    '--cached',
+    '--no-color',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--ignore-submodules=all',
+    '-M',
+    '--diff-filter=d',
+  ]
+  const [names, patch] = await Promise.all([
+    git([...common, '--name-only', '-z'], io),
+    git([...common, '-U0'], io),
+  ])
+  const paths = names.split('\0').filter((n) => n !== '')
+  const sections: string[][] = []
+  for (const line of patch.split('\n')) {
+    // A patch line starts with +, -, space or \: this is always a header.
+    if (line.startsWith('diff --git ')) sections.push([])
+    else sections.at(-1)?.push(line)
+  }
+  if (sections.length !== paths.length)
+    throw new Error(
+      `the staged diff names ${sections.length} files and lists ${paths.length}`
+    )
+  return paths.map((path, i) => ({
+    path,
+    added: addedLines(sections[i] ?? []),
+  }))
+}
+
+/** The staged blob of a path (stage 0 of the index the hook was given). */
+const stagedBlob = (path: string, io: PolicyIo): Promise<string> =>
+  git(['cat-file', 'blob', `:0:${path}`], io)
+
+const uses = (policies: readonly Policy[], check: PolicyCheck): boolean =>
+  policies.some((p) => p.rules.some((r) => r.check === check))
+
+/**
+ * pre-commit: the lines the commit adds, each file under its own scope's
+ * policies. A file is read from the index only when one of its lines is
+ * refused before the exemptions; only those files' exemptions are proved.
+ */
+async function preCommit(
+  ws: PolicyWorkspace,
+  prefix: string,
+  scopes: readonly string[],
+  io: PolicyIo
+): Promise<PolicyFailure[]> {
+  if (!uses(await policiesFor(ws, scopes), 'added-lines')) return []
+  const files = (await stagedChanges(io))
+    .filter((f) => f.added.length > 0)
+    .map((f) => ({ ...f, at: posix.join(prefix, f.path) }))
+  const policiesOf = await policiesByPath(
+    ws,
+    files.map((f) => f.at)
+  )
+  const suspects = files.filter(
+    (f) =>
+      checkAddedLines([{ path: f.at, added: f.added, after: '' }], policiesOf)
+        .length > 0
+  )
+  if (suspects.length === 0) return []
+  const proofs = await rnessOutputProofs(
+    ws,
+    suspects.map((f) => f.at)
+  )
+  const checked: AddedLinesFile[] = []
+  for (const f of suspects)
+    checked.push({
+      path: f.at,
+      added: f.added,
+      after: await stagedBlob(f.path, io),
+      ...proofs,
+    })
+  return checkAddedLines(checked, policiesOf)
+}
+
+/** The effective comment character, or null when git's cannot be known. */
+function commentCharOf(
+  char: string | null,
+  string: string | null
+): string | null {
+  const set = [...new Set([char, string].filter((v) => v !== null))]
+  if (set.length === 0) return '#'
+  const only = set.length === 1 ? set[0] : undefined
+  return only === undefined || only === '' || only === 'auto' ? null : only
+}
+
+/**
+ * Whether git will cut the message at its scissors line, as far as a hook
+ * can tell: `commit.verbose` on (git then cuts under `-m` and `-F` too), or
+ * `commit.cleanup=scissors` with the message edited (git sets `GIT_EDITOR`
+ * to `:` for the hooks when no editor runs, and keeps a scissors block
+ * typed under `-m`). A command-line `-v`, `--no-verbose` or `--cleanup` is
+ * not visible to the hook: the first only makes the check stricter.
+ */
+async function scissorsOf(io: PolicyIo): Promise<CommitMessageOptions> {
+  const [verbose, cleanup, char, string] = await Promise.all([
+    gitConfig(['--bool', '--get', 'commit.verbose'], io),
+    gitConfig(['--get', 'commit.cleanup'], io),
+    gitConfig(['--get', 'core.commentChar'], io),
+    gitConfig(['--get', 'core.commentString'], io),
+  ])
+  const commentChar = commentCharOf(char, string)
+  if (commentChar === null) return { cutAtScissors: false }
+  const edited = io.env['GIT_EDITOR'] !== ':'
+  return {
+    cutAtScissors: verbose === 'true' || (cleanup === 'scissors' && edited),
+    commentChar,
+  }
+}
+
+/** commit-msg: the message file, `$1`, relative to the work tree's root. */
+async function commitMsg(
+  ws: PolicyWorkspace,
+  scopes: readonly string[],
+  top: string,
+  args: readonly string[],
+  io: PolicyIo
+): Promise<PolicyFailure[]> {
+  const policies = await policiesFor(ws, scopes)
+  if (!uses(policies, 'commit-message')) return []
+  const file = args[0]
+  if (file === undefined || file === '')
+    throw new Error('no commit message file was given')
+  let text: string
+  try {
+    text = await readFile(resolve(top, file), 'utf8')
+  } catch {
+    throw new Error(`the commit message file ${file} cannot be read`)
+  }
+  return checkCommitMessage(text, policies, await scissorsOf(io))
+}
+
+async function readAll(input: PolicyIo['input']): Promise<string> {
+  if (input.isTTY === true) return ''
+  let text = ''
+  for await (const chunk of input) text += String(chunk)
+  return text
+}
+
+const UPDATE = /^(\S+) ([0-9a-f]+) (\S+) ([0-9a-f]+)$/
+const ZEROS = /^0+$/
+
+/**
+ * pre-push: each ref update git hands the hook on stdin, `<local ref>
+ * <local object> <remote ref> <remote object>`, judged on what it does.
+ * `git merge-base --is-ancestor` is asked once per update that is neither
+ * a new branch nor a deletion: 0 ancestor, 1 not, else not here (128).
+ */
+async function prePush(
+  ws: PolicyWorkspace,
+  scopes: readonly string[],
+  io: PolicyIo
+): Promise<PolicyFailure[]> {
+  const policies = await policiesFor(ws, scopes)
+  if (!uses(policies, 'push')) return []
+  const updates: PushUpdate[] = []
+  for (const line of (await readAll(io.input)).split('\n')) {
+    const m = UPDATE.exec(line.trim())
+    if (m === null) continue
+    updates.push({
+      ref: m[3] ?? '',
+      localOid: m[2] ?? '',
+      remoteOid: m[4] ?? '',
+    })
+  }
+  const answers = new Map<string, Ancestry>()
+  for (const u of updates) {
+    if (ZEROS.test(u.remoteOid) || ZEROS.test(u.localOid)) continue
+    const key = `${u.remoteOid} ${u.localOid}`
+    if (answers.has(key)) continue
+    const { code } = await runGit(
+      ['merge-base', '--is-ancestor', u.remoteOid, u.localOid],
+      io
+    )
+    answers.set(
+      key,
+      code === 0 ? 'ancestor' : code === 1 ? 'not-ancestor' : 'missing'
+    )
+  }
+  return checkPush(
+    updates,
+    (remote, local) => answers.get(`${remote} ${local}`) ?? 'missing',
+    policies
+  )
+}
+
+const message = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e)
+
+const isHook = (value: string | undefined): value is PolicyHook =>
+  (POLICY_HOOKS as readonly unknown[]).includes(value)
+
+/**
+ * Run one hook's check. 1 with the refusal on stderr when a policy refuses;
+ * 0 otherwise, silent when it passes, one line when it could not check.
+ */
+export async function policyCheckCommand(
+  hook: string | undefined,
+  args: readonly string[],
+  io: PolicyIo = defaultIo()
+): Promise<number> {
+  const say = (line: string): void => {
+    io.error.write(`${line}\n`)
+  }
+  try {
+    if (!isHook(hook))
+      throw new Error(
+        `unknown hook ${JSON.stringify(hook ?? '')} (expected ${POLICY_HOOKS.join(', ')})`
+      )
+    const { top, clone } = await workTree(io)
+    const found = await findWorkspace(clone).catch(() => null)
+    if (found === null)
+      throw new Error(`.rness/ is not reachable from ${clone}`)
+    const ws: PolicyWorkspace = {
+      ...found,
+      manifest: await loadManifest(found.rnessDir),
+    }
+    const place = placeOf(ws, clone)
+    if (place.kind === 'outside')
+      throw new Error(
+        `${place.prefix} is no scope of .rness/rness.json (rness add declares it)`
+      )
+    const scopes = scopesOf(place)
+    const invalid = await policiesNotApplied(ws, scopes)
+    if (invalid.length > 0) say(`${NOT_APPLIED}${invalid.join(', ')}`)
+
+    const failures =
+      hook === 'pre-commit'
+        ? await preCommit(ws, place.prefix, scopes, io)
+        : hook === 'commit-msg'
+          ? await commitMsg(ws, scopes, top, args, io)
+          : await prePush(ws, scopes, io)
+    if (failures.length === 0) return 0
+    say(refusalText(failures, ACTION[hook]))
+    // The record is the clone's, where `startOf(clone)` keeps the sessions:
+    // in a linked worktree git exports `GIT_DIR` (the worktree's own) to
+    // the hook, and `gitPath(clone)` would follow it. Every git call of the
+    // check is done, and this process ends with the hook.
+    for (const name of REPOSITORY_VARIABLES) delete process.env[name]
+    // A git hook knows the session only when Claude Code's Bash tool ran it.
+    await recordRefusals(
+      clone,
+      refusalsOf(failures, hook, io.env['CLAUDE_CODE_SESSION_ID'])
+    )
+    return 1
+  } catch (e) {
+    say(`${NOT_CHECKED}${message(e)}`)
+    return 0
+  }
+}

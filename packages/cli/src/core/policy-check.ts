@@ -1,5 +1,5 @@
 import { BLOCK_FILES } from './agent-targets.ts'
-import { isCurrentBlock, parseHeader } from './block.ts'
+import { isCurrentBlock } from './block.ts'
 import { findBlock } from './merge.ts'
 import {
   NON_FAST_FORWARD,
@@ -40,6 +40,26 @@ export interface AddedLinesFile {
    * exemption, since a path that looks like rness's proves nothing.
    */
   readonly isRnessOutput?: (path: string, after: string) => boolean
+  /**
+   * The hash of the block a fresh render gives for this path, null where
+   * sync writes none. Absent or null: no block exemption, since the hash a
+   * block carries is written by whoever wrote the block.
+   */
+  readonly expectedBlockHash?: (path: string) => string | null
+}
+
+export interface CommitMessageOptions {
+  /**
+   * Whether git will cut the message at its scissors block. False by
+   * default: under `-m` and `-F` git keeps a scissors block typed in the
+   * message and what follows it, so every line is checked.
+   */
+  readonly cutAtScissors?: boolean
+  /**
+   * The comment character git cuts at (`core.commentChar`), `#` by
+   * default: a block written with another is kept by git, and checked.
+   */
+  readonly commentChar?: string
 }
 
 export interface PushUpdate {
@@ -60,25 +80,24 @@ const LINE_CUT = 120
 /**
  * Git's scissors block, as `git commit -v` writes it (git 2.56, confirmed
  * 2026-11-03): the comment character, the dashed line, then two explanation
- * lines with the same character. Under `-m` and `-F` git keeps a lookalike
- * and what follows in the commit, so only the whole block cuts.
+ * lines with the same character. Git cuts at the dashed line alone, with its
+ * own comment character only; the whole block is asked for here, so the cut
+ * is never earlier than git's.
  */
-const SCISSORS = /^(\S+) -{24} >8 -{24}$/
+const SCISSORS_LINE = '------------------------ >8 ------------------------'
 const SCISSORS_EXPLAIN = [
   'Do not modify or remove the line above.',
   'Everything below it will be ignored.',
 ]
 
-function scissorsAt(lines: readonly string[]): number {
-  return lines.findIndex((line, i) => {
-    const char = SCISSORS.exec(line.trimEnd())?.[1]
-    return (
-      char !== undefined &&
+function scissorsAt(lines: readonly string[], char: string): number {
+  return lines.findIndex(
+    (line, i) =>
+      line.trimEnd() === `${char} ${SCISSORS_LINE}` &&
       SCISSORS_EXPLAIN.every(
         (text, k) => lines[i + 1 + k]?.trimEnd() === `${char} ${text}`
       )
-    )
-  })
+  )
 }
 
 /** A pattern per rule, compiled once; one that fails to compile is skipped (hooks fail open). */
@@ -100,27 +119,36 @@ function compile(policies: readonly Policy[], check: PolicyRule['check']) {
   return compiled
 }
 
-/** Is the rness block of `lines` one that sync wrote, untouched? Only block files have one. */
+/**
+ * The span of the one rness block of `lines`, when it is the block a fresh
+ * render gives: a block file, one block, its header's hash and its body's
+ * both the expected one. Never the hash the block names for itself.
+ */
 function currentBlockSpan(
   path: string,
-  lines: string[]
+  lines: string[],
+  expected: string | null
 ): { begin: number; end: number } | null {
+  if (expected === null) return null
   const base = path.split('/').pop() ?? ''
   if (!BLOCK_FILES.includes(base)) return null
   const found = findBlock(lines)
   if (found.kind !== 'one') return null
   const block = lines.slice(found.begin, found.end + 1)
-  const hash = parseHeader(block[1] ?? '')?.hash
-  return hash !== undefined && isCurrentBlock(block, hash) ? found : null
+  return isCurrentBlock(block, expected) ? found : null
 }
 
-/** Every line of the message up to git's scissors line, comment lines included. */
+/**
+ * Every line of the message, comment lines included; only when git will cut
+ * there (`cutAtScissors`), none after its scissors block.
+ */
 export function checkCommitMessage(
   text: string,
-  policies: readonly Policy[]
+  policies: readonly Policy[],
+  { cutAtScissors = false, commentChar = '#' }: CommitMessageOptions = {}
 ): PolicyFailure[] {
   const lines = text.split(/\r\n|\r|\n/)
-  const scissors = scissorsAt(lines)
+  const scissors = cutAtScissors ? scissorsAt(lines, commentChar) : -1
   const kept = scissors === -1 ? lines : lines.slice(0, scissors)
   const rules = compile(policies, 'commit-message')
   const failures: PolicyFailure[] = []
@@ -138,9 +166,9 @@ export function checkCommitMessage(
 }
 
 /**
- * The lines a change adds. rness's own outputs are exempt, each proved: a
- * file the caller says sync writes whole, and the lines inside a current
- * rness block (hash checked) of a block file.
+ * The lines a change adds. rness's own outputs are exempt, each proved by
+ * the caller: a file it says sync writes whole, and the lines inside the
+ * rness block of a block file when the block hashes to what it expects.
  */
 export function checkAddedLines(
   files: readonly AddedLinesFile[],
@@ -151,7 +179,11 @@ export function checkAddedLines(
     if (file.isRnessOutput?.(file.path, file.after) === true) continue
     const rules = compile(policiesOf(file.path), 'added-lines')
     if (rules.length === 0) continue
-    const span = currentBlockSpan(file.path, file.after.split(/\r\n|\r|\n/))
+    const span = currentBlockSpan(
+      file.path,
+      file.after.split(/\r\n|\r|\n/),
+      file.expectedBlockHash?.(file.path) ?? null
+    )
     // Line numbers are 1-based, the span's indexes 0-based and inclusive.
     const inBlock = (n: number): boolean =>
       span !== null && n >= span.begin + 1 && n <= span.end + 1

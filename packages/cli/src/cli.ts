@@ -341,6 +341,22 @@ function buildProgram(state: RunState): Command {
       state.code = await writtenFilesCommand(opts)
     })
 
+  // What the git hooks of every clone run (spec 0040 §4.2): loaded only then.
+  program
+    .command('policy', { hidden: true })
+    .command('check')
+    .argument('[hook]', 'pre-commit, commit-msg or pre-push')
+    .argument('[args...]', 'what git hands the hook')
+    // git's arguments are the hook's, never options of rness: a refusal
+    // from commander would abort the commit instead of failing open.
+    .allowUnknownOption()
+    .allowExcessArguments()
+    .helpOption(false)
+    .action(async (hook: string | undefined, args: string[]) => {
+      const { policyCheckCommand } = await import('./commands/policy.ts')
+      state.code = await policyCheckCommand(hook, args)
+    })
+
   // What Claude Code runs for the hooks the Claude target writes (spec 0015).
   program
     .command('hook', { hidden: true })

@@ -113,6 +113,21 @@ export function writtenFiles(manifest: Manifest): string[] {
 }
 
 /**
+ * The files `sync` writes whole (spec 0016 §3.2) for the declared agents,
+ * by workspace-relative path (`org/<repo>/.claude/skills/rness/...`), with
+ * the text it writes there: what proves a file is rness's own output.
+ */
+export async function wholeFileContents(
+  root: string,
+  manifest: Manifest
+): Promise<Map<string, string>> {
+  const contents = new Map<string, string>()
+  for (const owned of await filesOf(root, manifest, declared(manifest)))
+    if ('content' in owned) contents.set(owned.label, owned.content)
+  return contents
+}
+
+/**
  * Compile the declared agents into every clone (spec 0011 §3.3), or with
  * `check` only say what is missing. Unsupported names are the caller's to
  * refuse; they are skipped here.

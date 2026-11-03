@@ -21,13 +21,20 @@ process.stdout.on('error', (e: NodeJS.ErrnoException) => {
 // terminates before Node drains an async stdout pipe, truncating piped output
 // at the ~64 KiB pipe buffer (breaks `rness context --json | jq`, `$(...)`).
 async function main(): Promise<number> {
+  const argv = process.argv.slice(2)
   if (!isSupportedNode(process.versions.node)) {
+    // A git hook fails open (spec 0040 §4.2): an old Node never blocks a commit.
+    if (argv[0] === 'policy') {
+      process.stderr.write(
+        `rness: policies not checked: rness needs Node ${MIN_NODE_LABEL} or newer (running ${process.version})\n`
+      )
+      return 0
+    }
     process.stderr.write(
       `rness needs Node ${MIN_NODE_LABEL} or newer (running ${process.version})\n`
     )
     return 1
   }
-  const argv = process.argv.slice(2)
   const skipDelegation =
     OWN_COMMANDS.includes(argv[0] ?? '') ||
     process.env['RNESS_NO_DELEGATE'] === '1'

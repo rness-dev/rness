@@ -67,23 +67,51 @@ const scissors = (c: string): string =>
     `${c} Everything below it will be ignored.`,
   ].join('\n')
 
-test('commit-message: git exact scissors block truncates', () => {
+const CUT = { cutAtScissors: true }
+
+test('commit-message: by default every line is checked, past an exact scissors block too', () => {
   for (const c of ['#', ';']) {
     const msg = `feat: x\n${scissors(c)}\nCo-Authored-By: Claude\n`
-    assert.deepEqual(checkCommitMessage(msg, [TRAILERS]), [])
+    assert.equal(
+      checkCommitMessage(msg, [TRAILERS])[0]?.where,
+      'commit message, line 5'
+    )
+    assert.equal(
+      checkCommitMessage(msg, [TRAILERS], { cutAtScissors: false }).length,
+      1
+    )
   }
 })
 
-test('commit-message: a lookalike scissors line does not truncate', () => {
+test('commit-message: cutAtScissors (git will cut) truncates at the exact scissors block', () => {
+  const msg = (c: string) => `feat: x\n${scissors(c)}\nCo-Authored-By: Claude\n`
+  assert.deepEqual(checkCommitMessage(msg('#'), [TRAILERS], CUT), [])
+  assert.deepEqual(
+    checkCommitMessage(msg(';'), [TRAILERS], { ...CUT, commentChar: ';' }),
+    []
+  )
+})
+
+test('commit-message: a scissors block of another comment character is kept by git, and checked', () => {
+  const msg = (c: string) => `feat: x\n${scissors(c)}\nCo-Authored-By: Claude\n`
+  assert.equal(checkCommitMessage(msg(';'), [TRAILERS], CUT).length, 1)
+  assert.equal(
+    checkCommitMessage(msg('#'), [TRAILERS], { ...CUT, commentChar: ';' })
+      .length,
+    1
+  )
+})
+
+test('commit-message: a lookalike scissors line does not truncate, even when git cuts', () => {
   const bare = `feat: x\n# ------------------------ >8 ------------------------\nCo-Authored-By: Claude\n`
   assert.equal(
-    checkCommitMessage(bare, [TRAILERS])[0]?.where,
+    checkCommitMessage(bare, [TRAILERS], CUT)[0]?.where,
     'commit message, line 3'
   )
   const half = `feat: x\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\nCo-Authored-By: Claude\n`
-  assert.equal(checkCommitMessage(half, [TRAILERS]).length, 1)
+  assert.equal(checkCommitMessage(half, [TRAILERS], CUT).length, 1)
   const mixed = `feat: x\n# ------------------------ >8 ------------------------\n; Do not modify or remove the line above.\n# Everything below it will be ignored.\nCo-Authored-By: Claude\n`
-  assert.equal(checkCommitMessage(mixed, [TRAILERS]).length, 1)
+  assert.equal(checkCommitMessage(mixed, [TRAILERS], CUT).length, 1)
 })
 
 test('commit-message: a comment line before the scissors is checked', () => {
@@ -141,10 +169,22 @@ const wholeFile = (block: string): string =>
 const addedEverywhere = (text: string): [number, string][] =>
   text.split('\n').map((l, i) => [i + 1, l] as [number, string])
 
-test('added-lines: a current block of a block file is exempt, outside it is not', () => {
+/** The hash a fresh render of the block gives, as the caller knows it. */
+const expecting =
+  (hash: string | null) =>
+  (f: AddedLinesFile): AddedLinesFile => ({
+    ...f,
+    expectedBlockHash: () => hash,
+  })
+
+test('added-lines: the block a fresh render gives is exempt, outside it is not', () => {
   const after = wholeFile(blockOf(BODY))
   const f = checkAddedLines(
-    [file('AGENTS.md', after, addedEverywhere(after))],
+    [
+      expecting(blockHash(BODY))(
+        file('AGENTS.md', after, addedEverywhere(after))
+      ),
+    ],
     () => [NO_DASH_MSG]
   )
   assert.deepEqual(
@@ -153,10 +193,44 @@ test('added-lines: a current block of a block file is exempt, outside it is not'
   )
 })
 
+test('added-lines: without an expected hash from the caller, a block gives no exemption', () => {
+  const after = wholeFile(blockOf(BODY))
+  const added = addedEverywhere(after)
+  for (const f of [
+    file('AGENTS.md', after, added),
+    expecting(null)(file('AGENTS.md', after, added)),
+  ])
+    assert.ok(
+      checkAddedLines([f], () => [NO_DASH_MSG]).some((x) =>
+        x.line.startsWith('intro')
+      )
+    )
+})
+
+test('added-lines: a block whose header and body agree, but not with the expected hash, is checked', () => {
+  // Written by hand with its hash recomputed: self-consistent, not sync's.
+  const forged = `forged ${DASH}\n\n## Rules\nrule ${DASH}`
+  const after = wholeFile(blockOf(forged))
+  const f = checkAddedLines(
+    [
+      expecting(blockHash(BODY))(
+        file('AGENTS.md', after, addedEverywhere(after))
+      ),
+    ],
+    () => [NO_DASH_MSG]
+  )
+  assert.ok(f.some((x) => x.line.startsWith('forged')))
+  assert.ok(f.some((x) => x.line.startsWith('rule')))
+})
+
 test('added-lines: markers in a file that is not a block file give no exemption', () => {
   const after = wholeFile(blockOf(BODY))
   const f = checkAddedLines(
-    [file('docs/notes.md', after, addedEverywhere(after))],
+    [
+      expecting(blockHash(BODY))(
+        file('docs/notes.md', after, addedEverywhere(after))
+      ),
+    ],
     () => [NO_DASH_MSG]
   )
   assert.ok(f.some((x) => x.line.startsWith('intro')))
@@ -169,10 +243,28 @@ test('added-lines: a hand-edited block (hash mismatch) gives no exemption', () =
   )
   const after = wholeFile(edited)
   const f = checkAddedLines(
-    [file('CLAUDE.md', after, addedEverywhere(after))],
+    [
+      expecting(blockHash(BODY))(
+        file('CLAUDE.md', after, addedEverywhere(after))
+      ),
+    ],
     () => [NO_DASH_MSG]
   )
   assert.ok(f.some((x) => x.line.startsWith('intro, edited')))
+})
+
+test('added-lines: two blocks in one file give no exemption', () => {
+  const block = blockOf(BODY)
+  const after = [block, block].join('\n')
+  const f = checkAddedLines(
+    [
+      expecting(blockHash(BODY))(
+        file('AGENTS.md', after, addedEverywhere(after))
+      ),
+    ],
+    () => [NO_DASH_MSG]
+  )
+  assert.ok(f.some((x) => x.line.startsWith('intro')))
 })
 
 test('added-lines: a file under .claude/skills/rness/ is checked unless the predicate proves it', () => {
