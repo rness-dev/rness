@@ -38,8 +38,9 @@ import { findWorkspace } from '../core/workspace.ts'
  * 0040 §4.2). It reads what git hands the hook, applies the enabled
  * policies of the clone's scopes, and answers as a hook: 20 and the refusal
  * on stderr (the hook scripts turn it into 1), else 0. It fails open: anything that keeps it from checking
- * (no workspace, a clone that is no scope, its own error) is 0 and one line,
- * `rness: policies not checked: <why>`. Hidden: a person never runs it.
+ * (no workspace, its own error) is 0 and one line,
+ * `rness: policies not checked: <why>`; a clone that holds no scope, where
+ * no policy applies, is 0 and silent. Hidden: a person never runs it.
  * Like `hook`, one of the launcher's own commands: never installs, never
  * delegates.
  */
@@ -424,10 +425,9 @@ export async function policyCheckCommand(
       manifest: await loadManifest(found.rnessDir),
     }
     const place = placeOf(ws, clone)
-    if (place.kind === 'outside')
-      throw new Error(
-        `${place.prefix} is no scope of .rness/rness.json (rness add declares it)`
-      )
+    // A clone no scope declares: no policy applies there, so nothing is left
+    // unchecked and there is nothing to say (sync writes no hook there).
+    if (place.kind === 'outside') return 0
     const scopes = scopesOf(place)
     const invalid = await policiesNotApplied(ws, scopes)
     // Said once the check is done: a failure after it says one line only.

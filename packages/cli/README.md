@@ -342,9 +342,13 @@ scopes, `added-lines` applies each file's deepest scope; `commit-message` and
 `push` apply every scope of the clone.
 
 **Git hooks.** `create`, `add` and `sync` write `pre-commit`, `commit-msg` and
-`pre-push` in the hooks directory of every clone of `org/` (never `.rness`,
-whose scaffold `.githooks/` carries the same three, and never under
-`sync --check`), whatever the policies: each passes at once while no enabled
+`pre-push` in the hooks directory of every clone of `org/` that `rness.json`
+declares, as a repository or as the home of a scope (never `.rness`, whose
+scaffold `.githooks/` carries the same three, and never under
+`sync --check`). A clone it does not declare gets none. In a clone that
+holds no scope, no policy applies: `rness policy check` passes in silence
+and the guard does not check its files. The hooks are written whatever the
+policies: each passes at once while no enabled
 policy uses its check, so an `Enabled` merged in `.rness` applies without a
 `sync`. They are local, never committed, mode 0755, carry a marker line and
 call the pinned CLI by its absolute path
@@ -356,7 +360,8 @@ own hook manager (`node '<ws>/.rness/node_modules/@rness/cli/dist/bin/rness.js' 
 
 **The guard.** The `PreToolUse` hook gains two entries. On `Edit` and `Write`
 it checks the lines the edit adds against the `added-lines` rules of the
-file's scope, anywhere in the workspace, before the file is written. On
+file's scope, anywhere in the workspace but a clone that holds no scope,
+before the file is written. On
 `Bash` it parses every command and refuses, while an enabled policy applies,
 a bypass of the hooks: `git commit --no-verify` or `-n`, `git push
 --no-verify`, `git merge` or `pull --no-verify`, `git -c core.hooksPath=...`,
@@ -1117,7 +1122,7 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - **Policies as data** (spec 0040): a `policy/` collection of rules refused
   at commit, at push and on edit, for every local agent. Three checks
   (`commit-message`, `added-lines`, `push`), the `## Policies` section of the
-  block, git hooks written by `create`, `add` and `sync` in every clone
+  block, git hooks written by `create`, `add` and `sync` in every declared clone
   (reported when a foreign hook or `core.hooksPath` is left alone), the
   Claude Code guard on `Edit`, `Write` and `Bash`, refusals on record in the
   session summary and in a Policies tab of `rness status`. The scaffold gains

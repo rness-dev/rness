@@ -1046,6 +1046,25 @@ test('pre-tool-use: a disabled policy, or a policy of another scope, does not re
   assert.match(todo.err, /^rness: policy no-todo refused this edit\n/)
 })
 
+test('pre-tool-use: a file of a clone that holds no scope is not checked, as its hooks check nothing', async (t) => {
+  const { root } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const stray = join(root, 'org', 'stray')
+  await mkdir(stray)
+  await git(['init', '-q', '-b', 'main'], stray)
+  const file = join(stray, 'a.md')
+  await writeFile(file, 'x\n')
+  for (const input of [
+    editOf(file, stray, 'x', `x ${DASH}`),
+    writeOf(join(stray, 'new.md'), stray, `y ${DASH}\n`),
+  ])
+    assert.deepEqual(await hook('pre-tool-use', input), {
+      code: 0,
+      out: '',
+      err: '',
+    })
+  assert.deepEqual(await recorded(stray), [])
+})
+
 test('pre-tool-use: in .rness, a refused line and a contract problem come in one refusal', async (t) => {
   const { root } = await policed(t, {
     'policy/no-em-dash.md': POLICY,

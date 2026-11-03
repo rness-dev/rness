@@ -763,7 +763,20 @@ test('pre-push: a remote object not here is refused, with a fix to fetch first',
 
 // --- failing open ----------------------------------------------------------------
 
-test('fails open with one line: no workspace, no scope, a broken rness.json, no repository, no hook', async (t) => {
+test('a clone that holds no scope passes silently: nothing applies there', async (t) => {
+  const { stray } = await workspace(t)
+  await put(stray, 'a.md', `x ${DASH}\n`)
+  await git(['add', 'a.md'], stray)
+  assert.deepEqual(await check('pre-commit', stray), { code: 0, err: '' })
+  await put(stray, 'msg', 'Co-Authored-By: Claude <noreply@anthropic.com>\n')
+  assert.deepEqual(await check('commit-msg', stray, { args: ['msg'] }), {
+    code: 0,
+    err: '',
+  })
+  assert.deepEqual(await readRefusals(stray), [])
+})
+
+test('fails open with one line: no workspace, a broken rness.json, no repository, no hook', async (t) => {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-alone-')))
   t.after(() => rm(base, { recursive: true, force: true }))
   await git(['init', '-q', '-b', 'main'], base)
@@ -775,12 +788,6 @@ test('fails open with one line: no workspace, no scope, a broken rness.json, no 
   })
 
   const { root, stray } = await workspace(t)
-  await put(stray, 'a.md', `x ${DASH}\n`)
-  await git(['add', 'a.md'], stray)
-  assert.deepEqual(await check('pre-commit', stray), {
-    code: 0,
-    err: 'rness: policies not checked: org/stray is no scope of .rness/rness.json (rness add declares it)\n',
-  })
 
   const plain = join(base, 'plain')
   await mkdir(plain)

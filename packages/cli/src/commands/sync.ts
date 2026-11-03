@@ -205,13 +205,24 @@ function unreadWhy(dir: string, clones: ReadonlySet<string>): string {
   return `names are lowercase: ${rnessCommand()} add ${lower} renames it org/${lower}`
 }
 
-/** The clones whose hooks are written: all of them, or the one owning `--scope`. */
+/**
+ * The clones whose hooks are written: those `rness.json` declares (a
+ * repository, or the home of a scope), or the one owning `--scope`. An
+ * undeclared clone gets none: no policy applies there, and its hooks would
+ * only say so on every commit.
+ */
 function hookClones(
   manifest: Manifest,
   only: string | undefined,
-  clones: readonly string[]
+  clones: readonly string[],
+  scoped: ReadonlySet<string | undefined>
 ): string[] {
-  if (only === undefined) return [...new Set(clones)]
+  if (only === undefined)
+    return [
+      ...new Set(
+        clones.filter((n) => Object.hasOwn(manifest.repos, n) || scoped.has(n))
+      ),
+    ]
   const entry = manifest.scopes[only]
   const owner = entry?.path.split('/')[1]
   return owner !== undefined && clones.includes(owner) ? [owner] : []
@@ -625,12 +636,14 @@ export async function syncCommand(
       }
 
       // 4. The git hooks of the policies, and the refusal records, in every
-      // clone of the selection: never `.rness`, never under --check.
+      // declared clone of the selection: never `.rness`, never under --check.
       if (!check && (await exists(join(ws.root, 'org')))) {
-        for (const name of hookClones(manifest, opts.scope, [
-          ...clones,
-          ...clonedNow,
-        ])) {
+        for (const name of hookClones(
+          manifest,
+          opts.scope,
+          [...clones, ...clonedNow],
+          scoped
+        )) {
           if (misnamed.has(name)) continue
           const dir = join(ws.root, 'org', name)
           if (!(await exists(dir))) continue

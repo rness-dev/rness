@@ -54,9 +54,19 @@ export function scopesOf(place: WorkTreePlace): string[] {
 }
 
 /**
+ * Whether `path` lies in a clone of `org/` that holds no scope: there, as
+ * for its hooks (`placeOf` says `outside`), no policy applies.
+ */
+function inUndeclaredClone(ws: PolicyWorkspace, path: string): boolean {
+  const [top, name, ...rest] = path.split('/')
+  if (top !== 'org' || name === undefined || rest.length === 0) return false
+  return placeOf(ws, resolve(ws.root, 'org', name)).kind === 'outside'
+}
+
+/**
  * The enabled policies of each path's own scope, the deepest whose path
  * holds it (the global ones for a path in no scope), read once per scope.
- * A path not given here gets none.
+ * A path in a clone that holds no scope, or not given here, gets none.
  */
 export async function policiesByPath(
   ws: PolicyWorkspace,
@@ -65,6 +75,7 @@ export async function policiesByPath(
   const scopeOf = new Map<string, string | null>()
   const byScope = new Map<string | null, Policy[]>()
   for (const path of paths) {
+    if (inUndeclaredClone(ws, path)) continue
     const scope = resolveScope(ws.manifest, path)
     scopeOf.set(path, scope)
     if (!byScope.has(scope))

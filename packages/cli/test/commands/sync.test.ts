@@ -1052,6 +1052,19 @@ test('hooks: written in every clone, never in .rness, and said once', async (t) 
   assert.doesNotMatch(again.out, /git hooks/)
 })
 
+test('hooks: a clone rness.json does not declare gets none, and no line but its own', async (t) => {
+  const root = await hooksWorkspace(t)
+  const stray = join(root, 'org', 'stray')
+  await mkdir(stray)
+  await git(['init', '-q', '-b', 'main'], stray)
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /not in rness\.json: stray \(/)
+  assert.doesNotMatch(r.out, /org\/stray git hooks/)
+  assert.match(r.out, /updated {2}org\/web git hooks/)
+  await assert.rejects(access(join(stray, '.git', 'hooks', 'pre-commit')))
+})
+
 test('hooks: --scope installs those of that scope only; --check writes none', async (t) => {
   const root = await hooksWorkspace(t)
   const check = await sync(['--check', '--cwd', root])
