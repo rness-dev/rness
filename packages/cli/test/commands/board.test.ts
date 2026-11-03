@@ -264,11 +264,16 @@ test('push in a blank workspace: no organization, refused', async (t) => {
 test('a board not created yet, named after no collection: refused before GitHub is asked anything', async (t) => {
   await machine(t)
   const g = await board(t, { other: asUser('repo, project') })
-  for (const name of ['standards', 'nowhere']) {
+  for (const name of ['standards', 'policy', 'nowhere']) {
     const cwd = await makeWorkspace(t, {
       org: 'acme',
       boards: { [name]: 'collection' },
-      files: FILES,
+      // A policy carries a status, and still never becomes a card (spec 0040 §6).
+      files: {
+        ...FILES,
+        'policy/no-em-dash.md':
+          '---\nstatus: Enabled\nrules:\n  - check: added-lines\n    deny: x\n    fix: y\n---\n\n# No x\n',
+      },
     })
     const r = await run(() =>
       boardPushCommand(
@@ -2354,7 +2359,7 @@ test('rness pulse create marketing: declared by its preset, then pushed without 
 test('rness pulse create <collection>: a directory with no documents, refused before rness.json or GitHub is written', async (t) => {
   const { g, cwd } = await beforeMarketing(t)
   const before = await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
-  for (const collection of ['standards', 'nowhere']) {
+  for (const collection of ['standards', 'policy', 'nowhere']) {
     const r = await run(() =>
       pulseCreateCommand(
         collection,

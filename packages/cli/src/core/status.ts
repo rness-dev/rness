@@ -34,6 +34,12 @@ export interface StatusTab {
   name: string
   label: string
   rows: StatusRow[]
+  /**
+   * Lines shown under the rows, not rows: the refusals of the `Policies`
+   * tab (spec 0040 §6). One line says there is nothing; else the first is
+   * the heading and the others its items. Absent for a tab of documents only.
+   */
+  notes?: string[]
 }
 
 /** The contract's collections that carry a status: always shown. */
@@ -161,11 +167,13 @@ const DONE: ReadonlySet<string> = new Set([
   'implemented',
   'completed',
   'published',
+  'enabled',
 ])
 const DROPPED: ReadonlySet<string> = new Set([
   'rejected',
   'superseded',
   'abandoned',
+  'disabled',
 ])
 
 /** What a status says at a glance (spec 0016 §2.1), whatever its case. */
@@ -189,14 +197,22 @@ export function statusMarkdown(
     out.push(`## ${tab.label} (${tab.rows.length})`, '')
     if (tab.rows.length === 0) {
       out.push('_Nothing yet._', '')
-      continue
+    } else {
+      out.push('| Id | Title | Status |', '| --- | --- | --- |')
+      for (const row of tab.rows)
+        out.push(
+          `| ${cell(row.id)} | ${cell(row.title)} | ${cell(row.status ?? '?')} |`
+        )
+      out.push('')
     }
-    out.push('| Id | Title | Status |', '| --- | --- | --- |')
-    for (const row of tab.rows)
+    const [heading, ...items] = tab.notes ?? []
+    if (heading !== undefined)
       out.push(
-        `| ${cell(row.id)} | ${cell(row.title)} | ${cell(row.status ?? '?')} |`
+        heading,
+        '',
+        ...items.map((n) => `- ${n}`),
+        ...(items.length > 0 ? [''] : [])
       )
-    out.push('')
   }
   return out.join('\n')
 }

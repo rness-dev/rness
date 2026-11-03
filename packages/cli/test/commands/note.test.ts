@@ -16,6 +16,7 @@ import {
   noteCommand,
   sessionFrom,
 } from '../../src/commands/note.ts'
+import { recordRefusals } from '../../src/core/refusals.ts'
 import type { Terminal } from '../../src/core/terminal.ts'
 import { serverTools } from '../../src/mcp/tools.ts'
 import { capture } from '../helpers/capture.ts'
@@ -477,6 +478,64 @@ test('summary skipped with neither a commit nor a note, or with several plans an
   await commitIn(several.api, 'c.ts')
   assert.equal(await sessionEnd(several.g, several.root), 0)
   assert.deepEqual(several.g.comments, [])
+})
+
+const refused = (
+  policy: string,
+  by: 'pre-commit' | 'commit-msg' = 'commit-msg'
+) => ({
+  policy,
+  check: 'commit-message' as const,
+  by,
+})
+
+test('summary: the policies line counts the refusals since the start, most refused first then by name; one refusal is singular', async (t) => {
+  const { g, root, api } = await journaled(t)
+  await recordStart(api, SESSION, Date.now() - 60_000)
+  await recordRefusals(api, [
+    refused('no-em-dash'),
+    refused('no-agent-trailers'),
+    refused('no-em-dash'),
+    refused('a-policy'),
+  ])
+  await commitIn(api, 'a.ts')
+  assert.equal(await sessionEnd(g, root), 0)
+  const body = g.comments.at(-1)?.body ?? ''
+  assert.match(
+    body,
+    /\nPolicies: 4 refusals \(no-em-dash 2, a-policy 1, no-agent-trailers 1\)\n/
+  )
+
+  const one = await journaled(t)
+  await recordStart(one.api, SESSION, Date.now() - 60_000)
+  await recordRefusals(one.api, [refused('no-em-dash')])
+  await commitIn(one.api, 'a.ts')
+  assert.equal(await sessionEnd(one.g, one.root), 0)
+  assert.match(
+    one.g.comments.at(-1)?.body ?? '',
+    /\nPolicies: 1 refusal \(no-em-dash 1\)\n/
+  )
+})
+
+test('summary: a refusal alone posts it, on the one plan; no refusal, no line; a record before the start is not counted', async (t) => {
+  const { g, root, api } = await journaled(t)
+  const start = Date.now() - 60_000
+  await recordStart(api, SESSION, start)
+  await recordRefusals(api, [refused('no-em-dash')], start - 1000)
+  assert.equal(await sessionEnd(g, root), 0)
+  assert.equal(g.comments.length, 0)
+
+  await recordStart(api, SESSION, start)
+  await recordRefusals(api, [refused('no-force-push')])
+  assert.equal(await sessionEnd(g, root), 0)
+  const plan = g.issues.find((i) => i.title === '0002 - Limits')
+  const posted = g.comments.filter((c) => c.body.includes('summary -->'))
+  assert.equal(posted.length, 1)
+  assert.equal(posted[0]?.subjectId, plan?.id)
+  assert.match(
+    posted[0]?.body ?? '',
+    /^\*\*Session summary\*\* · claude · 1a2b3c4d · 1 min\n\nBranch `feat\/limits` · no commit\nPolicies: 1 refusal \(no-force-push 1\)\n\n<!-- rness note 1a2b3c4d summary -->$/
+  )
 })
 
 test('a summary GitHub refuses: recorded for the next session start, naming the board and the action', async (t) => {

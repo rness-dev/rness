@@ -101,3 +101,71 @@ test('a terminal smaller than the frame still renders, one row at least', () => 
   for (const line of renderView({ tab: 1, top: 0 }, TABS, 'acme', 4, 8, LOOK))
     assert.ok([...line].length <= 4, line)
 })
+
+test('the Policies tab: its policies, then the refusals under them; an empty tab keeps one line of notes', () => {
+  const policies: StatusTab = {
+    name: 'policy',
+    label: 'Policies',
+    rows: [
+      {
+        id: 'no-em-dash',
+        title: 'global',
+        status: 'Enabled',
+        path: 'policy/no-em-dash.md',
+      },
+      {
+        id: 'no-todo',
+        title: 'api',
+        status: 'Disabled',
+        path: 'policy/api/no-todo.md',
+      },
+    ],
+    notes: [
+      'Refusals of the last 7 days',
+      'no-em-dash: 3 refusals, last 2026-11-03 10:00',
+      'no-todo: 1 refusal, last 2026-11-02 12:00',
+    ],
+  }
+  assert.deepEqual(
+    renderView({ tab: 0, top: 0 }, [policies], 'acme', 50, 12, LOOK),
+    [
+      ' rness · acme',
+      ' [Policies (2)]',
+      ` ${'─'.repeat(48)}`,
+      '  no-em-dash  global                     Enabled ',
+      '  no-todo     api                        Disabled',
+      '',
+      '  Refusals of the last 7 days',
+      '    no-em-dash: 3 refusals, last 2026-11-03 10:00',
+      '    no-todo: 1 refusal, last 2026-11-02 12:00',
+      '',
+      ` ${'─'.repeat(48)}`,
+      '  ←/→ tab · ↑/↓ scroll · q close',
+    ].slice(0, 12)
+  )
+  const empty: StatusTab = {
+    name: 'policy',
+    label: 'Policies',
+    rows: [],
+    notes: ['No refusal in the last 7 days.'],
+  }
+  const lines = renderView({ tab: 0, top: 0 }, [empty], 'acme', 50, 8, LOOK)
+  assert.equal(lines[3], '  Nothing here yet.')
+  assert.equal(lines[5], '  No refusal in the last 7 days.')
+})
+
+test('a tab with notes pages its rows around them', () => {
+  const tab: StatusTab = {
+    name: 'policy',
+    label: 'Policies',
+    rows: rows(10),
+    notes: ['None.'],
+  }
+  // height 10: page 5, notes take 2 lines, so 3 rows.
+  const lines = renderView({ tab: 0, top: 0 }, [tab], 'acme', 50, 10, LOOK)
+  assert.equal(lines[3]?.includes('0010'), true)
+  assert.equal(lines[5]?.includes('0008'), true)
+  assert.equal(lines[6], '')
+  assert.equal(lines[7], '  None.')
+  assert.equal(press({ tab: 0, top: 0 }, 'end', [tab], 5).top, 7)
+})

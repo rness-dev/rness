@@ -99,6 +99,8 @@ export interface SnapshotTab {
   name: string
   label: string
   rows: SnapshotRow[]
+  /** The lines under the rows (`StatusTab.notes`); absent when the tab has none. */
+  notes?: string[]
 }
 
 /** What `rness status --json` prints: everything the mod draws, worded here. */
@@ -212,11 +214,14 @@ export function snapshotTabs(
   jira?: JiraTarget
 ): SnapshotTab[] {
   return tabs.map((tab) => {
-    const holder = holderOf(boards, tab.name)
+    // The Policies tab is no board's: its rows have no item (spec 0040 §6).
+    const holder =
+      tab.name === 'policy' ? undefined : holderOf(boards, tab.name)
     const colors = holder?.declaration.colors ?? SHIPPED_COLORS
     return {
       name: tab.name,
       label: tab.label,
+      ...(tab.notes === undefined ? {} : { notes: tab.notes }),
       rows: tab.rows.map((row) => ({
         ...row,
         color:

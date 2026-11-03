@@ -5,6 +5,7 @@ import { journalOf, planIssue, workspaceRepo } from '../commands/note.ts'
 import { branchOf, commitsBetween } from '../core/git.ts'
 import { journalReference } from '../core/github-journal.ts'
 import { providerOf } from '../core/manifest.ts'
+import { readRefusals } from '../core/refusals.ts'
 import { plansInProgress } from '../core/status.ts'
 import {
   type NotedIssue,
@@ -44,6 +45,26 @@ function commitsLine(commits: readonly string[]): string {
     .join(', ')
   const more = commits.length > SHOWN ? ', …' : ''
   return `${commits.length} commit${commits.length === 1 ? '' : 's'} (${named}${more})`
+}
+
+/**
+ * The refusals of policies in the session's clone since its start (spec 0040
+ * §6): `Policies: 3 refusals (no-em-dash 2, no-agent-trailers 1)`, the most
+ * refused first. One record is one refusal. Null when there is none.
+ */
+export function policiesLine(
+  refusals: readonly { policy: string }[]
+): string | null {
+  if (refusals.length === 0) return null
+  const counts = new Map<string, number>()
+  for (const { policy } of refusals)
+    counts.set(policy, (counts.get(policy) ?? 0) + 1)
+  const named = [...counts]
+    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
+    .map(([policy, n]) => `${policy} ${n}`)
+    .join(', ')
+  const n = refusals.length
+  return `Policies: ${n} refusal${n === 1 ? '' : 's'} (${named})`
 }
 
 /** The issue of the one plan in progress of the scope: its implementation issue in `repo` mode when there is one. */
@@ -87,11 +108,15 @@ export async function postSummary(input: SummaryInput): Promise<string[]> {
         : await commitsBetween(dir, start.head).catch(() => [])
     // A repository of another owner is not the workspace's (spec 0030 §3.4).
     const repo = url === undefined ? null : workspaceRepo(c, url)
+    const refusals =
+      dir === null || start === null
+        ? []
+        : await readRefusals(dir, { since: start.at })
     const noted = await issuesNoted(c.rnessDir, session)
     const targets =
       noted.length > 0
         ? noted
-        : commits.length > 0
+        : commits.length > 0 || refusals.length > 0
           ? await onePlan(input, repo)
           : []
     if (targets.length === 0) return []
@@ -108,6 +133,7 @@ export async function postSummary(input: SummaryInput): Promise<string[]> {
       start === null
         ? null
         : Math.max(1, Math.round((Date.now() - start.at) / 60_000))
+    const refused = policiesLine(refusals)
     const details = [
       ...(branch === null || start === null
         ? []
@@ -119,6 +145,7 @@ export async function postSummary(input: SummaryInput): Promise<string[]> {
               ? `Merge request ${repo.owner}/${repo.name}!${pr.number} (${pr.state.toLowerCase()})`
               : `Pull request ${repo.owner}/${repo.name}#${pr.number} (${pr.state.toLowerCase()})`,
           ]),
+      ...(refused === null ? [] : [refused]),
     ]
     const body = [
       [

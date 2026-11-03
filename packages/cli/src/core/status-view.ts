@@ -41,8 +41,16 @@ export function pageSize(height: number): number {
   return Math.max(1, height - FRAME)
 }
 
+/** The lines under the rows: a blank one, then the tab's notes. */
+const noteBlock = (tab: StatusTab | undefined): number =>
+  tab?.notes === undefined || tab.notes.length === 0 ? 0 : 1 + tab.notes.length
+
+/** The rows a page of `page` lines shows on `tab`: what its notes leave, one at least. */
+const rowsPage = (tab: StatusTab | undefined, page: number): number =>
+  Math.max(1, page - noteBlock(tab))
+
 function lastTop(tab: StatusTab | undefined, page: number): number {
-  return Math.max(0, (tab?.rows.length ?? 0) - page)
+  return Math.max(0, (tab?.rows.length ?? 0) - rowsPage(tab, page))
 }
 
 /** `view` moved by `key`: tabs wrap and start at the top; scrolling stops at the ends. */
@@ -161,6 +169,17 @@ function rowLines(
     ])
 }
 
+/** The notes under the rows: the heading, then its items a step in. */
+function noteLines(tab: StatusTab | undefined, look: Look): Segment[][] {
+  const [heading, ...items] = tab?.notes ?? []
+  if (heading === undefined) return []
+  return [
+    [['']],
+    [[`  ${heading}`, items.length > 0 ? look.bold : look.dim]],
+    ...items.map((item): Segment[] => [[`    ${item}`]]),
+  ]
+}
+
 /** The footer: what is out of sight, then the keys. */
 function footer(above: number, below: number): string {
   const parts = [
@@ -183,7 +202,11 @@ export function renderView(
   const page = pageSize(height)
   const tab = tabs[view.tab]
   const rule: Segment[] = [[` ${'─'.repeat(Math.max(0, columns - 2))}`]]
-  const rows = rowLines(tab, view.top, page, columns, look)
+  const shownRows = rowsPage(tab, page)
+  const rows = [
+    ...rowLines(tab, view.top, shownRows, columns, look),
+    ...noteLines(tab, look),
+  ]
   const shown = Math.min(page, rows.length)
   const total = tab?.rows.length ?? 0
   const lines: Segment[][] = [
@@ -193,7 +216,7 @@ export function renderView(
     ...rows,
     ...Array.from({ length: page - shown }, (): Segment[] => [['']]),
     rule,
-    [[footer(view.top, Math.max(0, total - view.top - page)), look.dim]],
+    [[footer(view.top, Math.max(0, total - view.top - shownRows)), look.dim]],
   ]
   return lines.slice(0, Math.max(0, height)).map((l) => line(l, columns))
 }

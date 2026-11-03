@@ -969,3 +969,40 @@ test('a document open: the scroll keys scroll it, the selection stays', async ($
   await pane.press({ key: 'back' })
   expect(await selectedRow(pane)).toBe('row-plans/0002-b.md')
 })
+
+test('the Policies tab: its policies as rows without an item, the refusals of the week drawn under them', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  cli(on, {
+    ...SNAPSHOT,
+    tabs: [
+      {
+        name: 'policy',
+        label: 'Policies',
+        rows: [
+          {
+            id: 'no-em-dash',
+            title: 'global',
+            status: 'Enabled',
+            path: 'policy/no-em-dash.md',
+            color: 'gray',
+            link: null,
+          },
+        ],
+        notes: [
+          'Refusals of the last 7 days',
+          'no-em-dash: 3 refusals, last 2026-11-03 10:00',
+        ],
+      },
+    ],
+  })
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'policy' } as never)
+  for (const surface of SURFACES) {
+    const pane = await $.ui.mount({ ...PANE, surface })
+    expect(await pane.find({ key: 'row-policy/no-em-dash.md' })).toBeTruthy()
+    expect(await pane.find({ key: 'note-0' })).toBeTruthy()
+    expect(await pane.find({ key: 'note-1' })).toBeTruthy()
+  }
+})

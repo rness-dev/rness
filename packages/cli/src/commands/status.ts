@@ -3,6 +3,7 @@ import { emitKeypressEvents } from 'node:readline'
 
 import { loadManifest, workspaceName } from '../core/manifest.ts'
 import { resolveScope } from '../core/scope.ts'
+import { policiesTab } from '../core/status-policies.ts'
 import {
   type Key,
   type Look,
@@ -168,7 +169,10 @@ export async function statusCommand(
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
     const workspace = workspaceName(manifest, ws.root)
-    const tabs = await statusTabs(ws.rnessDir)
+    const tabs = [
+      ...(await statusTabs(ws.rnessDir)),
+      await policiesTab(ws, manifest),
+    ]
     const wanted = tab === undefined ? undefined : findTab(tabs, tab)
     if (tab !== undefined && wanted === undefined) {
       process.stderr.write(

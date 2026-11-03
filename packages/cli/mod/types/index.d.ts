@@ -13,7 +13,13 @@ export type RnessRow = {
   link: string | null
 }
 
-export type RnessTab = { name: string; label: string; rows: RnessRow[] }
+export type RnessTab = {
+  name: string
+  label: string
+  rows: RnessRow[]
+  /** Lines under the rows: a heading and its items, or one line. */
+  notes?: string[]
+}
 
 export type RnessSnapshot = {
   version: string

@@ -33,7 +33,11 @@ test('off a terminal: Markdown, every tab or the one named', async (t) => {
   assert.equal(code, 0, c.err())
   assert.match(c.out(), /^acme · status\n\n## ADR \(1\)\n/)
   assert.match(c.out(), /\n\| 0002 \| Second \| Approved \|\n/)
-  assert.match(c.out(), /\n## Plans \(0\)\n\n_Nothing yet\._\n$/)
+  assert.match(c.out(), /\n## Plans \(0\)\n\n_Nothing yet\._\n/)
+  assert.match(
+    c.out(),
+    /\n## Policies \(0\)\n\n_Nothing yet\._\n\nNo refusal in the last 7 days\.\n$/
+  )
 
   const one = capture()
   assert.equal(await run(['status', 'SPECS', '--cwd', root]), 0)
@@ -48,7 +52,10 @@ test('an unknown tab is a usage error naming the tabs', async (t) => {
   const code = await run(['status', 'kanban', '--cwd', root])
   c.restore()
   assert.equal(code, 2)
-  assert.equal(c.err(), 'unknown tab "kanban" (tabs: adr, specs, plans)\n')
+  assert.equal(
+    c.err(),
+    'unknown tab "kanban" (tabs: adr, specs, plans, policy)\n'
+  )
 })
 
 /** A terminal the view can take: keys in, screens out, its raw mode recorded. */
@@ -186,8 +193,14 @@ test('--json at the workspace root: the banner, the status line, the tabs', asyn
   assert.equal(json.statusLine, 'rness · global · 1 in progress')
   assert.deepEqual(
     json.tabs.map((tab: { name: string }) => tab.name),
-    ['adr', 'specs', 'plans']
+    ['adr', 'specs', 'plans', 'policy']
   )
+  assert.deepEqual(json.tabs[3], {
+    name: 'policy',
+    label: 'Policies',
+    notes: ['No refusal in the last 7 days.'],
+    rows: [],
+  })
   assert.deepEqual(json.tabs[2].rows[0], {
     id: '0002',
     title: 'Second',

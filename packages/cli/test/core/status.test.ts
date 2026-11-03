@@ -2,12 +2,16 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
+import { loadManifest } from '../../src/core/manifest.ts'
+import { recordRefusals } from '../../src/core/refusals.ts'
+import { policiesTab } from '../../src/core/status-policies.ts'
 import {
   findTab,
   statusMarkdown,
   statusTabs,
   statusTone,
 } from '../../src/core/status.ts'
+import { git } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const doc = (status: string | null, title: string) =>
@@ -103,7 +107,8 @@ test('a directory whose documents carry a status is a tab of its own; its other 
     'docs/current.md': doc(null, 'Current behaviour'),
     'standards/style.md': doc('Accepted', 'Style'),
     'skills/x.md': doc('Accepted', 'A skill'),
-    // A collection of the contract: never a card of a board that takes all.
+    // A collection of the contract with a status, and still no discovered tab:
+    // the Policies tab is built apart, and a board never takes it (see board.test.ts).
     'policy/no-force-push.md': doc('Disabled', 'No force push'),
     '.github/notes.md': doc('Accepted', 'Hidden'),
     'node_modules/pkg/README.md': doc('Accepted', 'A package'),
@@ -193,4 +198,129 @@ test('Markdown: a heading, a section and a table per tab, an empty one said so, 
       '',
     ].join('\n')
   )
+})
+
+// --- the Policies tab (spec 0040 §6) -----------------------------------------
+
+const policy = (status: string, title: string) =>
+  `---\nstatus: ${status}\nrules:\n  - check: added-lines\n    deny: x\n    fix: Remove it.\n---\n\n# ${title}\n`
+const NOW = Date.parse('2026-11-03T12:00:00Z')
+const DAY = 24 * 60 * 60 * 1000
+const refusal = (
+  policy: string,
+  by: 'guard' | 'pre-commit' = 'pre-commit'
+) => ({
+  policy,
+  check: 'added-lines' as const,
+  by,
+})
+
+async function withClones(t: TestContext) {
+  const root = await makeWorkspace(t, {
+    repos: { api: { url: 'u' }, web: { url: 'v' } },
+    scopes: { api: { path: 'org/api' } },
+    dirs: ['org/api', 'org/web'],
+    files: {
+      'policy/no-em-dash.md': policy('Enabled', 'No em dash'),
+      'policy/api/no-todo.md': policy('Disabled', 'No todo'),
+    },
+  })
+  for (const clone of ['api', 'web', '.rness'])
+    await git(
+      ['init', '-q', '-b', 'main'],
+      join(root, clone === '.rness' ? clone : `org/${clone}`)
+    )
+  const ws = { root, rnessDir: join(root, '.rness') }
+  return { ws, manifest: await loadManifest(ws.rnessDir), root }
+}
+
+test('Policies tab: every policy with its scope and status; the refusals of the last 7 days across the clones, grouped, with count and last time', async (t) => {
+  const { ws, manifest, root } = await withClones(t)
+  const api = join(root, 'org/api')
+  const web = join(root, 'org/web')
+  await recordRefusals(api, [refusal('no-em-dash')], NOW - 3 * DAY)
+  await recordRefusals(
+    api,
+    [refusal('no-em-dash'), refusal('no-todo')],
+    NOW - DAY
+  )
+  await recordRefusals(
+    web,
+    [refusal('no-em-dash', 'guard')],
+    NOW - 2 * 60 * 60 * 1000
+  )
+  // Older than 7 days: not shown.
+  await recordRefusals(
+    web,
+    [refusal('no-todo'), refusal('no-todo')],
+    NOW - 8 * DAY
+  )
+  const tab = await policiesTab(ws, manifest, NOW)
+  assert.equal(tab.name, 'policy')
+  assert.equal(tab.label, 'Policies')
+  assert.deepEqual(tab.rows, [
+    {
+      id: 'no-em-dash',
+      title: 'global',
+      status: 'Enabled',
+      path: 'policy/no-em-dash.md',
+    },
+    {
+      id: 'no-todo',
+      title: 'api',
+      status: 'Disabled',
+      path: 'policy/api/no-todo.md',
+    },
+  ])
+  assert.deepEqual(tab.notes, [
+    'Refusals of the last 7 days',
+    'no-em-dash: 3 refusals, last 2026-11-03 10:00',
+    'no-todo: 1 refusal, last 2026-11-02 12:00',
+  ])
+  assert.equal(
+    statusMarkdown('acme', [tab]),
+    [
+      'acme · status',
+      '',
+      '## Policies (2)',
+      '',
+      '| Id | Title | Status |',
+      '| --- | --- | --- |',
+      '| no-em-dash | global | Enabled |',
+      '| no-todo | api | Disabled |',
+      '',
+      'Refusals of the last 7 days',
+      '',
+      '- no-em-dash: 3 refusals, last 2026-11-03 10:00',
+      '- no-todo: 1 refusal, last 2026-11-02 12:00',
+      '',
+    ].join('\n')
+  )
+})
+
+test('Policies tab: no refusal, or no policy, says so in one line', async (t) => {
+  const { ws, manifest } = await withClones(t)
+  const tab = await policiesTab(ws, manifest, NOW)
+  assert.deepEqual(tab.notes, ['No refusal in the last 7 days.'])
+  assert.match(
+    statusMarkdown('acme', [tab]),
+    /\n\nNo refusal in the last 7 days\.\n$/
+  )
+
+  const bare = await makeWorkspace(t, {})
+  const none = await policiesTab(
+    { root: bare, rnessDir: join(bare, '.rness') },
+    await loadManifest(join(bare, '.rness')),
+    NOW
+  )
+  assert.deepEqual(none.rows, [])
+  assert.match(
+    statusMarkdown('acme', [none]),
+    /## Policies \(0\)\n\n_Nothing yet\._\n\nNo refusal/
+  )
+})
+
+test('Policies: Enabled reads as done, Disabled as dropped', () => {
+  assert.equal(statusTone('Enabled'), 'done')
+  assert.equal(statusTone('Disabled'), 'dropped')
 })
