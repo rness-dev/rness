@@ -21,6 +21,7 @@ import { migrateBoards } from '../core/board-migration.ts'
 import { assembleContext } from '../core/context.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
+import { HOOK_NAMES, hookManagerLine, installHooks } from '../core/git-hooks.ts'
 import { clone, isClean, pullFastForward } from '../core/git.ts'
 import {
   NAME,
@@ -40,6 +41,7 @@ import {
 import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { openGitProvider } from '../core/providers.ts'
+import { pruneRefusals } from '../core/refusals.ts'
 import { count } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
@@ -200,6 +202,41 @@ function unreadWhy(dir: string, clones: ReadonlySet<string>): string {
   if (clones.has(lower))
     return `names are lowercase, and org/${lower} is another directory`
   return `names are lowercase: ${rnessCommand()} add ${lower} renames it org/${lower}`
+}
+
+/** The clones whose hooks are written: all of them, or the one owning `--scope`. */
+function hookClones(
+  manifest: Manifest,
+  only: string | undefined,
+  clones: readonly string[]
+): string[] {
+  if (only === undefined) return [...new Set(clones)]
+  const entry = manifest.scopes[only]
+  const owner = entry?.path.split('/')[1]
+  return owner !== undefined && clones.includes(owner) ? [owner] : []
+}
+
+/** Install the hooks in `dir`; one line per cause worth saying. */
+async function hookLines(
+  dir: string,
+  label: string,
+  ws: string
+): Promise<Line[]> {
+  const result = await installHooks(dir, ws)
+  const lines: Line[] = []
+  if (result.written.length > 0)
+    lines.push(['updated', `${label} git hooks (${result.written.join(', ')})`])
+  if (result.foreign.length > 0)
+    lines.push([
+      'skipped',
+      `${label} git hooks ${result.foreign.join(', ')} (not written by rness, left as is; to check policies there, run ${hookManagerLine('<hook>', ws)})`,
+    ])
+  if (result.hooksPath !== null)
+    lines.push([
+      'skipped',
+      `${label} git hooks (core.hooksPath is set, left as is; in your hook manager, for each of ${HOOK_NAMES.join(', ')}: ${hookManagerLine('<hook>', ws)})`,
+    ])
+  return lines
 }
 
 /**
@@ -379,6 +416,7 @@ export async function syncCommand(
       // 1. Repositories: clone only what was asked for; pull only on request,
       // only clean trees.
       const notCloned = new Set<string>()
+      const clonedNow = new Set<string>()
       for (const [name, repo] of Object.entries(manifest.repos)) {
         if (misnamed.has(name)) continue
         const dir = join(ws.root, 'org', name)
@@ -393,6 +431,7 @@ export async function syncCommand(
             await ui.step({ doing: `cloning  ${label}`, git: true }, () =>
               clone(repo.url, dir, credentials)
             )
+            clonedNow.add(name)
             lines.push(['cloned', `${label}`])
           } catch (e) {
             problems.push(
@@ -559,6 +598,28 @@ export async function syncCommand(
               lines.push(
                 `${label} still carries the values of an agent no longer in rness.json (left as is)`
               )
+        }
+      }
+
+      // 4. The git hooks of the policies, and the refusal records, in every
+      // clone of the selection: never `.rness`, never under --check.
+      if (!check && (await exists(join(ws.root, 'org')))) {
+        for (const name of hookClones(manifest, opts.scope, [
+          ...clones,
+          ...clonedNow,
+        ])) {
+          if (misnamed.has(name)) continue
+          const dir = join(ws.root, 'org', name)
+          if (!(await exists(dir))) continue
+          const label = `org/${name}`
+          try {
+            lines.push(...(await hookLines(dir, label, ws.root)))
+            await pruneRefusals(dir)
+          } catch (e) {
+            problems.push(
+              `${label}: ${e instanceof Error ? e.message : String(e)}`
+            )
+          }
         }
       }
 

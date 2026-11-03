@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   readlink,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -23,7 +24,7 @@ import {
   sshWorkspaceLines,
 } from '../../src/core/transport.ts'
 import { capture } from '../helpers/capture.ts'
-import { commitTo, makeBareRepo } from '../helpers/git.ts'
+import { commitTo, git, makeBareRepo } from '../helpers/git.ts'
 import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
 import { ignoresCase, makeWorkspace } from '../helpers/workspace.ts'
 
@@ -255,7 +256,7 @@ test('a missing clone is reported, not cloned; --check agrees; no per-scope line
   assert.equal(all.code, 0, all.err)
   assert.equal(
     all.out,
-    'cloned   org/api\nunchanged AGENTS.md\nupdated  org/api/AGENTS.md\nskipped  org/api/docs/AGENTS.md (directory not present)\n'
+    'cloned   org/api\nunchanged AGENTS.md\nupdated  org/api/AGENTS.md\nskipped  org/api/docs/AGENTS.md (directory not present)\nupdated  org/api git hooks (pre-commit, commit-msg, pre-push)\n'
   )
 })
 
@@ -271,7 +272,7 @@ test('--all clones missing repositories, pulls with --pull, skips dirty trees, a
   assert.equal(first.code, 0, first.err)
   assert.match(
     first.out,
-    /^cloned {3}org\/api\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n$/
+    /^cloned {3}org\/api\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\nupdated {2}org\/api git hooks \(pre-commit, commit-msg, pre-push\)\n$/
   )
   const agents = await readFile(join(root, 'org', 'api', 'AGENTS.md'), 'utf8')
   assert.equal(agents.trimEnd().endsWith(END), true)
@@ -462,7 +463,7 @@ test('terminal: catalogue repositories not cloned are offered; picked ones are c
   ])
   assert.equal(
     r.out,
-    'cloned   org/api\nnot cloned: docs (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n'
+    'cloned   org/api\nnot cloned: docs (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/api git hooks (pre-commit, commit-msg, pre-push)\n'
   )
   await assert.rejects(access(join(root, 'org', 'docs')))
 })
@@ -1009,3 +1010,99 @@ test('the former projects becomes boards, its boards read back the same; --check
   assert.doesNotMatch(again.out, /renamed|wrote/)
   assert.equal(await readFile(file, 'utf8'), text)
 })
+
+async function hooksWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org/web', 'org/api'],
+  })
+  for (const dir of ['.rness', 'org/web', 'org/api'])
+    await git(['init', '-q', '-b', 'main'], join(root, dir))
+  return root
+}
+
+const HOOKS_LINE = 'git hooks (pre-commit, commit-msg, pre-push)'
+
+test('hooks: written in every clone, never in .rness, and said once', async (t) => {
+  const root = await hooksWorkspace(t)
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    new RegExp(`updated {2}org/web ${escapeRe(HOOKS_LINE)}\n`)
+  )
+  assert.match(
+    r.out,
+    new RegExp(`updated {2}org/api ${escapeRe(HOOKS_LINE)}\n`)
+  )
+  for (const name of ['web', 'api'])
+    for (const hook of ['pre-commit', 'commit-msg', 'pre-push']) {
+      const file = join(root, 'org', name, '.git', 'hooks', hook)
+      assert.match(await readFile(file, 'utf8'), /# rness: policy hook/)
+      assert.equal((await stat(file)).mode & 0o777, 0o755)
+    }
+  await assert.rejects(
+    access(join(root, '.rness', '.git', 'hooks', 'pre-commit'))
+  )
+  // Current hooks are not said again.
+  const again = await sync(['--yes', '--cwd', root])
+  assert.doesNotMatch(again.out, /git hooks/)
+})
+
+test('hooks: --scope installs those of that scope only; --check writes none', async (t) => {
+  const root = await hooksWorkspace(t)
+  const check = await sync(['--check', '--cwd', root])
+  assert.doesNotMatch(check.out, /git hooks/)
+  await assert.rejects(
+    access(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
+  )
+  const scoped = await sync(['--yes', '--scope', 'web', '--cwd', root])
+  assert.equal(scoped.code, 0, scoped.err)
+  assert.match(scoped.out, /updated {2}org\/web git hooks/)
+  assert.doesNotMatch(scoped.out, /org\/api git hooks/)
+  await access(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
+  await assert.rejects(
+    access(join(root, 'org', 'api', '.git', 'hooks', 'pre-commit'))
+  )
+})
+
+test('hooks: a foreign hook and a core.hooksPath are left and reported with the line to add', async (t) => {
+  const root = await hooksWorkspace(t)
+  await writeFile(
+    join(root, 'org', 'web', '.git', 'hooks', 'pre-push'),
+    '#!/bin/sh\necho mine\n'
+  )
+  await git(['config', 'core.hooksPath', '.githooks'], join(root, 'org', 'api'))
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  const cli = `${root}/.rness/node_modules/@rness/cli/dist/bin/rness.js`
+  assert.ok(
+    r.out.includes(
+      `skipped  org/web git hooks pre-push (not written by rness, left as is; to check policies there, run node "${cli}" policy check <hook> "$@")\n`
+    ),
+    r.out
+  )
+  assert.ok(
+    r.out.includes(
+      `skipped  org/api git hooks (core.hooksPath is set, left as is; in your hook manager, for each of pre-commit, commit-msg, pre-push: node "${cli}" policy check <hook> "$@")\n`
+    ),
+    r.out
+  )
+  assert.equal(
+    await readFile(
+      join(root, 'org', 'web', '.git', 'hooks', 'pre-push'),
+      'utf8'
+    ),
+    '#!/bin/sh\necho mine\n'
+  )
+  await access(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
+  await assert.rejects(
+    access(join(root, 'org', 'api', '.git', 'hooks', 'pre-commit'))
+  )
+})
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}

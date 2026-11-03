@@ -203,6 +203,19 @@ export async function gitPath(
   }
 }
 
+/** The value of git config `key` as git resolves it in `dir`; null when unset or `dir` is no repository. */
+export async function configValue(
+  dir: string,
+  key: string
+): Promise<string | null> {
+  try {
+    const value = (await git(['config', '--get', key], dir)).trim()
+    return value === '' ? null : value
+  } catch {
+    return null
+  }
+}
+
 export async function pullFastForward(
   dir: string,
   credentials?: GitCredentials | null

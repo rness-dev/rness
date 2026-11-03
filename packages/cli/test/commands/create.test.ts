@@ -197,7 +197,7 @@ test('join without --repos: the whole catalogue is cloned', async (t) => {
   assert.equal(r.code, 0, r.err)
   assert.equal(
     r.out,
-    'found    acme/.rness - joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n'
+    'found    acme/.rness - joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/api git hooks (pre-commit, commit-msg, pre-push)\n\n  cd acme\n'
   )
   const root = join(cwd, 'acme')
   const { stdout } = await execFileP('git', ['remote', 'get-url', 'origin'], {
@@ -236,7 +236,7 @@ test('join --repos: catalogue entries are cloned without rewriting rness.json; o
   assert.equal(only.code, 0, only.err)
   assert.equal(
     only.out,
-    'found    acme/.rness - joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nnot cloned: web (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web\n  rness sync --all\n'
+    'found    acme/.rness - joining\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\nnot cloned: web (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/api git hooks (pre-commit, commit-msg, pre-push)\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web\n  rness sync --all\n'
   )
   const root = join(cwd, 'acme')
   await assert.rejects(access(join(root, 'org', 'web')))
@@ -999,7 +999,7 @@ test('wizard, join: the catalogue is pre-selected and completed; unpicked stays 
   assert.deepEqual(term.preselected, [['api', 'web', 'secret']])
   assert.equal(
     r.out,
-    'found    acme/.rness - joining\nlisting  acme repositories…\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\ncloned   org/other\ndeclared scope other (org/other)\nnot cloned: web, secret (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/other/AGENTS.md\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web, secret\n  rness sync --all\n'
+    'found    acme/.rness - joining\nlisting  acme repositories…\ncloned   acme/.rness (joined acme)\nskipped  install with npm (--skip-install)\ncloned   org/api\ncloned   org/other\ndeclared scope other (org/other)\nnot cloned: web, secret (rness add <name>, or rness sync --all)\nupdated  AGENTS.md\nupdated  org/api/AGENTS.md\nupdated  org/other/AGENTS.md\nupdated  org/api git hooks (pre-commit, commit-msg, pre-push)\nupdated  org/other git hooks (pre-commit, commit-msg, pre-push)\n\n  cd acme\n  # clone the catalogue repositories you did not pick: web, secret\n  rness sync --all\n'
   )
   const root = join(cwd, 'acme')
   await assert.rejects(access(join(root, 'org', 'web')))

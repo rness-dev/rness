@@ -41,9 +41,11 @@ test('add <url> clones, declares, and syncs the new scope and the root', async (
   assert.equal(r.code, 0, r.err)
   assert.match(
     r.out,
-    /^cloned {3}org\/api\ndeclared scope api \(org\/api\)\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n$/
+    /^cloned {3}org\/api\ndeclared scope api \(org\/api\)\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\nupdated {2}org\/api git hooks \(pre-commit, commit-msg, pre-push\)\n$/
   )
   await access(join(root, 'org', 'api', 'CLAUDE.md'))
+  for (const hook of ['pre-commit', 'commit-msg', 'pre-push'])
+    await access(join(root, 'org', 'api', '.git', 'hooks', hook))
   const m = await loadManifest(join(root, '.rness'))
   assert.deepEqual(m.repos, { api: { url } })
 })
@@ -154,7 +156,7 @@ test("add's sync clones nothing else from the catalogue", async (t) => {
   assert.equal(r.code, 0, r.err)
   assert.match(
     r.out,
-    /^cloned {3}org\/api\ndeclared scope api \(org\/api\)\nnot cloned: web \(rness add <name>, or rness sync --all\)\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\n$/
+    /^cloned {3}org\/api\ndeclared scope api \(org\/api\)\nnot cloned: web \(rness add <name>, or rness sync --all\)\nupdated {2}AGENTS\.md\nupdated {2}org\/api\/AGENTS\.md\nupdated {2}org\/api git hooks \(pre-commit, commit-msg, pre-push\)\n$/
   )
   await assert.rejects(access(join(root, 'org', 'web')))
   assert.deepEqual(
