@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { BEGIN, END, blockHash } from '../../src/core/block.ts'
 import {
   type AddedLinesFile,
   checkAddedLines,
@@ -59,11 +60,30 @@ test('commit-message: the trailer in any case is refused with its line', () => {
   assert.deepEqual(checkCommitMessage('feat: x\n\nbody\n', [TRAILERS]), [])
 })
 
-test('commit-message: lines after the scissors line are dropped', () => {
-  const msg = `feat: x\n# ------------------------ >8 ------------------------\nCo-Authored-By: Claude\n`
-  assert.deepEqual(checkCommitMessage(msg, [TRAILERS]), [])
-  const other = `feat: x\n; ------------------------ >8 ------------------------\nCo-Authored-By: Claude\n`
-  assert.deepEqual(checkCommitMessage(other, [TRAILERS]), [])
+const scissors = (c: string): string =>
+  [
+    `${c} ------------------------ >8 ------------------------`,
+    `${c} Do not modify or remove the line above.`,
+    `${c} Everything below it will be ignored.`,
+  ].join('\n')
+
+test('commit-message: git exact scissors block truncates', () => {
+  for (const c of ['#', ';']) {
+    const msg = `feat: x\n${scissors(c)}\nCo-Authored-By: Claude\n`
+    assert.deepEqual(checkCommitMessage(msg, [TRAILERS]), [])
+  }
+})
+
+test('commit-message: a lookalike scissors line does not truncate', () => {
+  const bare = `feat: x\n# ------------------------ >8 ------------------------\nCo-Authored-By: Claude\n`
+  assert.equal(
+    checkCommitMessage(bare, [TRAILERS])[0]?.where,
+    'commit message, line 3'
+  )
+  const half = `feat: x\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\nCo-Authored-By: Claude\n`
+  assert.equal(checkCommitMessage(half, [TRAILERS]).length, 1)
+  const mixed = `feat: x\n# ------------------------ >8 ------------------------\n; Do not modify or remove the line above.\n# Everything below it will be ignored.\nCo-Authored-By: Claude\n`
+  assert.equal(checkCommitMessage(mixed, [TRAILERS]).length, 1)
 })
 
 test('commit-message: a comment line before the scissors is checked', () => {
@@ -106,43 +126,82 @@ test('added-lines: an unchanged line passes', () => {
   )
 })
 
-test('added-lines: a line inside a rness block passes, outside it is refused', () => {
-  const after = [
-    `before ${DASH}`,
-    '<!-- BEGIN rness -->',
-    `inside ${DASH}`,
-    '<!-- END rness -->',
-    `after ${DASH}`,
+const BODY = `intro ${DASH}\n\n## Rules\nrule ${DASH}`
+const blockOf = (body: string, hash = blockHash(body)): string =>
+  [
+    BEGIN,
+    `<!-- rness \u00b7 scope: global \u00b7 contract: 1 \u00b7 hash: ${hash} \u00b7 generated: run \`rness sync\`, never edit inside this block -->`,
+    body,
+    END,
   ].join('\n')
+
+const wholeFile = (block: string): string =>
+  [`before ${DASH}`, block, `after ${DASH}`].join('\n')
+
+const addedEverywhere = (text: string): [number, string][] =>
+  text.split('\n').map((l, i) => [i + 1, l] as [number, string])
+
+test('added-lines: a current block of a block file is exempt, outside it is not', () => {
+  const after = wholeFile(blockOf(BODY))
   const f = checkAddedLines(
-    [
-      file('AGENTS.md', after, [
-        [1, `before ${DASH}`],
-        [3, `inside ${DASH}`],
-        [5, `after ${DASH}`],
-      ]),
-    ],
+    [file('AGENTS.md', after, addedEverywhere(after))],
     () => [NO_DASH_MSG]
   )
   assert.deepEqual(
     f.map((x) => x.where),
-    ['AGENTS.md:1', 'AGENTS.md:5']
+    ['AGENTS.md:1', `AGENTS.md:${after.split('\n').length}`]
   )
 })
 
-test('added-lines: a file under .claude/skills/rness/ passes', () => {
+test('added-lines: markers in a file that is not a block file give no exemption', () => {
+  const after = wholeFile(blockOf(BODY))
+  const f = checkAddedLines(
+    [file('docs/notes.md', after, addedEverywhere(after))],
+    () => [NO_DASH_MSG]
+  )
+  assert.ok(f.some((x) => x.line.startsWith('intro')))
+})
+
+test('added-lines: a hand-edited block (hash mismatch) gives no exemption', () => {
+  const edited = blockOf(BODY, blockHash(BODY)).replace(
+    'intro',
+    'intro, edited'
+  )
+  const after = wholeFile(edited)
+  const f = checkAddedLines(
+    [file('CLAUDE.md', after, addedEverywhere(after))],
+    () => [NO_DASH_MSG]
+  )
+  assert.ok(f.some((x) => x.line.startsWith('intro, edited')))
+})
+
+test('added-lines: a file under .claude/skills/rness/ is checked unless the predicate proves it', () => {
+  const path = 'org/rness/.claude/skills/rness/hooks/r.tsx'
   const after = `x ${DASH}\n`
+  const added: [number, string][] = [[1, `x ${DASH}`]]
+  assert.equal(
+    checkAddedLines([file(path, after, added)], () => [NO_DASH_MSG]).length,
+    1
+  )
+  assert.equal(
+    checkAddedLines(
+      [{ ...file(path, after, added), isRnessOutput: () => false }],
+      () => [NO_DASH_MSG]
+    ).length,
+    1
+  )
   assert.deepEqual(
     checkAddedLines(
-      [
-        file('org/rness/.claude/skills/rness/hooks/r.tsx', after, [
-          [1, `x ${DASH}`],
-        ]),
-      ],
+      [{ ...file(path, after, added), isRnessOutput: (p) => p === path }],
       () => [NO_DASH_MSG]
     ),
     []
   )
+})
+
+test('rules that do not compile are skipped, not thrown', () => {
+  const bad = policy('bad', [{ check: 'commit-message', deny: '(', fix: 'x' }])
+  assert.deepEqual(checkCommitMessage('a', [bad]), [])
 })
 
 test('added-lines: each file takes its own policies', () => {

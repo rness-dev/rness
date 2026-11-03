@@ -1,4 +1,5 @@
-import { ownedWhole } from './edit-guard.ts'
+import { BLOCK_FILES } from './agent-targets.ts'
+import { isCurrentBlock, parseHeader } from './block.ts'
 import { findBlock } from './merge.ts'
 import {
   NON_FAST_FORWARD,
@@ -34,6 +35,11 @@ export interface AddedLinesFile {
   readonly added: readonly { readonly line: number; readonly text: string }[]
   /** The file after the change: where a rness block is found. */
   readonly after: string
+  /**
+   * Whether `after` is what `sync` writes whole for this path. Absent: no
+   * exemption, since a path that looks like rness's proves nothing.
+   */
+  readonly isRnessOutput?: (path: string, after: string) => boolean
 }
 
 export interface PushUpdate {
@@ -49,12 +55,63 @@ export interface PushUpdate {
 export type Ancestry = 'ancestor' | 'not-ancestor' | 'missing'
 
 const ZEROS = /^0+$/
-/** git's scissors line: the comment character, then `>8` between dashes. */
-const SCISSORS = /^\S+ -{24} >8 -{24}$/
 const LINE_CUT = 120
 
-function violates(rule: PolicyRule, text: string): boolean {
-  return new RegExp(rule.deny, PATTERN_FLAGS).test(text)
+/**
+ * Git's scissors block, as `git commit -v` writes it (git 2.56, confirmed
+ * 2026-11-03): the comment character, the dashed line, then two explanation
+ * lines with the same character. Under `-m` and `-F` git keeps a lookalike
+ * and what follows in the commit, so only the whole block cuts.
+ */
+const SCISSORS = /^(\S+) -{24} >8 -{24}$/
+const SCISSORS_EXPLAIN = [
+  'Do not modify or remove the line above.',
+  'Everything below it will be ignored.',
+]
+
+function scissorsAt(lines: readonly string[]): number {
+  return lines.findIndex((line, i) => {
+    const char = SCISSORS.exec(line.trimEnd())?.[1]
+    return (
+      char !== undefined &&
+      SCISSORS_EXPLAIN.every(
+        (text, k) => lines[i + 1 + k]?.trimEnd() === `${char} ${text}`
+      )
+    )
+  })
+}
+
+/** A pattern per rule, compiled once; one that fails to compile is skipped (hooks fail open). */
+function compile(policies: readonly Policy[], check: PolicyRule['check']) {
+  const compiled: { policy: Policy; rule: PolicyRule; re: RegExp }[] = []
+  for (const policy of policies)
+    for (const rule of policy.rules) {
+      if (rule.check !== check) continue
+      try {
+        compiled.push({
+          policy,
+          rule,
+          re: new RegExp(rule.deny, PATTERN_FLAGS),
+        })
+      } catch {
+        // validate reports it; the checker does not block on it.
+      }
+    }
+  return compiled
+}
+
+/** Is the rness block of `lines` one that sync wrote, untouched? Only block files have one. */
+function currentBlockSpan(
+  path: string,
+  lines: string[]
+): { begin: number; end: number } | null {
+  const base = path.split('/').pop() ?? ''
+  if (!BLOCK_FILES.includes(base)) return null
+  const found = findBlock(lines)
+  if (found.kind !== 'one') return null
+  const block = lines.slice(found.begin, found.end + 1)
+  const hash = parseHeader(block[1] ?? '')?.hash
+  return hash !== undefined && isCurrentBlock(block, hash) ? found : null
 }
 
 /** Every line of the message up to git's scissors line, comment lines included. */
@@ -63,26 +120,27 @@ export function checkCommitMessage(
   policies: readonly Policy[]
 ): PolicyFailure[] {
   const lines = text.split(/\r\n|\r|\n/)
-  const scissors = lines.findIndex((l) => SCISSORS.test(l.trimEnd()))
+  const scissors = scissorsAt(lines)
   const kept = scissors === -1 ? lines : lines.slice(0, scissors)
+  const rules = compile(policies, 'commit-message')
   const failures: PolicyFailure[] = []
   kept.forEach((line, i) => {
-    for (const policy of policies)
-      for (const rule of policy.rules)
-        if (rule.check === 'commit-message' && violates(rule, line))
-          failures.push({
-            policy,
-            rule,
-            where: `commit message, line ${i + 1}`,
-            line,
-          })
+    for (const { policy, rule, re } of rules)
+      if (re.test(line))
+        failures.push({
+          policy,
+          rule,
+          where: `commit message, line ${i + 1}`,
+          line,
+        })
   })
   return failures
 }
 
 /**
- * The lines a change adds. rness's own outputs are exempt: a file written
- * whole by sync (`ownedWhole`) and the lines inside a rness block.
+ * The lines a change adds. rness's own outputs are exempt, each proved: a
+ * file the caller says sync writes whole, and the lines inside a current
+ * rness block (hash checked) of a block file.
  */
 export function checkAddedLines(
   files: readonly AddedLinesFile[],
@@ -90,24 +148,23 @@ export function checkAddedLines(
 ): PolicyFailure[] {
   const failures: PolicyFailure[] = []
   for (const file of files) {
-    if (ownedWhole(file.path)) continue
-    const policies = policiesOf(file.path)
-    if (policies.length === 0) continue
-    const found = findBlock(file.after.split(/\r\n|\r|\n/))
+    if (file.isRnessOutput?.(file.path, file.after) === true) continue
+    const rules = compile(policiesOf(file.path), 'added-lines')
+    if (rules.length === 0) continue
+    const span = currentBlockSpan(file.path, file.after.split(/\r\n|\r|\n/))
     // Line numbers are 1-based, the span's indexes 0-based and inclusive.
     const inBlock = (n: number): boolean =>
-      found.kind === 'one' && n >= found.begin + 1 && n <= found.end + 1
+      span !== null && n >= span.begin + 1 && n <= span.end + 1
     for (const { line, text } of file.added) {
       if (inBlock(line)) continue
-      for (const policy of policies)
-        for (const rule of policy.rules)
-          if (rule.check === 'added-lines' && violates(rule, text))
-            failures.push({
-              policy,
-              rule,
-              where: `${file.path}:${line}`,
-              line: text,
-            })
+      for (const { policy, rule, re } of rules)
+        if (re.test(text))
+          failures.push({
+            policy,
+            rule,
+            where: `${file.path}:${line}`,
+            line: text,
+          })
     }
   }
   return failures
