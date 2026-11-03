@@ -335,7 +335,11 @@ The three checks, a fixed set:
 | `push`           | each ref update of a push                                                                                                                                            | `non-fast-forward` only | the `pre-push` hook                                    |
 
 `added-lines` does not check what rness writes itself: the files of
-`.claude/skills/rness/` and the lines inside a rness block. A new branch and
+`.claude/skills/rness/` and the lines inside a rness block. A merge git
+concludes itself runs no `pre-commit`; one concluded with `git commit` after
+a conflict does, and only the lines added against every parent are checked
+(a conflict resolution, a new line): a line either branch brought passes,
+since that branch's commit was checked. A new branch and
 a deletion pass `push`; a remote object missing locally counts as
 non-fast-forward, and the fix says to fetch first. In a clone with several
 scopes, `added-lines` applies each file's deepest scope; `commit-message` and

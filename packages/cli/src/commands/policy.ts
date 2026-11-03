@@ -132,6 +132,8 @@ interface WorkTree {
   clone: string
   /** The clone's git directory, as git found it for the hook: the record's. */
   gitDir: string
+  /** The work tree's own git directory: a linked worktree's, where its merge state is. */
+  ownGitDir: string
 }
 
 /**
@@ -152,10 +154,15 @@ async function workTree(io: PolicyIo): Promise<WorkTree> {
   const [top, gitDir, commonDir] = out.split('\n').map((l) => l.trim())
   if (top === undefined || top === '' || gitDir === undefined)
     throw new Error('not in the work tree of a git repository')
+  const own = resolve(io.cwd, gitDir)
   const common = resolve(io.cwd, commonDir ?? gitDir)
-  const linked =
-    resolve(io.cwd, gitDir) !== common && basename(common) === '.git'
-  return { top, clone: linked ? dirname(common) : top, gitDir: common }
+  const linked = own !== common && basename(common) === '.git'
+  return {
+    top,
+    clone: linked ? dirname(common) : top,
+    gitDir: common,
+    ownGitDir: own,
+  }
 }
 
 interface StagedFile {
@@ -191,12 +198,16 @@ function addedLines(patch: readonly string[]): StagedFile['added'] {
 
 /**
  * The staged changes, each file with the lines it adds: the patch git
- * commits (`git diff --cached -U0`), deletions left out, renames detected
- * (a moved line is not added), binary files and submodules adding none.
- * The names come from `-z`, in the patch's order, so no quoted path is
- * parsed; two outputs that disagree make the hook fail open, said.
+ * commits (`git diff --cached -U0`, against HEAD or `base`), deletions left
+ * out, renames detected (a moved line is not added), binary files and
+ * submodules adding none. Lines are numbered in the staged file, whatever
+ * the base. The names come from `-z`, in the patch's order, so no quoted
+ * path is parsed; two outputs that disagree make the hook fail open, said.
  */
-async function stagedChanges(io: PolicyIo): Promise<StagedFile[]> {
+async function stagedChanges(
+  io: PolicyIo,
+  base?: string
+): Promise<StagedFile[]> {
   const common = [
     'diff',
     '--cached',
@@ -207,9 +218,10 @@ async function stagedChanges(io: PolicyIo): Promise<StagedFile[]> {
     '-M',
     '--diff-filter=d',
   ]
+  const against = base === undefined ? [] : [base, '--']
   const [names, patch] = await Promise.all([
-    git([...common, '--name-only', '-z'], io),
-    git([...common, '-U0'], io),
+    git([...common, '--name-only', '-z', ...against], io),
+    git([...common, '-U0', ...against], io),
   ])
   const paths = names.split('\0').filter((n) => n !== '')
   const sections: string[][] = []
@@ -225,6 +237,54 @@ async function stagedChanges(io: PolicyIo): Promise<StagedFile[]> {
   return paths.map((path, i) => ({
     path,
     added: addedLines(sections[i] ?? []),
+  }))
+}
+
+const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
+
+/** The other parents of a merge being concluded (`MERGE_HEAD`, one per line), or none. */
+async function mergeHeads(ownGitDir: string): Promise<string[]> {
+  let text: string
+  try {
+    text = await readFile(resolve(ownGitDir, 'MERGE_HEAD'), 'utf8')
+  } catch {
+    return []
+  }
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => OID.test(l))
+}
+
+/**
+ * What the commit adds. Concluding a merge (`MERGE_HEAD`), a line is added
+ * only when it is added against every parent: a conflict resolution or a
+ * new line is checked, a line taken from either branch passes, since that
+ * branch's own commit was checked. Lines are matched by their number in
+ * the staged file, the same in every diff.
+ */
+async function addedByCommit(
+  io: PolicyIo,
+  ownGitDir: string
+): Promise<StagedFile[]> {
+  const [files, heads] = await Promise.all([
+    stagedChanges(io),
+    mergeHeads(ownGitDir),
+  ])
+  if (heads.length === 0) return files
+  const others = await Promise.all(
+    heads.map(async (head) => {
+      const byPath = new Map<string, Set<number>>()
+      for (const f of await stagedChanges(io, head))
+        byPath.set(f.path, new Set(f.added.map((a) => a.line)))
+      return byPath
+    })
+  )
+  return files.map((f) => ({
+    ...f,
+    added: f.added.filter((a) =>
+      others.every((o) => o.get(f.path)?.has(a.line) === true)
+    ),
   }))
 }
 
@@ -244,10 +304,11 @@ async function preCommit(
   ws: PolicyWorkspace,
   prefix: string,
   scopes: readonly string[],
+  ownGitDir: string,
   io: PolicyIo
 ): Promise<PolicyFailure[]> {
   if (!uses(await policiesFor(ws, scopes), 'added-lines')) return []
-  const files = (await stagedChanges(io))
+  const files = (await addedByCommit(io, ownGitDir))
     .filter((f) => f.added.length > 0)
     .map((f) => ({ ...f, at: posix.join(prefix, f.path) }))
   const policiesOf = await policiesByPath(
@@ -416,7 +477,7 @@ export async function policyCheckCommand(
       throw new Error(
         `unknown hook ${JSON.stringify(hook ?? '')} (expected ${POLICY_HOOKS.join(', ')})`
       )
-    const { top, clone, gitDir } = await workTree(io)
+    const { top, clone, gitDir, ownGitDir } = await workTree(io)
     const found = await findWorkspace(clone).catch(() => null)
     if (found === null)
       throw new Error(`.rness/ is not reachable from ${clone}`)
@@ -436,7 +497,7 @@ export async function policyCheckCommand(
 
     const failures =
       hook === 'pre-commit'
-        ? await preCommit(ws, place.prefix, scopes, io)
+        ? await preCommit(ws, place.prefix, scopes, ownGitDir, io)
         : hook === 'commit-msg'
           ? await commitMsg(ws, scopes, top, args, io)
           : await prePush(ws, scopes, io)

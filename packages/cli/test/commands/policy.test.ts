@@ -695,6 +695,52 @@ test('pre-commit through git: git commit <path> is checked on its temporary inde
   assert.doesNotMatch(refused.stderr, /a\.md/)
 })
 
+test('pre-commit through git: concluding a conflicted merge checks its resolution, never what either branch brought', async (t) => {
+  const { web } = await workspace(t)
+  const base = ['one', 'two', 'three', 'four', 'five', 'six', ''].join('\n')
+  await put(web, 'a.md', base)
+  await git(['add', 'a.md'], web)
+  await git(['commit', '-q', '-m', 'base'], web)
+  // The other branch brings a refused line into the conflicted file and a
+  // file of its own; both were committed there, before any hook.
+  await git(['checkout', '-q', '-b', 'side'], web)
+  await put(web, 'a.md', `${base.replace('two', 'two, side')}side ${DASH}\n`)
+  await put(web, 's.md', `from side ${DASH}\n`)
+  await git(['add', 'a.md', 's.md'], web)
+  await git(['commit', '-q', '-m', 'side'], web)
+  await git(['checkout', '-q', 'main'], web)
+  await put(web, 'a.md', base.replace('two', 'two, main'))
+  await git(['add', 'a.md'], web)
+  await git(['commit', '-q', '-m', 'main'], web)
+  await installHook(web, 'pre-commit')
+
+  const conclude = async (resolution: string): Promise<Ran> => {
+    const merged = await gitRun(['merge', '-q', 'side'], web)
+    assert.notEqual(merged.code, 0, 'the merge conflicts')
+    await put(web, 'a.md', resolution)
+    await git(['add', 'a.md'], web)
+    return gitRun(['commit', '-q', '--no-edit'], web)
+  }
+  const kept = `${base.replace('two', 'two, main\ntwo, side')}side ${DASH}\n`
+  const ok = await conclude(kept)
+  assert.equal(ok.code, 0, ok.stderr)
+  assert.equal(
+    (await git(['log', '-1', '--format=%p'], web)).trim().split(' ').length,
+    2
+  )
+  assert.deepEqual(await readRefusals(web), [])
+
+  // A resolution that writes a refused line of its own is refused, alone.
+  await git(['reset', '-q', '--hard', 'HEAD^1'], web)
+  const refused = await conclude(
+    `${base.replace('two', `two ${DASH} both`)}side ${DASH}\n`
+  )
+  assert.notEqual(refused.code, 0)
+  assert.match(refused.stderr, /\n {2}org\/web\/a\.md:2: two /)
+  assert.doesNotMatch(refused.stderr, /a\.md:8|s\.md/)
+  assert.equal((await readRefusals(web)).length, 1)
+})
+
 // --- pre-push ------------------------------------------------------------------
 
 async function remoteFor(t: TestContext, clone: string): Promise<string> {
