@@ -379,7 +379,11 @@ async function addedProblems(
     was = (await checkContract(ws.rnessDir)).filter(mine)
     will = (await checkContract(ws.rnessDir, { rel, text: after })).filter(mine)
   }
-  return will.filter((p) => !was.includes(p))
+  // A policy's problem names its line (`policy/x.md:4: ...`): one the edit
+  // only moves is not one it adds.
+  const unlined = (p: string) => p.replace(/^([^:]+):\d+: /, '$1: ')
+  const had = new Set(was.map(unlined))
+  return will.filter((p) => !had.has(unlined(p)))
 }
 
 /**

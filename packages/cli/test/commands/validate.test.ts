@@ -509,6 +509,15 @@ test('boards: a collection that is no directory of .rness, or one never a collec
     never.err,
     /"boards\.marketing\.collections\.standards" is no collection/
   )
+  const policy = await validateBoards(t, {
+    marketing: declared(5, {
+      collections: { policy: { statuses: 'contract' } },
+    }),
+  })
+  assert.match(
+    policy.err,
+    /"boards\.marketing\.collections\.policy" is no collection: standards, skills, policy, node_modules never are/
+  )
 })
 
 test('boards: a collection on two boards; two boards that take all', async (t) => {

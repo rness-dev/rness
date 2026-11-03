@@ -781,6 +781,43 @@ test('pre-tool-use: a document already broken can still be edited, when the edit
   assert.deepEqual(r, { code: 0, out: '', err: '' })
 })
 
+const POLICY = `---
+status: Enabled
+rules:
+  - check: added-lines
+    deny: '\\u2014'
+    fix: Write " - " instead.
+---
+
+# No em dash
+`
+
+test('pre-tool-use: an Edit that breaks a policy is refused before it is written, the line named', async (t) => {
+  const root = await guarded(t, { 'policy/no-em-dash.md': POLICY })
+  const file = join(root, '.rness', 'policy', 'no-em-dash.md')
+  const r = await hook(
+    'pre-tool-use',
+    editOf(file, root, "deny: '\\u2014'", "deny: '('")
+  )
+  assert.equal(r.code, 2)
+  assert.match(
+    r.err,
+    /^rness: policy\/no-em-dash\.md:5: "deny" does not compile with the flags iu \(/
+  )
+})
+
+test('pre-tool-use: a policy already broken can still be edited when the edit moves its problem to another line', async (t) => {
+  const broken = POLICY.replace('status: Enabled', 'status: On')
+  const root = await guarded(t, { 'policy/no-em-dash.md': broken })
+  const file = join(root, '.rness', 'policy', 'no-em-dash.md')
+  // The problem was on line 2; a date above it moves it to line 3.
+  const r = await hook(
+    'pre-tool-use',
+    editOf(file, root, 'status: On', 'date: 2026-11-03\nstatus: On')
+  )
+  assert.deepEqual(r, { code: 0, out: '', err: '' })
+})
+
 test('pre-tool-use: a new plan without a number is refused before it lands', async (t) => {
   const root = await guarded(t)
   const file = join(root, '.rness', 'plans', 'draft.md')

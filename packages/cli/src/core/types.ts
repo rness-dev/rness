@@ -83,7 +83,8 @@ export interface Workspace {
   rnessDir: string
 }
 
-export type CollectionName = 'standards' | 'adr' | 'specs' | 'plans' | 'skills'
+export type CollectionName =
+  'standards' | 'adr' | 'specs' | 'plans' | 'skills' | 'policy'
 
 export interface ContextFile {
   rel: string

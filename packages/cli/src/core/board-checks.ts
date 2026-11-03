@@ -7,7 +7,7 @@ import { containedPath } from './contained.ts'
 import type { Manifest } from './types.ts'
 
 /** Directories of `.rness/` that are never a collection: not documents with a status. */
-const NEVER = new Set(['standards', 'skills', 'node_modules'])
+const NEVER = new Set(['standards', 'skills', 'policy', 'node_modules'])
 
 async function isDirectory(path: string): Promise<boolean> {
   try {

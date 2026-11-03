@@ -2,15 +2,12 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { collectMarkdown } from '../core/collect.ts'
-import { STATUSES } from '../core/contract.ts'
+import { NUMBERED, STATUSES } from '../core/contract.ts'
 import { documentNumber } from '../core/documents.ts'
 import { scaffoldDir } from '../core/scaffold.ts'
 import type { CollectionName } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { reportError } from '../report.ts'
-
-/** The collections whose documents are numbered: the ones with a status. */
-const NUMBERED = Object.keys(STATUSES) as CollectionName[]
 
 /** The sections a new document opens with, by collection; an ADR's come from its template. */
 const SECTIONS: Partial<Record<CollectionName, readonly string[]>> = {
@@ -91,7 +88,7 @@ export async function docNewCommand(
   collection: string,
   opts: { title?: string; cwd?: string }
 ): Promise<number> {
-  if (!(NUMBERED as string[]).includes(collection)) {
+  if (!(NUMBERED as readonly string[]).includes(collection)) {
     process.stderr.write(
       `${collection} is not a numbered collection of this workspace (${NUMBERED.join(', ')})\n`
     )

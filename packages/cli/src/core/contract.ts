@@ -3,7 +3,15 @@ import { join } from 'node:path'
 import { collectMarkdown, markdownItem } from './collect.ts'
 import { COLLECTIONS } from './context.ts'
 import { documentNumber } from './documents.ts'
+import { POLICY_STATUSES, checkPolicies } from './policy.ts'
 import type { CollectionName } from './types.ts'
+
+/**
+ * The collections whose documents are numbered (`NNNN-<slug>.md`), as
+ * `rness doc new` writes them. Not every collection with a status: a policy
+ * is named after its rule (spec 0040 §2.1).
+ */
+export const NUMBERED: readonly CollectionName[] = ['adr', 'specs', 'plans']
 
 /** Collections whose files must carry front matter with a `status`. */
 export const STATUSES: Partial<Record<CollectionName, readonly string[]>> = {
@@ -17,6 +25,7 @@ export const STATUSES: Partial<Record<CollectionName, readonly string[]>> = {
     'Rejected',
   ],
   plans: ['Draft', 'Ready', 'In progress', 'Blocked', 'Completed', 'Abandoned'],
+  policy: POLICY_STATUSES,
 }
 const SKIP = new Set(['adr/0000-template.md'])
 /** Front-matter keys from the withdrawn routing feature — the directory decides. */
@@ -62,15 +71,21 @@ export async function checkContract(
 ): Promise<string[]> {
   const problems: string[] = []
   for (const name of COLLECTIONS) {
-    const allowed = STATUSES[name]
     const items = await itemsOf(rnessDir, name, override)
+    // A policy's front matter is a contract of its own, read whole there.
+    if (name === 'policy') {
+      problems.push(...(await checkPolicies(rnessDir, items)))
+      continue
+    }
+    const allowed = STATUSES[name]
+    const numbered = NUMBERED.includes(name)
     // One number, one document (spec 0028 §9): the clash a merge of two
     // branches that each made the next document can still produce.
     const byNumber = new Map<string, string[]>()
     for (const item of items) {
       const where = `${name}/${item.rel}`
       if (SKIP.has(where)) continue
-      const number = allowed === undefined ? null : documentNumber(item.rel)
+      const number = numbered ? documentNumber(item.rel) : null
       if (number !== null)
         byNumber.set(number, [...(byNumber.get(number) ?? []), where])
     }
@@ -91,7 +106,7 @@ export async function checkContract(
     for (const item of items) {
       const where = `${name}/${item.rel}`
       if (SKIP.has(where)) continue
-      if (allowed !== undefined && documentNumber(item.rel) === null)
+      if (numbered && documentNumber(item.rel) === null)
         problems.push(
           `${where}: not numbered; name it ${next}-<slug>.md, the next number of ${name}`
         )

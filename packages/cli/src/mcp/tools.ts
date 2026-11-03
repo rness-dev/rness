@@ -25,6 +25,7 @@ const LABELS: Record<CollectionName, string> = {
   specs: 'Specifications',
   plans: 'Plans',
   skills: 'Skills',
+  policy: 'Policies',
 }
 /** The scaffold's ADR template is not a decision. */
 const TEMPLATE = 'adr/0000-template.md'
@@ -273,7 +274,7 @@ const collectionProperty = {
   type: 'string',
   enum: [...COLLECTIONS],
   description:
-    'standards (rules), adr (decisions), specs (specifications), plans, skills',
+    'standards (rules), adr (decisions), specs (specifications), plans, skills, policy (rules refused at commit, push and edit)',
 }
 
 export function mcpTools(cwd: string): McpTool[] {

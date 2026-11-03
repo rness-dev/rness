@@ -42,6 +42,7 @@ const NOUNS: Record<CollectionName, [string, string]> = {
   specs: ['specification', 'specifications'],
   plans: ['plan', 'plans'],
   skills: ['skill', 'skills'],
+  policy: ['policy', 'policies'],
 }
 
 /** The banner and the scope's summary for the model. */

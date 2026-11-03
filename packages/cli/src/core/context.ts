@@ -17,6 +17,7 @@ export const COLLECTIONS: readonly CollectionName[] = [
   'specs',
   'plans',
   'skills',
+  'policy',
 ]
 
 /** The first path segment of `rel`, or null for a file at the collection root. */
@@ -32,7 +33,7 @@ type Owned = MarkdownItem & { scope: string | null }
  * are global, `<scope>/**` files belong to that scope. A file under a
  * directory outside the chain is ignored; front matter never re-routes.
  */
-async function assembleCollection(
+export async function assembleCollection(
   dir: string,
   name: CollectionName,
   chain: string[]

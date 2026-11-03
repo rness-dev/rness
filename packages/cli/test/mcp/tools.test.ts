@@ -137,6 +137,51 @@ test('rness_list: a whole collection across scopes, filtered by status; bad inpu
   }
 })
 
+test('rness_list: policies, as any collection, filtered by Enabled or Disabled; rness_context lists those of the scope', async (t) => {
+  const policy = (status: string, title: string) =>
+    `---\nstatus: ${status}\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new branch.\n---\n\n# ${title}\n`
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    files: {
+      'policy/no-force-push.md': policy('Disabled', 'No force push'),
+      'policy/web/no-em-dash.md': policy('Enabled', 'No em dash'),
+      'policy/api/no-secrets.md': policy('Enabled', 'No secrets'),
+    },
+    dirs: ['org/web', 'org/api'],
+  })
+  const all = await call(root, 'rness_list', { collection: 'policy' })
+  assert.equal(
+    all.text,
+    [
+      'Policies (3):',
+      '- Enabled - No secrets · api · policy/api/no-secrets.md',
+      '- Disabled - No force push · global · policy/no-force-push.md',
+      '- Enabled - No em dash · web · policy/web/no-em-dash.md',
+    ].join('\n')
+  )
+  const enabled = await call(root, 'rness_list', {
+    collection: 'policy',
+    status: 'Enabled',
+  })
+  assert.doesNotMatch(enabled.text, /no-force-push/)
+  const refused = await call(root, 'rness_list', {
+    collection: 'policy',
+    status: 'Accepted',
+  })
+  assert.equal(refused.isError, true)
+  assert.match(refused.text, /one of Enabled, Disabled/)
+  const web = await call(join(root, 'org', 'web'), 'rness_context')
+  assert.match(
+    web.text,
+    /\nPolicies \(2\):\n- Enabled - No em dash · policy\/web\/no-em-dash\.md\n- Disabled - No force push · policy\/no-force-push\.md\n/
+  )
+  assert.doesNotMatch(web.text, /No secrets/)
+  const schema = mcpTools(root).find((x) => x.name === 'rness_list')
+    ?.inputSchema['properties'] as Record<string, { enum?: string[] }>
+  assert.ok(schema['collection']?.enum?.includes('policy'))
+})
+
 test('rness_read: a file of .rness, and nothing outside it', async (t) => {
   const root = await fixture(t)
   const r = await call(root, 'rness_read', { path: 'adr/0006-workspace.md' })

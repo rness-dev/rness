@@ -47,6 +47,7 @@ const NOT_DISCOVERED: ReadonlySet<string> = new Set([
   ...FIXED.map(([name]) => name),
   'standards',
   'skills',
+  'policy',
   'node_modules',
 ])
 const TEMPLATE = 'adr/0000-template.md'

@@ -117,3 +117,28 @@ test('an override equal to the disk changes nothing', async (t) => {
     await checkContract(rnessDir)
   )
 })
+
+// --- the policy collection (spec 0040 §7): its own checks, never numbered --
+
+const policy = (status: string) =>
+  `---\nstatus: ${status}\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new branch.\n---\n\n# No force push\n`
+
+test('a policy is never "not numbered", and a number in its name clashes with no document', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: {
+      'policy/no-force-push.md': policy('Disabled'),
+      'policy/0001-push.md': policy('Enabled'),
+      'specs/0001-a.md': doc('Draft', '0001 - A'),
+    },
+  })
+  assert.deepEqual(await checkContract(join(root, '.rness')), [])
+})
+
+test('a policy is checked as a policy: its status, with its line', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: { 'policy/no-force-push.md': policy('Approved') },
+  })
+  assert.deepEqual(await checkContract(join(root, '.rness')), [
+    'policy/no-force-push.md:2: unknown status "Approved" (expected Enabled, Disabled)',
+  ])
+})

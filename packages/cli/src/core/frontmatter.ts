@@ -15,6 +15,19 @@ function stripBom(source: string): string {
   return source.startsWith('﻿') ? source.slice(1) : source
 }
 
+/** The YAML of a leading `---` block, and the line of the file it starts on. */
+export interface FrontMatterBlock {
+  yaml: string
+  /** 1-based: the line after the opening fence. */
+  line: number
+}
+
+/** The leading `---` block, unparsed; null when there is none. */
+export function frontMatterBlock(source: string): FrontMatterBlock | null {
+  const match = stripBom(source).match(FRONT_MATTER)
+  return match === null ? null : { yaml: match[1] ?? '', line: 2 }
+}
+
 /**
  * Parse the leading `---` block as YAML (1.2 core schema: `2026-09-07` stays a
  * string, `1` becomes a number). Returns null when there is no block, `{}`
@@ -22,9 +35,9 @@ function stripBom(source: string): string {
  * YAML is invalid or is not a mapping.
  */
 export function parseFrontMatter(source: string): Fields | null {
-  const match = stripBom(source).match(FRONT_MATTER)
-  if (match === null) return null
-  const block = match[1] ?? ''
+  const found = frontMatterBlock(source)
+  if (found === null) return null
+  const block = found.yaml
   if (block.trim() === '') return {}
   let doc: unknown
   try {

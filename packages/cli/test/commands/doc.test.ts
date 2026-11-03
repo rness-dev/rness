@@ -115,6 +115,16 @@ test('doc new refuses a collection that is not numbered (exit 2)', async (t) => 
   )
 })
 
+test('doc new refuses policy: a policy has a status but no number, it is named after its rule', async (t) => {
+  const root = await makeWorkspace(t, {})
+  const bad = await docNew('policy', { cwd: root })
+  assert.equal(bad.code, 2)
+  assert.equal(
+    bad.err,
+    'policy is not a numbered collection of this workspace (adr, specs, plans)\n'
+  )
+})
+
 test('a document is never written over a file: the second of two allocations at once is refused', async (t) => {
   // Two sessions that allocate at once both read the same next number; the
   // write decides, and the second one writes nothing.

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { assembleContext, ownerScope } from '../../src/core/context.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import type { Context } from '../../src/core/types.ts'
+import { makeWorkspace } from '../helpers/workspace.ts'
 
 const rnessDir = fileURLToPath(
   new URL('../fixtures/ws-scoped/.rness', import.meta.url)
@@ -90,5 +92,36 @@ test('a 3-deep extends chain orders a-group, b-group, c-group, then global', asy
   assert.deepEqual(
     standards(ctx).files.map((f) => f.scope),
     ['a', 'b', 'c', null]
+  )
+})
+
+test('policy is a collection of the contract, resolved by scope as the others', async (t) => {
+  const root = await makeWorkspace(t, {
+    scopes: {
+      platform: { path: 'org/platform' },
+      web: { path: 'org/platform/web', extends: ['platform'] },
+      api: { path: 'org/api' },
+    },
+    files: {
+      'policy/no-em-dash.md': '# No em dash\n',
+      'policy/platform/no-force-push.md': '# No force push\n',
+      'policy/api/no-secrets.md': '# No secrets\n',
+    },
+  })
+  const rnessDir = join(root, '.rness')
+  const manifest = await loadManifest(rnessDir)
+  const ctx = await assembleContext({ rnessDir, manifest, scope: 'web' })
+  assert.deepEqual(
+    ctx.collections.map((c) => c.name),
+    ['standards', 'adr', 'specs', 'plans', 'skills', 'policy']
+  )
+  assert.deepEqual(
+    ctx.collections
+      .find((c) => c.name === 'policy')
+      ?.files.map((f) => [f.rel, f.scope]),
+    [
+      ['platform/no-force-push.md', 'platform'],
+      ['no-em-dash.md', null],
+    ]
   )
 })

@@ -103,6 +103,8 @@ test('a directory whose documents carry a status is a tab of its own; its other 
     'docs/current.md': doc(null, 'Current behaviour'),
     'standards/style.md': doc('Accepted', 'Style'),
     'skills/x.md': doc('Accepted', 'A skill'),
+    // A collection of the contract: never a card of a board that takes all.
+    'policy/no-force-push.md': doc('Disabled', 'No force push'),
     '.github/notes.md': doc('Accepted', 'Hidden'),
     'node_modules/pkg/README.md': doc('Accepted', 'A package'),
     'zines/0001-first.md': doc('Draft', '0001 - First'),

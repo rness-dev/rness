@@ -23,6 +23,7 @@
   "files": [
     "dist",
     "scaffold",
+    "schema",
     "mod/.claude-plugin/plugin.json",
     "mod/hooks/hooks.json",
     "mod/hooks/register.tsx",
