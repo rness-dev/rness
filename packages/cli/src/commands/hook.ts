@@ -637,18 +637,18 @@ async function skipping(
 /**
  * Before a `Bash` command (spec 0040 §4.3): refused, exit 2, when it would
  * skip the git hooks while an enabled policy they apply holds where git
- * runs. Nothing else of the command is judged: the hooks do that. A command
- * without `git` returns at once; one the shell would not read passes, since
- * the shell runs nothing of it.
+ * runs. Nothing else of the command is judged: the hooks do that. A
+ * command the shell would not read passes, since the shell runs nothing of
+ * it.
  */
 async function bashGuard(input: Input, io: HookIo): Promise<number> {
   const toolInput = input['tool_input']
   if (toolInput === null || typeof toolInput !== 'object') return 0
   const command = (toolInput as Input)['command']
   if (typeof command !== 'string') return 0
-  // At once only when nothing in it could spell git: an escape or a quote
-  // (`g\it`, `$'\x67it'`), an expansion, a glob or a brace (`{gi,x}t`).
-  if (!/git/i.test(command) && !/[\\'"$`*?[{]/.test(command)) return 0
+  // Every command is read: what spells git without the letters (an escape,
+  // a quote, an expansion, a glob, a brace, a zsh pattern) is past listing,
+  // and the reading costs nothing beside starting node.
   const cwd = cwdOf(input, io.env)
   const bypasses = gitBypasses(command, { cwd, env: io.env })
   if (bypasses === null || bypasses.length === 0) return 0

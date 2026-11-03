@@ -1498,7 +1498,35 @@ test('pre-tool-use: proofs that cannot be read leave a refused added line refuse
   assert.match(r.err, /^rness: policy no-em-dash refused this edit\n/)
 })
 
-test('pre-tool-use: a Bash command without git returns at once', async (t) => {
+test('pre-tool-use: braces with quoted parts, zsh =cmd and a glob after commit are refused; globs and braces that skip nothing pass', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  for (const command of [
+    `{"gi",x}t commit -n -m x`,
+    `{g'i',x}t commit -n -m x`,
+    '=git commit -n -m x',
+    'git commit -m x *.ts',
+  ])
+    assert.equal(
+      (await hook('pre-tool-use', bash(command, web))).code,
+      2,
+      command
+    )
+  for (const command of [
+    'ls {a,b}',
+    'git add *.ts',
+    `git log --format='%h {}'`,
+    'ls *.md && git status',
+    `git commit -m "$(cat <<'EOF'\nfeat: x\n\nbody --no-verify {a,b} *\nEOF\n)"`,
+    'git commit -m "docs: explain --no-verify"',
+  ])
+    assert.deepEqual(
+      await hook('pre-tool-use', bash(command, web)),
+      { code: 0, out: '', err: '' },
+      command
+    )
+})
+
+test('pre-tool-use: a Bash command without git is read and allowed', async (t) => {
   const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
   for (const command of ['ls -la && echo done', 'echo --no-verify -n'])
     assert.deepEqual(await hook('pre-tool-use', bash(command, web)), {

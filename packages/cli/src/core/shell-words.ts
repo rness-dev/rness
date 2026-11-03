@@ -504,14 +504,32 @@ export function literalOf(word: Word): string | null {
 /**
  * An unquoted glob (`*`, `?`, `[`) or brace expression (`{a,b}`, `{1..3}`)
  * in a word: the shell expands it before it runs anything, so the word as
- * written is not the word run. Null for none.
+ * written is not the word run. A brace expression is decided on the whole
+ * word, as bash decides it: its `{`, its `,` or `..` and its `}` unquoted,
+ * whatever is quoted between (`{"gi",x}t` is `git xt`). A word starting
+ * with an unquoted `=` is zsh's `=cmd`, the command's path: a glob here.
+ * Null for none.
  */
 export function patternOf(word: Word): 'glob' | 'brace' | null {
-  let glob = false
-  for (const s of word.segments) {
-    if (s.kind !== 'text' || s.quoted) continue
-    if (/\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(s.text)) return 'brace'
-    if (/[*?[]/.test(s.text)) glob = true
+  // Each character, and whether the shell may expand it; an expansion
+  // stands for characters it does not.
+  const chars: { c: string; open: boolean }[] = []
+  for (const seg of word.segments)
+    if (seg.kind === 'text')
+      for (const c of seg.text) chars.push({ c, open: !seg.quoted })
+    else chars.push({ c: '', open: false })
+  const open = (i: number, c: string): boolean =>
+    chars[i]?.open === true && chars[i]?.c === c
+  for (let i = 0; i < chars.length; i++) {
+    if (!open(i, '{')) continue
+    let separated = false
+    for (let j = i + 1; j < chars.length; j++) {
+      if (open(j, ',') || (open(j, '.') && open(j + 1, '.'))) separated = true
+      else if (open(j, '}') && separated) return 'brace'
+    }
   }
-  return glob ? 'glob' : null
+  if (open(0, '=') && chars.length > 1) return 'glob'
+  return chars.some((ch) => ch.open && '*?['.includes(ch.c) && ch.c !== '')
+    ? 'glob'
+    : null
 }

@@ -532,12 +532,7 @@ test('gitBypasses: a command name or a git word the shell expands (a glob, a bra
       [{ dir: '/w', how: '-n', skips: COMMIT, maybe: true }],
       script
     )
-  for (const script of [
-    'git add *.ts',
-    'git commit -m x src/*.ts',
-    '/usr/bin/gi? push -n',
-    'ls {a,b}',
-  ])
+  for (const script of ['git add *.ts', '/usr/bin/gi? push -n', 'ls {a,b}'])
     assert.deepEqual(found(script), [], script)
 })
 
@@ -557,4 +552,44 @@ test('gitBypasses: read as bash and as zsh, what either would run is judged', ()
       script
     )
   assert.equal(gitBypasses('git commit -n -m "never closed', AT), null)
+})
+
+// --- fix round 3: braces with quoted parts, globs after git, zsh =cmd -------
+
+test('gitBypasses: a brace with quoted parts, zsh =cmd, and a glob after commit or push go to the backstop', () => {
+  for (const script of [
+    `{"gi",x}t commit -n -m x`,
+    `{g'i',x}t commit -n -m x`,
+    '=git commit -n -m x',
+    'sudo =git commit -n',
+  ])
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how: '-n', skips: COMMIT, maybe: true }],
+      script
+    )
+  for (const [script, skips] of [
+    ['git commit -m x src/*.ts', COMMIT],
+    ['git commit -m x =y', COMMIT],
+    ['git push origin feat-?', ['pre-push']],
+  ] as const)
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how: 'a word the shell expands', skips, maybe: true }],
+      script
+    )
+})
+
+test('gitBypasses: globs, braces and quoted text that skip nothing are allowed', () => {
+  for (const script of [
+    'ls {a,b}',
+    'git add *.ts',
+    `git diff -- '*.md'`,
+    `git log --format='%h {}'`,
+    'ls *.md && git status',
+    "git commit -F - <<'EOF'\nfeat: a {b,c} * --no-verify\nEOF",
+    `git commit -m "$(cat <<'EOF'\nfeat: x\n\nbody --no-verify {a,b} *\nEOF\n)"`,
+    'git commit -m "docs: explain --no-verify"',
+  ])
+    assert.deepEqual(found(script), [], script)
 })

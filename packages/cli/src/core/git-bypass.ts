@@ -875,8 +875,9 @@ function gitCall(
   text: string,
   out: GitBypass[]
 ): Read {
-  // A brace expression makes other words of these: judged by its parts.
-  if (words.some((w) => patternOf(w) === 'brace')) return 'unread'
+  // A glob or a brace expression makes other words of these: judged by the
+  // backstop (a brace by its parts, a glob as a word not known).
+  if (words.some((w) => patternOf(w) !== null)) return 'unread'
   const values = words.map((w) => valueOf(w, state))
   let dir = from
   // The command line's options before the environment's variables; both
@@ -964,7 +965,9 @@ const N_CLUSTER = /^-[A-Za-z]*n[A-Za-z]*$/
  * it does not know, an option or a command name it cannot read). It fails
  * closed on what the words show, each finding one that may skip the hooks:
  * git (or a command name that cannot be read) then `--no-verify`, or then
- * `commit` and a short-option cluster holding `n`; git then core.hooksPath,
+ * `commit` and a short-option cluster holding `n`, or then `commit` or
+ * `push` and a word the shell expands (a glob, an unknown expansion);
+ * git then core.hooksPath,
  * an alias or an include given a value (`-c`, `--config-env`, `config`);
  * git given another configuration by its environment (the command's
  * assignments, the exported ones, `VAR=value` words before git). A `-n`
@@ -1033,6 +1036,16 @@ function backstop(
     after.slice(commit + 1).some((v) => v !== null && N_CLUSTER.test(v))
   ) {
     found('-n', COMMIT_HOOKS)
+    return
+  }
+  // A word after `commit` or `push` that the shell expands (a glob, an
+  // expansion not known) may be `--no-verify`, or `-n`.
+  const verb = after.findIndex((v) => v === 'commit' || v === 'push')
+  if (verb !== -1 && after.slice(verb + 1).some((v) => v === null)) {
+    found(
+      'a word the shell expands',
+      after[verb] === 'push' ? PUSH_HOOKS : COMMIT_HOOKS
+    )
     return
   }
   if (!named) return

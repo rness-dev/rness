@@ -183,3 +183,23 @@ test('patternOf: an unquoted glob or brace expression in a word', () => {
     null,
   ])
 })
+
+test('patternOf: a brace expression is decided on the whole word, its braces and separator unquoted; zsh expands =cmd', () => {
+  const [command] =
+    shellCommands(
+      `{"gi",x}t {g'i',x}t "{"a,b} {"a,b"} \\{a,b} {a".."b} {a..b} =git = a=b`
+    ) ?? []
+  assert.ok(command?.kind === 'command')
+  assert.deepEqual(command.words.map(patternOf), [
+    'brace',
+    'brace',
+    null,
+    null,
+    null,
+    null,
+    'brace',
+    'glob',
+    null,
+    null,
+  ])
+})
