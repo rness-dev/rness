@@ -680,6 +680,9 @@ export async function syncCommand(
           await pruneRefusals(dir)
         }
       }
+      // `.rness` gets no hook from sync, but the guard and its own
+      // `.githooks/` record there too.
+      if (!check) await pruneRefusals(ws.rnessDir)
 
       return problems.length > 0 ? 1 : 0
     } finally {

@@ -35,6 +35,11 @@ export interface StatusTab {
   label: string
   rows: StatusRow[]
   /**
+   * The heading of the rows' middle column off a terminal; `Title` when
+   * absent. The `Policies` tab shows each policy's scope there.
+   */
+  titleHeading?: string
+  /**
    * Lines shown under the rows, not rows: the refusals of the `Policies`
    * tab (spec 0040 §6). One line says there is nothing; else the first is
    * the heading and the others its items. Absent for a tab of documents only.
@@ -198,7 +203,10 @@ export function statusMarkdown(
     if (tab.rows.length === 0) {
       out.push('_Nothing yet._', '')
     } else {
-      out.push('| Id | Title | Status |', '| --- | --- | --- |')
+      out.push(
+        `| Id | ${cell(tab.titleHeading ?? 'Title')} | Status |`,
+        '| --- | --- | --- |'
+      )
       for (const row of tab.rows)
         out.push(
           `| ${cell(row.id)} | ${cell(row.title)} | ${cell(row.status ?? '?')} |`

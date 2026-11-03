@@ -17,9 +17,9 @@ import type { Manifest, Workspace } from './types.ts'
 export const RECENT_DAYS = 7
 const DAY = 24 * 60 * 60 * 1000
 
-/** `2026-11-03 14:02`, UTC: the minute is enough for "when". */
+/** `2026-11-03 14:02 UTC`: the minute is enough for "when", and says its zone. */
 const minute = (ms: number): string =>
-  new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
+  `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`
 
 /** The clones the refusals are read from: those of `org/` that exist, then `.rness`. */
 async function clonesOf(ws: Workspace, manifest: Manifest): Promise<string[]> {
@@ -80,6 +80,7 @@ export async function policiesTab(
   return {
     name: 'policy',
     label: 'Policies',
+    titleHeading: 'Scope',
     rows: policies
       .map((p) => ({
         id: p.name,

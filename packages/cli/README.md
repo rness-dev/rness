@@ -412,13 +412,16 @@ one correction passes:
       policy: .rness/policy/no-agent-trailers.md
 
 **Where refusals show.** Each refusal appends a line to
-`rness/refusals.jsonl` in the clone's git directory (never committed;
-`sync` prunes records older than 30 days). The session summary of a board
-journal gains `Policies: 3 refusals (no-em-dash 2, no-agent-trailers 1)`,
-and is posted when the session has at least one commit, note or refusal.
+`rness/refusals.jsonl` in the clone's git directory, or in `.rness`'s
+(never committed; `sync` prunes records older than 30 days in both). The
+session summary of a board journal gains
+`Policies: 3 refusals (no-em-dash 2, no-agent-trailers 1)`, and is posted
+when the session has at least one commit, note or refusal.
 `rness status policy` and the `/rness:status` pane have a Policies tab:
 every policy with its scope and status, then the refusals of the last 7 days
-across the clones, by policy.
+across the clones, by policy, with the last time in UTC. The session-start
+banner counts the `Enabled` policies; `rness context` prints every policy
+with its status under its title.
 
 **Fail open.** A missing `node`, a missing pinned CLI, a `.rness` not
 reachable or an error of rness's own never blocks: the hook prints at most

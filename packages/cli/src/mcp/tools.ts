@@ -134,7 +134,7 @@ async function context(cwd: string, args: Record<string, unknown>) {
 export interface ScopeSummary {
   /** `scope web (org/web, extends platform)`, or `global scope`. */
   where: string
-  /** The documents that apply, by collection; empty collections left out. */
+  /** The documents that apply, by collection (Enabled policies only); empty collections left out. */
   counts: Partial<Record<CollectionName, number>>
   /** The heading line, then each non-empty collection and its documents. */
   lines: string[]
@@ -165,7 +165,12 @@ export async function scopeSummary(
       .map((f) => index.get(`${collection.name}/${f.rel}`))
       .filter((d): d is Doc => d !== undefined)
     if (docs.length === 0) continue
-    counts[collection.name] = docs.length
+    // A policy counts once it is in force: the disabled example applies nowhere.
+    const counted =
+      collection.name === 'policy'
+        ? docs.filter((d) => d.status === 'Enabled').length
+        : docs.length
+    if (counted > 0) counts[collection.name] = counted
     lines.push(`${LABELS[collection.name]} (${docs.length}):`)
     for (const d of docs) lines.push(line(d))
   }

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { run } from '../../src/cli.ts'
 import { capture } from '../helpers/capture.ts'
+import { makeWorkspace } from '../helpers/workspace.ts'
 
 const scopedCwd = fileURLToPath(
   new URL('../fixtures/ws-scoped/org/web', import.meta.url)
@@ -54,6 +55,39 @@ test('markdown output carries provenance markers', async () => {
   assert.equal(code, 0)
   assert.match(c.out(), /## standards/)
   assert.match(c.out(), /<!-- rness: standards\/web\/seo\.md -->/)
+})
+
+test("markdown output says each policy's status under its title: the block lists only the Enabled ones", async (t) => {
+  const policy = (status: string, title: string, body = '') =>
+    `---\nstatus: ${status}\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new commit.\n---\n\n# ${title}\n${body}`
+  const root = await makeWorkspace(t, {
+    files: {
+      'policy/no-force-push.md': policy(
+        'Disabled',
+        'No force push',
+        '\nHistory stays.\n'
+      ),
+      'policy/on.md': policy('Enabled', 'On'),
+    },
+  })
+  const c = capture()
+  const code = await run(['context', '--cwd', root])
+  c.restore()
+  assert.equal(code, 0)
+  assert.ok(
+    c
+      .out()
+      .includes(
+        '<!-- rness: policy/no-force-push.md -->\n# No force push\n\nStatus: Disabled\n\nHistory stays.\n'
+      ),
+    c.out()
+  )
+  assert.ok(
+    c.out().includes('<!-- rness: policy/on.md -->\n# On\n\nStatus: Enabled\n'),
+    c.out()
+  )
+  // A standard is printed as it is.
+  assert.doesNotMatch(c.out(), /## standards[\s\S]*Status:[\s\S]*## policy/)
 })
 
 test('--scope in any case names the same scope: scope names are lowercase', async () => {

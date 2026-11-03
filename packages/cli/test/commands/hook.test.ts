@@ -113,6 +113,37 @@ async function hook(
 
 // --- session-start (spec 0015 §3) --------------------------------------------
 
+test('session start: the banner counts the Enabled policies only; the model is told each one and its status', async (t) => {
+  const policy = (status: string, title: string) =>
+    `---\nstatus: ${status}\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new commit.\n---\n\n# ${title}\n`
+  const root = await workspace(t, {
+    'policy/no-force-push.md': policy('Disabled', 'No force push'),
+    'policy/web/on.md': policy('Enabled', 'On'),
+  })
+  const r = await hook('session-start', {
+    cwd: join(root, 'org', 'web'),
+    source: 'startup',
+  })
+  const answer = JSON.parse(r.out)
+  assert.equal(
+    answer.systemMessage,
+    `rness ${VERSION} · acme · scope web · 2 standards, 1 decision, 1 policy`
+  )
+  assert.match(
+    answer.hookSpecificOutput.additionalContext,
+    /\nPolicies \(2\):\n- Enabled - On · policy\/web\/on\.md\n- Disabled - No force push · policy\/no-force-push\.md\n/
+  )
+  // Only a disabled one: none in force, none counted.
+  await rm(join(root, '.rness', 'policy', 'web'), { recursive: true })
+  const off = JSON.parse(
+    (await hook('session-start', { cwd: join(root, 'org', 'web') })).out
+  )
+  assert.equal(
+    off.systemMessage,
+    `rness ${VERSION} · acme · scope web · 2 standards, 1 decision`
+  )
+})
+
 test('session start in a clone: a banner for the developer, the scope for the model', async (t) => {
   const root = await workspace(t)
   const r = await hook('session-start', {

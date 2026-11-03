@@ -21,6 +21,7 @@ import { readOrNull } from '../../src/core/fs.ts'
 import { hookManagerSnippet } from '../../src/core/git-hooks.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import { freshBlockHash } from '../../src/core/policy-workspace.ts'
+import { readRefusals, recordRefusals } from '../../src/core/refusals.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import {
   INSTEAD_OF_LINES,
@@ -1084,6 +1085,29 @@ test('hooks: a clone a scope names in another case is declared, and gets them', 
   assert.doesNotMatch(r.out, /not in rness\.json/)
   assert.match(r.out, /updated {2}org\/web git hooks \(pre-commit\)/)
   await access(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
+})
+
+test('refusal records older than 30 days are pruned in the clones and in .rness; --check prunes none', async (t) => {
+  const root = await hooksWorkspace(t)
+  const old = {
+    policy: 'no-em-dash',
+    check: 'added-lines',
+    by: 'guard',
+  } as const
+  const recent = { ...old, policy: 'no-todo' }
+  const DAY = 24 * 60 * 60 * 1000
+  for (const dir of ['.rness', 'org/web']) {
+    await recordRefusals(join(root, dir), [old], Date.now() - 40 * DAY)
+    await recordRefusals(join(root, dir), [recent], Date.now() - DAY)
+  }
+  const kept = async (dir: string) =>
+    (await readRefusals(join(root, dir))).map((r) => r.policy)
+  await sync(['--check', '--cwd', root])
+  assert.deepEqual(await kept('.rness'), ['no-em-dash', 'no-todo'])
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.deepEqual(await kept('org/web'), ['no-todo'])
+  assert.deepEqual(await kept('.rness'), ['no-todo'])
 })
 
 test('hooks: --scope installs those of that scope only; --check writes none', async (t) => {

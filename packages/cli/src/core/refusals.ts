@@ -14,7 +14,11 @@ import { POLICY_CHECKS, type PolicyCheck } from './policy.ts'
  * the guard that refused.
  */
 
-/** In the git directory: `.git/rness/refusals.jsonl`, a linked worktree's own. */
+/**
+ * In the clone's git directory: `.git/rness/refusals.jsonl`. For a linked
+ * worktree, the common one: every reader and writer names the main work
+ * tree, or the git directory a hook was given (its common directory).
+ */
 export const REFUSALS_FILE = 'rness/refusals.jsonl'
 
 /** How long `sync` keeps a record (spec 0040 §6, proposal). */

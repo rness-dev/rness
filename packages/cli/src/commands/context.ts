@@ -1,6 +1,7 @@
 import { posix, relative, sep } from 'node:path'
 
 import { assembleContext } from '../core/context.ts'
+import { parseFrontMatter } from '../core/frontmatter.ts'
 import { loadManifest } from '../core/manifest.ts'
 import { resolveScope } from '../core/scope.ts'
 import type { Context } from '../core/types.ts'
@@ -16,14 +17,34 @@ export interface ContextOptions {
   cwd?: string
 }
 
+/**
+ * A policy with its status under its title: the block lists only the
+ * Enabled ones, `context` every one, so the status is said.
+ */
+function withStatus(body: string, content: string): string {
+  let status: unknown
+  try {
+    status = parseFrontMatter(body)?.['status']
+  } catch {
+    status = undefined
+  }
+  const line = `Status: ${typeof status === 'string' ? status : '?'}`
+  const [first = '', ...rest] = content.split('\n')
+  if (!first.startsWith('# ')) return `${line}\n\n${content}`
+  return [first, '', line, ...(rest[0] === '' ? [] : ['']), ...rest]
+    .join('\n')
+    .trim()
+}
+
 export function renderMarkdown(ctx: Context): string {
   const parts: string[] = []
   for (const collection of ctx.collections) {
     if (collection.files.length === 0) continue
     parts.push(`## ${collection.name}\n`)
     for (const file of collection.files) {
+      const content = file.content.trim()
       parts.push(
-        `<!-- rness: ${collection.name}/${file.rel} -->\n${file.content.trim()}\n`
+        `<!-- rness: ${collection.name}/${file.rel} -->\n${collection.name === 'policy' ? withStatus(file.body, content) : content}\n`
       )
     }
   }

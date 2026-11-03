@@ -274,8 +274,8 @@ test('Policies tab: every policy with its scope and status; the refusals of the 
   ])
   assert.deepEqual(tab.notes, [
     'Refusals of the last 7 days',
-    'no-em-dash: 3 refusals, last 2026-11-03 10:00',
-    'no-todo: 1 refusal, last 2026-11-02 12:00',
+    'no-em-dash: 3 refusals, last 2026-11-03 10:00 UTC',
+    'no-todo: 1 refusal, last 2026-11-02 12:00 UTC',
   ])
   assert.equal(
     statusMarkdown('acme', [tab]),
@@ -284,15 +284,15 @@ test('Policies tab: every policy with its scope and status; the refusals of the 
       '',
       '## Policies (2)',
       '',
-      '| Id | Title | Status |',
+      '| Id | Scope | Status |',
       '| --- | --- | --- |',
       '| no-em-dash | global | Enabled |',
       '| no-todo | api | Disabled |',
       '',
       'Refusals of the last 7 days',
       '',
-      '- no-em-dash: 3 refusals, last 2026-11-03 10:00',
-      '- no-todo: 1 refusal, last 2026-11-02 12:00',
+      '- no-em-dash: 3 refusals, last 2026-11-03 10:00 UTC',
+      '- no-todo: 1 refusal, last 2026-11-02 12:00 UTC',
       '',
     ].join('\n')
   )

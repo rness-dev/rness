@@ -44,10 +44,12 @@ npm create rness
   band above the prompt, the status line, `/rness:status` in a pane;
   `rness mcp` serves the same context to any MCP client.
 - **Rules that refuse.** A policy in `.rness/policy/` is refused by git
-  hooks in every clone, for any local agent or person who does not skip
-  them, and on edit by the Claude Code guard. Cloud agents and clones with
-  their own hook manager are not covered until the team adds a line; see the
-  enforcement matrix in the documentation. Off until enabled.
+  hooks in every clone `rness.json` declares, for any local agent or person
+  who does not skip them, and on edit by the Claude Code guard. Cloud agents and clones with
+  their own hook manager are not covered until the team adds a few lines; see
+  the enforcement matrix in
+  [the documentation](https://rness.dev/docs/guide/policies). Off until
+  enabled.
 - **Where everything stands.** `rness status` shows every decision,
   specification and plan and its status, in a terminal or as Markdown.
   `rness board push` puts them on the boards `rness.json` declares (a
