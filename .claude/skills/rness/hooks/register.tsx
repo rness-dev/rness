@@ -479,7 +479,7 @@ export const register: Register = (on) => {
                       onPress={() => void cycleTab($, -1)}
                     />
                   ) : (
-                    <Text> </Text>
+                    <Text key={`gap-${row.path}`}> </Text>
                   ),
                   <Button
                     key={`open-${row.path}`}
@@ -488,7 +488,9 @@ export const register: Register = (on) => {
                     {...(isSel ? { autoFocus: true as const } : {})}
                     onPress={() => void show($, row.path)}
                   />,
-                  <Text color={COLORS[row.color]}>{status}</Text>,
+                  <Text key={`status-${row.path}`} color={COLORS[row.color]}>
+                    {status}
+                  </Text>,
                   ...(isSel
                     ? [
                         <Button
