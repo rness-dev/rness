@@ -328,11 +328,11 @@ section and the block is unchanged.
 
 The three checks, a fixed set:
 
-| `check`          | Reads                                                                             | `deny`                  | Run by                                                 |
-| ---------------- | --------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------ |
-| `commit-message` | each line of the message, up to git's scissors line, git's comment lines included | a pattern               | the `commit-msg` hook                                  |
-| `added-lines`    | each line a commit or an edit adds, never a line already there                    | a pattern               | the `pre-commit` hook; the guard on `Edit` and `Write` |
-| `push`           | each ref update of a push                                                         | `non-fast-forward` only | the `pre-push` hook                                    |
+| `check`          | Reads                                                                                                                                                                | `deny`                  | Run by                                                 |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------ |
+| `commit-message` | every line of the message, comment lines included, cut at git's scissors line only for a message edited in an editor (never under `-m`, `-F` or for a merge message) | a pattern               | the `commit-msg` hook                                  |
+| `added-lines`    | each line a commit or an edit adds, never a line already there                                                                                                       | a pattern               | the `pre-commit` hook; the guard on `Edit` and `Write` |
+| `push`           | each ref update of a push                                                                                                                                            | `non-fast-forward` only | the `pre-push` hook                                    |
 
 `added-lines` does not check what rness writes itself: the files of
 `.claude/skills/rness/` and the lines inside a rness block. A new branch and

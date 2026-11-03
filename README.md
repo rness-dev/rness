@@ -43,9 +43,11 @@ npm create rness
   the conversation, and the plugin's mod keeps the workspace in view: a
   band above the prompt, the status line, `/rness:status` in a pane;
   `rness mcp` serves the same context to any MCP client.
-- **Rules that refuse.** A policy in `.rness/policy/` is refused at commit,
-  at push and on edit, by git hooks in every clone and by the Claude Code
-  guard, so Codex, Cursor and people are blocked too. Off until enabled.
+- **Rules that refuse.** A policy in `.rness/policy/` is refused by git
+  hooks in every clone, for any local agent or person who does not skip
+  them, and on edit by the Claude Code guard. Cloud agents and clones with
+  their own hook manager are not covered until the team adds a line; see the
+  enforcement matrix in the documentation. Off until enabled.
 - **Where everything stands.** `rness status` shows every decision,
   specification and plan and its status, in a terminal or as Markdown.
   `rness board push` puts them on the boards `rness.json` declares (a
