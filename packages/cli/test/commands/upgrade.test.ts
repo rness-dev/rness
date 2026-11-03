@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import {
+  access,
   chmod,
   cp,
   mkdir,
@@ -8,6 +9,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -116,6 +118,8 @@ async function workspace(
     installed?: string
     subject?: string
     trailer?: string | null
+    /** Scaffold files the base predates: left out of the first commit. */
+    omit?: string[]
   }
 ): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'rness-up-')))
@@ -127,6 +131,7 @@ async function workspace(
     version: spec.pin,
     packageManager: PM,
   })) {
+    if (spec.omit?.includes(f.path)) continue
     const to = join(rnessDir, ...f.path.split('/'))
     await mkdir(dirname(to), { recursive: true })
     await writeFile(to, f.content, { mode: f.executable ? 0o755 : 0o644 })
@@ -265,6 +270,64 @@ test("a scaffold change reaches an untouched file; the team's edit of another st
   assert.match(r.out, /^updated {2}WORKSPACE\.md$/m)
   assert.match(await read(root, 'WORKSPACE.md'), /New in 0\.5\.0\.\n$/)
   assert.match(await read(root, 'README.md'), /^Team intro\./)
+})
+
+const POLICY_FILES = [
+  '.githooks/commit-msg',
+  '.githooks/pre-push',
+  'policy/no-force-push.md',
+]
+
+test('an existing workspace gets the policy example and the two hooks', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, {
+    pin: '0.4.0',
+    installed: '0.4.0',
+    omit: POLICY_FILES,
+  })
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 0, r.err)
+  for (const rel of POLICY_FILES) {
+    assert.match(
+      r.out,
+      new RegExp(`^(added|updated)\\s+${rel.replace('.', '\\.')}$`, 'm'),
+      rel
+    )
+    await access(join(root, '.rness', ...rel.split('/')))
+  }
+  for (const hook of ['commit-msg', 'pre-push'])
+    assert.notEqual(
+      (await stat(join(root, '.rness', '.githooks', hook))).mode & 0o111,
+      0,
+      hook
+    )
+})
+
+test('a policy example turned on is kept when the scaffold changes another line of it', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  const file = join(rnessDir, 'policy', 'no-force-push.md')
+  await writeFile(
+    file,
+    (await readFile(file, 'utf8')).replace(
+      'status: Disabled',
+      'status: Enabled'
+    )
+  )
+  await git(rnessDir, 'commit', '-qam', 'docs: enable no-force-push')
+  const next = await changedScaffold(
+    t,
+    'policy/no-force-push.md',
+    (s) => `${s}\nA note from 0.5.0.\n`
+  )
+  const r = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, {
+    scaffoldFor: async () => ({ dir: next }),
+  })
+  assert.equal(r.code, 0, r.err)
+  const merged = await read(root, 'policy', 'no-force-push.md')
+  assert.match(merged, /^status: Enabled$/m)
+  assert.match(merged, /A note from 0\.5\.0\.\n$/)
 })
 
 test('overlapping edits conflict: nothing is installed; once resolved, a second run goes on', async (t) => {

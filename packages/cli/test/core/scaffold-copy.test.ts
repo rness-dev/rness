@@ -50,6 +50,13 @@ test('copies every scaffold file, renames _gitignore, replaces the tokens, keeps
   )
   const mode = (await stat(join(dest, '.githooks', 'pre-commit'))).mode & 0o111
   assert.notEqual(mode, 0, 'pre-commit keeps its executable bit')
+  for (const hook of ['pre-commit', 'commit-msg', 'pre-push'])
+    assert.equal(
+      (await stat(join(dest, '.githooks', hook))).mode & 0o777,
+      0o755,
+      hook
+    )
+  await access(join(dest, 'policy', 'no-force-push.md'))
 })
 
 test('renderScaffold: the files a version writes, tokens filled, no rness.json (spec 0013 §1)', async () => {

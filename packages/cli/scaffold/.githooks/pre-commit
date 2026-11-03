@@ -2,3 +2,12 @@
 set -eu
 cd "$(dirname "$0")/.."
 ./node_modules/.bin/rness validate
+status=0
+./node_modules/.bin/rness policy check pre-commit "$@" || status=$?
+if [ "$status" -eq 20 ]; then
+  exit 1
+fi
+if [ "$status" -ne 0 ]; then
+  echo "rness: policies not checked: the rness CLI exited $status" >&2
+fi
+exit 0

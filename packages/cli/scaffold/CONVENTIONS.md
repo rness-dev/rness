@@ -11,6 +11,9 @@
   root, scoped under `standards/<scope>/`.
 - **Skill** (`skills/`): reusable agent skills, resolved per scope the same
   way.
+- **Policy** (`policy/`): a rule that rness enforces on commits, pushes and
+  agent edits; global at the collection root, scoped under
+  `policy/<scope>/`. Policies are not numbered: `policy/<name>.md`.
 
 ADRs, specifications and plans are named `NNNN-<slug>.md`: the next number
 of their collection, which `rness doc new <collection>` gives, then a few
@@ -35,6 +38,7 @@ repo: <repository or scope this applies to>
 | ADR | `Proposed`, `Accepted`, `Rejected`, `Superseded` |
 | Specification | `Draft`, `Proposed`, `Approved`, `Implemented`, `Superseded`, `Rejected` |
 | Plan | `Draft`, `Ready`, `In progress`, `Blocked`, `Completed`, `Abandoned` |
+| Policy | `Enabled`, `Disabled` |
 
 `date` is the creation date; add `updated: YYYY-MM-DD` on meaningful change
 (never on an ADR). Link related documents with `spec:`, `plan:`, `adr:`, or
