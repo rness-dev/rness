@@ -554,14 +554,23 @@ function sequenceOf(inner: readonly Char[]): string[] | null | 'too many' {
   if (m === null) return null
   const from = numbers ? Number(m[1]) : (m[1] ?? '').charCodeAt(0)
   const to = numbers ? Number(m[2]) : (m[2] ?? '').charCodeAt(0)
-  const step = Math.abs(Number(m[3] ?? 1)) || 1
+  const given = Number(m[3] ?? 1)
+  // No arithmetic on a bound or step that is no safe integer: past 2^53,
+  // v + 1 is v, and a loop on it never ends. Too many, as the cap.
+  if (![from, to, given].every(Number.isSafeInteger)) return 'too many'
+  const step = Math.abs(given) || 1
   if (Math.floor(Math.abs(to - from) / step) + 1 > MAX_EXPANSION)
     return 'too many'
   const items: string[] = []
   const dir = to >= from ? 1 : -1
-  for (let v = from; dir > 0 ? v <= to : v >= to; v += dir * step)
+  // Bounded by a count too, whatever the arithmetic does.
+  for (
+    let v = from, n = 0;
+    (dir > 0 ? v <= to : v >= to) && n <= MAX_EXPANSION;
+    v += dir * step, n += 1
+  )
     items.push(numbers ? String(v) : String.fromCharCode(v))
-  return items
+  return items.length > MAX_EXPANSION ? 'too many' : items
 }
 
 /** The expansions of `chars`, appended to `out`; false past the cap. */

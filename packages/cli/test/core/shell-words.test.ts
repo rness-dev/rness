@@ -228,3 +228,21 @@ test('expandBraces: a word as bash expands its braces, quoted parts kept, capped
   assert.deepEqual(expand('{$X,b}'), [null, 'b'])
   assert.equal(expand('{1..100000}'), null, 'too many to read')
 })
+
+test(
+  'expandBraces: bounds or steps that are no safe integer are too many to read, at once',
+  { timeout: 5000 },
+  () => {
+    const expand = (text: string) => {
+      const [command] = shellCommands(text) ?? []
+      assert.ok(command?.kind === 'command')
+      const word = command.words[0]
+      return word === undefined ? undefined : expandBraces(word)
+    }
+    // Past 2^53, v + 1 is v: a loop on such bounds would never end.
+    assert.equal(expand('{9007199254740993..9007199254740995}'), null)
+    assert.equal(expand('{1..99999999999999999999}'), null)
+    assert.equal(expand('{1..3..99999999999999999999}'), null)
+    assert.deepEqual(expand('{1..3}')?.map(literalOf), ['1', '2', '3'])
+  }
+)

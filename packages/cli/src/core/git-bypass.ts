@@ -959,17 +959,20 @@ function gitCall(
 }
 
 /**
- * Whether a word the shell expands may start with `-`, and so be an option:
- * it starts with `-`, with an unquoted glob or brace character, or with an
- * expansion not known. A tilde starts a path.
+ * Whether a word the shell expands may start with `-`, and so be an option,
+ * decided on what it expands to first, empty quotes (`""`, `''`) skipped:
+ * `-`, an unquoted glob or brace character, or an expansion not known. A
+ * tilde starts a path.
  */
 function mayStartWithDash(word: Word): boolean {
-  const first = word.segments[0]
+  const first = word.segments.find(
+    (seg) => seg.kind !== 'text' || seg.text !== ''
+  )
   if (first === undefined) return false
   if (first.kind === 'tilde') return false
   if (first.kind !== 'text') return true
   const c = first.text[0] ?? ''
-  return c === '-' || (!first.quoted && '*?[{'.includes(c) && c !== '')
+  return c === '-' || (!first.quoted && '*?[{'.includes(c))
 }
 
 /** A short-option cluster holding `n`: `-n`, `-an`, `-nm`. */

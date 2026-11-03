@@ -632,3 +632,48 @@ test('gitBypasses: a path glob or path brace after commit or push cannot become 
     { dir: '/w', how: '-n', skips: COMMIT, maybe: true },
   ])
 })
+
+// --- fix round 5: an empty quote before a pattern ---------------------------
+
+test('gitBypasses: an empty quote does not hide a pattern that may start with -', () => {
+  for (const script of [
+    'git commit -m x ""{--no-verify,x}',
+    'git commit -m x ""{-n,x}',
+    'git commit -m x ""*',
+    "git commit -m x ''*",
+  ])
+    assert.deepEqual(
+      found(script),
+      [
+        {
+          dir: '/w',
+          how: 'a word the shell expands',
+          skips: COMMIT,
+          maybe: true,
+        },
+      ],
+      script
+    )
+  for (const script of [
+    'git commit -m x ""src/*.ts',
+    "git commit -m x ''docs/{a,b}.md",
+  ])
+    assert.deepEqual(found(script), [], script)
+})
+
+test(
+  'gitBypasses: a brace sequence too large to read is judged at once, refused',
+  { timeout: 5000 },
+  () => {
+    assert.deepEqual(found('git commit {1..1e309} --no-verify'), [
+      { dir: '/w', how: '--no-verify', skips: COMMIT, maybe: true },
+    ])
+    assert.deepEqual(found('git {1..99999999999999999999} commit -n'), [
+      { dir: '/w', how: '-n', skips: COMMIT, maybe: true },
+    ])
+    assert.deepEqual(
+      found('git {9007199254740993..9007199254740995} commit -n'),
+      [{ dir: '/w', how: '-n', skips: COMMIT, maybe: true }]
+    )
+  }
+)
