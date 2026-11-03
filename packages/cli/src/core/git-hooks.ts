@@ -31,24 +31,31 @@ const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`
 const ENABLED = `"^status:[[:space:]]*[\\"']?Enabled"`
 
 /**
- * What every policy hook runs, once `rness_dir` (the workspace's `.rness`)
- * and `rness_bin` (its pinned CLI) are set. Only the CLI's refusal code
- * blocks (exit 1, its words on stderr). Anything else lets git go on and
- * never ends the script, so a team's hook manager runs its own lines after
- * it: the CLI's words are shown when it exits 0, and replaced by one line
- * for any other status (a crash's stack, an older CLI's help); a missing
- * `node` or CLI is one line, said only while a policy of `.rness/` is
- * enabled, or when `.rness/` itself is not there. The output is held in a
- * variable, not a file; stdin is inherited, so pre-push still reads git's
- * lines.
+ * What every policy hook runs, once `rness_dir` (the workspace's `.rness`,
+ * resolved) is set, empty when there is none to look for. Only the CLI's
+ * refusal code blocks (exit 1, its words on stderr). Anything else lets git
+ * go on and never ends the script, so a team's hook manager runs its own
+ * lines after it: the CLI's words are shown when it exits 0, and replaced by
+ * one line for any other status (a crash's stack, an older CLI's help).
+ * A missing `node` or CLI is one line, said only while a policy of `.rness/`
+ * is enabled, or when `.rness/` itself is not there. The CLI runs only from
+ * a `.rness` that holds its `rness.json`, is the user's own and is not open
+ * to all: a directory found by a path, not one anyone could plant above a
+ * clone (`/tmp/.rness`). The output is held in a variable, not a file;
+ * stdin is inherited, so pre-push still reads git's lines.
  */
 function hookBody(hook: string): string {
-  return `if ! command -v node >/dev/null 2>&1; then
+  return `rness_bin="$rness_dir/${PINNED_BIN}"
+rness_why=
+if [ -z "$rness_dir" ]; then
+  :
+elif ! command -v node >/dev/null 2>&1; then
   rness_why='node not found'
 elif [ ! -f "$rness_bin" ]; then
   rness_why="$rness_bin not found"
+elif [ ! -f "$rness_dir/rness.json" ] || [ ! -O "$rness_dir" ] || [ -n "$(find "$rness_dir" -prune -perm -0002)" ]; then
+  echo "rness: policies not checked: $rness_dir is no workspace .rness of yours alone" >&2
 else
-  rness_why=
   rness_status=0
   rness_out=$(node "$rness_bin" policy check ${hook} "$@" 2>&1) || rness_status=$?
   if [ "$rness_status" -ne 0 ] && [ "$rness_status" -ne ${POLICY_REFUSED_EXIT} ]; then
@@ -69,28 +76,30 @@ fi
 
 /**
  * The text of one hook in a clone's hooks directory: the body above, the
- * pinned CLI at the workspace's absolute path, and exit 0 at its end. No
+ * workspace's `.rness` by its absolute path, and exit 0 at its end. No
  * `exec`: the script reads the status.
  */
 export function hookScript(hook: HookName, ws: string): string {
+  const dir = quote(join(ws, '.rness'))
   return `#!/bin/sh
 ${HOOK_MARKER}
-rness_dir=${quote(join(ws, '.rness'))}
-rness_bin=${quote(pinnedCliOf(ws))}
+rness_dir=$(cd ${dir} 2>/dev/null && pwd -P) || rness_dir=${dir}
 ${hookBody(hook)}exit 0
 `
 }
 
 /**
  * The lines a team's hook manager (husky, lefthook) runs for `hook` when it
- * owns `core.hooksPath`: the same body, the CLI found from the clone
- * (`org/<name>`, two levels under the workspace's root), so that the file
- * a team commits holds no path of one machine. It never exits but to
- * refuse: the team's own lines run after it.
+ * owns `core.hooksPath`: the same body, the workspace found from the clone
+ * (`org/<name>`, two levels under the workspace's root), so that the file a
+ * team commits holds no path of one machine; nothing at all outside a work
+ * tree. It never exits but to refuse: the team's own lines run after it.
  */
 export function hookManagerSnippet(hook: string): string {
-  return `rness_dir="$(git rev-parse --show-toplevel)/../../.rness"
-rness_bin="$rness_dir/${PINNED_BIN}"
+  return `rness_dir=
+if rness_top=$(git rev-parse --show-toplevel 2>/dev/null); then
+  rness_dir=$(cd "$rness_top/../../.rness" 2>/dev/null && pwd -P) || rness_dir="$rness_top/../../.rness"
+fi
 ${hookBody(hook)}`
 }
 

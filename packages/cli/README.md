@@ -361,18 +361,26 @@ hidden command). `sync` rewrites a stale rness hook. A hook file without the
 marker is never touched, and a clone with `core.hooksPath` set (husky,
 lefthook) is left alone; `sync` reports each, once per clone until the cause
 changes, with the lines to add to the team's own hook, `<hook>` replaced by
-its name. They find the CLI from the clone, so a team can commit them, and
-they end the hook only to refuse:
+its name. They find the workspace from the clone, so a team can commit
+them; outside a work tree they do nothing, and they end the hook only to
+refuse:
 
 ```sh
-rness_dir="$(git rev-parse --show-toplevel)/../../.rness"
+rness_dir=
+if rness_top=$(git rev-parse --show-toplevel 2>/dev/null); then
+  rness_dir=$(cd "$rness_top/../../.rness" 2>/dev/null && pwd -P) || rness_dir="$rness_top/../../.rness"
+fi
 rness_bin="$rness_dir/node_modules/@rness/cli/dist/bin/rness.js"
-if ! command -v node >/dev/null 2>&1; then
+rness_why=
+if [ -z "$rness_dir" ]; then
+  :
+elif ! command -v node >/dev/null 2>&1; then
   rness_why='node not found'
 elif [ ! -f "$rness_bin" ]; then
   rness_why="$rness_bin not found"
+elif [ ! -f "$rness_dir/rness.json" ] || [ ! -O "$rness_dir" ] || [ -n "$(find "$rness_dir" -prune -perm -0002)" ]; then
+  echo "rness: policies not checked: $rness_dir is no workspace .rness of yours alone" >&2
 else
-  rness_why=
   rness_status=0
   rness_out=$(node "$rness_bin" policy check <hook> "$@" 2>&1) || rness_status=$?
   if [ "$rness_status" -ne 0 ] && [ "$rness_status" -ne 20 ]; then
@@ -428,6 +436,10 @@ reachable or an error of rness's own never blocks: the hook prints at most
 one line, `rness: policies not checked: <why>`, and exits 0. A missing
 `node` or CLI says nothing while no policy of `.rness/policy/` is `Enabled`
 (nothing would be checked), and is said when `.rness/` itself is not there.
+A hook runs the CLI only from a `.rness` that holds its `rness.json`, is
+owned by the user and is not writable by all: a directory planted above a
+clone (`/tmp/.rness` for a clone under `/tmp`) is said in one line, never
+run.
 Only a refusal blocks: `rness policy check` exits 20 for it, and each hook
 maps 20 to 1, its words on stderr; any other non-zero status becomes one
 line, `rness: policies not checked: the rness CLI exited <n>`, in place of
