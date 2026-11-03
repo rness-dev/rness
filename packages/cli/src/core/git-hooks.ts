@@ -5,6 +5,13 @@ import { PINNED_BIN } from './delegate.ts'
 import { readOrNull, writeFileAtomic } from './fs.ts'
 import { configValue, gitPath } from './git.ts'
 
+/**
+ * The exit code of a refusal. Not 1: a crashed or unparseable CLI exits 1
+ * (Node's own codes are 1 to 14, 128+signal), and the hooks must tell the
+ * two apart so that only a refusal blocks.
+ */
+export const POLICY_REFUSED_EXIT = 20
+
 /** The hooks that carry the workspace's policies (spec 0040 4.2). */
 export const HOOK_NAMES = ['pre-commit', 'commit-msg', 'pre-push'] as const
 export type HookName = (typeof HOOK_NAMES)[number]
@@ -21,8 +28,11 @@ export function pinnedCliOf(ws: string): string {
 const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`
 
 /**
- * The text of one hook: locate the pinned CLI and run it, nothing more. A
- * missing `node` or CLI is said in one line and lets git go on (fail open).
+ * The text of one hook: locate the pinned CLI and run it, nothing more. Only
+ * the CLI's refusal code blocks (exit 1); a missing `node` or CLI, or a CLI
+ * that crashed, is said in one line and lets git go on (fail open). No
+ * `exec`: the script reads the status; stdin is inherited, so pre-push still
+ * reads git's lines.
  */
 export function hookScript(hook: HookName, ws: string): string {
   return `#!/bin/sh
@@ -36,13 +46,21 @@ if [ ! -f "$bin" ]; then
   echo "rness: policies not checked: $bin not found" >&2
   exit 0
 fi
-exec node "$bin" policy check ${hook} "$@"
+node "$bin" policy check ${hook} "$@"
+status=$?
+if [ "$status" -eq ${POLICY_REFUSED_EXIT} ]; then
+  exit 1
+fi
+if [ "$status" -ne 0 ]; then
+  echo "rness: policies not checked: the rness CLI exited $status" >&2
+fi
+exit 0
 `
 }
 
 /** The line a team's hook manager runs for `hook` when it owns `core.hooksPath`. */
 export function hookManagerLine(hook: string, ws: string): string {
-  return `node "${pinnedCliOf(ws)}" policy check ${hook} "$@"`
+  return `node ${quote(pinnedCliOf(ws))} policy check ${hook} "$@"`
 }
 
 export interface HooksResult {

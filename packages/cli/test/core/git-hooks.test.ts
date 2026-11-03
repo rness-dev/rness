@@ -98,7 +98,7 @@ test('a clone with core.hooksPath is left whole and reported', async (t) => {
   await assert.rejects(stat(join(clone, '.git', 'hooks', 'pre-commit')))
   assert.equal(
     hookManagerLine('commit-msg', WS),
-    `node "${WS}/.rness/node_modules/@rness/cli/dist/bin/rness.js" policy check commit-msg "$@"`
+    `node '${WS}/.rness/node_modules/@rness/cli/dist/bin/rness.js' policy check commit-msg "$@"`
   )
 })
 
@@ -143,32 +143,82 @@ test('the script fails open with one line when node is missing', async (t) => {
   assert.equal(r.stderr, 'rness: policies not checked: node not found\n')
 })
 
-test('a commit through the written hook is refused by the CLI it runs,', async (t) => {
-  const ws = await tmp(t)
+async function standIn(ws: string, body: string): Promise<void> {
   const bin = join(ws, '.rness', 'node_modules', '@rness', 'cli', 'dist', 'bin')
   await mkdir(bin, { recursive: true })
-  // A stand-in for the pinned CLI: refuses a commit message naming "forbidden".
-  await writeFile(
-    join(bin, 'rness.js'),
-    `import { readFileSync } from 'node:fs'
-const [, , a, b, hook, file] = process.argv
-if (a !== 'policy' || b !== 'check') process.exit(0)
-if (hook === 'commit-msg' && readFileSync(file, 'utf8').includes('forbidden')) {
-  process.stderr.write('rness: policy stand-in refused this commit\\n')
-  process.exit(1)
-}
-`
-  )
+  await writeFile(join(bin, 'rness.js'), body)
   await writeFile(join(bin, '..', '..', 'package.json'), '{"type":"module"}')
+}
+
+async function hookedClone(ws: string): Promise<string> {
   const clone = join(ws, 'org', 'web')
   await mkdir(clone, { recursive: true })
   await git(['init', '-q', '-b', 'main'], clone)
   await installHooks(clone, ws)
   await writeFile(join(clone, 'a.txt'), 'a\n')
   await git(['add', 'a.txt'], clone)
-  await assert.rejects(git(['commit', '-q', '-m', 'a forbidden word'], clone), {
-    stderr: /rness: policy stand-in refused this commit/,
+  return clone
+}
+
+// A stand-in for the pinned CLI: refuses (20) a message naming "forbidden",
+// crashes (1) on one naming "crash".
+const STAND_IN = `import { readFileSync } from 'node:fs'
+const [, , a, b, hook, file] = process.argv
+if (a === 'policy' && b === 'check' && hook === 'commit-msg') {
+  const text = readFileSync(file, 'utf8')
+  if (text.includes('forbidden')) {
+    process.stderr.write('rness: policy stand-in refused this commit\\n')
+    process.exit(20)
+  }
+  if (text.includes('crash')) process.exit(1)
+}
+`
+
+for (const dirName of ['ws', "my ws 'quoted'"])
+  test(`a commit through the written hook: refusal 20 blocks, a crash (1) passes with one line, in ${dirName}`, async (t) => {
+    const ws = join(await tmp(t), dirName)
+    await standIn(ws, STAND_IN)
+    const clone = await hookedClone(ws)
+    await assert.rejects(
+      git(['commit', '-q', '-m', 'a forbidden word'], clone),
+      { stderr: /rness: policy stand-in refused this commit/ }
+    )
+    const crashed = await execFileP(
+      'git',
+      ['commit', '-m', 'a crash', '--no-gpg-sign'],
+      {
+        cwd: clone,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'x',
+          GIT_AUTHOR_EMAIL: 'x@x.invalid',
+          GIT_COMMITTER_NAME: 'x',
+          GIT_COMMITTER_EMAIL: 'x@x.invalid',
+        },
+      }
+    )
+    const lines = crashed.stderr.split('\n').filter((l) => l.includes('rness:'))
+    assert.deepEqual(lines, [
+      'rness: policies not checked: the rness CLI exited 1',
+    ])
+    assert.match(await git(['log', '--format=%s'], clone), /^a crash$/m)
+    await writeFile(join(clone, 'b.txt'), 'b\n')
+    await git(['add', 'b.txt'], clone)
+    await git(['commit', '-q', '-m', 'fine'], clone)
   })
-  await git(['commit', '-q', '-m', 'fine'], clone)
-  assert.match(await git(['log', '--format=%s'], clone), /^fine$/m)
+
+test('pre-push still reads the lines git gives on stdin', async (t) => {
+  const ws = await tmp(t)
+  await standIn(
+    ws,
+    `import { readFileSync } from 'node:fs'
+if (process.argv[4] === 'pre-push' && readFileSync(0, 'utf8').includes('refs/heads/main')) process.exit(20)
+`
+  )
+  const clone = await hookedClone(ws)
+  await git(['commit', '-q', '-m', 'one'], clone)
+  const bare = join(await tmp(t), 'remote.git')
+  await git(['init', '-q', '--bare', bare], ws)
+  await git(['remote', 'add', 'origin', bare], clone)
+  await assert.rejects(git(['push', '-q', 'origin', 'main'], clone))
 })

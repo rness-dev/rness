@@ -1080,13 +1080,13 @@ test('hooks: a foreign hook and a core.hooksPath are left and reported with the 
   const cli = `${root}/.rness/node_modules/@rness/cli/dist/bin/rness.js`
   assert.ok(
     r.out.includes(
-      `skipped  org/web git hooks pre-push (not written by rness, left as is; to check policies there, run node "${cli}" policy check <hook> "$@")\n`
+      `skipped  org/web git hooks pre-push (not written by rness, left as is; to check policies there, run node '${cli}' policy check <hook> "$@")\n`
     ),
     r.out
   )
   assert.ok(
     r.out.includes(
-      `skipped  org/api git hooks (core.hooksPath is set, left as is; in your hook manager, for each of pre-commit, commit-msg, pre-push: node "${cli}" policy check <hook> "$@")\n`
+      `skipped  org/api git hooks (core.hooksPath is set, left as is; in your hook manager, for each of pre-commit, commit-msg, pre-push: node '${cli}' policy check <hook> "$@")\n`
     ),
     r.out
   )
@@ -1101,6 +1101,14 @@ test('hooks: a foreign hook and a core.hooksPath are left and reported with the 
   await assert.rejects(
     access(join(root, 'org', 'api', '.git', 'hooks', 'pre-commit'))
   )
+  // Said once per clone and cause: the next sync stays silent.
+  const again = await sync(['--yes', '--cwd', root])
+  assert.doesNotMatch(again.out, /git hooks/)
+  // A changed cause is said again.
+  await git(['config', 'core.hooksPath', '.other'], join(root, 'org', 'api'))
+  const changed = await sync(['--yes', '--cwd', root])
+  assert.match(changed.out, /skipped {2}org\/api git hooks \(core\.hooksPath/)
+  assert.doesNotMatch(changed.out, /org\/web git hooks/)
 })
 
 function escapeRe(s: string): string {

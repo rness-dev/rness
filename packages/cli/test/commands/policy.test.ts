@@ -21,6 +21,7 @@ import { run } from '../../src/cli.ts'
 import { policyCheckCommand } from '../../src/commands/policy.ts'
 import { blockHash, bodyOf, parseHeader } from '../../src/core/block.ts'
 import { OWN_COMMANDS } from '../../src/core/catch-up.ts'
+import { POLICY_REFUSED_EXIT } from '../../src/core/git-hooks.ts'
 import { findBlock } from '../../src/core/merge.ts'
 import { readRefusals } from '../../src/core/refusals.ts'
 import { capture } from '../helpers/capture.ts'
@@ -218,7 +219,7 @@ test('pre-commit: an added em dash is refused, exit 1, the refusal on stderr, an
   await put(web, 'src/a.ts', `ok\nx ${DASH} y\n`)
   await git(['add', 'src/a.ts'], web)
   const r = await check('pre-commit', web)
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.equal(
     r.err,
     [
@@ -264,7 +265,7 @@ test('pre-commit: each file under its own scope, the deepest that holds it', asy
   await put(mono, 'README.md', 'TODO: later\n')
   await git(['add', '-A'], mono)
   const r = await check('pre-commit', mono)
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.match(r.err, /^rness: policy no-todo refused this commit\n/)
   assert.match(r.err, /\n {2}org\/mono\/packages\/pkg\/a\.ts:1: TODO: later\n/)
   assert.doesNotMatch(r.err, /README/)
@@ -275,7 +276,7 @@ test('pre-commit: every failing rule of every policy in one message', async (t) 
   await put(mono, 'packages/pkg/a.ts', `TODO ${DASH}\n`)
   await git(['add', '-A'], mono)
   const r = await check('pre-commit', mono)
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.match(r.err, /rness: policy no-todo refused this commit/)
   assert.match(r.err, /rness: policy no-em-dash refused this commit/)
   assert.deepEqual((await readRefusals(mono)).map((x) => x.policy).sort(), [
@@ -302,7 +303,7 @@ test('an invalid policy is named in one line; the valid ones still apply', async
   await put(web, 'a.md', `clean ${DASH}\n`)
   await git(['add', 'a.md'], web)
   const r = await check('pre-commit', web)
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.ok(r.err.startsWith(notApplied), r.err)
   assert.match(r.err, /rness: policy no-em-dash refused this commit/)
 })
@@ -356,7 +357,7 @@ test('the context repository .rness answers to the global policies', async (t) =
   await put(rness, 'policy/pkg/note.md', 'TODO\n')
   await git(['add', '-A'], rness)
   const r = await check('pre-commit', rness)
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.match(r.err, /\n {2}\.rness\/standards\/style\.md:3: A /)
   // The scoped policy of pkg is not the context repository's.
   assert.doesNotMatch(r.err, /no-todo/)
@@ -375,7 +376,7 @@ test('a linked worktree is checked as its clone, and recorded there', async (t) 
   await put(wt, 'b.md', `b ${DASH}\n`)
   await git(['add', 'b.md'], wt)
   const r = await check('pre-commit', wt)
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.match(r.err, /\n {2}org\/web\/b\.md:1: b /)
   assert.equal((await readRefusals(web)).length, 1)
 })
@@ -412,7 +413,7 @@ test('a separate git directory named by GIT_DIR: the record goes there, process.
   assert.equal((await gitRun(['add', 'a.md'], web, env)).code, 0)
   const before = { ...process.env }
   const r = await check('pre-commit', web, { env })
-  assert.equal(r.code, 1, r.err)
+  assert.equal(r.code, POLICY_REFUSED_EXIT, r.err)
   assert.deepEqual({ ...process.env }, before)
   const record = await readFile(join(gitDir, 'rness', 'refusals.jsonl'), 'utf8')
   assert.match(
@@ -439,7 +440,7 @@ test('a file sync writes under .claude/skills/rness/ is exempt only when it is w
   await appendFile(join(web, ...rel.split('/')), `// mine ${DASH}\n`)
   await git(['add', rel], web)
   const r = await check('pre-commit', web)
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.match(
     r.err,
     /org\/web\/\.claude\/skills\/rness\/hooks\/register\.tsx:\d+: \/\/ mine /
@@ -476,7 +477,7 @@ test('the block sync writes is exempt; a block forged with its own hash is not',
   await writeFile(agents, lines.join('\n'))
   await git(['add', 'AGENTS.md'], web)
   const r = await check('pre-commit', web)
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.match(r.err, /org\/web\/AGENTS\.md:\d+: Forged /)
 })
 
@@ -493,7 +494,7 @@ test('commit-msg: a trailer refused, a clean message passes; $1 read from the wo
     args: ['.git/COMMIT_EDITMSG'],
     env: { CLAUDE_CODE_SESSION_ID: 'session-1' },
   })
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.equal(
     r.err,
     [
@@ -522,7 +523,7 @@ test('commit-msg: every scope of the clone applies, not only its root', async (t
     await writeFile(join(dir, '.git', 'COMMIT_EDITMSG'), 'wip: later\n')
   const args = ['.git/COMMIT_EDITMSG']
   const r = await check('commit-msg', mono, { args })
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.match(r.err, /^rness: policy no-todo refused this commit\n/)
   assert.deepEqual(await check('commit-msg', web, { args }), {
     code: 0,
@@ -746,7 +747,7 @@ test('pre-push: a remote object not here is refused, with a fix to fetch first',
     args: ['origin', 'file:///x'],
     input: `refs/heads/main ${local} refs/heads/main ${unknown}\n`,
   })
-  assert.equal(r.code, 1)
+  assert.equal(r.code, POLICY_REFUSED_EXIT)
   assert.match(
     r.err,
     /\n {2}refs\/heads\/main: remote object ccccccc is not here, so the push cannot be shown to be a fast-forward\n {2}fix: Fetch first, then push again\. /

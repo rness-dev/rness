@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, dirname, posix, resolve } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
+import { POLICY_REFUSED_EXIT } from '../core/git-hooks.ts'
 import { loadManifest } from '../core/manifest.ts'
 import {
   type AddedLinesFile,
@@ -35,8 +36,8 @@ import { findWorkspace } from '../core/workspace.ts'
 /**
  * `rness policy check <hook>`: what the git hooks of every clone run (spec
  * 0040 §4.2). It reads what git hands the hook, applies the enabled
- * policies of the clone's scopes, and answers as a hook: 1 and the refusal
- * on stderr, else 0. It fails open: anything that keeps it from checking
+ * policies of the clone's scopes, and answers as a hook: 20 and the refusal
+ * on stderr (the hook scripts turn it into 1), else 0. It fails open: anything that keeps it from checking
  * (no workspace, a clone that is no scope, its own error) is 0 and one line,
  * `rness: policies not checked: <why>`. Hidden: a person never runs it.
  * Like `hook`, one of the launcher's own commands: never installs, never
@@ -398,7 +399,7 @@ const isHook = (value: string | undefined): value is PolicyHook =>
   (POLICY_HOOKS as readonly unknown[]).includes(value)
 
 /**
- * Run one hook's check. 1 with the refusal on stderr when a policy refuses;
+ * Run one hook's check. `POLICY_REFUSED_EXIT` with the refusal on stderr when a policy refuses;
  * 0 otherwise, silent when it passes, one line when it could not check.
  */
 export async function policyCheckCommand(
@@ -451,7 +452,7 @@ export async function policyCheckCommand(
       gitDir,
       refusalsOf(failures, hook, io.env['CLAUDE_CODE_SESSION_ID'])
     )
-    return 1
+    return POLICY_REFUSED_EXIT
   } catch (e) {
     say(`${NOT_CHECKED}${message(e)}`)
     return 0

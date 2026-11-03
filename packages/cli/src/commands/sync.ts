@@ -1,4 +1,5 @@
-import { join } from 'node:path'
+import { mkdir, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 import {
   BLOCK_FILES,
@@ -22,7 +23,7 @@ import { assembleContext } from '../core/context.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
 import { HOOK_NAMES, hookManagerLine, installHooks } from '../core/git-hooks.ts'
-import { clone, isClean, pullFastForward } from '../core/git.ts'
+import { clone, gitPath, isClean, pullFastForward } from '../core/git.ts'
 import {
   NAME,
   NAME_RULE,
@@ -216,6 +217,9 @@ function hookClones(
   return owner !== undefined && clones.includes(owner) ? [owner] : []
 }
 
+/** Where `sync` remembers what it said about a clone it left alone. */
+const HOOKS_NOTICE = 'rness/hooks-notice'
+
 /** Install the hooks in `dir`; one line per cause worth saying. */
 async function hookLines(
   dir: string,
@@ -226,15 +230,34 @@ async function hookLines(
   const lines: Line[] = []
   if (result.written.length > 0)
     lines.push(['updated', `${label} git hooks (${result.written.join(', ')})`])
-  if (result.foreign.length > 0)
-    lines.push([
-      'skipped',
-      `${label} git hooks ${result.foreign.join(', ')} (not written by rness, left as is; to check policies there, run ${hookManagerLine('<hook>', ws)})`,
-    ])
+  // A clone left alone stays so (often by the user's global git config): the
+  // cause is said once, and again only when it changes.
+  const cause =
+    result.hooksPath !== null
+      ? `hooksPath ${result.hooksPath}`
+      : result.foreign.length > 0
+        ? `foreign ${result.foreign.join(',')}`
+        : null
+  const notice = await gitPath(dir, HOOKS_NOTICE)
+  if (notice !== null) {
+    const said = await readOrNull(notice)
+    if (cause === null) {
+      if (said !== null) await rm(notice, { force: true })
+    } else if (said !== cause) {
+      await mkdir(dirname(notice), { recursive: true })
+      await writeFileAtomic(notice, cause)
+    }
+    if (cause === null || said === cause) return lines
+  }
   if (result.hooksPath !== null)
     lines.push([
       'skipped',
       `${label} git hooks (core.hooksPath is set, left as is; in your hook manager, for each of ${HOOK_NAMES.join(', ')}: ${hookManagerLine('<hook>', ws)})`,
+    ])
+  else if (result.foreign.length > 0)
+    lines.push([
+      'skipped',
+      `${label} git hooks ${result.foreign.join(', ')} (not written by rness, left as is; to check policies there, run ${hookManagerLine('<hook>', ws)})`,
     ])
   return lines
 }
@@ -614,12 +637,13 @@ export async function syncCommand(
           const label = `org/${name}`
           try {
             lines.push(...(await hookLines(dir, label, ws.root)))
-            await pruneRefusals(dir)
           } catch (e) {
             problems.push(
               `${label}: ${e instanceof Error ? e.message : String(e)}`
             )
           }
+          // Independent of the hooks: an error above must not skip it.
+          await pruneRefusals(dir)
         }
       }
 
