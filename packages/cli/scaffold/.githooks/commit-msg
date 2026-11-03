@@ -2,15 +2,23 @@
 set -eu
 cd "$(dirname "$0")/.."
 if [ ! -x ./node_modules/.bin/rness ]; then
-  echo "rness: policies not checked: the rness CLI is not installed in .rness" >&2
+  # Said only while a policy is enabled: with none, nothing goes unchecked.
+  if grep -rqsE "^status:[[:space:]]*[\"']?Enabled" policy; then
+    echo "rness: policies not checked: the rness CLI is not installed in .rness" >&2
+  fi
   exit 0
 fi
+# The CLI's words are held: shown on a refusal (20) or a pass, replaced by
+# one line for any other status (a crash's stack, an older CLI's help).
 status=0
-./node_modules/.bin/rness policy check commit-msg "$@" || status=$?
+out=$(./node_modules/.bin/rness policy check commit-msg "$@" 2>&1) || status=$?
+if [ "$status" -ne 0 ] && [ "$status" -ne 20 ]; then
+  out="rness: policies not checked: the rness CLI exited $status"
+fi
+if [ -n "$out" ]; then
+  printf '%s\n' "$out" >&2
+fi
 if [ "$status" -eq 20 ]; then
   exit 1
-fi
-if [ "$status" -ne 0 ]; then
-  echo "rness: policies not checked: the rness CLI exited $status" >&2
 fi
 exit 0

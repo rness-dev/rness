@@ -8,6 +8,7 @@ import {
   realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,7 +19,7 @@ import { promisify } from 'node:util'
 import {
   HOOK_MARKER,
   HOOK_NAMES,
-  hookManagerLine,
+  hookManagerSnippet,
   hookScript,
   installHooks,
 } from '../../src/core/git-hooks.ts'
@@ -96,11 +97,44 @@ test('a clone with core.hooksPath is left whole and reported', async (t) => {
   assert.equal(r.hooksPath, '.githooks')
   assert.deepEqual(r.written, [])
   await assert.rejects(stat(join(clone, '.git', 'hooks', 'pre-commit')))
-  assert.equal(
-    hookManagerLine('commit-msg', WS),
-    `node '${WS}/.rness/node_modules/@rness/cli/dist/bin/rness.js' policy check commit-msg "$@"`
-  )
 })
+
+test("the hook manager's snippet finds the CLI from the clone, never by this machine's path", () => {
+  const snippet = hookManagerSnippet('commit-msg')
+  assert.ok(!snippet.includes(WS))
+  assert.ok(
+    snippet.startsWith(
+      'rness_dir="$(git rev-parse --show-toplevel)/../../.rness"\n'
+    ),
+    snippet
+  )
+  assert.match(snippet, /policy check commit-msg "\$@"/)
+  // Pasted into a team's hook: it never ends it, but on a refusal.
+  assert.doesNotMatch(snippet, /exit 0/)
+  assert.match(snippet, /exit 1/)
+})
+
+/** An enabled policy in the workspace's `.rness/policy/`. */
+async function enabledPolicy(ws: string, status = 'Enabled'): Promise<void> {
+  await mkdir(join(ws, '.rness', 'policy'), { recursive: true })
+  await writeFile(
+    join(ws, '.rness', 'policy', 'no-force-push.md'),
+    `---\nstatus: ${status}\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new commit.\n---\n\n# No force push\n`
+  )
+}
+
+async function runScript(
+  file: string,
+  env?: NodeJS.ProcessEnv
+): Promise<{ code: number; stderr: string }> {
+  return execFileP('/bin/sh', [file], env === undefined ? {} : { env }).then(
+    (o) => ({ code: 0, stderr: o.stderr }),
+    (e: { code: number; stderr: string }) => ({
+      code: e.code,
+      stderr: e.stderr,
+    })
+  )
+}
 
 test('a directory that is no repository is left alone', async (t) => {
   const dir = await tmp(t)
@@ -118,29 +152,51 @@ test('a linked worktree gets the hooks in the main repository', async (t) => {
   await stat(join(clone, '.git', 'hooks', 'pre-push'))
 })
 
-test('the script fails open with one line when the pinned CLI is missing', async (t) => {
+test('the script fails open with one line when the pinned CLI is missing and a policy is enabled', async (t) => {
   const ws = await tmp(t)
+  await enabledPolicy(ws)
   const file = join(ws, 'hook')
   await writeFile(file, hookScript('pre-commit', ws))
-  const r = await execFileP('sh', [file]).then(
-    (o) => ({ code: 0, ...o }),
-    (e: { code: number; stdout: string; stderr: string }) => e
-  )
-  assert.equal(r.code, 0)
-  assert.equal(
-    r.stderr,
-    `rness: policies not checked: ${ws}/.rness/node_modules/@rness/cli/dist/bin/rness.js not found\n`
-  )
+  assert.deepEqual(await runScript(file), {
+    code: 0,
+    stderr: `rness: policies not checked: ${ws}/.rness/node_modules/@rness/cli/dist/bin/rness.js not found\n`,
+  })
 })
 
-test('the script fails open with one line when node is missing', async (t) => {
+test('a missing CLI says nothing while no policy is enabled; a .rness that is not there is said', async (t) => {
   const ws = await tmp(t)
   const file = join(ws, 'hook')
   await writeFile(file, hookScript('pre-commit', ws))
-  const r = await execFileP('/bin/sh', [file], {
-    env: { PATH: '/nonexistent' },
+  // No .rness at all: the workspace moved, or is gone.
+  assert.match((await runScript(file)).stderr, /^rness: policies not checked: /)
+  // A .rness without policies, then with the example still disabled.
+  await mkdir(join(ws, '.rness'))
+  assert.deepEqual(await runScript(file), { code: 0, stderr: '' })
+  await enabledPolicy(ws, 'Disabled')
+  assert.deepEqual(await runScript(file), { code: 0, stderr: '' })
+})
+
+/** A PATH where `grep` is found and `node` is not. */
+async function pathWithoutNode(t: import('node:test').TestContext) {
+  const bin = join(await tmp(t), 'bin')
+  await mkdir(bin)
+  const grep = (await execFileP('/bin/sh', ['-c', 'command -v grep'])).stdout
+  await symlink(grep.trim(), join(bin, 'grep'))
+  return bin
+}
+
+test('the script fails open with one line when node is missing, silent with no enabled policy', async (t) => {
+  const ws = await tmp(t)
+  const file = join(ws, 'hook')
+  await writeFile(file, hookScript('pre-commit', ws))
+  const PATH = await pathWithoutNode(t)
+  await enabledPolicy(ws, 'Disabled')
+  assert.deepEqual(await runScript(file, { PATH }), { code: 0, stderr: '' })
+  await enabledPolicy(ws)
+  assert.deepEqual(await runScript(file, { PATH }), {
+    code: 0,
+    stderr: 'rness: policies not checked: node not found\n',
   })
-  assert.equal(r.stderr, 'rness: policies not checked: node not found\n')
 })
 
 async function standIn(ws: string, body: string): Promise<void> {
@@ -161,18 +217,57 @@ async function hookedClone(ws: string): Promise<string> {
 }
 
 // A stand-in for the pinned CLI: refuses (20) a message naming "forbidden",
-// crashes (1) on one naming "crash".
+// crashes (1) on one naming "crash", prints a lot and exits 2 (a CLI that
+// knows no \`policy\`) on "noisy", says a line and passes on "notice".
 const STAND_IN = `import { readFileSync } from 'node:fs'
 const [, , a, b, hook, file] = process.argv
 if (a === 'policy' && b === 'check' && hook === 'commit-msg') {
   const text = readFileSync(file, 'utf8')
   if (text.includes('forbidden')) {
-    process.stderr.write('rness: policy stand-in refused this commit\\n')
+    process.stderr.write('rness: policy stand-in refused this commit\\n  fix: say it otherwise\\n')
     process.exit(20)
   }
   if (text.includes('crash')) process.exit(1)
+  if (text.includes('noisy')) {
+    for (let i = 0; i < 40; i++) {
+      process.stdout.write('noise ' + i + '\\n')
+      process.stderr.write('noise ' + i + '\\n')
+    }
+    process.exit(2)
+  }
+  if (text.includes('notice')) process.stderr.write('rness: a notice\\n')
 }
 `
+
+const ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: 'x',
+  GIT_AUTHOR_EMAIL: 'x@x.invalid',
+  GIT_COMMITTER_NAME: 'x',
+  GIT_COMMITTER_EMAIL: 'x@x.invalid',
+}
+
+/** `git commit -m <message>` in `clone`: its exit code and the hooks' `rness:` lines. */
+async function commitWith(
+  clone: string,
+  message: string
+): Promise<{ code: number; stderr: string; rness: string[] }> {
+  const r = await execFileP(
+    'git',
+    ['commit', '--allow-empty', '-m', message, '--no-gpg-sign'],
+    { cwd: clone, env: ENV }
+  ).then(
+    (o) => ({ code: 0, stderr: o.stderr }),
+    (e: { code: number; stderr: string }) => ({
+      code: e.code,
+      stderr: e.stderr,
+    })
+  )
+  return {
+    ...r,
+    rness: r.stderr.split('\n').filter((l) => l.includes('rness:')),
+  }
+}
 
 for (const dirName of ['ws', "my ws 'quoted'"])
   test(`a commit through the written hook: refusal 20 blocks, a crash (1) passes with one line, in ${dirName}`, async (t) => {
@@ -206,6 +301,80 @@ for (const dirName of ['ws', "my ws 'quoted'"])
     await git(['add', 'b.txt'], clone)
     await git(['commit', '-q', '-m', 'fine'], clone)
   })
+
+test('through the written hook, a CLI that prints a lot and exits 2 is one line; its words show on 0 and 20', async (t) => {
+  const ws = await tmp(t)
+  await standIn(ws, STAND_IN)
+  const clone = await hookedClone(ws)
+  const noisy = await commitWith(clone, 'noisy')
+  assert.equal(noisy.code, 0)
+  assert.doesNotMatch(noisy.stderr, /noise/)
+  assert.deepEqual(noisy.rness, [
+    'rness: policies not checked: the rness CLI exited 2',
+  ])
+  const notice = await commitWith(clone, 'notice')
+  assert.equal(notice.code, 0)
+  assert.deepEqual(notice.rness, ['rness: a notice'])
+  const refused = await commitWith(clone, 'forbidden')
+  assert.notEqual(refused.code, 0)
+  assert.match(
+    refused.stderr,
+    /rness: policy stand-in refused this commit\n {2}fix: say it otherwise\n/
+  )
+})
+
+test("the hook manager's snippet through git: 20 blocks, 0 goes on to the team's hook, a crash or a missing CLI is one line", async (t) => {
+  const ws = await tmp(t)
+  await standIn(ws, STAND_IN)
+  await enabledPolicy(ws)
+  const clone = join(ws, 'org', 'web')
+  await mkdir(join(clone, '.husky'), { recursive: true })
+  await git(['init', '-q', '-b', 'main'], clone)
+  await git(['config', 'core.hooksPath', '.husky'], clone)
+  // As husky runs a hook: under sh -e, the team's own line after ours.
+  const hook = join(clone, '.husky', 'commit-msg')
+  await writeFile(
+    hook,
+    `#!/bin/sh\nset -e\n${hookManagerSnippet('commit-msg')}echo team >> "$(git rev-parse --git-dir)/team-ran"\n`
+  )
+  await chmod(hook, 0o755)
+  const ran = async () =>
+    (await readFile(join(clone, '.git', 'team-ran'), 'utf8').catch(() => ''))
+      .split('\n')
+      .filter((l) => l !== '').length
+
+  const refused = await commitWith(clone, 'a forbidden word')
+  assert.notEqual(refused.code, 0)
+  assert.match(refused.stderr, /rness: policy stand-in refused this commit\n/)
+  assert.equal(await ran(), 0)
+
+  assert.deepEqual(
+    { ...(await commitWith(clone, 'fine')), stderr: '' },
+    { code: 0, stderr: '', rness: [] }
+  )
+  assert.equal(await ran(), 1)
+  const crash = await commitWith(clone, 'a crash')
+  assert.equal(crash.code, 0)
+  assert.deepEqual(crash.rness, [
+    'rness: policies not checked: the rness CLI exited 1',
+  ])
+  const noisy = await commitWith(clone, 'noisy')
+  assert.equal(noisy.code, 0)
+  assert.deepEqual(noisy.rness, [
+    'rness: policies not checked: the rness CLI exited 2',
+  ])
+  assert.equal(await ran(), 3)
+
+  await rm(join(ws, '.rness', 'node_modules'), { recursive: true })
+  const missing = await commitWith(clone, 'a forbidden word, unchecked')
+  assert.equal(missing.code, 0)
+  assert.equal(missing.rness.length, 1)
+  assert.match(
+    missing.rness[0] ?? '',
+    /^rness: policies not checked: .*\/org\/web\/\.\.\/\.\.\/\.rness\/node_modules\/@rness\/cli\/dist\/bin\/rness\.js not found$/
+  )
+  assert.equal(await ran(), 4)
+})
 
 test('pre-push still reads the lines git gives on stdin', async (t) => {
   const ws = await tmp(t)

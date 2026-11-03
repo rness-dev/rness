@@ -18,6 +18,7 @@ import { run } from '../../src/cli.ts'
 import { type SyncOptions, syncCommand } from '../../src/commands/sync.ts'
 import { BEGIN, END, blockHash, parseHeader } from '../../src/core/block.ts'
 import { readOrNull } from '../../src/core/fs.ts'
+import { hookManagerSnippet } from '../../src/core/git-hooks.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import { freshBlockHash } from '../../src/core/policy-workspace.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
@@ -1111,19 +1112,26 @@ test('hooks: a foreign hook and a core.hooksPath are left and reported with the 
   await git(['config', 'core.hooksPath', '.githooks'], join(root, 'org', 'api'))
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
-  const cli = `${root}/.rness/node_modules/@rness/cli/dist/bin/rness.js`
+  // The lines to add, under each: the CLI found from the clone, no path of
+  // this machine, which a team would commit.
+  const snippet = hookManagerSnippet('<hook>')
+    .trimEnd()
+    .split('\n')
+    .map((l) => `    ${l}`)
+    .join('\n')
   assert.ok(
     r.out.includes(
-      `skipped  org/web git hooks pre-push (not written by rness, left as is; to check policies there, run node '${cli}' policy check <hook> "$@")\n`
+      `skipped  org/web git hooks pre-push (not written by rness, left as is; to check policies there, add to it these lines, <hook> its name)\n${snippet}\n`
     ),
     r.out
   )
   assert.ok(
     r.out.includes(
-      `skipped  org/api git hooks (core.hooksPath is set, left as is; in your hook manager, for each of pre-commit, commit-msg, pre-push: node '${cli}' policy check <hook> "$@")\n`
+      `skipped  org/api git hooks (core.hooksPath is set, left as is; to check policies there, add to your hook manager's pre-commit, commit-msg, pre-push these lines, <hook> its name)\n${snippet}\n`
     ),
     r.out
   )
+  assert.ok(!r.out.includes(`${root}/.rness/node_modules`), r.out)
   assert.equal(
     await readFile(
       join(root, 'org', 'web', '.git', 'hooks', 'pre-push'),

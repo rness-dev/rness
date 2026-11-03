@@ -27,40 +27,71 @@ export function pinnedCliOf(ws: string): string {
 
 const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`
 
+/** A policy file that says it is enabled, as `grep -E` reads it: quotes allowed. */
+const ENABLED = `"^status:[[:space:]]*[\\"']?Enabled"`
+
 /**
- * The text of one hook: locate the pinned CLI and run it, nothing more. Only
- * the CLI's refusal code blocks (exit 1); a missing `node` or CLI, or a CLI
- * that crashed, is said in one line and lets git go on (fail open). No
- * `exec`: the script reads the status; stdin is inherited, so pre-push still
- * reads git's lines.
+ * What every policy hook runs, once `rness_dir` (the workspace's `.rness`)
+ * and `rness_bin` (its pinned CLI) are set. Only the CLI's refusal code
+ * blocks (exit 1, its words on stderr). Anything else lets git go on and
+ * never ends the script, so a team's hook manager runs its own lines after
+ * it: the CLI's words are shown when it exits 0, and replaced by one line
+ * for any other status (a crash's stack, an older CLI's help); a missing
+ * `node` or CLI is one line, said only while a policy of `.rness/` is
+ * enabled, or when `.rness/` itself is not there. The output is held in a
+ * variable, not a file; stdin is inherited, so pre-push still reads git's
+ * lines.
+ */
+function hookBody(hook: string): string {
+  return `if ! command -v node >/dev/null 2>&1; then
+  rness_why='node not found'
+elif [ ! -f "$rness_bin" ]; then
+  rness_why="$rness_bin not found"
+else
+  rness_why=
+  rness_status=0
+  rness_out=$(node "$rness_bin" policy check ${hook} "$@" 2>&1) || rness_status=$?
+  if [ "$rness_status" -ne 0 ] && [ "$rness_status" -ne ${POLICY_REFUSED_EXIT} ]; then
+    rness_out="rness: policies not checked: the rness CLI exited $rness_status"
+  fi
+  if [ -n "$rness_out" ]; then
+    printf '%s\\n' "$rness_out" >&2
+  fi
+  if [ "$rness_status" -eq ${POLICY_REFUSED_EXIT} ]; then
+    exit 1
+  fi
+fi
+if [ -n "$rness_why" ] && { [ ! -d "$rness_dir" ] || grep -rqsE ${ENABLED} "$rness_dir/policy"; }; then
+  echo "rness: policies not checked: $rness_why" >&2
+fi
+`
+}
+
+/**
+ * The text of one hook in a clone's hooks directory: the body above, the
+ * pinned CLI at the workspace's absolute path, and exit 0 at its end. No
+ * `exec`: the script reads the status.
  */
 export function hookScript(hook: HookName, ws: string): string {
   return `#!/bin/sh
 ${HOOK_MARKER}
-bin=${quote(pinnedCliOf(ws))}
-if ! command -v node >/dev/null 2>&1; then
-  echo "rness: policies not checked: node not found" >&2
-  exit 0
-fi
-if [ ! -f "$bin" ]; then
-  echo "rness: policies not checked: $bin not found" >&2
-  exit 0
-fi
-node "$bin" policy check ${hook} "$@"
-status=$?
-if [ "$status" -eq ${POLICY_REFUSED_EXIT} ]; then
-  exit 1
-fi
-if [ "$status" -ne 0 ]; then
-  echo "rness: policies not checked: the rness CLI exited $status" >&2
-fi
-exit 0
+rness_dir=${quote(join(ws, '.rness'))}
+rness_bin=${quote(pinnedCliOf(ws))}
+${hookBody(hook)}exit 0
 `
 }
 
-/** The line a team's hook manager runs for `hook` when it owns `core.hooksPath`. */
-export function hookManagerLine(hook: string, ws: string): string {
-  return `node ${quote(pinnedCliOf(ws))} policy check ${hook} "$@"`
+/**
+ * The lines a team's hook manager (husky, lefthook) runs for `hook` when it
+ * owns `core.hooksPath`: the same body, the CLI found from the clone
+ * (`org/<name>`, two levels under the workspace's root), so that the file
+ * a team commits holds no path of one machine. It never exits but to
+ * refuse: the team's own lines run after it.
+ */
+export function hookManagerSnippet(hook: string): string {
+  return `rness_dir="$(git rev-parse --show-toplevel)/../../.rness"
+rness_bin="$rness_dir/${PINNED_BIN}"
+${hookBody(hook)}`
 }
 
 export interface HooksResult {

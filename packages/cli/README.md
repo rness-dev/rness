@@ -352,16 +352,43 @@ scaffold `.githooks/` carries the same three, and never under
 `sync --check`). A clone it does not declare gets none. In a clone that
 holds no scope, no policy applies: `rness policy check` passes in silence
 and the guard does not check its files. A clone's name is compared whatever
-its case: `org/Web` is the declared `web`, and its policies apply. The hooks are written whatever the
-policies: each passes at once while no enabled
+its case: `org/Web` is the declared `web`, and its policies apply. The hooks
+are written whatever the policies: each passes at once while no enabled
 policy uses its check, so an `Enabled` merged in `.rness` applies without a
 `sync`. They are local, never committed, mode 0755, carry a marker line and
-call the pinned CLI by its absolute path
-(`rness policy check <hook>`, a hidden command). `sync` rewrites a stale rness
-hook. A hook file without the marker is never touched, and a clone with
-`core.hooksPath` set (husky, lefthook) is left alone; `sync` reports each,
-once per clone until the cause changes, with the line to add to the team's
-own hook manager (`node '<ws>/.rness/node_modules/@rness/cli/dist/bin/rness.js' policy check <hook> "$@"`).
+call the pinned CLI by its absolute path (`rness policy check <hook>`, a
+hidden command). `sync` rewrites a stale rness hook. A hook file without the
+marker is never touched, and a clone with `core.hooksPath` set (husky,
+lefthook) is left alone; `sync` reports each, once per clone until the cause
+changes, with the lines to add to the team's own hook, `<hook>` replaced by
+its name. They find the CLI from the clone, so a team can commit them, and
+they end the hook only to refuse:
+
+```sh
+rness_dir="$(git rev-parse --show-toplevel)/../../.rness"
+rness_bin="$rness_dir/node_modules/@rness/cli/dist/bin/rness.js"
+if ! command -v node >/dev/null 2>&1; then
+  rness_why='node not found'
+elif [ ! -f "$rness_bin" ]; then
+  rness_why="$rness_bin not found"
+else
+  rness_why=
+  rness_status=0
+  rness_out=$(node "$rness_bin" policy check <hook> "$@" 2>&1) || rness_status=$?
+  if [ "$rness_status" -ne 0 ] && [ "$rness_status" -ne 20 ]; then
+    rness_out="rness: policies not checked: the rness CLI exited $rness_status"
+  fi
+  if [ -n "$rness_out" ]; then
+    printf '%s\n' "$rness_out" >&2
+  fi
+  if [ "$rness_status" -eq 20 ]; then
+    exit 1
+  fi
+fi
+if [ -n "$rness_why" ] && { [ ! -d "$rness_dir" ] || grep -rqsE "^status:[[:space:]]*[\"']?Enabled" "$rness_dir/policy"; }; then
+  echo "rness: policies not checked: $rness_why" >&2
+fi
+```
 
 **The guard.** The `PreToolUse` hook gains two entries. On `Edit` and `Write`
 it checks the lines the edit adds against the `added-lines` rules of the
@@ -395,12 +422,28 @@ across the clones, by policy.
 
 **Fail open.** A missing `node`, a missing pinned CLI, a `.rness` not
 reachable or an error of rness's own never blocks: the hook prints at most
-one line, `rness: policies not checked: <why>`, and exits 0. Only a refusal
-blocks: `rness policy check` exits 20 for it, and each hook maps 20 to 1;
-any other non-zero status becomes a one-line warning and exit 0. What
-policies do not cover (a write through Bash until it is committed,
-`--no-verify` outside Claude Code, cloud agents without the hooks) is in the
-enforcement matrix of the documentation.
+one line, `rness: policies not checked: <why>`, and exits 0. A missing
+`node` or CLI says nothing while no policy of `.rness/policy/` is `Enabled`
+(nothing would be checked), and is said when `.rness/` itself is not there.
+Only a refusal blocks: `rness policy check` exits 20 for it, and each hook
+maps 20 to 1, its words on stderr; any other non-zero status becomes one
+line, `rness: policies not checked: the rness CLI exited <n>`, in place of
+what the CLI printed (a crash's stack, the help of a CLI without `policy`),
+and exit 0. What policies do not cover (a write through Bash until it is
+committed, `--no-verify` outside Claude Code, cloud agents without the
+hooks) is in the enforcement matrix of the documentation.
+
+**After a rollback.** A pin moved back below the version that brought
+policies leaves the hooks of the clones in place, each commit and push
+saying `the rness CLI exited 2`. To remove them, in each clone (a rness hook
+is the one whose second line is the marker; any other is left):
+
+```sh
+for hook in pre-commit commit-msg pre-push; do
+  file="$(git rev-parse --git-path hooks)/$hook"
+  if grep -qs '^# rness: policy hook' "$file"; then rm "$file"; fi
+done
+```
 
 ### Boards
 

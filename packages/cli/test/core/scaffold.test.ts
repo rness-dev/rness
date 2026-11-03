@@ -105,16 +105,28 @@ test('CONVENTIONS.md names the Policy role and its statuses', async () => {
   assert.match(text, /not numbered/)
 })
 
-/** Runs a scaffold hook from a copy of `.rness` whose CLI is `cli` (a sh body), or absent. */
+/**
+ * Runs a scaffold hook from a copy of `.rness` whose CLI is `cli` (a sh
+ * body), or absent; with an enabled policy unless `enabled` is false.
+ */
 async function runHook(
   hook: string,
-  cli: string | null
+  cli: string | null,
+  enabled = true
 ): Promise<{ code: number; err: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'rness-hook-'))
   try {
     await cp(join(scaffoldDir(), '.githooks'), join(dir, '.githooks'), {
       recursive: true,
     })
+    await cp(join(scaffoldDir(), 'policy'), join(dir, 'policy'), {
+      recursive: true,
+    })
+    if (enabled)
+      await writeFile(
+        join(dir, 'policy', 'on.md'),
+        "---\nstatus: 'Enabled'\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new commit.\n---\n\n# On\n"
+      )
     if (cli !== null) {
       const bin = join(dir, 'node_modules', '.bin')
       await mkdir(bin, { recursive: true })
@@ -154,6 +166,33 @@ for (const hook of ['commit-msg', 'pre-push']) {
       err: 'rness: policies not checked: the rness CLI is not installed in .rness\n',
     })
   })
+
+  test(`${hook}: a missing CLI says nothing while no policy is enabled (the example is Disabled)`, async () => {
+    assert.deepEqual(await runHook(hook, null, false), { code: 0, err: '' })
+  })
+
+  test(`${hook}: a CLI that prints a lot and exits 2 is one line; its words show on 20 and 0`, async () => {
+    const noisy =
+      'i=0; while [ $i -lt 40 ]; do echo "noise $i"; echo "noise $i" >&2; i=$((i+1)); done; exit 2'
+    assert.deepEqual(await runHook(hook, noisy), {
+      code: 0,
+      err: 'rness: policies not checked: the rness CLI exited 2\n',
+    })
+    assert.deepEqual(
+      await runHook(
+        hook,
+        'echo "rness: policy x refused this push" >&2; exit 20'
+      ),
+      { code: 1, err: 'rness: policy x refused this push\n' }
+    )
+    assert.deepEqual(
+      await runHook(hook, 'echo "rness: a notice" >&2; exit 0'),
+      {
+        code: 0,
+        err: 'rness: a notice\n',
+      }
+    )
+  })
 }
 
 test('pre-commit: validate fails closed, then the policy check maps 20 to a refusal', async () => {
@@ -181,4 +220,19 @@ test('pre-commit: validate fails closed, then the policy check maps 20 to a refu
   )
   assert.equal(other.code, 0)
   assert.match(other.err, /the rness CLI exited 4/)
+  // The policy check's words, not validate's, are held: a noisy failure is one line.
+  assert.deepEqual(
+    await runHook(
+      'pre-commit',
+      '[ "$1" = validate ] && exit 0; echo noise; echo noise >&2; exit 2'
+    ),
+    { code: 0, err: 'rness: policies not checked: the rness CLI exited 2\n' }
+  )
+  assert.deepEqual(
+    await runHook(
+      'pre-commit',
+      '[ "$1" = validate ] && exit 0; echo "rness: refused" >&2; exit 20'
+    ),
+    { code: 1, err: 'rness: refused\n' }
+  )
 })

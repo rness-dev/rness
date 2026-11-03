@@ -22,7 +22,11 @@ import { migrateBoards } from '../core/board-migration.ts'
 import { assembleContext } from '../core/context.ts'
 import type { CommandDeps } from '../core/deps.ts'
 import { exists, isSymlink, readOrNull, writeFileAtomic } from '../core/fs.ts'
-import { HOOK_NAMES, hookManagerLine, installHooks } from '../core/git-hooks.ts'
+import {
+  HOOK_NAMES,
+  hookManagerSnippet,
+  installHooks,
+} from '../core/git-hooks.ts'
 import { clone, gitPath, isClean, pullFastForward } from '../core/git.ts'
 import {
   NAME,
@@ -231,14 +235,21 @@ function hookClones(
 /** Where `sync` remembers what it said about a clone it left alone. */
 const HOOKS_NOTICE = 'rness/hooks-notice'
 
-/** Install the hooks in `dir`; one line per cause worth saying. */
+/** The lines to add to a hook, indented as a block under the line that says why. */
+const SNIPPET = hookManagerSnippet('<hook>')
+  .trimEnd()
+  .split('\n')
+  .map((l) => `    ${l}`)
+  .join('\n')
+
+/** Install the hooks in `dir`; one line per cause worth saying, and the lines to add. */
 async function hookLines(
   dir: string,
   label: string,
   ws: string
-): Promise<Line[]> {
+): Promise<(Line | string)[]> {
   const result = await installHooks(dir, ws)
-  const lines: Line[] = []
+  const lines: (Line | string)[] = []
   if (result.written.length > 0)
     lines.push(['updated', `${label} git hooks (${result.written.join(', ')})`])
   // A clone left alone stays so (often by the user's global git config): the
@@ -261,15 +272,21 @@ async function hookLines(
     if (cause === null || said === cause) return lines
   }
   if (result.hooksPath !== null)
-    lines.push([
-      'skipped',
-      `${label} git hooks (core.hooksPath is set, left as is; in your hook manager, for each of ${HOOK_NAMES.join(', ')}: ${hookManagerLine('<hook>', ws)})`,
-    ])
+    lines.push(
+      [
+        'skipped',
+        `${label} git hooks (core.hooksPath is set, left as is; to check policies there, add to your hook manager's ${HOOK_NAMES.join(', ')} these lines, <hook> its name)`,
+      ],
+      SNIPPET
+    )
   else if (result.foreign.length > 0)
-    lines.push([
-      'skipped',
-      `${label} git hooks ${result.foreign.join(', ')} (not written by rness, left as is; to check policies there, run ${hookManagerLine('<hook>', ws)})`,
-    ])
+    lines.push(
+      [
+        'skipped',
+        `${label} git hooks ${result.foreign.join(', ')} (not written by rness, left as is; to check policies there, add to it these lines, <hook> its name)`,
+      ],
+      SNIPPET
+    )
   return lines
 }
 
