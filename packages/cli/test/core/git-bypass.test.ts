@@ -173,34 +173,60 @@ test('gitBypasses: git -c core.hooksPath=... on any subcommand, the key in any c
       how: 'core.hooksPath',
       skips: ALL,
       hooksPath: '/dev/null',
+      scope: 'command',
     },
   ])
   assert.deepEqual(found('git -c CORE.HOOKSPATH=x status'), [
-    { dir: '/w', how: 'core.hooksPath', skips: ALL, hooksPath: 'x' },
+    {
+      dir: '/w',
+      how: 'core.hooksPath',
+      skips: ALL,
+      hooksPath: 'x',
+      scope: 'command',
+    },
   ])
   assert.deepEqual(found('git --config-env=core.hooksPath=V push'), [
-    { dir: '/w', how: 'core.hooksPath', skips: ALL },
+    { dir: '/w', how: 'core.hooksPath', skips: ALL, scope: 'command' },
   ])
-  assert.deepEqual(found('git --config-env core.hookspath=V commit'), [
-    { dir: '/w', how: 'core.hooksPath', skips: ALL },
-  ])
+  assert.deepEqual(
+    found('V=/dev/null git --config-env core.hookspath=V commit'),
+    [
+      {
+        dir: '/w',
+        how: 'core.hooksPath',
+        skips: ALL,
+        hooksPath: '/dev/null',
+        scope: 'command',
+      },
+    ]
+  )
   assert.deepEqual(found('git -c user.name=x commit -m x'), [])
   assert.deepEqual(found('git -c core.hooksPath=/dev/null'), [])
 })
 
 test('gitBypasses: setting core.hooksPath with git config; reading or unsetting it passes', () => {
-  for (const [script, value] of [
-    ['git config core.hooksPath /dev/null', '/dev/null'],
-    ['git config --local core.hooksPath x', 'x'],
-    ['git config --global core.hookspath x', 'x'],
-    ['git config -f .git/config core.hooksPath x', 'x'],
-    ['git config --add core.hooksPath x', 'x'],
-    ['git config set core.hooksPath x', 'x'],
-    ['git config --type path set core.hooksPath x', 'x'],
+  for (const [script, value, scope] of [
+    ['git config core.hooksPath /dev/null', '/dev/null', 'local'],
+    ['git config --local core.hooksPath x', 'x', 'local'],
+    ['git config --global core.hookspath x', 'x', 'global'],
+    ['git config --system core.hooksPath x', 'x', 'system'],
+    ['git config --worktree core.hooksPath x', 'x', 'worktree'],
+    ['git config -f .git/config core.hooksPath x', 'x', 'file'],
+    ['git config --add core.hooksPath x', 'x', 'local'],
+    ['git config set core.hooksPath x', 'x', 'local'],
+    ['git config --type path set --global core.hooksPath x', 'x', 'global'],
   ] as const)
     assert.deepEqual(
       found(script),
-      [{ dir: '/w', how: 'core.hooksPath', skips: ALL, hooksPath: value }],
+      [
+        {
+          dir: '/w',
+          how: 'core.hooksPath',
+          skips: ALL,
+          hooksPath: value,
+          scope: scope,
+        },
+      ],
       script
     )
   for (const script of [
@@ -227,17 +253,31 @@ test('gitBypasses: the environment forms, as a prefix, through env, or exported'
         how: 'GIT_CONFIG_KEY_0=core.hooksPath',
         skips: ALL,
         hooksPath: '/dev/null',
+        scope: 'environment',
       },
     ]
   )
   assert.deepEqual(found('env -i GIT_CONFIG_KEY_3=Core.HooksPath git push'), [
-    { dir: '/w', how: 'GIT_CONFIG_KEY_3=core.hooksPath', skips: ALL },
+    {
+      dir: '/w',
+      how: 'GIT_CONFIG_KEY_3=core.hooksPath',
+      skips: ALL,
+      scope: 'environment',
+    },
   ])
   assert.deepEqual(
     found(
       `export GIT_CONFIG_PARAMETERS="'core.hooksPath'='/dev/null'"; git commit -m x`
     ),
-    [{ dir: '/w', how: 'GIT_CONFIG_PARAMETERS', skips: ALL }]
+    [
+      {
+        dir: '/w',
+        how: 'GIT_CONFIG_PARAMETERS',
+        skips: ALL,
+        hooksPath: '/dev/null',
+        scope: 'environment',
+      },
+    ]
   )
   // Not exported: git never sees it.
   assert.deepEqual(found('GIT_CONFIG_KEY_0=core.hooksPath; git commit'), [])
@@ -340,4 +380,139 @@ test('gitBypasses: one per bypass, with the text of its command', () => {
 
 test('gitBypasses: a command that cannot be read is null', () => {
   assert.equal(gitBypasses('git commit -n -m "oops', AT), null)
+})
+
+// --- after the security review of the first version (2026-11-03): where the
+// parser cannot tell, a command pairing git with a hook-skipping word is
+// refused rather than allowed.
+
+test('gitBypasses: GIT_DIR and GIT_WORK_TREE place git as --git-dir and --work-tree do, the options first', () => {
+  const dirs = (script: string) => found(script)?.map((b) => b.dir) ?? null
+  assert.deepEqual(dirs('GIT_DIR=org/web/.git git commit -n'), ['/w/org/web'])
+  assert.deepEqual(dirs('GIT_WORK_TREE=/x/y GIT_DIR=/x/y/.git git commit -n'), [
+    '/x/y',
+  ])
+  assert.deepEqual(dirs('env GIT_DIR=/a/.git git commit -n'), ['/a'])
+  assert.deepEqual(dirs('export GIT_DIR=/a/.git; git commit -n'), ['/a'])
+  assert.deepEqual(dirs('GIT_DIR=/a/.git git --git-dir=/b/.git commit -n'), [
+    '/b',
+  ])
+  // Relative to where git ends up: -C first.
+  assert.deepEqual(dirs('git --git-dir=.git -C org/web commit -n'), [
+    '/w/org/web',
+  ])
+  assert.deepEqual(dirs('GIT_DIR=$NOWHERE git commit -n'), [null])
+})
+
+test('gitBypasses: an alias that skips the hooks, set by -c, --config-env, the environment or git config', () => {
+  const how = (script: string) => found(script)?.map((b) => b.how) ?? null
+  for (const [script, key] of [
+    ['git -c alias.ci="commit -n" ci -m x', 'alias.ci'],
+    ['git -c alias.ci="commit -an" ci -m x', 'alias.ci'],
+    [`git -c alias.ci='!git commit --no-verify' ci`, 'alias.ci'],
+    ['git -c alias.p="push --no-verify" p', 'alias.p'],
+    ['V="commit -n" git --config-env=alias.ci=V ci', 'alias.ci'],
+    [
+      'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ci GIT_CONFIG_VALUE_0="commit -n" git ci',
+      'alias.ci',
+    ],
+    [`GIT_CONFIG_PARAMETERS="'alias.ci'='commit -n'" git ci`, 'alias.ci'],
+    ['git config alias.ci "commit --no-verify"', 'alias.ci'],
+    ['git config --global alias.ci "commit -n"', 'alias.ci'],
+  ] as const)
+    assert.deepEqual(how(script), [key], script)
+  for (const script of [
+    'git -c alias.lg="log -n 5" lg',
+    'git -c alias.ci="commit -m -n" ci',
+    'git config alias.st status',
+    'git config --get alias.ci',
+  ])
+    assert.deepEqual(found(script), [], script)
+})
+
+test('gitBypasses: another configuration for git, or an include written, skips every hook', () => {
+  for (const [script, how] of [
+    ['GIT_CONFIG_GLOBAL=/tmp/x git commit -m x', 'GIT_CONFIG_GLOBAL'],
+    ['GIT_CONFIG_SYSTEM=/tmp/x git status', 'GIT_CONFIG_SYSTEM'],
+    ['export GIT_CONFIG=/tmp/x; git push', 'GIT_CONFIG'],
+    ['git -c include.path=/tmp/x commit -m x', 'include.path'],
+    ['git config include.path /tmp/x', 'include.path'],
+    [
+      'git config --add includeIf.gitdir:~/w/.path /tmp/x',
+      'includeIf.gitdir:~/w/.path',
+    ],
+  ] as const)
+    assert.deepEqual(found(script), [{ dir: '/w', how, skips: ALL }], script)
+  for (const script of [
+    'git config --get include.path',
+    'git config --get-regexp includeIf',
+    'GIT_CONFIG_NOSYSTEM=1 git commit -m x',
+  ])
+    assert.deepEqual(found(script), [], script)
+})
+
+test('gitBypasses: the common wrappers are unwrapped', () => {
+  for (const [script, how] of [
+    ['xargs git commit --no-verify', '--no-verify'],
+    ['xargs -0 -n 1 -I{} git commit -n -m {}', '-n'],
+    ['sudo git commit --no-verify', '--no-verify'],
+    ['sudo -E -u me git commit -n', '-n'],
+    ['nice -n 10 git commit -n', '-n'],
+    ['timeout 30 git commit -n', '-n'],
+    ['timeout -s KILL 5m git commit -n', '-n'],
+    ['doas -u me git commit -n', '-n'],
+    ['stdbuf -oL git commit -n', '-n'],
+    ['ionice -c 3 git commit -n', '-n'],
+    ['chronic git commit -n', '-n'],
+    ['watch -n 5 git commit -n', '-n'],
+    ['watch -x git commit -n', '-n'],
+  ] as const)
+    assert.deepEqual(
+      found(script)?.map((b) => b.how),
+      [how],
+      script
+    )
+  assert.deepEqual(
+    found('sudo -D org/web git commit -n')?.map((b) => b.dir),
+    ['/w/org/web']
+  )
+  for (const script of ['xargs -n 1 git push', 'timeout 5 git push -n'])
+    assert.deepEqual(found(script), [], script)
+})
+
+test('gitBypasses: a command the parser cannot read is refused when it pairs git with --no-verify or core.hooksPath', () => {
+  for (const [script, how, skips] of [
+    ['parallel git commit --no-verify ::: a', '--no-verify', COMMIT],
+    ['foo git push --no-verify', '--no-verify', ['pre-push']],
+    ['foo git --no-verify', '--no-verify', ALL],
+    ['foo git -c core.hooksPath=/dev/null status', 'core.hooksPath', ALL],
+    ['foo git config core.HooksPath /dev/null', 'core.hooksPath', ALL],
+    ['env -S "x" git commit --no-verify', '--no-verify', COMMIT],
+  ] as const)
+    assert.deepEqual(found(script), [{ dir: '/w', how, skips }], script)
+  for (const script of [
+    'parallel git commit -n ::: a',
+    'foo git config --get core.hooksPath',
+    'foo --no-verify git status',
+    'echo git commit --no-verify',
+    'printf "%s\\n" git commit --no-verify',
+    'git commit -m --no-verify',
+  ])
+    assert.deepEqual(found(script), [], script)
+})
+
+test('gitBypasses: a configuration key the command does not say is refused; an option git reads that cannot be read is judged by its words', () => {
+  for (const [script, how] of [
+    ['git -c "$KV" commit -m x', '-c'],
+    [
+      'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$K git commit -m x',
+      'GIT_CONFIG_KEY_0',
+    ],
+    ['GIT_CONFIG_PARAMETERS=$P git commit -m x', 'GIT_CONFIG_PARAMETERS'],
+  ] as const)
+    assert.deepEqual(found(script), [{ dir: '/w', how, skips: ALL }], script)
+  assert.deepEqual(found('git $OPTS commit --no-verify'), [
+    { dir: '/w', how: '--no-verify', skips: COMMIT },
+  ])
+  assert.deepEqual(found('git $OPTS commit -n'), [])
 })

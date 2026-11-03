@@ -12,13 +12,12 @@ import { checkContract } from '../core/contract.ts'
 import {
   type AddedLine,
   type Replayed,
+  addedLines,
   editRefusal,
-  editedLines,
   ownedRefusal,
   ownedWhole,
   replayEdit,
   writeRefusal,
-  writtenLines,
 } from '../core/edit-guard.ts'
 import { readOrNull } from '../core/fs.ts'
 import {
@@ -424,14 +423,12 @@ async function policyWorkspace(ws: Workspace): Promise<PolicyWorkspace | null> {
 
 /** The repository a workspace path belongs to: `.rness`, a clone, or none. */
 function repositoryOf(pws: PolicyWorkspace, label: string): string | null {
-  if (label === '.rness' || label.startsWith('.rness/')) return pws.rnessDir
-  return (
-    cloneHolding(
-      pws.root,
-      pws.manifest.repos,
-      join(pws.root, ...label.split('/'))
-    )?.dir ?? null
-  )
+  // By path, not by name: a standalone checkout of the context repository
+  // is the context whatever its directory is called.
+  const path = join(pws.root, ...label.split('/'))
+  if (path === pws.rnessDir || inside(pws.rnessDir, path) !== null)
+    return pws.rnessDir
+  return cloneHolding(pws.root, pws.manifest.repos, path)?.dir ?? null
 }
 
 /** The session the hook input names, as the git hooks record it: Claude Code's id. */
@@ -494,12 +491,10 @@ async function editGuard(input: Input, io: HookIo): Promise<number> {
   const before = await readOrNull(file)
   let after: string
   let spans: Replayed['spans'] | null = null
-  let added: AddedLine[]
   if (input['tool_name'] === 'Write') {
     const content = args['content']
     if (typeof content !== 'string') return 0
     after = content
-    added = writtenLines(before, after)
   } else {
     const { old_string, new_string, replace_all } = args
     if (
@@ -517,7 +512,6 @@ async function editGuard(input: Input, io: HookIo): Promise<number> {
     if (replayed === null) return 0
     after = replayed.after
     spans = replayed.spans
-    added = editedLines(replayed, old_string, new_string)
   }
   if (blocked && before !== null) {
     const reason =
@@ -528,7 +522,13 @@ async function editGuard(input: Input, io: HookIo): Promise<number> {
   }
   const failures =
     pws !== null && policiesOf !== null && policed
-      ? await addedLineFailures(pws, policiesOf, label, added, after)
+      ? await addedLineFailures(
+          pws,
+          policiesOf,
+          label,
+          addedLines(before, after),
+          after
+        )
       : []
   const problems =
     rel === null ? [] : await addedProblems(ws, rel, before, after)
@@ -577,30 +577,46 @@ interface Skipping {
 /**
  * The policies a bypass would skip, in the repository git runs in: `.rness`
  * (the global ones) or a clone that holds scopes (theirs), those with a
- * rule the skipped hooks check. Null where git runs in neither, or where
- * the bypass skips nothing: core.hooksPath set, in `.rness`, to the
- * scaffold's `.githooks/`, which is where its hooks are.
+ * rule the skipped hooks check. Where git runs cannot be told (an unknown
+ * `cd`, `-C` or GIT_DIR), it is taken to be anywhere in the workspace the
+ * command starts in: every policy of it, the record in the repository the
+ * command starts in, else `.rness`. Null where git runs in no repository
+ * of a workspace, or where the bypass skips nothing: a local `git config
+ * core.hooksPath .githooks` in `.rness`, which is where its hooks are.
  */
-async function skipping(bypass: GitBypass): Promise<Skipping | null> {
-  if (bypass.dir === null) return null
-  const ws = await findWorkspace(bypass.dir).catch(() => null)
+async function skipping(
+  bypass: GitBypass,
+  cwd: string
+): Promise<Skipping | null> {
+  const placed = bypass.dir !== null
+  const at = bypass.dir ?? cwd
+  const ws = await findWorkspace(at).catch(() => null)
   if (ws === null) return null
   const pws = await policyWorkspace(ws)
   if (pws === null) return null
-  const label = await within(ws.root, bypass.dir)
-  if (label === null) return null
-  const repository = repositoryOf(pws, label)
-  if (repository === null) return null
-  const place = placeOf(pws, repository)
-  if (place.kind === 'outside') return null
-  if (
-    place.kind === 'context' &&
-    bypass.hooksPath !== undefined &&
-    resolve(ws.rnessDir, bypass.hooksPath) === join(ws.rnessDir, '.githooks')
-  )
-    return null
+  const label = await within(ws.root, at)
+  const found = label === null ? null : repositoryOf(pws, label)
+  let scopes: string[]
+  let repository: string
+  if (placed) {
+    if (found === null) return null
+    const place = placeOf(pws, found)
+    if (place.kind === 'outside') return null
+    if (
+      place.kind === 'context' &&
+      bypass.scope === 'local' &&
+      bypass.hooksPath !== undefined &&
+      resolve(ws.rnessDir, bypass.hooksPath) === join(ws.rnessDir, '.githooks')
+    )
+      return null
+    scopes = scopesOf(place)
+    repository = found
+  } else {
+    scopes = Object.keys(pws.manifest.scopes)
+    repository = found ?? ws.rnessDir
+  }
   const checks = new Set(bypass.skips.map((h) => HOOK_CHECK[h]))
-  const policies = (await policiesFor(pws, scopesOf(place))).filter((p) =>
+  const policies = (await policiesFor(pws, scopes)).filter((p) =>
     p.rules.some((r) => checks.has(r.check))
   )
   return policies.length === 0 ? null : { bypass, repository, policies }
@@ -610,22 +626,20 @@ async function skipping(bypass: GitBypass): Promise<Skipping | null> {
  * Before a `Bash` command (spec 0040 §4.3): refused, exit 2, when it would
  * skip the git hooks while an enabled policy they apply holds where git
  * runs. Nothing else of the command is judged: the hooks do that. A command
- * without `git` returns at once; one the shell would not read, or whose git
- * calls cannot be placed, passes, since the hooks still run.
+ * without `git` returns at once; one the shell would not read passes, since
+ * the shell runs nothing of it.
  */
 async function bashGuard(input: Input, io: HookIo): Promise<number> {
   const toolInput = input['tool_input']
   if (toolInput === null || typeof toolInput !== 'object') return 0
   const command = (toolInput as Input)['command']
   if (typeof command !== 'string' || !/git/i.test(command)) return 0
-  const bypasses = gitBypasses(command, {
-    cwd: cwdOf(input, io.env),
-    env: io.env,
-  })
+  const cwd = cwdOf(input, io.env)
+  const bypasses = gitBypasses(command, { cwd, env: io.env })
   if (bypasses === null || bypasses.length === 0) return 0
   const refused: Skipping[] = []
   for (const bypass of bypasses) {
-    const found = await skipping(bypass)
+    const found = await skipping(bypass, cwd)
     if (found !== null) refused.push(found)
   }
   if (refused.length === 0) return 0

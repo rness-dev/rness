@@ -84,7 +84,7 @@ export interface AddedLine {
   text: string
 }
 
-const BREAK = /\r\n|\r|\n/g
+const BREAK = /\r\n|\r|\n/
 
 /** The lines of a text; a final line break ends its last line and starts none. */
 function linesOf(text: string): string[] {
@@ -108,60 +108,30 @@ function notIn(lines: readonly string[], base: readonly string[]): number[] {
 }
 
 /**
- * The lines a `Write` adds (spec 0040 §4.3): those of its content the
- * current file does not have, a second copy of a line being one more.
+ * The lines an `Edit` or a `Write` adds (spec 0040 §4.3), as a commit shows
+ * them: the lines of the file after whose whole text the file before does
+ * not have, a second copy of a line being one more, numbered in the file
+ * after. The lines both start and end with are left aside first, so a line
+ * is numbered where the change put it.
  */
-export function writtenLines(
-  before: string | null,
-  after: string
-): AddedLine[] {
-  const lines = linesOf(after)
-  return notIn(lines, before === null ? [] : linesOf(before)).map((i) => ({
-    line: i + 1,
-    text: lines[i] ?? '',
+export function addedLines(before: string | null, after: string): AddedLine[] {
+  const was = before === null ? [] : linesOf(before)
+  const now = linesOf(after)
+  let head = 0
+  while (head < was.length && head < now.length && was[head] === now[head])
+    head += 1
+  let tail = 0
+  while (
+    tail < was.length - head &&
+    tail < now.length - head &&
+    was[was.length - 1 - tail] === now[now.length - 1 - tail]
+  )
+    tail += 1
+  const middle = now.slice(head, now.length - tail)
+  return notIn(middle, was.slice(head, was.length - tail)).map((i) => ({
+    line: head + i + 1,
+    text: middle[i] ?? '',
   }))
-}
-
-/**
- * The lines an `Edit` adds (spec 0040 §4.3): those of `new_string` that
- * `old_string` does not have, at each place it is put, numbered in the file
- * the edit leaves and read there whole, since a line `new_string` starts or
- * ends inside is the file's line, as a commit shows it.
- */
-export function editedLines(
-  replayed: Replayed,
-  oldString: string,
-  newString: string
-): AddedLine[] {
-  const fresh = notIn(newString.split(BREAK), oldString.split(BREAK))
-  if (fresh.length === 0) return []
-  const starts = (text: string): number[] => [
-    0,
-    ...[...text.matchAll(BREAK)].map((m) => (m.index ?? 0) + m[0].length),
-  ]
-  const pieces = starts(newString)
-  const lineStarts = starts(replayed.after)
-  const lines = replayed.after.split(BREAK)
-  const lineOf = (offset: number): number => {
-    let lo = 0
-    let hi = lineStarts.length - 1
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2)
-      if ((lineStarts[mid] ?? 0) <= offset) lo = mid
-      else hi = mid - 1
-    }
-    return lo
-  }
-  const seen = new Set<number>()
-  let shift = 0
-  for (const [s, e] of replayed.spans) {
-    const at = s + shift
-    shift += newString.length - (e - s)
-    for (const k of fresh) seen.add(lineOf(at + (pieces[k] ?? 0)))
-  }
-  return [...seen]
-    .sort((a, b) => a - b)
-    .map((n) => ({ line: n + 1, text: lines[n] ?? '' }))
 }
 
 /** The whole files rness writes in a project directory (spec 0016 §3.2). */

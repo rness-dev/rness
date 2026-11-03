@@ -30,7 +30,18 @@ export interface GitBypass {
   readonly skips: readonly SkippedHook[]
   /** The core.hooksPath given, when the command sets it to a known value. */
   readonly hooksPath?: string
+  /** Where a core.hooksPath is set: a `git config` scope, `-c`, or the environment. */
+  readonly scope?: ConfigScope
 }
+
+export type ConfigScope =
+  | 'local'
+  | 'global'
+  | 'system'
+  | 'worktree'
+  | 'file'
+  | 'command'
+  | 'environment'
 
 /** Where the command starts: its directory and the environment it expands. */
 export interface ShellStart {
@@ -506,7 +517,118 @@ function command(
     }
     return
   }
-  run(words.slice(i), prefix, state, item.text, out)
+  // What the parser cannot read is judged by its words, failing closed.
+  if (run(words.slice(i), prefix, state, item.text, out) === 'unread')
+    backstop(words.slice(i), state, item.text, out)
+}
+
+/** Whether a command was read to the end, or the parser gave up on it. */
+type Read = 'read' | 'unread'
+
+/**
+ * Commands that run the command after their options (and, for `timeout`,
+ * its duration): the options that take the next word, and those that
+ * change directory.
+ */
+interface Wrapper {
+  readonly args: readonly string[]
+  readonly chdir?: readonly string[]
+  readonly positionals?: number
+}
+
+const WRAPPERS: Readonly<Record<string, Wrapper>> = {
+  nohup: { args: [] },
+  chronic: { args: [] },
+  time: { args: [] },
+  exec: { args: ['-a'] },
+  nice: { args: ['-n', '--adjustment'] },
+  timeout: {
+    args: ['-s', '--signal', '-k', '--kill-after'],
+    positionals: 1,
+  },
+  xargs: {
+    args: '-a --arg-file -d --delimiter -E -I -L --max-lines -n --max-args -P --max-procs -s --max-chars --process-slot-var'.split(
+      ' '
+    ),
+  },
+  sudo: {
+    args: '-C --close-from -D --chdir -g --group -h --host -p --prompt -R --chroot -r --role -t --type -T --command-timeout -U --other-user -u --user'.split(
+      ' '
+    ),
+    chdir: ['-D', '--chdir'],
+  },
+  doas: { args: ['-C', '-u'] },
+  stdbuf: { args: ['-i', '--input', '-o', '--output', '-e', '--error'] },
+  ionice: {
+    args: '-c --class -n --classdata -p --pid -P --pgid -u --uid'.split(' '),
+  },
+  watch: { args: ['-n', '--interval', '-q', '--equexit'] },
+}
+
+/** Commands that never run their arguments: nothing to judge in them. */
+const NEVER_RUNS = new Set(
+  'echo printf grep egrep fgrep rg ag ack man which type true false :'.split(
+    ' '
+  )
+)
+
+interface Unwrapped {
+  rest: Word[]
+  /** The option words, as given. */
+  flags: string[]
+  /** The directory the wrapper moves to; undefined when it does not. */
+  chdir?: string | null
+}
+
+/** The command after a wrapper's options; null when an option cannot be read. */
+function unwrap(
+  words: readonly Word[],
+  spec: Wrapper,
+  state: State
+): Unwrapped | null {
+  const flags: string[] = []
+  let chdir: string | null | undefined
+  const takes = (opt: string, value: string | null): void => {
+    if (spec.chdir?.includes(opt) === true) chdir = value
+  }
+  let i = 0
+  for (; i < words.length; i++) {
+    const v = valueOf(words[i], state)
+    if (v === null) return null
+    if (v === '--') {
+      i += 1
+      break
+    }
+    if (!v.startsWith('-') || v === '-') break
+    flags.push(v)
+    if (v.startsWith('--')) {
+      const eq = v.indexOf('=')
+      if (eq !== -1) takes(v.slice(0, eq), v.slice(eq + 1))
+      else if (spec.args.includes(v)) {
+        takes(v, valueOf(words[i + 1], state))
+        i += 1
+      }
+      continue
+    }
+    // A cluster: the first letter that takes a value takes the rest of it,
+    // or the next word.
+    for (let k = 1; k < v.length; k++) {
+      const opt = `-${v[k] ?? ''}`
+      if (!spec.args.includes(opt)) continue
+      const attached = v.slice(k + 1)
+      if (attached !== '') takes(opt, attached)
+      else {
+        takes(opt, valueOf(words[i + 1], state))
+        i += 1
+      }
+      break
+    }
+  }
+  return {
+    rest: words.slice(i + (spec.positionals ?? 0)),
+    flags,
+    ...(chdir === undefined ? {} : { chdir }),
+  }
 }
 
 /** A simple command: its words, the assignments before it, the shell's state. */
@@ -516,16 +638,18 @@ function run(
   state: State,
   text: string,
   out: GitBypass[]
-): void {
+): Read {
   let rest = [...words]
   let dir = state.dir
   let name = valueOf(rest.shift(), state)
   // Wrappers that run the command after them.
   for (;;) {
+    if (name === null) return 'unread'
+    const spec = WRAPPERS[name]
     if (name === 'env') {
       for (;;) {
         const w = rest[0]
-        if (w === undefined) return
+        if (w === undefined) return 'read'
         const a = assignmentOf(w, state)
         if (a !== null) {
           prefix.set(a.name, a.value)
@@ -533,7 +657,7 @@ function run(
           continue
         }
         const v = valueOf(w, state)
-        if (v === null) return
+        if (v === null) return 'unread'
         if (v === '-C' || v === '--chdir') {
           dir = pathFrom(dir, valueOf(rest[1], state))
           rest = rest.slice(2)
@@ -541,7 +665,7 @@ function run(
           dir = pathFrom(dir, v.slice('--chdir='.length))
           rest = rest.slice(1)
         } else if (v === '-u' || v === '--unset') rest = rest.slice(2)
-        else if (v === '-S' || v.startsWith('--split-string')) return
+        else if (v === '-S' || v.startsWith('--split-string')) return 'unread'
         else if (v === '--') {
           rest = rest.slice(1)
           break
@@ -550,26 +674,41 @@ function run(
       }
     } else if (name === 'command') {
       const v = valueOf(rest[0], state)
-      if (v === '-v' || v === '-V') return
+      if (v === '-v' || v === '-V') return 'read'
       if (v === '-p') rest = rest.slice(1)
-    } else if (name === 'exec') {
-      while (/^-[cl]+$/.test(valueOf(rest[0], state) ?? ''))
-        rest = rest.slice(1)
-      if (valueOf(rest[0], state) === '-a') rest = rest.slice(2)
-    } else if (name === 'time') {
-      if (valueOf(rest[0], state) === '-p') rest = rest.slice(1)
-    } else if (name !== 'nohup') break
+    } else if (spec !== undefined) {
+      const inner = unwrap(rest, spec, state)
+      if (inner === null) return 'unread'
+      rest = inner.rest
+      if (inner.chdir !== undefined) dir = pathFrom(dir, inner.chdir)
+      if (
+        name === 'watch' &&
+        !inner.flags.some(
+          (f) => f === '--exec' || (/^-[^-]/.test(f) && f.includes('x'))
+        )
+      ) {
+        // Without -x, watch runs its words through `sh -c`.
+        const parts = rest.map((w) => valueOf(w, state))
+        if (parts.some((p) => p === null)) return 'unread'
+        const items = shellCommands(parts.join(' '))
+        if (items === null) return 'unread'
+        const child = cloned(state)
+        child.dir = dir
+        walk(items, child, out)
+        return 'read'
+      }
+    } else break
+    if (rest.length === 0) return 'read'
     name = valueOf(rest.shift(), state)
   }
-  if (name === null) return
   const env: Env = new Map([...state.exported, ...prefix])
   const base = basename(name)
-  if (/^git$/i.test(base)) {
-    gitCall(rest, dir, env, state, text, out)
-  } else if (SHELLS.has(base)) {
+  if (/^git$/i.test(base)) return gitCall(rest, dir, env, state, text, out)
+  if (NEVER_RUNS.has(base)) return 'read'
+  if (SHELLS.has(base)) {
     const script = shellScript(rest, state)
     const items = script === null ? null : shellCommands(script)
-    if (items === null) return
+    if (items === null) return 'unread'
     const child = cloned(state)
     child.dir = dir
     for (const [k, v] of prefix) {
@@ -577,12 +716,17 @@ function run(
       if (v !== null) child.vars.set(k, v)
     }
     walk(items, child, out)
-  } else if (name === 'eval') {
+    return 'read'
+  }
+  if (name === 'eval') {
     const parts = rest.map((w) => valueOf(w, state))
-    if (parts.some((p) => p === null)) return
+    if (parts.some((p) => p === null)) return 'unread'
     const items = shellCommands(parts.join(' '))
-    if (items !== null) walk(items, state, out)
-  } else if (name === 'cd' || name === 'pushd') {
+    if (items === null) return 'unread'
+    walk(items, state, out)
+    return 'read'
+  }
+  if (name === 'cd' || name === 'pushd') {
     while (/^-[LPe@]+$/.test(valueOf(rest[0], state) ?? ''))
       rest = rest.slice(1)
     const target =
@@ -590,9 +734,13 @@ function run(
         ? (state.vars.get('HOME') ?? null)
         : valueOf(rest[0], state)
     state.dir = target === '-' ? null : pathFrom(state.dir, target)
-  } else if (name === 'popd') {
+    return 'read'
+  }
+  if (name === 'popd') {
     state.dir = null
-  } else if (name === 'export') {
+    return 'read'
+  }
+  if (name === 'export') {
     for (const w of rest) {
       const a = assignmentOf(w, state)
       if (a !== null) {
@@ -605,7 +753,9 @@ function run(
       if (v !== null && NAME.test(v))
         state.exported.set(v, state.vars.get(v) ?? null)
     }
+    return 'read'
   }
+  return 'unread'
 }
 
 /** The script of `sh -c <script>`; null without `-c`, or when not known. */
@@ -790,21 +940,41 @@ const GIT_CONFIG_SUBCOMMANDS = new Set([
   'get-colorbool',
 ])
 
+/** A configuration value given to git: by `git config`, `-c`, or the environment. */
+interface ConfigWrite {
+  /** As written; null when the command does not say. */
+  readonly key: string | null
+  /** Null when not known; undefined when none is given. */
+  readonly value: string | null | undefined
+  readonly scope: ConfigScope
+}
+
 /**
- * The value `git config` sets core.hooksPath to, in any scope or file, by
- * the old form (`git config core.hooksPath <value>`, `--add`,
- * `--replace-all`) or the new (`git config set`); undefined for a value not
- * known; null when it reads, unsets or sets something else.
+ * What `git config` writes, in which scope, by the old form (`git config
+ * <key> <value>`, `--add`, `--replace-all`) or the new (`git config set`);
+ * null when it reads, unsets or lists.
  */
-function hooksPathSet(
-  values: readonly (string | null)[]
-): string | null | undefined {
+function configWrite(values: readonly (string | null)[]): ConfigWrite | null {
   const positional: (string | null)[] = []
   let mode: 'read' | 'write' | null = null
+  let scope: ConfigScope = 'local'
   for (let i = 0; i < values.length; i++) {
     const v = values[i] ?? null
-    if (v === null || !v.startsWith('-') || v === '-') positional.push(v)
-    else if (GIT_CONFIG_ARG.has(v)) i += 1
+    if (v === null || !v.startsWith('-') || v === '-') {
+      positional.push(v)
+      continue
+    }
+    if (v === '--global' || v === '--system' || v === '--worktree')
+      scope = v.slice(2) as ConfigScope
+    else if (
+      v === '-f' ||
+      v === '--file' ||
+      v === '--blob' ||
+      v.startsWith('--file=') ||
+      v.startsWith('--blob=')
+    )
+      scope = 'file'
+    if (GIT_CONFIG_ARG.has(v)) i += 1
     else if (GIT_CONFIG_READ.has(v)) mode = 'read'
     else if (GIT_CONFIG_WRITE.has(v)) mode = 'write'
   }
@@ -818,17 +988,132 @@ function hooksPathSet(
     positional.shift()
     mode = first === 'set' ? 'write' : 'read'
   }
-  if (positional[0]?.toLowerCase() !== HOOKS_PATH) return null
-  if (mode === 'read') return null
+  if (mode === 'read' || positional.length === 0) return null
   if (mode !== 'write' && positional.length < 2) return null
-  return positional[1] ?? undefined
+  return { key: positional[0] ?? null, value: positional[1], scope }
 }
 
-const withPath = (
-  b: Omit<GitBypass, 'hooksPath'>,
-  hooksPath: string | null | undefined
-): GitBypass =>
-  hooksPath === null || hooksPath === undefined ? b : { ...b, hooksPath }
+/** Whether an alias's value runs git without its hooks. */
+function aliasSkips(value: string, state: State): boolean {
+  if (value.includes('--no-veri')) return true
+  const script = value.startsWith('!') ? value.slice(1) : `git ${value}`
+  const items = shellCommands(script)
+  if (items === null) return false
+  const out: GitBypass[] = []
+  walk(items, cloned(state), out)
+  return out.length > 0
+}
+
+type Found = Omit<GitBypass, 'dir' | 'text'>
+
+/**
+ * Why a configuration value skips the hooks: core.hooksPath, an include (a
+ * file that may set it), an alias whose value skips them; or a key the
+ * command does not say. Null for any other key.
+ */
+function configBypass(w: ConfigWrite, state: State): Found | null {
+  if (w.key === null) return { how: 'an unknown key', skips: ALL_HOOKS }
+  const key = w.key.toLowerCase()
+  if (key === HOOKS_PATH)
+    return {
+      how: 'core.hooksPath',
+      skips: ALL_HOOKS,
+      ...(typeof w.value === 'string' ? { hooksPath: w.value } : {}),
+      scope: w.scope,
+    }
+  if (key === 'include.path' || key.startsWith('includeif.'))
+    return { how: w.key, skips: ALL_HOOKS }
+  if (
+    key.startsWith('alias.') &&
+    typeof w.value === 'string' &&
+    aliasSkips(w.value, state)
+  )
+    return { how: w.key, skips: ALL_HOOKS }
+  return null
+}
+
+/** `key=value` as `-c` takes it; the value of `--config-env` is an environment variable's. */
+function keyValue(
+  kv: string | null,
+  scope: ConfigScope
+): {
+  key: string | null
+  value: string | null | undefined
+  scope: ConfigScope
+} {
+  if (kv === null) return { key: null, value: null, scope }
+  const eq = kv.indexOf('=')
+  return eq === -1
+    ? { key: kv, value: undefined, scope }
+    : { key: kv.slice(0, eq), value: kv.slice(eq + 1), scope }
+}
+
+/** The pairs of `GIT_CONFIG_PARAMETERS`: `'key'='value'`, or `'key=value'` as older git wrote. */
+function parametersOf(text: string): ConfigWrite[] {
+  const pairs: ConfigWrite[] = []
+  for (const m of text.matchAll(/'([^']*)'(?:='([^']*)')?/g)) {
+    const key = m[1] ?? ''
+    const value = m[2]
+    const eq = key.indexOf('=')
+    pairs.push(
+      value === undefined && eq !== -1
+        ? {
+            key: key.slice(0, eq),
+            value: key.slice(eq + 1),
+            scope: 'environment',
+          }
+        : { key, value, scope: 'environment' }
+    )
+  }
+  return pairs
+}
+
+/** Variables that point git at another configuration file. */
+const OTHER_CONFIG = ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG']
+
+/**
+ * The configuration git gets from its environment: GIT_CONFIG_KEY_<n> and
+ * GIT_CONFIG_VALUE_<n>, GIT_CONFIG_PARAMETERS, another configuration file.
+ */
+function environmentBypasses(env: Env, state: State): Found[] {
+  const found: Found[] = []
+  for (const [name, value] of env) {
+    const n = /^GIT_CONFIG_KEY_(\d+)$/.exec(name)?.[1]
+    if (n !== undefined) {
+      const hit = configBypass(
+        {
+          key: value?.trim() ?? null,
+          value: env.get(`GIT_CONFIG_VALUE_${n}`),
+          scope: 'environment',
+        },
+        state
+      )
+      if (hit !== null)
+        found.push(
+          hit.how === 'core.hooksPath'
+            ? { ...hit, how: `${name}=core.hooksPath` }
+            : hit.how === 'an unknown key'
+              ? { ...hit, how: name }
+              : hit
+        )
+    } else if (name === 'GIT_CONFIG_PARAMETERS') {
+      if (value === null) {
+        found.push({ how: name, skips: ALL_HOOKS })
+        continue
+      }
+      const hits = parametersOf(value)
+        .map((w) => configBypass(w, state))
+        .filter((h) => h !== null)
+      const path = hits.find((h) => h.how === 'core.hooksPath')
+      if (path !== undefined) found.push({ ...path, how: name })
+      else if (value.toLowerCase().includes(HOOKS_PATH))
+        found.push({ how: name, skips: ALL_HOOKS, scope: 'environment' })
+      found.push(...hits.filter((h) => h.how !== 'core.hooksPath'))
+    } else if (OTHER_CONFIG.includes(name))
+      found.push({ how: name, skips: ALL_HOOKS })
+  }
+  return found
+}
 
 /** One call of git: its global options, then its subcommand. */
 function gitCall(
@@ -838,86 +1123,132 @@ function gitCall(
   state: State,
   text: string,
   out: GitBypass[]
-): void {
+): Read {
   const values = words.map((w) => valueOf(w, state))
   let dir = from
-  let gitDir: string | null | undefined
-  let workTree: string | null | undefined
-  const keys: { key: string; value: string | null }[] = []
-  const config = (kv: string | null, withValue: boolean): void => {
-    if (kv === null) return
-    const eq = kv.indexOf('=')
-    keys.push({
-      key: (eq === -1 ? kv : kv.slice(0, eq)).toLowerCase(),
-      value: withValue && eq !== -1 ? kv.slice(eq + 1) : null,
-    })
+  // The command line's options before the environment's variables; both
+  // relative to where git ends up, after every -C.
+  const fromEnv = (name: string): string | null | undefined =>
+    env.has(name) ? (env.get(name) ?? null) : undefined
+  let gitDir = fromEnv('GIT_DIR')
+  let workTree = fromEnv('GIT_WORK_TREE')
+  const configs: ConfigWrite[] = []
+  const lookup = (kv: string | null): string | null => {
+    const v = keyValue(kv, 'command').value
+    if (typeof v !== 'string') return null
+    return env.get(v) ?? state.vars.get(v) ?? null
   }
   let i = 0
   for (; i < values.length; i++) {
     const v = values[i]
-    if (v === null || v === undefined) return
+    // An option git reads that cannot be read here: judged by its words.
+    if (v === null || v === undefined) return 'unread'
     const next = values[i + 1] ?? null
     if (GIT_GLOBAL_ARG.has(v)) {
       if (v === '-C') dir = next === '' ? dir : pathFrom(dir, next)
-      else if (v === '-c') config(next, true)
-      else if (v === '--config-env') config(next, false)
-      else if (v === '--git-dir') gitDir = pathFrom(dir, next)
-      else if (v === '--work-tree') workTree = pathFrom(dir, next)
+      else if (v === '-c') configs.push(keyValue(next, 'command'))
+      else if (v === '--config-env')
+        configs.push({ ...keyValue(next, 'command'), value: lookup(next) })
+      else if (v === '--git-dir') gitDir = next
+      else if (v === '--work-tree') workTree = next
       i += 1
     } else if (v.startsWith('--config-env=')) {
-      config(v.slice('--config-env='.length), false)
+      const kv = v.slice('--config-env='.length)
+      configs.push({ ...keyValue(kv, 'command'), value: lookup(kv) })
     } else if (v.startsWith('--git-dir=')) {
-      gitDir = pathFrom(dir, v.slice('--git-dir='.length))
+      gitDir = v.slice('--git-dir='.length)
     } else if (v.startsWith('--work-tree=')) {
-      workTree = pathFrom(dir, v.slice('--work-tree='.length))
+      workTree = v.slice('--work-tree='.length)
     } else if (!v.startsWith('-')) break
   }
   const sub = values[i]
   // No subcommand: git prints its usage and runs no hook.
-  if (sub === null || sub === undefined) return
+  if (sub === null || sub === undefined) return 'read'
+  const place = (p: string | null): string | null => pathFrom(dir, p)
   const where =
     workTree !== undefined
-      ? workTree
+      ? place(workTree)
       : gitDir !== undefined
-        ? gitDir === null
-          ? null
-          : basename(gitDir) === '.git'
-            ? dirname(gitDir)
-            : gitDir
+        ? ((d) =>
+            d === null ? null : basename(d) === '.git' ? dirname(d) : d)(
+            place(gitDir)
+          )
         : dir
   const args = values.slice(i + 1)
-  const found = (
-    how: string,
-    skips: readonly SkippedHook[],
-    hooksPath?: string | null
-  ) => out.push(withPath({ dir: where, text, how, skips }, hooksPath))
-
-  const byKey = keys.find((k) => k.key === HOOKS_PATH)
-  if (byKey !== undefined) found('core.hooksPath', ALL_HOOKS, byKey.value)
-  for (const [name, value] of env) {
-    const n = /^GIT_CONFIG_KEY_(\d+)$/.exec(name)?.[1]
-    if (n !== undefined && value?.trim().toLowerCase() === HOOKS_PATH)
-      found(
-        `${name}=core.hooksPath`,
-        ALL_HOOKS,
-        env.get(`GIT_CONFIG_VALUE_${n}`)
-      )
-    else if (
-      name === 'GIT_CONFIG_PARAMETERS' &&
-      value?.toLowerCase().includes(HOOKS_PATH) === true
-    )
-      found(name, ALL_HOOKS)
+  const found = (f: Found): void => {
+    out.push({ dir: where, text, ...f })
   }
+
+  for (const c of configs) {
+    const hit = configBypass(c, state)
+    if (hit !== null)
+      found(hit.how === 'an unknown key' ? { ...hit, how: '-c' } : hit)
+  }
+  for (const f of environmentBypasses(env, state)) found(f)
   if (sub === 'commit') {
     const how = verifySkipped(args, COMMIT)
-    if (how !== null) found(how, COMMIT_HOOKS)
+    if (how !== null) found({ how, skips: COMMIT_HOOKS })
   } else if (sub === 'push') {
     const how = verifySkipped(args, PUSH)
-    if (how !== null) found(how, PUSH_HOOKS)
+    if (how !== null) found({ how, skips: PUSH_HOOKS })
   } else if (sub === 'config') {
-    const value = hooksPathSet(args)
-    if (value !== null) found('core.hooksPath', ALL_HOOKS, value)
+    const write = configWrite(args)
+    const hit = write === null ? null : configBypass(write, state)
+    if (hit !== null)
+      found(hit.how === 'an unknown key' ? { ...hit, how: 'config' } : hit)
   }
+  return 'read'
+}
+
+/**
+ * The backstop, for a command the parser did not read to the end (a wrapper
+ * it does not know, an option it cannot read): its words name git and then
+ * `--no-verify`, or core.hooksPath where a value is set. A `-n` alone is
+ * not enough (`xargs -n`, `git push -n`).
+ */
+function backstop(
+  words: readonly Word[],
+  state: State,
+  text: string,
+  out: GitBypass[]
+): void {
+  const values = words.map((w) => valueOf(w, state))
+  const first = values[0]
+  if (first !== null && first !== undefined && NEVER_RUNS.has(basename(first)))
+    return
+  const g = values.findIndex((v) => v !== null && /^git$/i.test(basename(v)))
+  if (g === -1) return
+  const after = values.slice(g + 1)
+  const found = (how: string, skips: readonly SkippedHook[]): void => {
+    out.push({ dir: state.dir, text, how, skips })
+  }
+  if (after.includes('--no-verify')) {
+    found(
+      '--no-verify',
+      after.includes('push')
+        ? PUSH_HOOKS
+        : after.includes('commit')
+          ? COMMIT_HOOKS
+          : ALL_HOOKS
+    )
+    return
+  }
+  const config = after.indexOf('config')
+  const set = after.some((v, k) => {
+    const low = v?.toLowerCase() ?? ''
+    if (/^--config-env=core\.hookspath(=|$)/.test(low)) return true
+    if (!/^core\.hookspath(=|$)/.test(low)) return false
+    const prev = after[k - 1]
+    if (prev === '-c' || prev === '--config-env') return true
+    const value = after[k + 1]
+    return (
+      config !== -1 &&
+      config < k &&
+      value !== undefined &&
+      !(value ?? '').startsWith('-')
+    )
+  })
+  if (set) found('core.hooksPath', ALL_HOOKS)
 }
 
 /**

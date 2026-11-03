@@ -1242,6 +1242,123 @@ test('pre-tool-use: in .rness, core.hooksPath set to its .githooks passes, to an
   ])
 })
 
+test('pre-tool-use: in a standalone checkout of the context repository, a bypass is refused there too', async (t) => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-ctx-')))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  // No `.rness/` above: the directory holding rness.json is the context.
+  const ctx = join(base, 'acme-rness')
+  await mkdir(join(ctx, 'policy'), { recursive: true })
+  await writeFile(
+    join(ctx, 'rness.json'),
+    JSON.stringify({ contract: 1, repos: {}, scopes: {} })
+  )
+  await writeFile(join(ctx, 'policy', 'no-em-dash.md'), POLICY)
+  await git(['init', '-q', '-b', 'main'], ctx)
+  const r = await hook('pre-tool-use', bash('git commit -n -m x', ctx))
+  assert.equal(r.code, 2)
+  assert.deepEqual(await recorded(ctx), [
+    {
+      policy: 'no-em-dash',
+      check: 'added-lines',
+      by: 'guard',
+      session: SESSION,
+    },
+  ])
+})
+
+test('pre-tool-use: an Edit splitting or joining lines so a refused full line appears is refused', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const file = join(web, 'a.md')
+  await writeFile(file, `one ${DASH} two and three\n`)
+  const split = await hook('pre-tool-use', editOf(file, web, ' and ', '\n'))
+  assert.equal(split.code, 2)
+  assert.match(
+    split.err,
+    new RegExp(`\\n  org/web/a\\.md:1: one ${DASH} two\\n`)
+  )
+  // old_string and new_string hold the same lines; the file's line is new.
+  await writeFile(file, `${DASH} X\nY end\n`)
+  const swapped = await hook('pre-tool-use', editOf(file, web, 'X\nY', 'Y\nX'))
+  assert.equal(swapped.code, 2)
+  assert.match(swapped.err, new RegExp(`\\n  org/web/a\\.md:1: ${DASH} Y\\n`))
+})
+
+test('pre-tool-use: GIT_DIR pointing at a clone with a policy is refused, from the workspace root', async (t) => {
+  const { root } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const r = await hook(
+    'pre-tool-use',
+    bash('GIT_DIR=org/web/.git GIT_WORK_TREE=org/web git commit -n -m x', root)
+  )
+  assert.equal(r.code, 2)
+  assert.match(r.err, /\(-n skips the pre-commit and commit-msg hooks\)\n/)
+})
+
+test('pre-tool-use: behind xargs or sudo, an alias set with -c, or a directory that cannot be told, the bypass is refused', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  for (const [command, line] of [
+    [
+      'xargs git commit --no-verify',
+      '  xargs git commit --no-verify (--no-verify skips the pre-commit and commit-msg hooks)',
+    ],
+    [
+      'sudo git commit --no-verify -m x',
+      '  sudo git commit --no-verify -m x (--no-verify skips the pre-commit and commit-msg hooks)',
+    ],
+    [
+      'git -c alias.ci="commit -n" ci -m x',
+      '  git -c alias.ci="commit -n" ci -m x (alias.ci skips every hook)',
+    ],
+    [
+      'cd "$NOWHERE" && git commit -n -m x',
+      '  git commit -n -m x (-n skips the pre-commit and commit-msg hooks)',
+    ],
+  ] as const) {
+    const r = await hook('pre-tool-use', bash(command, web))
+    assert.equal(r.code, 2, command)
+    assert.equal(r.err.split('\n')[1], line, command)
+  }
+  const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'rness-out-')))
+  t.after(() => rm(elsewhere, { recursive: true, force: true }))
+  assert.equal(
+    (
+      await hook(
+        'pre-tool-use',
+        bash('cd "$NOWHERE" && git commit -n -m x', elsewhere)
+      )
+    ).code,
+    0,
+    'started outside any workspace: nothing to place it in'
+  )
+})
+
+test('pre-tool-use: in .rness, only a local write of core.hooksPath to .githooks passes', async (t) => {
+  const { root } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const rness = join(root, '.rness')
+  await git(['init', '-q', '-b', 'main'], rness)
+  for (const command of [
+    'git config core.hooksPath .githooks',
+    'git config --local core.hooksPath .githooks/',
+  ])
+    assert.equal(
+      (await hook('pre-tool-use', bash(command, rness))).code,
+      0,
+      command
+    )
+  for (const command of [
+    'git config --global core.hooksPath .githooks',
+    'git config --system core.hooksPath .githooks',
+    'git config --worktree core.hooksPath .githooks',
+    'git config -f .git/config core.hooksPath .githooks',
+    'git -c core.hooksPath=.githooks commit -m x',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=.githooks git commit -m x',
+  ])
+    assert.equal(
+      (await hook('pre-tool-use', bash(command, rness))).code,
+      2,
+      command
+    )
+})
+
 test('pre-tool-use: a Bash command without git returns at once', async (t) => {
   const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
   for (const command of ['ls -la && echo done', 'echo --no-verify -n'])
