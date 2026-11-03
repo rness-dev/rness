@@ -5,6 +5,7 @@ import {
   type ShellItem,
   VARIABLE_NAME,
   type Word,
+  expandBraces,
   patternOf,
   shellCommands,
 } from './shell-words.ts'
@@ -957,6 +958,20 @@ function gitCall(
   return 'read'
 }
 
+/**
+ * Whether a word the shell expands may start with `-`, and so be an option:
+ * it starts with `-`, with an unquoted glob or brace character, or with an
+ * expansion not known. A tilde starts a path.
+ */
+function mayStartWithDash(word: Word): boolean {
+  const first = word.segments[0]
+  if (first === undefined) return false
+  if (first.kind === 'tilde') return false
+  if (first.kind !== 'text') return true
+  const c = first.text[0] ?? ''
+  return c === '-' || (!first.quoted && '*?[{'.includes(c) && c !== '')
+}
+
 /** A short-option cluster holding `n`: `-n`, `-an`, `-nm`. */
 const N_CLUSTER = /^-[A-Za-z]*n[A-Za-z]*$/
 
@@ -980,23 +995,31 @@ function backstop(
   text: string,
   out: GitBypass[]
 ): void {
-  // The words as the shell may run them: a brace expression's alternatives
-  // in their order, a glob not known.
-  const values: (string | null)[] = []
-  const wordAt: number[] = []
-  words.forEach((w, k) => {
-    const pattern = patternOf(w)
-    const parts =
-      pattern === 'brace'
-        ? w.segments
+  // The words as the shell may run them. Up to the word holding `commit` or
+  // `push`, a brace word is expanded as bash expands it, so that git and its
+  // verb are found. After it, a pattern is judged by its first character: one
+  // that may start with `-` is not known (it may be an option); one that
+  // cannot (`src/*.ts`, `docs/{a,b}.md`, zsh's `=cmd`) stands as its text.
+  const asRun = (x: Word): string | null =>
+    patternOf(x) === null
+      ? valueOf(x, state)
+      : mayStartWithDash(x)
+        ? null
+        : x.segments
             .map((seg) => (seg.kind === 'text' ? seg.text : ''))
             .join('')
-            .split(/[{},]/)
-            .filter((p) => p !== '')
-        : [pattern === 'glob' ? null : valueOf(w, state)]
+  const values: (string | null)[] = []
+  const wordAt: number[] = []
+  let verbSeen = false
+  words.forEach((w, k) => {
+    const parts =
+      patternOf(w) === 'brace' && !verbSeen
+        ? (expandBraces(w)?.map(asRun) ?? [null])
+        : [asRun(w)]
     for (const part of parts) {
       values.push(part)
       wordAt.push(k)
+      if (part === 'commit' || part === 'push') verbSeen = true
     }
   })
   const first = values[0]
@@ -1005,12 +1028,12 @@ function backstop(
   let g = values.findIndex((v) => v !== null && /^git$/i.test(basename(v)))
   const named = g !== -1
   if (!named) {
-    // A word that cannot be read, or a brace expression none of whose parts
-    // is git (`{gi,x}t`), may be git: git's own shape only.
+    // A word that cannot be read, or a pattern none of whose parts is git
+    // (`{gi,x}t`, `/usr/bin/gi?`), may be git: git's own shape only.
     g = values.findIndex(
       (v, k) =>
         v === null ||
-        patternOf(words[wordAt[k] ?? 0] ?? { segments: [] }) === 'brace'
+        patternOf(words[wordAt[k] ?? 0] ?? { segments: [] }) !== null
     )
     if (g === -1) return
   }

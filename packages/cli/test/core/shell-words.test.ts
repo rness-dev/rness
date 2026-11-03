@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  expandBraces,
   literalOf,
   patternOf,
   shellCommands,
@@ -202,4 +203,28 @@ test('patternOf: a brace expression is decided on the whole word, its braces and
     null,
     null,
   ])
+})
+
+test('expandBraces: a word as bash expands its braces, quoted parts kept, capped', () => {
+  const expand = (text: string) => {
+    const [command] = shellCommands(text) ?? []
+    assert.ok(command?.kind === 'command')
+    const words =
+      command.words[0] === undefined ? null : expandBraces(command.words[0])
+    return words?.map(literalOf) ?? null
+  }
+  assert.deepEqual(expand('{gi,x}t'), ['git', 'xt'])
+  assert.deepEqual(expand(`{"gi",x}t`), ['git', 'xt'])
+  assert.deepEqual(expand('{--no-ver,x}ify'), ['--no-verify', 'xify'])
+  assert.deepEqual(expand('docs/{a,b}.md'), ['docs/a.md', 'docs/b.md'])
+  assert.deepEqual(expand('{a,{b,c}}d'), ['ad', 'bd', 'cd'])
+  assert.deepEqual(expand('{a{b,c}}'), ['{ab}', '{ac}'])
+  assert.deepEqual(expand('{1..7..3}'), ['1', '4', '7'])
+  assert.deepEqual(expand('{c..a}'), ['c', 'b', 'a'])
+  assert.deepEqual(expand(`{"a,b",c}`), ['a,b', 'c'])
+  assert.deepEqual(expand('{a,b}{1,2}'), ['a1', 'a2', 'b1', 'b2'])
+  assert.deepEqual(expand('x{a}y'), ['x{a}y'])
+  assert.deepEqual(expand('{a,b'), ['{a,b'])
+  assert.deepEqual(expand('{$X,b}'), [null, 'b'])
+  assert.equal(expand('{1..100000}'), null, 'too many to read')
 })

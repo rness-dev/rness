@@ -533,3 +533,108 @@ export function patternOf(word: Word): 'glob' | 'brace' | null {
     ? 'glob'
     : null
 }
+
+/** A character of a word, whether the shell may expand it, or a whole expansion. */
+type Char =
+  { readonly c: string; readonly open: boolean } | { readonly segment: Segment }
+
+const opens = (ch: Char | undefined, c: string): boolean =>
+  ch !== undefined && 'c' in ch && ch.open && ch.c === c
+
+/** More words than this from one word: not read here. */
+const MAX_EXPANSION = 256
+
+/** `{a..e}`, `{1..9}`, `{1..9..2}`: its items; null for no sequence. */
+function sequenceOf(inner: readonly Char[]): string[] | null | 'too many' {
+  if (!inner.every((ch) => 'c' in ch && ch.open)) return null
+  const text = inner.map((ch) => ('c' in ch ? ch.c : '')).join('')
+  const numbers = /^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$/.exec(text)
+  const letters = /^([A-Za-z])\.\.([A-Za-z])(?:\.\.(-?\d+))?$/.exec(text)
+  const m = numbers ?? letters
+  if (m === null) return null
+  const from = numbers ? Number(m[1]) : (m[1] ?? '').charCodeAt(0)
+  const to = numbers ? Number(m[2]) : (m[2] ?? '').charCodeAt(0)
+  const step = Math.abs(Number(m[3] ?? 1)) || 1
+  if (Math.floor(Math.abs(to - from) / step) + 1 > MAX_EXPANSION)
+    return 'too many'
+  const items: string[] = []
+  const dir = to >= from ? 1 : -1
+  for (let v = from; dir > 0 ? v <= to : v >= to; v += dir * step)
+    items.push(numbers ? String(v) : String.fromCharCode(v))
+  return items
+}
+
+/** The expansions of `chars`, appended to `out`; false past the cap. */
+function expandChars(chars: readonly Char[], out: Char[][]): boolean {
+  for (let i = 0; i < chars.length; i++) {
+    if (!opens(chars[i], '{')) continue
+    let depth = 0
+    let close = -1
+    const commas: number[] = []
+    for (let j = i; j < chars.length; j++) {
+      if (opens(chars[j], '{')) depth += 1
+      else if (opens(chars[j], '}')) {
+        depth -= 1
+        if (depth === 0) {
+          close = j
+          break
+        }
+      } else if (depth === 1 && opens(chars[j], ',')) commas.push(j)
+    }
+    // A `{` the word never closes is a character; a later one may expand.
+    if (close === -1) continue
+    let alternatives: Char[][]
+    if (commas.length > 0) {
+      alternatives = []
+      let from = i + 1
+      for (const at of [...commas, close]) {
+        alternatives.push(chars.slice(from, at))
+        from = at + 1
+      }
+    } else {
+      const items = sequenceOf(chars.slice(i + 1, close))
+      if (items === 'too many') return false
+      if (items === null) continue
+      alternatives = items.map((item) =>
+        [...item].map((c) => ({ c, open: false }))
+      )
+    }
+    const before = chars.slice(0, i)
+    const after = chars.slice(close + 1)
+    for (const alternative of alternatives)
+      if (!expandChars([...before, ...alternative, ...after], out)) return false
+    return true
+  }
+  out.push([...chars])
+  return out.length <= MAX_EXPANSION
+}
+
+/**
+ * A word's brace expansion, as bash makes it before anything else: comma
+ * lists and sequences, nested, left to right, only an unquoted `{`, `,`,
+ * `..` and `}` counting. The word itself when it holds none; null past
+ * MAX_EXPANSION words.
+ */
+export function expandBraces(word: Word): Word[] | null {
+  const chars: Char[] = []
+  for (const segment of word.segments)
+    if (segment.kind === 'text')
+      for (const c of segment.text) chars.push({ c, open: !segment.quoted })
+    else chars.push({ segment })
+  const out: Char[][] = []
+  if (!expandChars(chars, out)) return null
+  return out.map((expanded) => {
+    const segments: Segment[] = []
+    for (const ch of expanded) {
+      if ('segment' in ch) {
+        segments.push(ch.segment)
+        continue
+      }
+      const last = segments.at(-1)
+      if (last?.kind === 'text' && last.quoted === !ch.open)
+        segments[segments.length - 1] = { ...last, text: last.text + ch.c }
+      else segments.push({ kind: 'text', text: ch.c, quoted: !ch.open })
+    }
+    return { segments }
+  })
+}

@@ -524,7 +524,6 @@ test('gitBypasses: a command name or a git word the shell expands (a glob, a bra
     '/usr/bin/g[i]t commit -n -m x',
     '{git,commit} -n -m x',
     'git {commit,-n} -m x',
-    'git commit {-n,-m} x',
     'sudo /usr/bin/gi? commit -n',
   ])
     assert.deepEqual(
@@ -569,9 +568,10 @@ test('gitBypasses: a brace with quoted parts, zsh =cmd, and a glob after commit 
       script
     )
   for (const [script, skips] of [
-    ['git commit -m x src/*.ts', COMMIT],
-    ['git commit -m x =y', COMMIT],
-    ['git push origin feat-?', ['pre-push']],
+    ['git commit -m x *', COMMIT],
+    ['git commit -m x -*', COMMIT],
+    ['git commit -m x [-]n', COMMIT],
+    ['git push origin *', ['pre-push']],
   ] as const)
     assert.deepEqual(
       found(script),
@@ -592,4 +592,43 @@ test('gitBypasses: globs, braces and quoted text that skip nothing are allowed',
     'git commit -m "docs: explain --no-verify"',
   ])
     assert.deepEqual(found(script), [], script)
+})
+
+// --- fix round 4: a word that cannot start with "-" is no option ------------
+
+test('gitBypasses: a path glob or path brace after commit or push cannot become an option', () => {
+  for (const script of [
+    'git commit -m x src/*.ts',
+    'git commit -m x ./*.md',
+    'git commit -m x docs/{a,b}.md',
+    'git commit -m x docs/{-n,b}.md',
+    'git commit -m x =y',
+    'git push origin feat-?',
+    'git commit -m x ~/notes/*.md',
+  ])
+    assert.deepEqual(found(script), [], script)
+  // After commit, a brace word is judged by its first character, never
+  // split: bash makes `--no-verify xify` of `{--no-ver,x}ify`.
+  for (const script of [
+    'git commit {--no-verify,-m} x',
+    'git commit {-n,-m} x',
+    'git commit {--no-ver,x}ify -m m',
+  ])
+    assert.deepEqual(
+      found(script),
+      [
+        {
+          dir: '/w',
+          how: 'a word the shell expands',
+          skips: COMMIT,
+          maybe: true,
+        },
+      ],
+      script
+    )
+  assert.deepEqual(found('git commit -m m docs/{a,b}.md'), [])
+  // A command name of that shape may still be git.
+  assert.deepEqual(found('/usr/bin/{git,x} commit -n'), [
+    { dir: '/w', how: '-n', skips: COMMIT, maybe: true },
+  ])
 })

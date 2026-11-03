@@ -1514,6 +1514,8 @@ test('pre-tool-use: braces with quoted parts, zsh =cmd and a glob after commit a
   for (const command of [
     'ls {a,b}',
     'git add *.ts',
+    'git commit -m x src/*.ts',
+    'git commit -m x docs/{a,b}.md',
     `git log --format='%h {}'`,
     'ls *.md && git status',
     `git commit -m "$(cat <<'EOF'\nfeat: x\n\nbody --no-verify {a,b} *\nEOF\n)"`,
