@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 
+import { type Policy, type PolicyRule, policiesOf } from './policy.ts'
 import type { Context } from './types.ts'
 
 export const BEGIN = '<!-- BEGIN rness -->'
@@ -69,6 +70,32 @@ function header(scope: string | null, hash: string): string {
   return `<!-- rness · scope: ${scope ?? 'global'} · contract: 1 · hash: ${hash} · generated: run \`rness sync\`, never edit inside this block -->`
 }
 
+const REFUSED_AT: Record<PolicyRule['check'], string> = {
+  'commit-message': 'Refused at commit (the message)',
+  'added-lines': 'Refused at commit and on edit (added lines)',
+  push: 'Refused at push (non-fast-forward)',
+}
+
+/** One enabled policy: marker and title as a standard's, what is refused where, its standard, its reason. */
+function policySection(policy: Policy): string {
+  const lines = [
+    `<!-- rness: ${policy.rel} -->`,
+    `# ${policy.title}`,
+    ...policy.rules.map((r) => `- ${REFUSED_AT[r.check]}: ${r.fix}`),
+  ]
+  if (policy.standard !== null) lines.push(`- Standard: \`${policy.standard}\``)
+  if (policy.body !== '') lines.push('', toLf(policy.body).trim())
+  return lines.join('\n')
+}
+
+/** The `## Policies` section, or '' when no policy is enabled for the scope. */
+function policies(context: Context): string {
+  const enabled = policiesOf(context)
+  return enabled.length === 0
+    ? ''
+    : `\n\n## Policies\n${enabled.map(policySection).join('\n\n')}`
+}
+
 /** Render the block for one scope (or the root) from an already resolved context. */
 export function renderBlock({
   scope,
@@ -84,7 +111,7 @@ export function renderBlock({
       : standards.map(
           (f) => `<!-- rness: standards/${f.rel} -->\n${toLf(f.content).trim()}`
         )
-  const body = `${intro(scope, org, depth)}\n\n## Rules\n${rules.join('\n\n')}`
+  const body = `${intro(scope, org, depth)}\n\n## Rules\n${rules.join('\n\n')}${policies(context)}`
   const hash = blockHash(body)
   const text = [BEGIN, header(scope, hash), body, END].join('\n')
   return { text, hash, bytes: Buffer.byteLength(text, 'utf8') }

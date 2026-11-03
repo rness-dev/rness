@@ -15,9 +15,10 @@ import { test } from 'node:test'
 
 import { run } from '../../src/cli.ts'
 import { type SyncOptions, syncCommand } from '../../src/commands/sync.ts'
-import { BEGIN, END } from '../../src/core/block.ts'
+import { BEGIN, END, blockHash, parseHeader } from '../../src/core/block.ts'
 import { readOrNull } from '../../src/core/fs.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
+import { freshBlockHash } from '../../src/core/policy-workspace.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import {
   INSTEAD_OF_LINES,
@@ -1114,3 +1115,48 @@ test('hooks: a foreign hook and a core.hooksPath are left and reported with the 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
+
+// --- the Policies section (spec 0040 4.1) ------------------------------------
+
+test('a workspace without policies: the block is what it always was, hash included', async (t) => {
+  const root = await basic(t)
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0, 'sync')
+  const web = await readFile(join(root, 'org', 'web', 'AGENTS.md'), 'utf8')
+  // The body as written before policies existed: intro, then the rules.
+  const body = [
+    'This directory is scope `web` of rness workspace `acme`. Full context lives in',
+    '`../../.rness/`: start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;',
+    'live: `rness context --scope web`. If `.rness/` is not reachable, this is a',
+    'standalone clone: the rules below are all you have.',
+    '',
+    '## Rules',
+    `<!-- rness: standards/web/seo.md -->\n${seo.trim()}`,
+    '',
+    `<!-- rness: standards/coding.md -->\n${coding.trim()}`,
+  ].join('\n')
+  const hash = blockHash(body)
+  assert.ok(web.includes(`\n${body}\n${END}`), web)
+  assert.equal(parseHeader(web.split('\n')[1] ?? '')?.hash, hash)
+  assert.doesNotMatch(web, /## Policies/)
+})
+
+test('freshBlockHash is the hash sync writes, for a scope with a policy', async (t) => {
+  const root = await basic(t)
+  await mkdir(join(root, '.rness', 'policy'), { recursive: true })
+  await writeFile(
+    join(root, '.rness', 'policy', 'no-force-push.md'),
+    '---\nstatus: Enabled\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new commit.\n---\n\n# No force push\n\nHistory stays.\n'
+  )
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0, 'sync')
+  const rnessDir = join(root, '.rness')
+  const ws = { root, rnessDir, manifest: await loadManifest(rnessDir) }
+  for (const path of ['AGENTS.md', 'org/web/AGENTS.md']) {
+    const text = await readFile(join(root, ...path.split('/')), 'utf8')
+    assert.match(text, /## Policies\n<!-- rness: policy\/no-force-push\.md -->/)
+    assert.equal(
+      await freshBlockHash(ws, path),
+      parseHeader(text.split('\n')[1] ?? '')?.hash,
+      path
+    )
+  }
+})

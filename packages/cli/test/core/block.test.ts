@@ -271,3 +271,116 @@ test('a block is current by its hash, whichever header form it has', () => {
   broken[1] = '<!-- something else -->'
   assert.equal(isCurrentBlock(broken, block.hash), false, 'no header')
 })
+
+// --- the Policies section (spec 0040 4.1) ------------------------------------
+
+function withPolicies(
+  base: Context,
+  files: Array<{ rel: string; body: string }>
+): Context {
+  return {
+    ...base,
+    collections: [
+      ...base.collections,
+      {
+        name: 'policy',
+        files: files.map((f) => ({
+          rel: f.rel,
+          scope: null,
+          title: null,
+          body: f.body,
+          content: f.body,
+        })),
+      },
+    ],
+  }
+}
+
+const NO_EM_DASH = `---
+status: Enabled
+standard: standards/coding.md
+rules:
+  - check: added-lines
+    deny: '\\u2014'
+    fix: Replace the em dash with a hyphen, a comma or a colon.
+  - check: commit-message
+    deny: '\\u2014'
+    fix: Reword the message without an em dash.
+---
+
+# No em dash
+
+It reads as AI-generated.
+`
+
+const NO_FORCE_PUSH = `---
+status: Enabled
+rules:
+  - check: push
+    deny: non-fast-forward
+    fix: Push a new commit instead of rewriting history.
+---
+
+# No force push
+`
+
+const DISABLED = NO_FORCE_PUSH.replace('Enabled', 'Disabled').replace(
+  'No force push',
+  'Dormant'
+)
+
+const render = (context: Context) =>
+  renderBlock({ scope: 'web', org: 'acme', depth: 2, context })
+
+test('no enabled policy: no Policies section, the same bytes and hash as before', () => {
+  const before = render(twoStandards)
+  const none = render(withPolicies(twoStandards, []))
+  const off = render(
+    withPolicies(twoStandards, [{ rel: 'dormant.md', body: DISABLED }])
+  )
+  assert.doesNotMatch(before.text, /## Policies/)
+  assert.equal(none.text, before.text)
+  assert.equal(off.text, before.text)
+  assert.equal(off.hash, before.hash)
+})
+
+test('the Policies section follows Rules: marker, title, one line per rule, the standard, the reason', () => {
+  const block = render(
+    withPolicies(twoStandards, [{ rel: 'no-em-dash.md', body: NO_EM_DASH }])
+  )
+  const body = bodyOf(block.text.split('\n'))
+  assert.ok(
+    body.endsWith(
+      [
+        '## Policies',
+        '<!-- rness: policy/no-em-dash.md -->',
+        '# No em dash',
+        '- Refused at commit and on edit (added lines): Replace the em dash with a hyphen, a comma or a colon.',
+        '- Refused at commit (the message): Reword the message without an em dash.',
+        '- Standard: `standards/coding.md`',
+        '',
+        'It reads as AI-generated.',
+      ].join('\n')
+    ),
+    body
+  )
+  assert.ok(body.indexOf('## Rules') < body.indexOf('## Policies'))
+  assert.equal(block.hash, blockHash(body))
+  assert.ok(!block.text.includes('\u2014'))
+})
+
+test('only the enabled policies are listed, in the order the context gives; a push rule names its refusal', () => {
+  const block = render(
+    withPolicies(twoStandards, [
+      { rel: 'no-force-push.md', body: NO_FORCE_PUSH },
+      { rel: 'dormant.md', body: DISABLED },
+      { rel: 'no-em-dash.md', body: NO_EM_DASH },
+    ])
+  )
+  assert.match(
+    block.text,
+    /<!-- rness: policy\/no-force-push\.md -->\n# No force push\n- Refused at push \(non-fast-forward\): Push a new commit instead of rewriting history\.\n\n<!-- rness: policy\/no-em-dash\.md -->/
+  )
+  assert.doesNotMatch(block.text, /Dormant|dormant/)
+  assert.notEqual(block.hash, render(twoStandards).hash)
+})
