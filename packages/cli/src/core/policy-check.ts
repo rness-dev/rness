@@ -81,8 +81,9 @@ const LINE_CUT = 120
  * Git's scissors block, as `git commit -v` writes it (git 2.56, confirmed
  * 2026-11-03): the comment character, the dashed line, then two explanation
  * lines with the same character. Git cuts at the dashed line alone, with its
- * own comment character only; the whole block is asked for here, so the cut
- * is never earlier than git's.
+ * own comment character, matched byte for byte up to its `\n` (a trailing
+ * space or a `\r` and git keeps it); the whole block is asked for here, each
+ * line as exactly, so the cut is never earlier than git's.
  */
 const SCISSORS_LINE = '------------------------ >8 ------------------------'
 const SCISSORS_EXPLAIN = [
@@ -90,13 +91,25 @@ const SCISSORS_EXPLAIN = [
   'Everything below it will be ignored.',
 ]
 
+/** The index of the block's first line, `lines` split on `\n` alone; -1 when none. */
 function scissorsAt(lines: readonly string[], char: string): number {
   return lines.findIndex(
     (line, i) =>
-      line.trimEnd() === `${char} ${SCISSORS_LINE}` &&
+      line === `${char} ${SCISSORS_LINE}` &&
       SCISSORS_EXPLAIN.every(
-        (text, k) => lines[i + 1 + k]?.trimEnd() === `${char} ${text}`
+        (text, k) => lines[i + 1 + k] === `${char} ${text}`
       )
+  )
+}
+
+/** The message up to git's cut, `\n`-located; null when git does not cut it. */
+function beforeScissors(text: string, char: string): string | null {
+  const raw = text.split('\n')
+  const at = scissorsAt(raw, char)
+  if (at === -1) return null
+  return text.slice(
+    0,
+    raw.slice(0, at).reduce((n, line) => n + line.length + 1, 0)
   )
 }
 
@@ -147,9 +160,11 @@ export function checkCommitMessage(
   policies: readonly Policy[],
   { cutAtScissors = false, commentChar = '#' }: CommitMessageOptions = {}
 ): PolicyFailure[] {
-  const lines = text.split(/\r\n|\r|\n/)
-  const scissors = cutAtScissors ? scissorsAt(lines, commentChar) : -1
-  const kept = scissors === -1 ? lines : lines.slice(0, scissors)
+  const cut = cutAtScissors ? beforeScissors(text, commentChar) : null
+  // Numbered as before the cut: what is kept is a prefix of the text, and
+  // it ends at a line break whose empty remainder is no line.
+  const kept = (cut ?? text).split(/\r\n|\r|\n/)
+  if (cut !== null) kept.pop()
   const rules = compile(policies, 'commit-message')
   const failures: PolicyFailure[] = []
   kept.forEach((line, i) => {

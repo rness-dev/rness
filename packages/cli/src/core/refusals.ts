@@ -1,5 +1,5 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { appendFile, mkdir, readFile, stat } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 import { writeFileAtomic } from './fs.ts'
 import { gitPath } from './git.ts'
@@ -86,9 +86,36 @@ export async function recordRefusals(
   now: number = Date.now()
 ): Promise<boolean> {
   if (entries.length === 0) return true
+  const file = await gitPath(clone, REFUSALS_FILE)
+  return file !== null && appendRecords(file, entries, now)
+}
+
+/**
+ * The same, for a repository whose git directory is known (a git hook's,
+ * which `gitPath` would look for again in an environment that may not be
+ * the hook's): the record of its main work tree, `<gitDir>/rness/...`.
+ */
+export async function recordRefusalsIn(
+  gitDir: string,
+  entries: readonly RefusalEntry[],
+  now: number = Date.now()
+): Promise<boolean> {
+  if (entries.length === 0) return true
   try {
-    const file = await gitPath(clone, REFUSALS_FILE)
-    if (file === null) return false
+    // Never made: a directory that is not there is no repository.
+    if (!(await stat(gitDir)).isDirectory()) return false
+  } catch {
+    return false
+  }
+  return appendRecords(join(gitDir, ...REFUSALS_FILE.split('/')), entries, now)
+}
+
+async function appendRecords(
+  file: string,
+  entries: readonly RefusalEntry[],
+  now: number
+): Promise<boolean> {
+  try {
     const time = new Date(now).toISOString()
     const text = entries
       .map((e) =>

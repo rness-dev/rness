@@ -12,6 +12,7 @@ import {
   pruneRefusals,
   readRefusals,
   recordRefusals,
+  recordRefusalsIn,
   refusalsOf,
 } from '../../src/core/refusals.ts'
 import { git } from '../helpers/git.ts'
@@ -145,6 +146,19 @@ test('pruning keeps the last days and says how many went', async (t) => {
     ['p29', 'p0']
   )
   assert.equal(await pruneRefusals(dir, 30, NOW), 0)
+})
+
+test('recordRefusalsIn: the record of a git directory known already, never one made up', async (t) => {
+  const dir = await repo(t)
+  const entry = { policy: 'p', check: 'push', by: 'pre-push' } as const
+  assert.equal(await recordRefusalsIn(join(dir, '.git'), [entry], NOW), true)
+  assert.deepEqual(
+    (await readRefusals(dir)).map((r) => [r.policy, r.time]),
+    [['p', '2026-11-03T12:00:00.000Z']]
+  )
+  const missing = join(dir, 'no-such-git-dir')
+  assert.equal(await recordRefusalsIn(missing, [entry], NOW), false)
+  await assert.rejects(readFile(join(missing, 'rness', 'refusals.jsonl')))
 })
 
 test('outside a repository: nothing recorded, nothing read, nothing thrown', async (t) => {

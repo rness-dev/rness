@@ -114,6 +114,34 @@ test('commit-message: a lookalike scissors line does not truncate, even when git
   assert.equal(checkCommitMessage(mixed, [TRAILERS], CUT).length, 1)
 })
 
+test('commit-message: the scissors lines compared as git compares them, \\r and trailing space kept', () => {
+  const spaced = `feat: x\n${scissors('#').replace('>8 ------------------------', '>8 ------------------------ ')}\nCo-Authored-By: Claude\n`
+  assert.equal(checkCommitMessage(spaced, [TRAILERS], CUT).length, 1)
+  const crlf = `feat: x\r\n${scissors('#').replaceAll('\n', '\r\n')}\r\nCo-Authored-By: Claude\r\n`
+  assert.equal(
+    checkCommitMessage(crlf, [TRAILERS], CUT)[0]?.where,
+    'commit message, line 5'
+  )
+})
+
+test('commit-message: a cut leaves the numbering of the lines above it unchanged', () => {
+  const msg = `x\r\ny\rfeat ${DASH}\n${scissors('#')}\nCo-Authored-By: Claude\n`
+  const f = checkCommitMessage(msg, [TRAILERS, NO_DASH_MSG], CUT)
+  assert.deepEqual(
+    f.map((x) => x.where),
+    ['commit message, line 3']
+  )
+  // At the very first line, git cuts the whole message.
+  assert.deepEqual(
+    checkCommitMessage(
+      `${scissors('#')}\nCo-Authored-By: Claude\n`,
+      [TRAILERS],
+      CUT
+    ),
+    []
+  )
+})
+
 test('commit-message: a comment line before the scissors is checked', () => {
   const f = checkCommitMessage(`feat: x\n# a ${DASH} b\n`, [NO_DASH_MSG])
   assert.equal(f.length, 1)

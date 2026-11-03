@@ -307,6 +307,18 @@ test('an invalid policy is named in one line; the valid ones still apply', async
   assert.match(r.err, /rness: policy no-em-dash refused this commit/)
 })
 
+test('an invalid policy, then a failure to check: one line, the failure', async (t) => {
+  const { web } = await workspace(t, {
+    files: {
+      'policy/broken.md': NO_TRAILERS.replace('status: Enabled', 'status: On'),
+    },
+  })
+  assert.deepEqual(await check('commit-msg', web), {
+    code: 0,
+    err: 'rness: policies not checked: no commit message file was given\n',
+  })
+})
+
 test('no enabled policy using the check: exit 0, not a word', async (t) => {
   const off = (text: string) =>
     text.replace('status: Enabled', 'status: Disabled')
@@ -384,6 +396,29 @@ test("a linked worktree through git: its hook runs the main clone's, the record 
   assert.notEqual(refused.code, 0)
   assert.match(refused.stderr, /\n {2}org\/web\/b\.md:1: b /)
   assert.equal((await readRefusals(web)).length, 1)
+})
+
+test('a separate git directory named by GIT_DIR: the record goes there, process.env untouched', async (t) => {
+  const { web } = await workspace(t)
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'rness-gitdir-')))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  const gitDir = join(base, 'web.git')
+  await rm(join(web, '.git'), { recursive: true, force: true })
+  await git(['init', '-q', '-b', 'main', `--separate-git-dir=${gitDir}`], web)
+  // No `.git` in the work tree: only the hook's environment knows the repository.
+  await rm(join(web, '.git'), { force: true })
+  const env = { GIT_DIR: gitDir, GIT_WORK_TREE: web }
+  await put(web, 'a.md', `x ${DASH}\n`)
+  assert.equal((await gitRun(['add', 'a.md'], web, env)).code, 0)
+  const before = { ...process.env }
+  const r = await check('pre-commit', web, { env })
+  assert.equal(r.code, 1, r.err)
+  assert.deepEqual({ ...process.env }, before)
+  const record = await readFile(join(gitDir, 'rness', 'refusals.jsonl'), 'utf8')
+  assert.match(
+    record,
+    /"policy":"no-em-dash","check":"added-lines","by":"pre-commit"/
+  )
 })
 
 // --- rness's own outputs -------------------------------------------------------
@@ -543,19 +578,95 @@ test('commit-msg through git: refused, then the scissors cut only where git cuts
     ).code,
     0
   )
+  // A message not edited is never cut: commit.verbose cuts under -m, but
+  // `--no-verbose` (which the hook cannot see) keeps it all.
+  assert.notEqual(
+    (await commit(['-m', below], ['commit.verbose=true'])).code,
+    0
+  )
+  assert.notEqual(
+    (await commit(['--no-verbose', '-m', below], ['commit.verbose=true'])).code,
+    0
+  )
   assert.equal((await gitRun(['rev-parse', 'HEAD'], web)).code, 128)
-  // commit.verbose: git cuts there, under -m too, and so does the check.
-  const verbose = await commit(['-m', below], ['commit.verbose=true'])
-  assert.equal(verbose.code, 0, verbose.stderr)
-  assert.equal(await log(), 'feat: x')
-  // commit.cleanup=scissors with the message edited: git cuts, the check too.
-  const edited = join(web, '..', 'edited-msg')
-  await writeFile(edited, `${below}\n`)
-  const editor = await commit([], ['commit.cleanup=scissors'], {
-    GIT_EDITOR: `cp "${edited}"`,
+
+  // An edited message (the editor a script that writes it): git cuts at
+  // its exact line only, and so does the check.
+  const editing = async (name: string, text: string): Promise<string> => {
+    const file = join(web, '..', `${name}-msg`)
+    await writeFile(file, text)
+    return `cp "${file}"`
+  }
+  const spaced = below.replace(
+    '>8 ------------------------',
+    '>8 ------------------------ '
+  )
+  const kept = await commit([], ['commit.cleanup=scissors'], {
+    GIT_EDITOR: await editing('spaced', `${spaced}\n`),
   })
-  assert.equal(editor.code, 0, editor.stderr)
+  assert.notEqual(kept.code, 0)
+  assert.match(
+    kept.stderr,
+    /rness: policy no-agent-trailers refused this commit/
+  )
+  assert.equal((await gitRun(['rev-parse', 'HEAD'], web)).code, 128)
+
+  const cut = await commit([], ['commit.cleanup=scissors'], {
+    GIT_EDITOR: await editing('exact', `${below}\n`),
+  })
+  assert.equal(cut.code, 0, cut.stderr)
   assert.equal(await log(), 'feat: x')
+})
+
+test("commit-msg through git: an edited verbose commit is cut at git's block, its diff not checked", async (t) => {
+  const { web } = await workspace(t)
+  await installHook(web, 'commit-msg')
+  await put(web, 'a.md', `x ${DASH} y\n`)
+  await git(['add', 'a.md'], web)
+  // The editor keeps git's template (its scissors block, then the diff,
+  // which holds the em dash) and writes the subject above it.
+  const editor = join(web, '..', 'subject-editor')
+  await writeFile(
+    editor,
+    '#!/bin/sh\n{ printf \'feat: x\\n\'; cat "$1"; } > "$1.new" && mv "$1.new" "$1"\n'
+  )
+  await chmod(editor, 0o755)
+  const r = await gitRun(
+    ['-c', 'commit.verbose=true', 'commit', '-q', '-v'],
+    web,
+    { GIT_EDITOR: editor }
+  )
+  assert.equal(r.code, 0, r.stderr)
+  assert.equal((await git(['log', '-1', '--format=%B'], web)).trim(), 'feat: x')
+})
+
+test('commit-msg through git: a merge message is never cut, commit.verbose aside', async (t) => {
+  const { web } = await workspace(t)
+  await git(['commit', '-q', '--allow-empty', '-m', 'one'], web)
+  await git(['checkout', '-q', '-b', 'side'], web)
+  await git(['commit', '-q', '--allow-empty', '-m', 'side'], web)
+  await git(['checkout', '-q', 'main'], web)
+  await git(['commit', '-q', '--allow-empty', '-m', 'two'], web)
+  await installHook(web, 'commit-msg')
+  const merged = await gitRun(
+    [
+      '-c',
+      'commit.verbose=true',
+      'merge',
+      '-q',
+      '--no-ff',
+      '-m',
+      `merge side\n${SCISSORS}\nCo-Authored-By: Claude <noreply@anthropic.com>`,
+      'side',
+    ],
+    web
+  )
+  assert.notEqual(merged.code, 0)
+  assert.match(
+    merged.stderr,
+    /rness: policy no-agent-trailers refused this commit/
+  )
+  assert.equal((await git(['log', '-1', '--format=%s'], web)).trim(), 'two')
 })
 
 // --- pre-commit through git: the index git hands the hook -----------------------

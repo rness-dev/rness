@@ -29,7 +29,7 @@ import {
   policiesFor,
   policiesNotApplied,
 } from '../core/policy.ts'
-import { recordRefusals, refusalsOf } from '../core/refusals.ts'
+import { recordRefusalsIn, refusalsOf } from '../core/refusals.ts'
 import { findWorkspace } from '../core/workspace.ts'
 
 /**
@@ -72,14 +72,6 @@ const defaultIo = (): PolicyIo => ({
 
 const NOT_CHECKED = 'rness: policies not checked: '
 const NOT_APPLIED = 'rness: policy not applied (invalid, run rness validate): '
-
-/** What pins git to one repository in a hook's environment. */
-const REPOSITORY_VARIABLES = [
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_COMMON_DIR',
-  'GIT_INDEX_FILE',
-] as const
 
 /** A large staged diff is still read whole; past this, the hook fails open. */
 const MAX_OUTPUT = 256 * 1024 * 1024
@@ -131,12 +123,21 @@ async function gitConfig(
   return run.code === 0 ? run.stdout.trim() : null
 }
 
+interface WorkTree {
+  /** The work tree the hook runs in. */
+  top: string
+  /** The clone it belongs to: the same, or a linked worktree's main work tree. */
+  clone: string
+  /** The clone's git directory, as git found it for the hook: the record's. */
+  gitDir: string
+}
+
 /**
- * The work tree the hook runs in (`top`), and the clone it belongs to: the
- * same, or for a linked worktree its main work tree, which `sync` knows
- * and whose hooks git runs.
+ * Where the hook runs, as git tells it in the hook's environment: for a
+ * linked worktree, the clone is its main work tree, which `sync` knows and
+ * whose hooks git runs, and the common directory is the clone's.
  */
-async function workTree(io: PolicyIo): Promise<{ top: string; clone: string }> {
+async function workTree(io: PolicyIo): Promise<WorkTree> {
   let out: string
   try {
     out = await git(
@@ -152,7 +153,7 @@ async function workTree(io: PolicyIo): Promise<{ top: string; clone: string }> {
   const common = resolve(io.cwd, commonDir ?? gitDir)
   const linked =
     resolve(io.cwd, gitDir) !== common && basename(common) === '.git'
-  return { top, clone: linked ? dirname(common) : top }
+  return { top, clone: linked ? dirname(common) : top, gitDir: common }
 }
 
 interface StagedFile {
@@ -285,13 +286,21 @@ function commentCharOf(
 
 /**
  * Whether git will cut the message at its scissors line, as far as a hook
- * can tell: `commit.verbose` on (git then cuts under `-m` and `-F` too), or
- * `commit.cleanup=scissors` with the message edited (git sets `GIT_EDITOR`
- * to `:` for the hooks when no editor runs, and keeps a scissors block
- * typed under `-m`). A command-line `-v`, `--no-verbose` or `--cleanup` is
- * not visible to the hook: the first only makes the check stricter.
+ * can tell. Only a message git opened in the editor: git sets `GIT_EDITOR`
+ * to `:` for the hooks when no editor runs, and a message given with `-m`
+ * or `-F`, or a merge's (`MERGE_MSG`, `commit.verbose` ignored), can carry a
+ * scissors block git keeps (verified 2026-11-03, git 2.56.0). Then
+ * `commit.verbose` on or `commit.cleanup=scissors`, at git's comment
+ * character. A command-line `-v` is not visible to the hook (the check is
+ * then stricter); `--no-verbose` or `--cleanup` against the configuration,
+ * on an edited message, is not either.
  */
-async function scissorsOf(io: PolicyIo): Promise<CommitMessageOptions> {
+async function scissorsOf(
+  io: PolicyIo,
+  file: string
+): Promise<CommitMessageOptions> {
+  if (io.env['GIT_EDITOR'] === ':' || basename(file) === 'MERGE_MSG')
+    return { cutAtScissors: false }
   const [verbose, cleanup, char, string] = await Promise.all([
     gitConfig(['--bool', '--get', 'commit.verbose'], io),
     gitConfig(['--get', 'commit.cleanup'], io),
@@ -300,9 +309,8 @@ async function scissorsOf(io: PolicyIo): Promise<CommitMessageOptions> {
   ])
   const commentChar = commentCharOf(char, string)
   if (commentChar === null) return { cutAtScissors: false }
-  const edited = io.env['GIT_EDITOR'] !== ':'
   return {
-    cutAtScissors: verbose === 'true' || (cleanup === 'scissors' && edited),
+    cutAtScissors: verbose === 'true' || cleanup === 'scissors',
     commentChar,
   }
 }
@@ -326,7 +334,7 @@ async function commitMsg(
   } catch {
     throw new Error(`the commit message file ${file} cannot be read`)
   }
-  return checkCommitMessage(text, policies, await scissorsOf(io))
+  return checkCommitMessage(text, policies, await scissorsOf(io, file))
 }
 
 async function readAll(input: PolicyIo['input']): Promise<string> {
@@ -406,7 +414,7 @@ export async function policyCheckCommand(
       throw new Error(
         `unknown hook ${JSON.stringify(hook ?? '')} (expected ${POLICY_HOOKS.join(', ')})`
       )
-    const { top, clone } = await workTree(io)
+    const { top, clone, gitDir } = await workTree(io)
     const found = await findWorkspace(clone).catch(() => null)
     if (found === null)
       throw new Error(`.rness/ is not reachable from ${clone}`)
@@ -421,7 +429,9 @@ export async function policyCheckCommand(
       )
     const scopes = scopesOf(place)
     const invalid = await policiesNotApplied(ws, scopes)
-    if (invalid.length > 0) say(`${NOT_APPLIED}${invalid.join(', ')}`)
+    // Said once the check is done: a failure after it says one line only.
+    const notApplied =
+      invalid.length > 0 ? `${NOT_APPLIED}${invalid.join(', ')}` : null
 
     const failures =
       hook === 'pre-commit'
@@ -429,16 +439,16 @@ export async function policyCheckCommand(
         : hook === 'commit-msg'
           ? await commitMsg(ws, scopes, top, args, io)
           : await prePush(ws, scopes, io)
+    if (notApplied !== null) say(notApplied)
     if (failures.length === 0) return 0
     say(refusalText(failures, ACTION[hook]))
-    // The record is the clone's, where `startOf(clone)` keeps the sessions:
-    // in a linked worktree git exports `GIT_DIR` (the worktree's own) to
-    // the hook, and `gitPath(clone)` would follow it. Every git call of the
-    // check is done, and this process ends with the hook.
-    for (const name of REPOSITORY_VARIABLES) delete process.env[name]
-    // A git hook knows the session only when Claude Code's Bash tool ran it.
-    await recordRefusals(
-      clone,
+    // In the clone's git directory, as git found it in the hook's own
+    // environment (the common directory of a linked worktree, a separate
+    // git directory named by `GIT_DIR`): where `startOf(clone)` keeps the
+    // sessions. A git hook knows the session only when Claude Code's Bash
+    // tool ran it.
+    await recordRefusalsIn(
+      gitDir,
       refusalsOf(failures, hook, io.env['CLAUDE_CODE_SESSION_ID'])
     )
     return 1
