@@ -452,10 +452,15 @@ async function addedLineFailures(
   if (added.length === 0) return []
   const file = { path: label, added, after }
   if (checkAddedLines([file], policiesOf).length === 0) return []
-  return checkAddedLines(
-    [{ ...file, ...(await rnessOutputProofs(pws, [label])) }],
-    policiesOf
-  )
+  try {
+    return checkAddedLines(
+      [{ ...file, ...(await rnessOutputProofs(pws, [label])) }],
+      policiesOf
+    )
+  } catch {
+    // The proofs cannot be read: no policy refusal, the other guards run.
+    return []
+  }
 }
 
 /**
@@ -482,7 +487,10 @@ async function editGuard(input: Input, io: HookIo): Promise<number> {
   const rel = await within(ws.rnessDir, file)
   const blocked = BLOCK_FILES.includes(posix.basename(label))
   const pws = await policyWorkspace(ws)
-  const policiesOf = pws === null ? null : await policiesByPath(pws, [label])
+  // Policies that cannot be read are no policy here: the block and contract
+  // guards below still run.
+  const policiesOf =
+    pws === null ? null : await policiesByPath(pws, [label]).catch(() => null)
   const policed =
     policiesOf?.(label).some((p) =>
       p.rules.some((r) => r.check === 'added-lines')
@@ -561,6 +569,7 @@ const HOOK_CHECK: Readonly<Record<SkippedHook, PolicyCheck>> = {
 
 const HOOKS_SKIPPED: Readonly<Record<string, string>> = {
   'pre-commit,commit-msg': 'the pre-commit and commit-msg hooks',
+  'commit-msg': 'the commit-msg hook',
   'pre-push': 'the pre-push hook',
   'pre-commit,commit-msg,pre-push': 'every hook',
 }
@@ -633,7 +642,9 @@ async function bashGuard(input: Input, io: HookIo): Promise<number> {
   const toolInput = input['tool_input']
   if (toolInput === null || typeof toolInput !== 'object') return 0
   const command = (toolInput as Input)['command']
-  if (typeof command !== 'string' || !/git/i.test(command)) return 0
+  if (typeof command !== 'string') return 0
+  // At once only when nothing in it could spell git (`g\it`, `$'\x67it'`).
+  if (!/git/i.test(command) && !/[\\'"$`]/.test(command)) return 0
   const cwd = cwdOf(input, io.env)
   const bypasses = gitBypasses(command, { cwd, env: io.env })
   if (bypasses === null || bypasses.length === 0) return 0
@@ -670,14 +681,16 @@ async function bashGuard(input: Input, io: HookIo): Promise<number> {
       refused.map(({ bypass }) => {
         const text = bypass.text.replace(/\s+/g, ' ').slice(0, BYPASS_CUT)
         const hooks = HOOKS_SKIPPED[bypass.skips.join(',')] ?? 'the hooks'
-        return `  ${text} (${bypass.how} skips ${hooks})`
+        return bypass.maybe === true
+          ? `  ${text} (${bypass.how} may skip the hooks)`
+          : `  ${text} (${bypass.how} skips ${hooks})`
       })
     ),
   ]
   return refuse(io, [
     "rness: this command would skip the git hooks that apply the workspace's policies",
     ...lines,
-    '  fix: run it without --no-verify (or -n) and fix what the hook refuses',
+    '  fix: run it without skipping the hooks (no --no-verify, -n, core.hooksPath, hook-skipping alias or config override), and fix what the hook refuses',
     ...[...named.values()].map((p) => `  policy ${p.name}: .rness/${p.rel}`),
   ])
 }

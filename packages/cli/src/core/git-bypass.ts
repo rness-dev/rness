@@ -1,20 +1,29 @@
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
 
+import {
+  type ShellItem,
+  VARIABLE_NAME,
+  type Word,
+  shellCommands,
+} from './shell-words.ts'
+
 /**
  * The git calls of a Bash command that would skip the git hooks (spec 0040
- * §4.3): `git commit --no-verify` or `-n`, `git push --no-verify`, and
- * core.hooksPath set by `git -c`, `--config-env`, `git config` or the
- * environment. Pure: a command and where it starts in, the bypasses out,
- * each with the directory git runs in. The command is read as a POSIX shell
- * reads it (quotes, lists, subshells, substitutions, here-documents), not
- * matched as a string; what cannot be known here (an expansion of an unknown
- * variable, an alias, a script) is no bypass, as the hooks still run.
+ * §4.3): `git commit --no-verify` or `-n`, `git push`, `git merge` and `git
+ * pull --no-verify`; core.hooksPath, an alias that skips them, an include or
+ * another configuration file given to git by `-c`, `--config-env`, `git
+ * config` or the environment. Pure: a command and where it starts in, the
+ * bypasses out, each with the directory git runs in. The command is read as
+ * the shell reads it (`./shell-words.ts`), not matched as a string. Where it
+ * cannot be read to the end (an unknown wrapper, an expansion), its words
+ * are judged by a backstop that fails closed: the finding is a "may".
  *
  * The option tables are git 2.56.0's (`git <command>
  * --git-completion-helper-all`, read 2026-11-03): git takes an unambiguous
- * prefix of a long option (`--no-veri`), refuses an ambiguous or unknown one
- * (`--no-ver`) and so runs nothing, and the last of `--no-verify` and
- * `--verify` wins.
+ * prefix of a long option (`--no-veri` for commit), refuses an ambiguous or
+ * unknown one (`--no-ver`) and so runs nothing, and the last of
+ * `--no-verify` and `--verify` wins. An option this git does not know
+ * leaves only a literal `--no-verify` to read, which may skip the hooks.
  */
 
 /** The hooks of a clone that apply the policies (spec 0040 §4.2). */
@@ -32,6 +41,11 @@ export interface GitBypass {
   readonly hooksPath?: string
   /** Where a core.hooksPath is set: a `git config` scope, `-c`, or the environment. */
   readonly scope?: ConfigScope
+  /**
+   * The command may skip the hooks, as far as can be told here: another
+   * configuration given to git, a value or a command not read to the end.
+   */
+  readonly maybe?: true
 }
 
 export type ConfigScope =
@@ -47,343 +61,6 @@ export type ConfigScope =
 export interface ShellStart {
   readonly cwd: string
   readonly env: Readonly<Record<string, string | undefined>>
-}
-
-type Segment =
-  | { readonly kind: 'text'; readonly text: string; readonly quoted: boolean }
-  | { readonly kind: 'var'; readonly name: string }
-  | { readonly kind: 'tilde' }
-  /** An expansion whose value is not known here. */
-  | { readonly kind: 'unknown' }
-
-export interface Word {
-  readonly segments: readonly Segment[]
-}
-
-export type ShellItem =
-  | { readonly kind: 'command'; readonly words: Word[]; readonly text: string }
-  /** A subshell or a substitution starts: what `cd` does inside stays inside. */
-  | { readonly kind: 'enter' }
-  | { readonly kind: 'leave' }
-
-class Unreadable extends Error {}
-
-const BLANK = new Set([' ', '\t'])
-const ENDS_WORD = new Set([' ', '\t', '\n', ';', '&', '|', '(', ')', '<', '>'])
-const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
-const ANSI_C: Readonly<Record<string, string>> = {
-  n: '\n',
-  t: '\t',
-  r: '\r',
-  a: '\u0007',
-  b: '\b',
-  e: '\u001b',
-  E: '\u001b',
-  f: '\f',
-  v: '\v',
-  '\\': '\\',
-  "'": "'",
-  '"': '"',
-  '?': '?',
-}
-
-class Parser {
-  private readonly src: string
-  private pos = 0
-  private heredocs: { delimiter: string; tabs: boolean }[] = []
-
-  constructor(src: string) {
-    this.src = src
-  }
-
-  parse(): ShellItem[] {
-    return this.list(false)
-  }
-
-  /** Commands up to the end, or up to the `)` that closes the list when `closing`. */
-  private list(closing: boolean): ShellItem[] {
-    const src = this.src
-    const items: ShellItem[] = []
-    let words: Word[] = []
-    let before: ShellItem[] = []
-    let start = -1
-    let end = -1
-    let target = false
-    const flush = (): void => {
-      items.push(...before)
-      if (words.length > 0)
-        items.push({ kind: 'command', words, text: src.slice(start, end) })
-      words = []
-      before = []
-      start = -1
-    }
-    while (this.pos < src.length) {
-      const c = src[this.pos] ?? ''
-      const next = src[this.pos + 1] ?? ''
-      if (BLANK.has(c)) {
-        this.pos += 1
-      } else if (c === '\\' && next === '\n') {
-        this.pos += 2
-      } else if (c === '\n') {
-        flush()
-        this.pos += 1
-        this.skipHeredocs()
-      } else if (c === '#') {
-        const eol = src.indexOf('\n', this.pos)
-        this.pos = eol === -1 ? src.length : eol
-      } else if (c === '&' && next === '>') {
-        this.pos += src[this.pos + 2] === '>' ? 3 : 2
-        target = true
-      } else if (c === ';' || c === '&' || c === '|') {
-        flush()
-        this.pos += next === c || (c === '|' && next === '&') ? 2 : 1
-      } else if (c === '(') {
-        flush()
-        this.pos += 1
-        items.push({ kind: 'enter' }, ...this.list(true), { kind: 'leave' })
-      } else if (c === ')') {
-        flush()
-        this.pos += 1
-        if (closing) return items
-        // A `case` pattern's: nothing to close.
-      } else if ((c === '<' || c === '>') && next === '(') {
-        // A process substitution: its commands run, its word is a path.
-        this.pos += 2
-        before.push({ kind: 'enter' }, ...this.list(true), { kind: 'leave' })
-        if (!target) {
-          if (start === -1) start = this.pos
-          end = this.pos
-          words.push({ segments: [{ kind: 'unknown' }] })
-        }
-        target = false
-      } else if (c === '<' || c === '>') {
-        if (c === '<' && next === '<' && src[this.pos + 2] !== '<') {
-          const tabs = src[this.pos + 2] === '-'
-          this.pos += tabs ? 3 : 2
-          while (BLANK.has(src[this.pos] ?? '')) this.pos += 1
-          const delimiter = this.word(before)
-          this.heredocs.push({
-            delimiter: delimiter.segments
-              .map((s) => (s.kind === 'text' ? s.text : ''))
-              .join(''),
-            tabs,
-          })
-        } else {
-          const op = /^(?:<<<|>>|<>|<&|>&|>\||<|>)/.exec(
-            src.slice(this.pos, this.pos + 3)
-          )?.[0]
-          this.pos += op?.length ?? 1
-          target = true
-        }
-      } else {
-        const at = this.pos
-        const word = this.word(before)
-        const raw = src.slice(at, this.pos)
-        const after = src[this.pos] ?? ''
-        // The descriptor of a redirection (`2>`), or its target: no word.
-        if (/^\d+$/.test(raw) && (after === '<' || after === '>')) continue
-        if (target) {
-          target = false
-          continue
-        }
-        if (start === -1) start = at
-        end = this.pos
-        words.push(word)
-      }
-    }
-    if (closing)
-      throw new Unreadable('a subshell or substitution is not closed')
-    flush()
-    return items
-  }
-
-  /** The bodies of the here-documents the line opened: no commands. */
-  private skipHeredocs(): void {
-    for (const { delimiter, tabs } of this.heredocs) {
-      while (this.pos < this.src.length) {
-        const eol = this.src.indexOf('\n', this.pos)
-        const line = this.src.slice(this.pos, eol === -1 ? undefined : eol)
-        this.pos = eol === -1 ? this.src.length : eol + 1
-        if ((tabs ? line.replace(/^\t+/, '') : line) === delimiter) break
-      }
-    }
-    this.heredocs = []
-  }
-
-  /** One word, quotes removed; the commands of its substitutions go to `before`. */
-  private word(before: ShellItem[]): Word {
-    const src = this.src
-    const segments: Segment[] = []
-    const text = (t: string, quoted: boolean): void => {
-      const last = segments.at(-1)
-      if (last?.kind === 'text' && last.quoted === quoted)
-        segments[segments.length - 1] = { ...last, text: last.text + t }
-      else segments.push({ kind: 'text', text: t, quoted })
-    }
-    while (this.pos < src.length) {
-      const c = src[this.pos] ?? ''
-      if (ENDS_WORD.has(c)) break
-      if (c === '\\') {
-        const n = src[this.pos + 1]
-        if (n === undefined) text('\\', false)
-        else if (n !== '\n') text(n, true)
-        this.pos += 2
-      } else if (c === "'") {
-        const close = src.indexOf("'", this.pos + 1)
-        if (close === -1) throw new Unreadable('a single quote is not closed')
-        text(src.slice(this.pos + 1, close), true)
-        this.pos = close + 1
-      } else if (c === '"') {
-        this.pos += 1
-        this.doubleQuoted(segments, text, before)
-      } else if (c === '$') {
-        this.dollar(segments, text, before, false)
-      } else if (c === '`') {
-        this.backquoted(segments, before)
-      } else if (c === '~' && segments.length === 0) {
-        const n = src[this.pos + 1] ?? ''
-        this.pos += 1
-        if (n === '' || n === '/' || ENDS_WORD.has(n))
-          segments.push({ kind: 'tilde' })
-        else segments.push({ kind: 'unknown' })
-      } else {
-        text(c, false)
-        this.pos += 1
-      }
-    }
-    return { segments }
-  }
-
-  private doubleQuoted(
-    segments: Segment[],
-    text: (t: string, quoted: boolean) => void,
-    before: ShellItem[]
-  ): void {
-    const src = this.src
-    while (this.pos < src.length) {
-      const c = src[this.pos] ?? ''
-      if (c === '"') {
-        this.pos += 1
-        // `""` is a word, empty.
-        if (segments.length === 0) text('', true)
-        return
-      }
-      if (c === '\\') {
-        const n = src[this.pos + 1] ?? ''
-        if ('$`"\\'.includes(n) && n !== '') {
-          text(n, true)
-          this.pos += 2
-        } else if (n === '\n') this.pos += 2
-        else {
-          text('\\', true)
-          this.pos += 1
-        }
-      } else if (c === '$') this.dollar(segments, text, before, true)
-      else if (c === '`') this.backquoted(segments, before)
-      else {
-        text(c, true)
-        this.pos += 1
-      }
-    }
-    throw new Unreadable('a double quote is not closed')
-  }
-
-  private dollar(
-    segments: Segment[],
-    text: (t: string, quoted: boolean) => void,
-    before: ShellItem[],
-    quoted: boolean
-  ): void {
-    const src = this.src
-    const n = src[this.pos + 1] ?? ''
-    if (n === '(') {
-      this.pos += 2
-      before.push({ kind: 'enter' }, ...this.list(true), { kind: 'leave' })
-      segments.push({ kind: 'unknown' })
-    } else if (n === '{') {
-      let depth = 0
-      let i = this.pos + 1
-      for (; i < src.length; i++) {
-        if (src[i] === '{') depth += 1
-        else if (src[i] === '}' && --depth === 0) break
-      }
-      if (i >= src.length) throw new Unreadable('a ${ is not closed')
-      const inner = src.slice(this.pos + 2, i)
-      segments.push(
-        NAME.test(inner) ? { kind: 'var', name: inner } : { kind: 'unknown' }
-      )
-      this.pos = i + 1
-    } else if (n === "'" && !quoted) {
-      let out = ''
-      let i = this.pos + 2
-      for (; i < src.length && src[i] !== "'"; i++) {
-        if (src[i] === '\\' && i + 1 < src.length) {
-          const e = src[i + 1] ?? ''
-          out += ANSI_C[e] ?? `\\${e}`
-          i += 1
-        } else out += src[i]
-      }
-      if (i >= src.length) throw new Unreadable("a $' is not closed")
-      text(out, true)
-      this.pos = i + 1
-    } else if (n === '"' && !quoted) {
-      // `$"..."`, a translated string: a double-quoted one here.
-      this.pos += 1
-    } else if (/[A-Za-z_]/.test(n)) {
-      const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(this.pos + 1))?.[0]
-      segments.push({ kind: 'var', name: name ?? n })
-      this.pos += 1 + (name?.length ?? 1)
-    } else if (/[0-9@*#?$!-]/.test(n) && n !== '') {
-      segments.push({ kind: 'unknown' })
-      this.pos += 2
-    } else {
-      text('$', quoted)
-      this.pos += 1
-    }
-  }
-
-  private backquoted(segments: Segment[], before: ShellItem[]): void {
-    const src = this.src
-    let inner = ''
-    let i = this.pos + 1
-    for (; i < src.length && src[i] !== '`'; i++) {
-      const e = src[i + 1] ?? ''
-      if (src[i] === '\\' && '$`\\'.includes(e) && e !== '') {
-        inner += e
-        i += 1
-      } else inner += src[i]
-    }
-    if (i >= src.length) throw new Unreadable('a backquote is not closed')
-    this.pos = i + 1
-    before.push({ kind: 'enter' }, ...new Parser(inner).parse(), {
-      kind: 'leave',
-    })
-    segments.push({ kind: 'unknown' })
-  }
-}
-
-/**
- * The commands of a shell script, in the order they run, a substitution's
- * before the command holding it; null when the shell would refuse it (an
- * unbalanced quote, subshell or substitution).
- */
-export function shellCommands(script: string): ShellItem[] | null {
-  try {
-    return new Parser(script).parse()
-  } catch (e) {
-    if (e instanceof Unreadable) return null
-    throw e
-  }
-}
-
-/** A word's value when it is written out, with no expansion; else null. */
-export function literalOf(word: Word): string | null {
-  let out = ''
-  for (const s of word.segments) {
-    if (s.kind !== 'text') return null
-    out += s.text
-  }
-  return out
 }
 
 // --- what runs, and where -------------------------------------------------
@@ -452,7 +129,7 @@ function assignmentOf(
   const first = word.segments[0]
   if (first?.kind !== 'text' || first.quoted) return null
   const eq = first.text.indexOf('=')
-  if (eq < 1 || !NAME.test(first.text.slice(0, eq))) return null
+  if (eq < 1 || !VARIABLE_NAME.test(first.text.slice(0, eq))) return null
   const rest: Word = {
     segments: [
       { ...first, text: first.text.slice(eq + 1) },
@@ -519,7 +196,7 @@ function command(
   }
   // What the parser cannot read is judged by its words, failing closed.
   if (run(words.slice(i), prefix, state, item.text, out) === 'unread')
-    backstop(words.slice(i), state, item.text, out)
+    backstop(words.slice(i), prefix, state, item.text, out)
 }
 
 /** Whether a command was read to the end, or the parser gave up on it. */
@@ -567,9 +244,7 @@ const WRAPPERS: Readonly<Record<string, Wrapper>> = {
 
 /** Commands that never run their arguments: nothing to judge in them. */
 const NEVER_RUNS = new Set(
-  'echo printf grep egrep fgrep rg ag ack man which type true false :'.split(
-    ' '
-  )
+  'echo printf grep egrep fgrep which type true false :'.split(' ')
 )
 
 interface Unwrapped {
@@ -750,7 +425,7 @@ function run(
         continue
       }
       const v = valueOf(w, state)
-      if (v !== null && NAME.test(v))
+      if (v !== null && VARIABLE_NAME.test(v))
         state.exported.set(v, state.vars.get(v) ?? null)
     }
     return 'read'
@@ -843,6 +518,32 @@ const COMMIT: Options = {
   skip: 'n',
 }
 
+/** git merge: `-n` is `--no-stat`; `--no-verify` skips commit-msg (and pre-merge-commit). */
+const MERGE: Options = {
+  long: table(
+    'cleanup strategy strategy-option message file into-name',
+    'gpg-sign log',
+    'stat summary compact-summary squash commit edit ff ff-only rerere-autoupdate verify-signatures verbose quiet abort quit continue allow-unrelated-histories progress autostash overwrite-ignore signoff no-verify verify no-stat no-summary no-compact-summary no-log no-squash no-commit no-edit no-cleanup no-ff no-rerere-autoupdate no-verify-signatures no-strategy no-strategy-option no-message no-into-name no-verbose no-quiet no-abort no-quit no-continue no-allow-unrelated-histories no-progress no-gpg-sign no-autostash no-overwrite-ignore no-signoff'
+  ),
+  required: 'smXF',
+  optional: 'S',
+  none: 'nevqh',
+  skip: null,
+}
+
+/** git pull: what it hands git merge, `--no-verify` among it. */
+const PULL: Options = {
+  long: table(
+    'cleanup strategy strategy-option upload-pack depth shallow-since shallow-exclude deepen refmap server-option negotiation-restrict negotiation-tip negotiation-include',
+    'recurse-submodules rebase gpg-sign jobs log',
+    'verbose quiet progress stat summary compact-summary signoff squash commit edit ff ff-only verify verify-signatures autostash allow-unrelated-histories all append force tags prune dry-run keep unshallow update-shallow ipv4 ipv6 show-forced-updates set-upstream no-verify no-verbose no-quiet no-progress no-recurse-submodules no-rebase no-stat no-summary no-compact-summary no-log no-signoff no-squash no-commit no-edit no-cleanup no-ff no-verify-signatures no-autostash no-strategy no-strategy-option no-gpg-sign no-allow-unrelated-histories no-all no-append no-upload-pack no-force no-tags no-prune no-jobs no-dry-run no-keep no-depth no-shallow-since no-shallow-exclude no-deepen no-update-shallow no-server-option no-ipv4 no-ipv6 no-negotiation-restrict no-negotiation-tip no-negotiation-include no-show-forced-updates no-set-upstream'
+  ),
+  required: 'sXo',
+  optional: 'rSj',
+  none: 'vqnaftpk46h',
+  skip: null,
+}
+
 const PUSH: Options = {
   long: table(
     'repo recurse-submodules receive-pack exec push-option',
@@ -853,6 +554,16 @@ const PUSH: Options = {
   optional: '',
   none: 'vqufnd46h',
   skip: null,
+}
+
+/** The subcommands whose `--no-verify` skips hooks of a clone, and which. */
+const VERIFIED: Readonly<
+  Record<string, { options: Options; hooks: readonly SkippedHook[] }>
+> = {
+  commit: { options: COMMIT, hooks: COMMIT_HOOKS },
+  push: { options: PUSH, hooks: PUSH_HOOKS },
+  merge: { options: MERGE, hooks: ['commit-msg'] },
+  pull: { options: PULL, hooks: ['commit-msg'] },
 }
 
 /** The long option `name` names, exactly or as its one prefix; null when git refuses it. */
@@ -870,17 +581,26 @@ function longOption(name: string, options: Options): string | null {
 function verifySkipped(
   values: readonly (string | null)[],
   options: Options
-): string | null {
+): { how: string; maybe: boolean } | null {
   let skipped: string | null = null
+  // An option this git does not know: git 2.56 refuses the command, a newer
+  // git may not, and whether it takes a value cannot be told. Then only a
+  // literal --no-verify is read, and it may skip the hooks.
+  let unsure = false
+  let literal = false
   for (let i = 0; i < values.length; i++) {
     const v = values[i]
     // An expansion: whatever it is, it cannot be read here.
     if (v === null || v === undefined) continue
     if (v === '--') break
+    if (v === '--no-verify') literal = true
     if (v.startsWith('--')) {
       const eq = v.indexOf('=')
       const opt = longOption(eq === -1 ? v.slice(2) : v.slice(2, eq), options)
-      if (opt === null) return null
+      if (opt === null) {
+        unsure = true
+        continue
+      }
       if (opt === 'no-verify') skipped = '--no-verify'
       else if (opt === 'verify' || opt === 'no-no-verify') skipped = null
       if (eq === -1 && options.long[opt] === 'required') i += 1
@@ -894,11 +614,15 @@ function verifySkipped(
         break
       }
       if (options.optional.includes(c)) break
-      if (!options.none.includes(c)) return null
+      if (!options.none.includes(c)) {
+        unsure = true
+        break
+      }
       if (c === options.skip) skipped = `-${c}`
     }
   }
-  return skipped
+  if (unsure) return literal ? { how: '--no-verify', maybe: true } : null
+  return skipped === null ? null : { how: skipped, maybe: false }
 }
 
 const GIT_CONFIG_READ = new Set([
@@ -1012,7 +736,8 @@ type Found = Omit<GitBypass, 'dir' | 'text'>
  * command does not say. Null for any other key.
  */
 function configBypass(w: ConfigWrite, state: State): Found | null {
-  if (w.key === null) return { how: 'an unknown key', skips: ALL_HOOKS }
+  if (w.key === null)
+    return { how: 'an unknown key', skips: ALL_HOOKS, maybe: true }
   const key = w.key.toLowerCase()
   if (key === HOOKS_PATH)
     return {
@@ -1022,13 +747,13 @@ function configBypass(w: ConfigWrite, state: State): Found | null {
       scope: w.scope,
     }
   if (key === 'include.path' || key.startsWith('includeif.'))
-    return { how: w.key, skips: ALL_HOOKS }
-  if (
-    key.startsWith('alias.') &&
-    typeof w.value === 'string' &&
-    aliasSkips(w.value, state)
-  )
-    return { how: w.key, skips: ALL_HOOKS }
+    return { how: w.key, skips: ALL_HOOKS, maybe: true }
+  if (key.startsWith('alias.')) {
+    // An alias whose value is not known may be anything.
+    if (w.value === null) return { how: w.key, skips: ALL_HOOKS, maybe: true }
+    if (typeof w.value === 'string' && aliasSkips(w.value, state))
+      return { how: w.key, skips: ALL_HOOKS }
+  }
   return null
 }
 
@@ -1046,6 +771,24 @@ function keyValue(
   return eq === -1
     ? { key: kv, value: undefined, scope }
     : { key: kv.slice(0, eq), value: kv.slice(eq + 1), scope }
+}
+
+/**
+ * `-c`'s word: its key and value; when the word holds an expansion, the key
+ * it starts with written out (`alias.ci=$V`), its value not known.
+ */
+function keyValueOf(word: Word | undefined, state: State): ConfigWrite {
+  const whole = valueOf(word, state)
+  if (whole !== null || word === undefined) return keyValue(whole, 'command')
+  let lead = ''
+  for (const seg of word.segments) {
+    if (seg.kind !== 'text') break
+    lead += seg.text
+  }
+  const eq = lead.indexOf('=')
+  return eq === -1
+    ? { key: null, value: null, scope: 'command' }
+    : { key: lead.slice(0, eq), value: null, scope: 'command' }
 }
 
 /** The pairs of `GIT_CONFIG_PARAMETERS`: `'key'='value'`, or `'key=value'` as older git wrote. */
@@ -1098,7 +841,7 @@ function environmentBypasses(env: Env, state: State): Found[] {
         )
     } else if (name === 'GIT_CONFIG_PARAMETERS') {
       if (value === null) {
-        found.push({ how: name, skips: ALL_HOOKS })
+        found.push({ how: name, skips: ALL_HOOKS, maybe: true })
         continue
       }
       const hits = parametersOf(value)
@@ -1110,7 +853,7 @@ function environmentBypasses(env: Env, state: State): Found[] {
         found.push({ how: name, skips: ALL_HOOKS, scope: 'environment' })
       found.push(...hits.filter((h) => h.how !== 'core.hooksPath'))
     } else if (OTHER_CONFIG.includes(name))
-      found.push({ how: name, skips: ALL_HOOKS })
+      found.push({ how: name, skips: ALL_HOOKS, maybe: true })
   }
   return found
 }
@@ -1146,7 +889,7 @@ function gitCall(
     const next = values[i + 1] ?? null
     if (GIT_GLOBAL_ARG.has(v)) {
       if (v === '-C') dir = next === '' ? dir : pathFrom(dir, next)
-      else if (v === '-c') configs.push(keyValue(next, 'command'))
+      else if (v === '-c') configs.push(keyValueOf(words[i + 1], state))
       else if (v === '--config-env')
         configs.push({ ...keyValue(next, 'command'), value: lookup(next) })
       else if (v === '--git-dir') gitDir = next
@@ -1185,12 +928,15 @@ function gitCall(
       found(hit.how === 'an unknown key' ? { ...hit, how: '-c' } : hit)
   }
   for (const f of environmentBypasses(env, state)) found(f)
-  if (sub === 'commit') {
-    const how = verifySkipped(args, COMMIT)
-    if (how !== null) found({ how, skips: COMMIT_HOOKS })
-  } else if (sub === 'push') {
-    const how = verifySkipped(args, PUSH)
-    if (how !== null) found({ how, skips: PUSH_HOOKS })
+  const skipped = VERIFIED[sub]
+  if (skipped !== undefined) {
+    const hit = verifySkipped(args, skipped.options)
+    if (hit !== null)
+      found({
+        how: hit.how,
+        skips: skipped.hooks,
+        ...(hit.maybe ? { maybe: true as const } : {}),
+      })
   } else if (sub === 'config') {
     const write = configWrite(args)
     const hit = write === null ? null : configBypass(write, state)
@@ -1200,14 +946,23 @@ function gitCall(
   return 'read'
 }
 
+/** A short-option cluster holding `n`: `-n`, `-an`, `-nm`. */
+const N_CLUSTER = /^-[A-Za-z]*n[A-Za-z]*$/
+
 /**
  * The backstop, for a command the parser did not read to the end (a wrapper
- * it does not know, an option it cannot read): its words name git and then
- * `--no-verify`, or core.hooksPath where a value is set. A `-n` alone is
- * not enough (`xargs -n`, `git push -n`).
+ * it does not know, an option or a command name it cannot read). It fails
+ * closed on what the words show, each finding one that may skip the hooks:
+ * git (or a command name that cannot be read) then `--no-verify`, or then
+ * `commit` and a short-option cluster holding `n`; git then core.hooksPath,
+ * an alias or an include given a value (`-c`, `--config-env`, `config`);
+ * git given another configuration by its environment (the command's
+ * assignments, the exported ones, `VAR=value` words before git). A `-n`
+ * without `commit` is not enough (`xargs -n`, `git push -n`).
  */
 function backstop(
   words: readonly Word[],
+  prefix: ReadonlyMap<string, string | null>,
   state: State,
   text: string,
   out: GitBypass[]
@@ -1216,13 +971,19 @@ function backstop(
   const first = values[0]
   if (first !== null && first !== undefined && NEVER_RUNS.has(basename(first)))
     return
-  const g = values.findIndex((v) => v !== null && /^git$/i.test(basename(v)))
-  if (g === -1) return
+  let g = values.findIndex((v) => v !== null && /^git$/i.test(basename(v)))
+  const named = g !== -1
+  if (!named) {
+    // A command name that cannot be read may be git: git's own shape only.
+    if (first !== null) return
+    g = 0
+  }
   const after = values.slice(g + 1)
   const found = (how: string, skips: readonly SkippedHook[]): void => {
-    out.push({ dir: state.dir, text, how, skips })
+    out.push({ dir: state.dir, text, how, skips, maybe: true })
   }
-  if (after.includes('--no-verify')) {
+  const sub = after.some((v) => v === 'commit' || v === 'push')
+  if (after.includes('--no-verify') && (named || sub)) {
     found(
       '--no-verify',
       after.includes('push')
@@ -1233,22 +994,59 @@ function backstop(
     )
     return
   }
+  const commit = after.indexOf('commit')
+  if (
+    commit !== -1 &&
+    after.slice(commit + 1).some((v) => v !== null && N_CLUSTER.test(v))
+  ) {
+    found('-n', COMMIT_HOOKS)
+    return
+  }
+  if (!named) return
+  const env = new Map([...state.exported, ...prefix])
+  for (const w of words.slice(0, g)) {
+    const a = assignmentOf(w, state)
+    if (a !== null) env.set(a.name, a.value)
+  }
+  const configured = environmentBypasses(env, state)
+  if (configured.length > 0) {
+    for (const f of configured) found(f.how, f.skips)
+    return
+  }
   const config = after.indexOf('config')
-  const set = after.some((v, k) => {
-    const low = v?.toLowerCase() ?? ''
-    if (/^--config-env=core\.hookspath(=|$)/.test(low)) return true
-    if (!/^core\.hookspath(=|$)/.test(low)) return false
+  for (let k = 0; k < after.length; k++) {
+    const v = after[k]
+    if (v === null || v === undefined) continue
     const prev = after[k - 1]
-    if (prev === '-c' || prev === '--config-env') return true
-    const value = after[k + 1]
-    return (
+    const next = after[k + 1]
+    let kv: string | null = null
+    if (prev === '-c' || prev === '--config-env') kv = v
+    else if (v.toLowerCase().startsWith('--config-env='))
+      kv = v.slice('--config-env='.length)
+    else if (
       config !== -1 &&
       config < k &&
-      value !== undefined &&
-      !(value ?? '').startsWith('-')
+      !v.startsWith('-') &&
+      next !== undefined &&
+      !(next ?? '').startsWith('-')
     )
-  })
-  if (set) found('core.hooksPath', ALL_HOOKS)
+      kv = v
+    if (kv === null) continue
+    const key = kv.split('=')[0] ?? ''
+    const low = key.toLowerCase()
+    if (low === HOOKS_PATH) {
+      found('core.hooksPath', ALL_HOOKS)
+      return
+    }
+    if (
+      low.startsWith('alias.') ||
+      low.startsWith('include.') ||
+      low.startsWith('includeif.')
+    ) {
+      found(key, ALL_HOOKS)
+      return
+    }
+  }
 }
 
 /**

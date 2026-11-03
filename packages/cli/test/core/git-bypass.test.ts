@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import {
-  type GitBypass,
-  gitBypasses,
-  literalOf,
-  shellCommands,
-} from '../../src/core/git-bypass.ts'
+import { type GitBypass, gitBypasses } from '../../src/core/git-bypass.ts'
 
 // What the guard reads in a Bash command (spec 0040 §4.3): the git calls
 // that would skip the hooks, where each runs. The option tables were read
@@ -15,12 +10,6 @@ import {
 
 const AT = { cwd: '/w', env: { HOME: '/home/me' } }
 
-/** The words of each command, `enter`/`leave` for a subshell. */
-const shape = (script: string) =>
-  shellCommands(script)?.map((item) =>
-    item.kind === 'command' ? item.words.map(literalOf) : item.kind
-  ) ?? null
-
 const COMMIT = ['pre-commit', 'commit-msg']
 const ALL = ['pre-commit', 'commit-msg', 'pre-push']
 
@@ -28,81 +17,6 @@ const ALL = ['pre-commit', 'commit-msg', 'pre-push']
 const found = (script: string, at = AT) =>
   gitBypasses(script, at)?.map(({ text: _text, ...rest }: GitBypass) => rest) ??
   null
-
-// --- the tokenizer -----------------------------------------------------------
-
-test('shellCommands: lists, pipes, background and newlines separate commands; quotes hold them', () => {
-  assert.deepEqual(
-    shape(`cd 'a b' && git commit -m "x; y" | cat || true; ls &\npwd`),
-    [
-      ['cd', 'a b'],
-      ['git', 'commit', '-m', 'x; y'],
-      ['cat'],
-      ['true'],
-      ['ls'],
-      ['pwd'],
-    ]
-  )
-})
-
-test('shellCommands: backslashes, single quotes, ANSI-C quotes and line continuations', () => {
-  assert.deepEqual(
-    shape(`echo a\\ b '$HOME' $'it\\'s' "say \\"hi\\"" one\\\ntwo`),
-    [['echo', 'a b', '$HOME', "it's", 'say "hi"', 'onetwo']]
-  )
-})
-
-test('shellCommands: an expansion makes a word unknown; a comment ends the line', () => {
-  assert.deepEqual(shape('git $X "${Y}" `pwd` # git commit -n\nls'), [
-    'enter',
-    ['pwd'],
-    'leave',
-    ['git', null, null, null],
-    ['ls'],
-  ])
-})
-
-test('shellCommands: the commands of a substitution and of a subshell are read, as their own scope', () => {
-  assert.deepEqual(shape('echo "$(git commit -n)" && (cd a; ls)'), [
-    'enter',
-    ['git', 'commit', '-n'],
-    'leave',
-    ['echo', null],
-    'enter',
-    ['cd', 'a'],
-    ['ls'],
-    'leave',
-  ])
-})
-
-test('shellCommands: redirections and their targets are no words; a heredoc body is no command', () => {
-  assert.deepEqual(
-    shape(
-      'git commit -n -F - 2>&1 >out.txt <<EOF\ngit commit --no-verify\nEOF\ngit status <<-"END"\n\tgit push --no-verify\n\tEND\nls'
-    ),
-    [['git', 'commit', '-n', '-F', '-'], ['git', 'status'], ['ls']]
-  )
-})
-
-test('shellCommands: each command keeps its text as written', () => {
-  const items = shellCommands(`cd org/web && git commit -m "a b"  ;ls`) ?? []
-  assert.deepEqual(
-    items.map((i) => (i.kind === 'command' ? i.text : i.kind)),
-    ['cd org/web', 'git commit -m "a b"', 'ls']
-  )
-})
-
-test('shellCommands: an unbalanced quote, substitution or subshell cannot be read', () => {
-  for (const script of [
-    'git commit -m "oops',
-    "git commit -m 'oops",
-    'echo $(git commit -n',
-    'echo `git commit -n',
-    '(git commit -n',
-    'echo ${HOME',
-  ])
-    assert.equal(shellCommands(script), null, script)
-})
 
 // --- git commit ---------------------------------------------------------------
 
@@ -350,7 +264,7 @@ test('gitBypasses: commands that only mention git, or skip nothing', () => {
     'grep -n git file.txt',
     'command -v git',
     'gitk -n',
-    '$GIT commit -n',
+    '$GIT push -n',
   ])
     assert.deepEqual(found(script), [], script)
 })
@@ -442,7 +356,11 @@ test('gitBypasses: another configuration for git, or an include written, skips e
       'includeIf.gitdir:~/w/.path',
     ],
   ] as const)
-    assert.deepEqual(found(script), [{ dir: '/w', how, skips: ALL }], script)
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how, skips: ALL, maybe: true }],
+      script
+    )
   for (const script of [
     'git config --get include.path',
     'git config --get-regexp includeIf',
@@ -483,16 +401,35 @@ test('gitBypasses: the common wrappers are unwrapped', () => {
 test('gitBypasses: a command the parser cannot read is refused when it pairs git with --no-verify or core.hooksPath', () => {
   for (const [script, how, skips] of [
     ['parallel git commit --no-verify ::: a', '--no-verify', COMMIT],
+    ['parallel git commit -an ::: a', '-n', COMMIT],
+    ['$GIT commit --no-verify', '--no-verify', COMMIT],
+    ['$GIT commit -n', '-n', COMMIT],
+    ['rg git --no-verify', '--no-verify', ALL],
+    ['foo GIT_CONFIG_GLOBAL=/tmp/x git commit', 'GIT_CONFIG_GLOBAL', ALL],
+    [
+      'GIT_CONFIG_KEY_0=core.hooksPath foo git commit',
+      'GIT_CONFIG_KEY_0=core.hooksPath',
+      ALL,
+    ],
+    ['foo git -c alias.ci=x ci', 'alias.ci', ALL],
+    ['foo git -c include.path=/x status', 'include.path', ALL],
+    ['foo git --config-env=includeIf.x.path=V status', 'includeIf.x.path', ALL],
     ['foo git push --no-verify', '--no-verify', ['pre-push']],
     ['foo git --no-verify', '--no-verify', ALL],
     ['foo git -c core.hooksPath=/dev/null status', 'core.hooksPath', ALL],
     ['foo git config core.HooksPath /dev/null', 'core.hooksPath', ALL],
     ['env -S "x" git commit --no-verify', '--no-verify', COMMIT],
   ] as const)
-    assert.deepEqual(found(script), [{ dir: '/w', how, skips }], script)
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how, skips, maybe: true }],
+      script
+    )
   for (const script of [
-    'parallel git commit -n ::: a',
+    'parallel git push -n ::: a',
+    'foo -n git status',
     'foo git config --get core.hooksPath',
+    'grep git --no-verify',
     'foo --no-verify git status',
     'echo git commit --no-verify',
     'printf "%s\\n" git commit --no-verify',
@@ -509,10 +446,71 @@ test('gitBypasses: a configuration key the command does not say is refused; an o
       'GIT_CONFIG_KEY_0',
     ],
     ['GIT_CONFIG_PARAMETERS=$P git commit -m x', 'GIT_CONFIG_PARAMETERS'],
+    ['git -c alias.ci="$V" ci', 'alias.ci'],
+    ['git --config-env=alias.ci=UNSET ci', 'alias.ci'],
+    [
+      'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ci GIT_CONFIG_VALUE_0=$V git ci',
+      'alias.ci',
+    ],
   ] as const)
-    assert.deepEqual(found(script), [{ dir: '/w', how, skips: ALL }], script)
-  assert.deepEqual(found('git $OPTS commit --no-verify'), [
-    { dir: '/w', how: '--no-verify', skips: COMMIT },
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how, skips: ALL, maybe: true }],
+      script
+    )
+  for (const [script, how] of [
+    ['git $OPTS commit --no-verify', '--no-verify'],
+    ['git $OPTS commit -n', '-n'],
+  ] as const)
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how, skips: COMMIT, maybe: true }],
+      script
+    )
+})
+
+test('gitBypasses: git merge and git pull --no-verify skip the commit-msg hook; their -n is --no-stat', () => {
+  for (const script of [
+    'git merge --no-verify feature',
+    'git merge -m "x" --no-verify feature',
+    'git pull --no-verify origin main',
+    'git pull --rebase --no-verify',
   ])
-  assert.deepEqual(found('git $OPTS commit -n'), [])
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how: '--no-verify', skips: ['commit-msg'] }],
+      script
+    )
+  for (const script of [
+    'git merge -n feature',
+    'git pull -n',
+    // Ambiguous to git: --no-verify or --no-verify-signatures.
+    'git pull --no-veri',
+    'git merge --no-verif feature',
+    'git merge -m --no-verify feature',
+    'git merge -s ours -X theirs -F msg feature',
+    'git merge --no-verify --verify feature',
+    'git pull -o --no-verify',
+  ])
+    assert.deepEqual(found(script), [], script)
+})
+
+test('gitBypasses: a literal --no-verify survives an option git 2.56 does not know', () => {
+  assert.deepEqual(found('git commit --newopt --no-verify -m x'), [
+    { dir: '/w', how: '--no-verify', skips: COMMIT, maybe: true },
+  ])
+  assert.deepEqual(found('git push -Z --no-verify'), [
+    { dir: '/w', how: '--no-verify', skips: ['pre-push'], maybe: true },
+  ])
+  for (const script of ['git commit --no-ver -m x', 'git commit -nX -m x'])
+    assert.deepEqual(found(script), [], script)
+})
+
+test('gitBypasses: an escaped git is git', () => {
+  for (const script of [`g\\it commit -n`, `$'\\x67it' commit -n`])
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how: '-n', skips: COMMIT }],
+      script
+    )
 })
