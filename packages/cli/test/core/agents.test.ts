@@ -10,6 +10,7 @@ import {
   unsupportedAgents,
   unsupportedMessage,
 } from '../../src/core/agents.ts'
+import { ensureGuarantees } from '../../src/core/json-guarantees.ts'
 import { VERSION } from '../../src/version.ts'
 
 // The exact lines Claude Code runs. Never change them: a changed entry is
@@ -45,6 +46,14 @@ const hooks = (start: string, guard: string, edit: string, end: string) => [
       hooks: [{ type: 'command', command: guard, timeout: 10 }],
     },
     label: 'the rness pre-tool-use hook',
+  },
+  {
+    path: ['hooks', 'PreToolUse'],
+    contains: {
+      matcher: 'Bash',
+      hooks: [{ type: 'command', command: guard, timeout: 10 }],
+    },
+    label: 'the rness pre-tool-use hook for Bash',
   },
   {
     path: ['hooks', 'PostToolUse'],
@@ -435,6 +444,78 @@ test('Claude Code is the one target: read access to .rness, the rness MCP server
     },
     ...plugin('.rness', 'root'),
   ])
+})
+
+// The settings 0.23 wrote: four entries, the guard on Edit|Write only.
+const SETTINGS_0_23 = (
+  start: string,
+  guard: string,
+  edit: string,
+  end: string
+) =>
+  `${JSON.stringify(
+    {
+      permissions: { additionalDirectories: ['../../.rness'] },
+      hooks: {
+        SessionStart: [
+          { hooks: [{ type: 'command', command: start, timeout: 10 }] },
+        ],
+        PreToolUse: [
+          {
+            matcher: 'Edit|Write',
+            hooks: [{ type: 'command', command: guard, timeout: 10 }],
+          },
+        ],
+        PostToolUse: [
+          {
+            matcher: 'Edit|Write',
+            hooks: [{ type: 'command', command: edit, timeout: 10 }],
+          },
+        ],
+        SessionEnd: [
+          { hooks: [{ type: 'command', command: end, timeout: 10 }] },
+        ],
+      },
+    },
+    null,
+    2
+  )}\n`
+
+test('settings holding the Edit|Write guard gain exactly the Bash entry, nothing removed (spec 0040 §4.3)', () => {
+  const files = TARGETS['claude']?.files({ packageManager: 'npm' }) ?? []
+  for (const [at, text] of [
+    ['clones', SETTINGS_0_23(CLONE_START, CLONE_GUARD, CLONE_EDIT, CLONE_END)],
+    ['root', SETTINGS_0_23(ROOT_START, ROOT_GUARD, ROOT_EDIT, ROOT_END)],
+  ] as const) {
+    const settings = files.find(
+      (f) => f.at === at && f.file === '.claude/settings.json'
+    )
+    assert.ok(settings !== undefined && 'guarantees' in settings)
+    const before = JSON.parse(text)
+    const ensured = ensureGuarantees(text, settings.guarantees)
+    assert.equal(ensured.kind, 'updated', at)
+    assert.ok('text' in ensured)
+    const after = JSON.parse(ensured.text)
+    const guard = at === 'root' ? ROOT_GUARD : CLONE_GUARD
+    assert.deepEqual(after, {
+      ...before,
+      hooks: {
+        ...before.hooks,
+        PreToolUse: [
+          ...before.hooks.PreToolUse,
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: guard, timeout: 10 }],
+          },
+        ],
+      },
+    })
+    // The Edit|Write entry is kept as it was, first: the next sync adds nothing.
+    assert.deepEqual(ensureGuarantees(ensured.text, settings.guarantees), {
+      kind: 'unchanged',
+      text: ensured.text,
+    })
+  }
 })
 
 test('the closing line of /rness:status follows the manager: pnpm, npm, yarn, bun', () => {

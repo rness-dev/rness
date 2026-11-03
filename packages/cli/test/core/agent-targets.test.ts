@@ -80,6 +80,16 @@ const hooksFor = (rness: string) => ({
         },
       ],
     },
+    {
+      matcher: 'Bash',
+      hooks: [
+        {
+          type: 'command',
+          command: hookLine(rness, 'pre-tool-use'),
+          timeout: 10,
+        },
+      ],
+    },
   ],
   PostToolUse: [
     {
@@ -286,7 +296,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
       label: SETTINGS,
       status: 'stale',
       detail:
-        'hooks.SessionStart lacks the rness session-start hook; hooks.PreToolUse lacks the rness pre-tool-use hook; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
+        'hooks.SessionStart lacks the rness session-start hook; hooks.PreToolUse lacks the rness pre-tool-use hook; hooks.PreToolUse lacks the rness pre-tool-use hook for Bash; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
     },
     { label: PLUGIN_JSON, status: 'stale', detail: 'missing' },
     { label: SKILL, status: 'stale', detail: 'missing' },
@@ -299,7 +309,7 @@ test('check writes nothing and says what is missing; an unreadable file is repor
       label: `org/api/${SETTINGS}`,
       status: 'stale',
       detail:
-        'permissions.additionalDirectories lacks ../../.rness; hooks.SessionStart lacks the rness session-start hook; hooks.PreToolUse lacks the rness pre-tool-use hook; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
+        'permissions.additionalDirectories lacks ../../.rness; hooks.SessionStart lacks the rness session-start hook; hooks.PreToolUse lacks the rness pre-tool-use hook; hooks.PreToolUse lacks the rness pre-tool-use hook for Bash; hooks.PostToolUse lacks the rness post-tool-use hook; hooks.SessionEnd lacks the rness session-end hook',
     },
     {
       label: 'org/api/.mcp.json',

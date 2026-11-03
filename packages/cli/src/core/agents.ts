@@ -65,7 +65,7 @@ export function hookLine(rness: string, event: HookEvent): string {
   return `${run} else echo '${missing}'; fi`
 }
 
-/** The four hook entries, for a project directory reaching `.rness` at `rness`. */
+/** The hook entries, for a project directory reaching `.rness` at `rness`. */
 function hooks(rness: string): Guarantee[] {
   return [
     {
@@ -96,6 +96,24 @@ function hooks(rness: string): Guarantee[] {
         ],
       },
       label: 'the rness pre-tool-use hook',
+    },
+    {
+      // Before a command: refused when it would skip the git hooks that
+      // apply the policies (spec 0040 §4.3). A separate entry, so settings
+      // holding the one above gain this and lose nothing; no filter on the
+      // command, the hook reads it (73 ms cold, plan 0054 task 1).
+      path: ['hooks', 'PreToolUse'],
+      contains: {
+        matcher: 'Bash',
+        hooks: [
+          {
+            type: 'command',
+            command: hookLine(rness, 'pre-tool-use'),
+            timeout: 10,
+          },
+        ],
+      },
+      label: 'the rness pre-tool-use hook for Bash',
     },
     {
       path: ['hooks', 'PostToolUse'],

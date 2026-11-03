@@ -78,6 +78,92 @@ export function replayEdit(
   return { after, spans }
 }
 
+/** A line an edit adds, 1-based in the file it leaves. */
+export interface AddedLine {
+  line: number
+  text: string
+}
+
+const BREAK = /\r\n|\r|\n/g
+
+/** The lines of a text; a final line break ends its last line and starts none. */
+function linesOf(text: string): string[] {
+  if (text === '') return []
+  const lines = text.split(BREAK)
+  if (lines.at(-1) === '') lines.pop()
+  return lines
+}
+
+/** The indexes of `lines` left once each line of `base` is taken out, once per copy. */
+function notIn(lines: readonly string[], base: readonly string[]): number[] {
+  const left = new Map<string, number>()
+  for (const l of base) left.set(l, (left.get(l) ?? 0) + 1)
+  const fresh: number[] = []
+  lines.forEach((l, i) => {
+    const n = left.get(l) ?? 0
+    if (n > 0) left.set(l, n - 1)
+    else fresh.push(i)
+  })
+  return fresh
+}
+
+/**
+ * The lines a `Write` adds (spec 0040 §4.3): those of its content the
+ * current file does not have, a second copy of a line being one more.
+ */
+export function writtenLines(
+  before: string | null,
+  after: string
+): AddedLine[] {
+  const lines = linesOf(after)
+  return notIn(lines, before === null ? [] : linesOf(before)).map((i) => ({
+    line: i + 1,
+    text: lines[i] ?? '',
+  }))
+}
+
+/**
+ * The lines an `Edit` adds (spec 0040 §4.3): those of `new_string` that
+ * `old_string` does not have, at each place it is put, numbered in the file
+ * the edit leaves and read there whole, since a line `new_string` starts or
+ * ends inside is the file's line, as a commit shows it.
+ */
+export function editedLines(
+  replayed: Replayed,
+  oldString: string,
+  newString: string
+): AddedLine[] {
+  const fresh = notIn(newString.split(BREAK), oldString.split(BREAK))
+  if (fresh.length === 0) return []
+  const starts = (text: string): number[] => [
+    0,
+    ...[...text.matchAll(BREAK)].map((m) => (m.index ?? 0) + m[0].length),
+  ]
+  const pieces = starts(newString)
+  const lineStarts = starts(replayed.after)
+  const lines = replayed.after.split(BREAK)
+  const lineOf = (offset: number): number => {
+    let lo = 0
+    let hi = lineStarts.length - 1
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2)
+      if ((lineStarts[mid] ?? 0) <= offset) lo = mid
+      else hi = mid - 1
+    }
+    return lo
+  }
+  const seen = new Set<number>()
+  let shift = 0
+  for (const [s, e] of replayed.spans) {
+    const at = s + shift
+    shift += newString.length - (e - s)
+    for (const k of fresh) seen.add(lineOf(at + (pieces[k] ?? 0)))
+  }
+  return [...seen]
+    .sort((a, b) => a - b)
+    .map((n) => ({ line: n + 1, text: lines[n] ?? '' }))
+}
+
 /** The whole files rness writes in a project directory (spec 0016 §3.2). */
 const OWNED = /(?:^|\/)\.claude\/skills\/rness\//
 

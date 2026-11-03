@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises'
-import { isAbsolute, posix, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
 import { type Spawn, detached, takeFailure } from '../board/detached.ts'
@@ -10,16 +10,42 @@ import { takeModNotice } from '../core/claude-code.ts'
 import { COLLECTIONS } from '../core/context.ts'
 import { checkContract } from '../core/contract.ts'
 import {
+  type AddedLine,
   type Replayed,
   editRefusal,
+  editedLines,
   ownedRefusal,
   ownedWhole,
   replayEdit,
   writeRefusal,
+  writtenLines,
 } from '../core/edit-guard.ts'
 import { readOrNull } from '../core/fs.ts'
+import {
+  type GitBypass,
+  type SkippedHook,
+  gitBypasses,
+} from '../core/git-bypass.ts'
 import { loadManifest, parseManifest } from '../core/manifest.ts'
+import {
+  type PolicyFailure,
+  checkAddedLines,
+  refusalText,
+} from '../core/policy-check.ts'
+import {
+  type PolicyWorkspace,
+  placeOf,
+  policiesByPath,
+  rnessOutputProofs,
+  scopesOf,
+} from '../core/policy-workspace.ts'
+import { type Policy, type PolicyCheck, policiesFor } from '../core/policy.ts'
 import { type NamedBoard, readBoards } from '../core/preset-board.ts'
+import {
+  type RefusalEntry,
+  recordRefusals,
+  refusalsOf,
+} from '../core/refusals.ts'
 import { cloneHolding } from '../core/repos.ts'
 import { safetyNet } from '../core/safety-net.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
@@ -386,69 +412,271 @@ async function addedProblems(
   return will.filter((p) => !had.has(unlined(p)))
 }
 
+/** The policies that apply to the workspace, or null when they cannot be read. */
+async function policyWorkspace(ws: Workspace): Promise<PolicyWorkspace | null> {
+  try {
+    return { ...ws, manifest: await loadManifest(ws.rnessDir) }
+  } catch {
+    // A broken rness.json: the contract guard still runs, the policies not.
+    return null
+  }
+}
+
+/** The repository a workspace path belongs to: `.rness`, a clone, or none. */
+function repositoryOf(pws: PolicyWorkspace, label: string): string | null {
+  if (label === '.rness' || label.startsWith('.rness/')) return pws.rnessDir
+  return (
+    cloneHolding(
+      pws.root,
+      pws.manifest.repos,
+      join(pws.root, ...label.split('/'))
+    )?.dir ?? null
+  )
+}
+
+/** The session the hook input names, as the git hooks record it: Claude Code's id. */
+function sessionIdOf(input: Input): string | null {
+  const id = input['session_id']
+  return typeof id === 'string' && id !== '' ? id : null
+}
+
 /**
- * Before an `Edit` or a `Write` (spec 0029 §4): refused, exit 2 with the
- * reason on stderr — Claude Code does not run the tool and the model reads
- * why — when it would change what `sync` generates (the block, the plugin's
- * files) or add a contract problem to `.rness/`. Else 0, silent; and 0 on
- * any failure of its own: the guard never stops a session. The path is
- * checked before anything is read: this runs before every edit.
+ * The added-lines policies of the file's scope (spec 0040 §4.3) on the lines
+ * the edit adds. Proofs of rness's own outputs are read only for a file one
+ * of whose lines is refused before them, as the pre-commit hook does.
  */
-async function preToolUse(input: Input, io: HookIo): Promise<number> {
+async function addedLineFailures(
+  pws: PolicyWorkspace,
+  policiesOf: (path: string) => readonly Policy[],
+  label: string,
+  added: readonly AddedLine[],
+  after: string
+): Promise<PolicyFailure[]> {
+  if (added.length === 0) return []
+  const file = { path: label, added, after }
+  if (checkAddedLines([file], policiesOf).length === 0) return []
+  return checkAddedLines(
+    [{ ...file, ...(await rnessOutputProofs(pws, [label])) }],
+    policiesOf
+  )
+}
+
+/**
+ * Before an `Edit` or a `Write` (spec 0029 §4, spec 0040 §4.3): refused,
+ * exit 2 with the reason on stderr (Claude Code does not run the tool and
+ * the model reads why) when it would change what `sync` generates (the
+ * block, the plugin's files), add a line a policy refuses, anywhere in the
+ * workspace, or add a contract problem to `.rness/`. Else 0, silent. Nothing
+ * is read for a file outside `.rness/` that holds no block, unless an
+ * added-lines policy applies to it: this runs before every edit.
+ */
+async function editGuard(input: Input, io: HookIo): Promise<number> {
   const toolInput = input['tool_input']
   if (toolInput === null || typeof toolInput !== 'object') return 0
   const args = toolInput as Input
   const path = args['file_path']
   if (typeof path !== 'string' || path === '') return 0
+  const cwd = cwdOf(input, io.env)
+  const ws = await findWorkspace(cwd)
+  const file = resolve(cwd, path)
+  const label = await within(ws.root, file)
+  if (label === null) return 0
+  if (ownedWhole(label)) return refuse(io, [ownedRefusal(label)])
+  const rel = await within(ws.rnessDir, file)
+  const blocked = BLOCK_FILES.includes(posix.basename(label))
+  const pws = await policyWorkspace(ws)
+  const policiesOf = pws === null ? null : await policiesByPath(pws, [label])
+  const policed =
+    policiesOf?.(label).some((p) =>
+      p.rules.some((r) => r.check === 'added-lines')
+    ) === true
+  if (rel === null && !blocked && !policed) return 0
+  const before = await readOrNull(file)
+  let after: string
+  let spans: Replayed['spans'] | null = null
+  let added: AddedLine[]
+  if (input['tool_name'] === 'Write') {
+    const content = args['content']
+    if (typeof content !== 'string') return 0
+    after = content
+    added = writtenLines(before, after)
+  } else {
+    const { old_string, new_string, replace_all } = args
+    if (
+      before === null ||
+      typeof old_string !== 'string' ||
+      typeof new_string !== 'string'
+    )
+      return 0
+    const replayed = replayEdit(
+      before,
+      old_string,
+      new_string,
+      replace_all === true
+    )
+    if (replayed === null) return 0
+    after = replayed.after
+    spans = replayed.spans
+    added = editedLines(replayed, old_string, new_string)
+  }
+  if (blocked && before !== null) {
+    const reason =
+      spans === null
+        ? writeRefusal(label, before, after)
+        : editRefusal(label, before, spans)
+    if (reason !== null) return refuse(io, [reason])
+  }
+  const failures =
+    pws !== null && policiesOf !== null && policed
+      ? await addedLineFailures(pws, policiesOf, label, added, after)
+      : []
+  const problems =
+    rel === null ? [] : await addedProblems(ws, rel, before, after)
+  if (failures.length === 0 && problems.length === 0) return 0
+  if (failures.length > 0 && pws !== null) {
+    const repository = repositoryOf(pws, label)
+    if (repository !== null)
+      await recordRefusals(
+        repository,
+        refusalsOf(failures, 'guard', sessionIdOf(input))
+      )
+  }
+  return refuse(io, [
+    ...(failures.length > 0 ? [refusalText(failures, 'edit')] : []),
+    ...(problems.length > 0
+      ? [
+          ...problems.map((p) => `rness: ${p}`),
+          `Fix the edit of ${rel}; rness validate checks the whole workspace.`,
+        ]
+      : []),
+  ])
+}
+
+/** The checks each skipped hook runs (spec 0040 §3). */
+const HOOK_CHECK: Readonly<Record<SkippedHook, PolicyCheck>> = {
+  'pre-commit': 'added-lines',
+  'commit-msg': 'commit-message',
+  'pre-push': 'push',
+}
+
+const HOOKS_SKIPPED: Readonly<Record<string, string>> = {
+  'pre-commit,commit-msg': 'the pre-commit and commit-msg hooks',
+  'pre-push': 'the pre-push hook',
+  'pre-commit,commit-msg,pre-push': 'every hook',
+}
+
+const BYPASS_CUT = 120
+
+/** One bypass, refused: where it runs, and the policies it would skip. */
+interface Skipping {
+  bypass: GitBypass
+  repository: string
+  policies: Policy[]
+}
+
+/**
+ * The policies a bypass would skip, in the repository git runs in: `.rness`
+ * (the global ones) or a clone that holds scopes (theirs), those with a
+ * rule the skipped hooks check. Null where git runs in neither, or where
+ * the bypass skips nothing: core.hooksPath set, in `.rness`, to the
+ * scaffold's `.githooks/`, which is where its hooks are.
+ */
+async function skipping(bypass: GitBypass): Promise<Skipping | null> {
+  if (bypass.dir === null) return null
+  const ws = await findWorkspace(bypass.dir).catch(() => null)
+  if (ws === null) return null
+  const pws = await policyWorkspace(ws)
+  if (pws === null) return null
+  const label = await within(ws.root, bypass.dir)
+  if (label === null) return null
+  const repository = repositoryOf(pws, label)
+  if (repository === null) return null
+  const place = placeOf(pws, repository)
+  if (place.kind === 'outside') return null
+  if (
+    place.kind === 'context' &&
+    bypass.hooksPath !== undefined &&
+    resolve(ws.rnessDir, bypass.hooksPath) === join(ws.rnessDir, '.githooks')
+  )
+    return null
+  const checks = new Set(bypass.skips.map((h) => HOOK_CHECK[h]))
+  const policies = (await policiesFor(pws, scopesOf(place))).filter((p) =>
+    p.rules.some((r) => checks.has(r.check))
+  )
+  return policies.length === 0 ? null : { bypass, repository, policies }
+}
+
+/**
+ * Before a `Bash` command (spec 0040 §4.3): refused, exit 2, when it would
+ * skip the git hooks while an enabled policy they apply holds where git
+ * runs. Nothing else of the command is judged: the hooks do that. A command
+ * without `git` returns at once; one the shell would not read, or whose git
+ * calls cannot be placed, passes, since the hooks still run.
+ */
+async function bashGuard(input: Input, io: HookIo): Promise<number> {
+  const toolInput = input['tool_input']
+  if (toolInput === null || typeof toolInput !== 'object') return 0
+  const command = (toolInput as Input)['command']
+  if (typeof command !== 'string' || !/git/i.test(command)) return 0
+  const bypasses = gitBypasses(command, {
+    cwd: cwdOf(input, io.env),
+    env: io.env,
+  })
+  if (bypasses === null || bypasses.length === 0) return 0
+  const refused: Skipping[] = []
+  for (const bypass of bypasses) {
+    const found = await skipping(bypass)
+    if (found !== null) refused.push(found)
+  }
+  if (refused.length === 0) return 0
+  // One record per policy and repository: a refused command is one refusal.
+  const session = sessionIdOf(input)
+  const entries = new Map<string, Map<string, RefusalEntry>>()
+  const named = new Map<string, Policy>()
+  for (const { bypass, repository, policies } of refused) {
+    const checks = new Set(bypass.skips.map((h) => HOOK_CHECK[h]))
+    const byPolicy = entries.get(repository) ?? new Map<string, RefusalEntry>()
+    for (const policy of policies) {
+      named.set(policy.rel, policy)
+      const check = policy.rules.find((r) => checks.has(r.check))?.check
+      if (check === undefined || byPolicy.has(policy.name)) continue
+      byPolicy.set(policy.name, {
+        policy: policy.name,
+        check,
+        by: 'guard',
+        ...(session === null ? {} : { session }),
+      })
+    }
+    entries.set(repository, byPolicy)
+  }
+  for (const [repository, byPolicy] of entries)
+    await recordRefusals(repository, [...byPolicy.values()])
+  const lines = [
+    ...new Set(
+      refused.map(({ bypass }) => {
+        const text = bypass.text.replace(/\s+/g, ' ').slice(0, BYPASS_CUT)
+        const hooks = HOOKS_SKIPPED[bypass.skips.join(',')] ?? 'the hooks'
+        return `  ${text} (${bypass.how} skips ${hooks})`
+      })
+    ),
+  ]
+  return refuse(io, [
+    "rness: this command would skip the git hooks that apply the workspace's policies",
+    ...lines,
+    '  fix: run it without --no-verify (or -n) and fix what the hook refuses',
+    ...[...named.values()].map((p) => `  policy ${p.name}: .rness/${p.rel}`),
+  ])
+}
+
+/**
+ * Before a tool runs: the guard of spec 0029 §4 and spec 0040 §4.3, by the
+ * tool's name. It never stops a session on its own failure: 0.
+ */
+async function preToolUse(input: Input, io: HookIo): Promise<number> {
   try {
-    const cwd = cwdOf(input, io.env)
-    const ws = await findWorkspace(cwd)
-    const file = resolve(cwd, path)
-    const label = await within(ws.root, file)
-    if (label === null) return 0
-    if (ownedWhole(label)) return refuse(io, [ownedRefusal(label)])
-    const rel = await within(ws.rnessDir, file)
-    const blocked = BLOCK_FILES.includes(posix.basename(label))
-    if (rel === null && !blocked) return 0
-    const before = await readOrNull(file)
-    let after: string
-    let spans: Replayed['spans'] | null = null
-    if (input['tool_name'] === 'Write') {
-      const content = args['content']
-      if (typeof content !== 'string') return 0
-      after = content
-    } else {
-      const { old_string, new_string, replace_all } = args
-      if (
-        before === null ||
-        typeof old_string !== 'string' ||
-        typeof new_string !== 'string'
-      )
-        return 0
-      const replayed = replayEdit(
-        before,
-        old_string,
-        new_string,
-        replace_all === true
-      )
-      if (replayed === null) return 0
-      after = replayed.after
-      spans = replayed.spans
-    }
-    if (blocked && before !== null) {
-      const reason =
-        spans === null
-          ? writeRefusal(label, before, after)
-          : editRefusal(label, before, spans)
-      if (reason !== null) return refuse(io, [reason])
-    }
-    if (rel === null) return 0
-    const added = await addedProblems(ws, rel, before, after)
-    if (added.length === 0) return 0
-    return refuse(io, [
-      ...added.map((p) => `rness: ${p}`),
-      `Fix the edit of ${rel}; rness validate checks the whole workspace.`,
-    ])
+    return input['tool_name'] === 'Bash'
+      ? await bashGuard(input, io)
+      : await editGuard(input, io)
   } catch {
     return 0
   }

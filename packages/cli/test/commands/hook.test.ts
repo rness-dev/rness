@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -11,11 +18,15 @@ import { fileURLToPath } from 'node:url'
 import { recordFailure } from '../../src/board/detached.ts'
 import { recordNotice } from '../../src/board/journal-state.ts'
 import { hookCommand } from '../../src/commands/hook.ts'
+import { wholeFileContents } from '../../src/core/agent-targets.ts'
 import { configDir } from '../../src/core/auth.ts'
 import { OWN_COMMANDS } from '../../src/core/catch-up.ts'
+import { ownedRefusal } from '../../src/core/edit-guard.ts'
+import { loadManifest } from '../../src/core/manifest.ts'
 import { presetTemplate } from '../../src/core/presets.ts'
+import { readRefusals } from '../../src/core/refusals.ts'
 import { VERSION } from '../../src/version.ts'
-import { commitDir } from '../helpers/git.ts'
+import { commitDir, git } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const binPath = fileURLToPath(
@@ -873,6 +884,376 @@ test('pre-tool-use: straight quotes for the block’s curly ones are matched as 
   )
   assert.equal(r.code, 2)
   assert.match(r.err, /from \.rness\/standards\/web\/seo\.md\./)
+})
+
+// --- pre-tool-use and the policies (spec 0040 §4.3) ---------------------------
+
+// Run from a git hook, the tests would inherit its repository.
+for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'])
+  delete process.env[name]
+
+const DASH = '\u2014'
+const SESSION = '5a1e55ad-0000-4000-8000-000000000000'
+const NO_TRAILERS = `---
+status: Enabled
+rules:
+  - check: commit-message
+    deny: '^co-authored-by: .*claude'
+    fix: Remove the agent's Co-Authored-By trailer, then commit again.
+---
+
+# No agent trailers
+`
+const NO_FORCE_PUSH = `---
+status: Enabled
+rules:
+  - check: push
+    deny: non-fast-forward
+    fix: Rebase on the remote branch and push again.
+---
+
+# No force push
+`
+
+/** A workspace with these policies whose clone `org/web` is a repository. */
+async function policed(t: TestContext, files: Record<string, string>) {
+  const root = await guarded(t, files)
+  const web = join(root, 'org', 'web')
+  await git(['init', '-q', '-b', 'main'], web)
+  return { root, web }
+}
+
+const bash = (command: string, cwd: string) => ({
+  cwd,
+  session_id: SESSION,
+  tool_name: 'Bash',
+  tool_input: { command, description: 'x' },
+})
+
+/** The records of a clone, without their time. */
+const recorded = async (dir: string) =>
+  (await readRefusals(dir)).map(({ time: _time, ...r }) => r)
+
+test('pre-tool-use: an Edit adding a refused line in a project clone is refused before the write, and recorded', async (t) => {
+  const { root, web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const file = join(web, 'src', 'app.ts')
+  await mkdir(join(web, 'src'))
+  const text = 'const a = 1\nconst b = 2\n'
+  await writeFile(file, text)
+  const r = await hook('pre-tool-use', {
+    ...editOf(file, web, 'const b = 2', `const b = 2 // one ${DASH} two`),
+    session_id: SESSION,
+  })
+  assert.equal(r.code, 2)
+  assert.equal(
+    r.err,
+    [
+      'rness: policy no-em-dash refused this edit',
+      `  org/web/src/app.ts:2: const b = 2 // one ${DASH} two`,
+      '  fix: Write " - " instead.',
+      '  policy: .rness/policy/no-em-dash.md',
+      '',
+    ].join('\n')
+  )
+  assert.equal(await readFile(file, 'utf8'), text)
+  assert.deepEqual(await recorded(web), [
+    {
+      policy: 'no-em-dash',
+      check: 'added-lines',
+      by: 'guard',
+      session: SESSION,
+    },
+  ])
+  assert.deepEqual(await recorded(join(root, '.rness')), [])
+})
+
+test('pre-tool-use: a refused line the file already has passes when the edit leaves it; a copy of it is an added line', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const file = join(web, 'notes.md')
+  const text = `a ${DASH} b\nc\n`
+  await writeFile(file, text)
+  for (const input of [
+    editOf(file, web, 'c', 'd'),
+    editOf(file, web, 'c\n', `c\nd\n`),
+    writeOf(file, web, `${text}e\n`),
+    writeOf(file, web, `c\na ${DASH} b\n`),
+  ])
+    assert.deepEqual(await hook('pre-tool-use', input), {
+      code: 0,
+      out: '',
+      err: '',
+    })
+  const copied = await hook(
+    'pre-tool-use',
+    writeOf(file, web, `${text}a ${DASH} b\n`)
+  )
+  assert.equal(copied.code, 2)
+  assert.match(
+    copied.err,
+    new RegExp(`\\n  org/web/notes\\.md:3: a ${DASH} b\\n`)
+  )
+  assert.deepEqual(await recorded(web), [
+    { policy: 'no-em-dash', check: 'added-lines', by: 'guard' },
+  ])
+})
+
+test('pre-tool-use: each added line is numbered in the file the edit leaves, read whole', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const fresh = await hook(
+    'pre-tool-use',
+    writeOf(join(web, 'new.md'), web, `ok\nbad ${DASH} x\n`)
+  )
+  assert.equal(fresh.code, 2)
+  assert.match(
+    fresh.err,
+    new RegExp(`\\n  org/web/new\\.md:2: bad ${DASH} x\\n`)
+  )
+  const file = join(web, 'a.txt')
+  await writeFile(file, 'one\ntwo x three\nfour x\n')
+  const all = await hook('pre-tool-use', editOf(file, web, 'x', DASH, true))
+  assert.equal(all.code, 2)
+  assert.match(
+    all.err,
+    new RegExp(
+      `\\n  org/web/a\\.txt:2: two ${DASH} three\\n  org/web/a\\.txt:3: four ${DASH}\\n  fix: `
+    )
+  )
+})
+
+test('pre-tool-use: a disabled policy, or a policy of another scope, does not refuse the edit', async (t) => {
+  const { root, web } = await policed(t, {
+    'policy/no-em-dash.md': POLICY.replace('Enabled', 'Disabled'),
+    'policy/web/no-todo.md': POLICY.replace("'\\u2014'", 'TODO').replace(
+      '# No em dash',
+      '# No TODO'
+    ),
+  })
+  const file = join(web, 'a.md')
+  await writeFile(file, 'x\n')
+  assert.equal(
+    (await hook('pre-tool-use', editOf(file, web, 'x', `x ${DASH}`))).code,
+    0
+  )
+  const style = join(root, '.rness', 'standards', 'style.md')
+  assert.equal(
+    (await hook('pre-tool-use', editOf(style, root, '# Style', '# Style TODO')))
+      .code,
+    0,
+    'a global file answers to the global policies only'
+  )
+  const todo = await hook('pre-tool-use', editOf(file, web, 'x', 'x TODO'))
+  assert.equal(todo.code, 2)
+  assert.match(todo.err, /^rness: policy no-todo refused this edit\n/)
+})
+
+test('pre-tool-use: in .rness, a refused line and a contract problem come in one refusal', async (t) => {
+  const { root } = await policed(t, {
+    'policy/no-em-dash.md': POLICY,
+    'specs/0001-a.md': spec('Draft'),
+  })
+  const file = join(root, '.rness', 'specs', '0001-a.md')
+  const r = await hook(
+    'pre-tool-use',
+    editOf(file, root, 'status: Draft', `status: Done ${DASH}`)
+  )
+  assert.equal(r.code, 2)
+  assert.equal(
+    r.err,
+    [
+      'rness: policy no-em-dash refused this edit',
+      `  .rness/specs/0001-a.md:2: status: Done ${DASH}`,
+      '  fix: Write " - " instead.',
+      '  policy: .rness/policy/no-em-dash.md',
+      `rness: specs/0001-a.md: unknown status "Done ${DASH}" (expected Draft, Proposed, Approved, Implemented, Superseded, Rejected)`,
+      'Fix the edit of specs/0001-a.md; rness validate checks the whole workspace.',
+      '',
+    ].join('\n')
+  )
+})
+
+test('pre-tool-use: a file of the rness plugin, as sync writes it, gets the plugin refusal alone: no policy, no record', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    agents: ['claude'],
+    repos: { web: { url: 'https://github.com/acme/web.git' } },
+    scopes: { web: { path: 'org/web' } },
+    files: {
+      // Every file of the plugin names rness.
+      'policy/no-rness.md': POLICY.replace("'\\u2014'", 'rness'),
+    },
+    dirs: ['org/web'],
+  })
+  const web = join(root, 'org', 'web')
+  await git(['init', '-q', '-b', 'main'], web)
+  const label = 'org/web/.claude/skills/rness/skills/status/SKILL.md'
+  const content = (
+    await wholeFileContents(root, await loadManifest(join(root, '.rness')))
+  ).get(label)
+  assert.ok(content !== undefined && content.includes('rness'))
+  const r = await hook(
+    'pre-tool-use',
+    writeOf(join(root, ...label.split('/')), web, content)
+  )
+  assert.deepEqual(r, { code: 2, out: '', err: `${ownedRefusal(label)}\n` })
+  assert.deepEqual(await recorded(web), [])
+})
+
+test('pre-tool-use: git commit -n is refused when an enabled policy applies, recorded by the guard with the session', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const r = await hook('pre-tool-use', bash('git commit -n -m x', web))
+  assert.equal(r.code, 2)
+  assert.equal(
+    r.err,
+    [
+      "rness: this command would skip the git hooks that apply the workspace's policies",
+      '  git commit -n -m x (-n skips the pre-commit and commit-msg hooks)',
+      '  fix: run it without --no-verify (or -n) and fix what the hook refuses',
+      '  policy no-em-dash: .rness/policy/no-em-dash.md',
+      '',
+    ].join('\n')
+  )
+  assert.deepEqual(await recorded(web), [
+    {
+      policy: 'no-em-dash',
+      check: 'added-lines',
+      by: 'guard',
+      session: SESSION,
+    },
+  ])
+})
+
+test('pre-tool-use: git commit -n is allowed when no policy is enabled', async (t) => {
+  for (const files of [
+    {},
+    { 'policy/no-em-dash.md': POLICY.replace('Enabled', 'Disabled') },
+  ]) {
+    const { web } = await policed(t, files)
+    assert.deepEqual(
+      await hook('pre-tool-use', bash('git commit -n -m x', web)),
+      { code: 0, out: '', err: '' }
+    )
+  }
+})
+
+test('pre-tool-use: -n inside a message, git push -n and a read of core.hooksPath skip no hook', async (t) => {
+  const { web } = await policed(t, {
+    'policy/no-em-dash.md': POLICY,
+    'policy/no-force-push.md': NO_FORCE_PUSH,
+  })
+  for (const command of [
+    'git commit -m "-n"',
+    'git commit -m -n',
+    'git push -n origin main',
+    'git config --get core.hooksPath',
+    'git commit -m "oops',
+  ])
+    assert.deepEqual(
+      await hook('pre-tool-use', bash(command, web)),
+      { code: 0, out: '', err: '' },
+      command
+    )
+  assert.deepEqual(await recorded(web), [])
+})
+
+test('pre-tool-use: cd into a clone from the workspace root, then git commit --no-verify, is refused', async (t) => {
+  const { root } = await policed(t, { 'policy/no-trailers.md': NO_TRAILERS })
+  const r = await hook(
+    'pre-tool-use',
+    bash('cd org/web && git commit --no-verify -m x', root)
+  )
+  assert.equal(r.code, 2)
+  assert.match(
+    r.err,
+    /\n {2}git commit --no-verify -m x \(--no-verify skips the pre-commit and commit-msg hooks\)\n.*\n {2}policy no-trailers: \.rness\/policy\/no-trailers\.md\n$/
+  )
+  assert.deepEqual(
+    await hook('pre-tool-use', bash('git commit --no-verify -m x', root)),
+    { code: 0, out: '', err: '' },
+    'the root is no clone: no hook to skip'
+  )
+})
+
+test('pre-tool-use: git -c core.hooksPath=/dev/null skips every hook, so every policy is named and recorded', async (t) => {
+  const { web } = await policed(t, {
+    'policy/no-em-dash.md': POLICY,
+    'policy/no-force-push.md': NO_FORCE_PUSH,
+  })
+  const r = await hook(
+    'pre-tool-use',
+    bash('git -c core.hooksPath=/dev/null commit -m x', web)
+  )
+  assert.equal(r.code, 2)
+  assert.match(
+    r.err,
+    /\n {2}git -c core\.hooksPath=\/dev\/null commit -m x \(core\.hooksPath skips every hook\)\n/
+  )
+  assert.match(
+    r.err,
+    /\n {2}policy no-em-dash: \.rness\/policy\/no-em-dash\.md\n {2}policy no-force-push: \.rness\/policy\/no-force-push\.md\n$/
+  )
+  assert.deepEqual(
+    (await recorded(web)).map((x) => `${x.policy} ${x.check}`),
+    ['no-em-dash added-lines', 'no-force-push push']
+  )
+})
+
+test('pre-tool-use: a bypass is refused only for the policies the skipped hooks apply', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  assert.equal(
+    (await hook('pre-tool-use', bash('git push --no-verify', web))).code,
+    0,
+    'no push policy: pre-push checks nothing'
+  )
+  const pushed = await policed(t, { 'policy/no-force-push.md': NO_FORCE_PUSH })
+  const r = await hook('pre-tool-use', bash('git push --no-verify', pushed.web))
+  assert.equal(r.code, 2)
+  assert.match(r.err, /\(--no-verify skips the pre-push hook\)\n/)
+  assert.equal(
+    (await hook('pre-tool-use', bash('git commit -n -m x', pushed.web))).code,
+    0
+  )
+})
+
+test('pre-tool-use: in .rness, core.hooksPath set to its .githooks passes, to anything else is refused', async (t) => {
+  const { root } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  const rness = join(root, '.rness')
+  await git(['init', '-q', '-b', 'main'], rness)
+  assert.equal(
+    (
+      await hook(
+        'pre-tool-use',
+        bash('git config core.hooksPath .githooks', rness)
+      )
+    ).code,
+    0
+  )
+  const r = await hook(
+    'pre-tool-use',
+    bash('git config core.hooksPath /dev/null', rness)
+  )
+  assert.equal(r.code, 2)
+  assert.deepEqual(await recorded(rness), [
+    {
+      policy: 'no-em-dash',
+      check: 'added-lines',
+      by: 'guard',
+      session: SESSION,
+    },
+  ])
+})
+
+test('pre-tool-use: a Bash command without git returns at once', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  for (const command of ['ls -la && echo done', 'echo --no-verify -n'])
+    assert.deepEqual(await hook('pre-tool-use', bash(command, web)), {
+      code: 0,
+      out: '',
+      err: '',
+    })
+  assert.deepEqual(
+    await hook('pre-tool-use', { tool_name: 'Bash', tool_input: {} }),
+    { code: 0, out: '', err: '' }
+  )
 })
 
 // --- what a session does to a board, declared (spec 0032, plan 0046) --------
