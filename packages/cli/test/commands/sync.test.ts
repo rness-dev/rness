@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   readlink,
+  rm,
   stat,
   symlink,
   writeFile,
@@ -1063,6 +1064,25 @@ test('hooks: a clone rness.json does not declare gets none, and no line but its 
   assert.doesNotMatch(r.out, /org\/stray git hooks/)
   assert.match(r.out, /updated {2}org\/web git hooks/)
   await assert.rejects(access(join(stray, '.git', 'hooks', 'pre-commit')))
+})
+
+test('hooks: a clone a scope names in another case is declared, and gets them', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { path: 'org/Web' } },
+    files: { 'standards/coding.md': coding },
+    dirs: ['org/web'],
+  })
+  await git(['init', '-q', '-b', 'main'], join(root, 'org', 'web'))
+  const scoped = await sync(['--yes', '--scope', 'web', '--cwd', root])
+  assert.equal(scoped.code, 0, scoped.err)
+  assert.match(scoped.out, /updated {2}org\/web git hooks/)
+  await rm(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.out, /not in rness\.json/)
+  assert.match(r.out, /updated {2}org\/web git hooks \(pre-commit\)/)
+  await access(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
 })
 
 test('hooks: --scope installs those of that scope only; --check writes none', async (t) => {

@@ -27,7 +27,7 @@ import { presetTemplate } from '../../src/core/presets.ts'
 import { readRefusals } from '../../src/core/refusals.ts'
 import { VERSION } from '../../src/version.ts'
 import { commitDir, git } from '../helpers/git.ts'
-import { makeWorkspace } from '../helpers/workspace.ts'
+import { ignoresCase, makeWorkspace } from '../helpers/workspace.ts'
 
 const binPath = fileURLToPath(
   new URL('../../src/bin/rness.ts', import.meta.url)
@@ -1063,6 +1063,40 @@ test('pre-tool-use: a file of a clone that holds no scope is not checked, as its
       err: '',
     })
   assert.deepEqual(await recorded(stray), [])
+})
+
+test('pre-tool-use: a declared clone named in another case is that clone: its policies apply (fail closed)', async (t) => {
+  const { root, web } = await policed(t, {
+    'policy/no-em-dash.md': POLICY,
+    'policy/web/no-todo.md': POLICY.replace("'\\u2014'", 'TODO').replace(
+      '# No em dash',
+      '# No TODO'
+    ),
+  })
+  const variant = join(root, 'org', 'Web')
+  const wrote = await hook(
+    'pre-tool-use',
+    writeOf(join(variant, 'new.md'), root, `a ${DASH}\nb TODO\n`)
+  )
+  assert.equal(wrote.code, 2)
+  assert.match(wrote.err, /^rness: policy no-em-dash refused this edit\n/m)
+  assert.match(wrote.err, /^rness: policy no-todo refused this edit\n/m)
+  // Where the file system ignores case, an Edit reaches the clone's file.
+  if (await ignoresCase(root)) {
+    await writeFile(join(web, 'a.md'), 'x\n')
+    const edited = await hook(
+      'pre-tool-use',
+      editOf(join(variant, 'a.md'), root, 'x', `x ${DASH}`)
+    )
+    assert.equal(edited.code, 2)
+    assert.match(edited.err, /^rness: policy no-em-dash refused this edit\n/)
+  }
+  const skipped = await hook(
+    'pre-tool-use',
+    bash('git -C org/Web commit -n -m x', root)
+  )
+  assert.equal(skipped.code, 2)
+  assert.match(skipped.err, /would skip the git hooks/)
 })
 
 test('pre-tool-use: in .rness, a refused line and a contract problem come in one refusal', async (t) => {

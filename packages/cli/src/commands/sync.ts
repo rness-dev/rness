@@ -224,7 +224,7 @@ function hookClones(
       ),
     ]
   const entry = manifest.scopes[only]
-  const owner = entry?.path.split('/')[1]
+  const owner = entry?.path.split('/')[1]?.toLowerCase()
   return owner !== undefined && clones.includes(owner) ? [owner] : []
 }
 
@@ -502,8 +502,12 @@ export async function syncCommand(
         )
       // A clone the catalogue does not know gets no block: no scope declares
       // its rules. Say how to bring it in rather than skipping it silently.
+      // A scope path in another case (`org/Web`) still names clone `web`:
+      // the same directory where the file system ignores case.
       const scoped = new Set(
-        Object.values(manifest.scopes).map((s) => s.path.split('/')[1])
+        Object.values(manifest.scopes).map((s) =>
+          s.path.split('/')[1]?.toLowerCase()
+        )
       )
       const undeclared = [...clones].filter(
         (n) => !Object.hasOwn(manifest.repos, n) && !scoped.has(n)

@@ -351,7 +351,8 @@ declares, as a repository or as the home of a scope (never `.rness`, whose
 scaffold `.githooks/` carries the same three, and never under
 `sync --check`). A clone it does not declare gets none. In a clone that
 holds no scope, no policy applies: `rness policy check` passes in silence
-and the guard does not check its files. The hooks are written whatever the
+and the guard does not check its files. A clone's name is compared whatever
+its case: `org/Web` is the declared `web`, and its policies apply. The hooks are written whatever the
 policies: each passes at once while no enabled
 policy uses its check, so an `Enabled` merged in `.rness` applies without a
 `sync`. They are local, never committed, mode 0755, carry a marker line and

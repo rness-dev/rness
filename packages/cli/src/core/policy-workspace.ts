@@ -34,14 +34,27 @@ export type WorkTreePlace =
 const toPosix = (p: string): string => p.split(sep).join(posix.sep)
 
 /**
+ * Whether `outer` is `inner` or holds it, segment by segment, whatever the
+ * case. `org/Web` is clone `org/web` where the file system ignores case
+ * (macOS by default); where it does not, taking it for that clone applies
+ * the clone's policies all the same: a policy fails closed on a name.
+ */
+const holds = (outer: string, inner: string): boolean => {
+  const o = outer.toLowerCase()
+  const i = inner.toLowerCase()
+  return i === o || i.startsWith(`${o}/`)
+}
+
+/**
  * The place of the work tree at `dir`: `.rness`, a clone with the scopes
- * whose path is its own or under it (a monorepo's packages), or neither.
+ * whose path is its own or under it (a monorepo's packages), whatever the
+ * case, or neither.
  */
 export function placeOf(ws: PolicyWorkspace, dir: string): WorkTreePlace {
   const prefix = toPosix(relative(ws.root, resolve(dir)))
   if (resolve(dir) === resolve(ws.rnessDir)) return { kind: 'context', prefix }
   const scopes = Object.entries(ws.manifest.scopes)
-    .filter(([, e]) => e.path === prefix || e.path.startsWith(`${prefix}/`))
+    .filter(([, e]) => holds(prefix, e.path))
     .map(([name]) => name)
   return scopes.length === 0
     ? { kind: 'outside', prefix }
@@ -65,8 +78,9 @@ function inUndeclaredClone(ws: PolicyWorkspace, path: string): boolean {
 
 /**
  * The enabled policies of each path's own scope, the deepest whose path
- * holds it (the global ones for a path in no scope), read once per scope.
- * A path in a clone that holds no scope, or not given here, gets none.
+ * holds it whatever the case (the global ones for a path in no scope),
+ * read once per scope. A path in a clone that holds no scope, or not given
+ * here, gets none.
  */
 export async function policiesByPath(
   ws: PolicyWorkspace,
@@ -74,9 +88,19 @@ export async function policiesByPath(
 ): Promise<(path: string) => readonly Policy[]> {
   const scopeOf = new Map<string, string | null>()
   const byScope = new Map<string | null, Policy[]>()
+  // The scopes' paths in lower case, so that `resolveScope` matches as `holds` does.
+  const lowered = {
+    ...ws.manifest,
+    scopes: Object.fromEntries(
+      Object.entries(ws.manifest.scopes).map(([name, e]) => [
+        name,
+        { ...e, path: e.path.toLowerCase() },
+      ])
+    ),
+  }
   for (const path of paths) {
     if (inUndeclaredClone(ws, path)) continue
-    const scope = resolveScope(ws.manifest, path)
+    const scope = resolveScope(lowered, path.toLowerCase())
     scopeOf.set(path, scope)
     if (!byScope.has(scope))
       byScope.set(scope, await policiesFor(ws, scope === null ? [] : [scope]))

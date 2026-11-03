@@ -428,7 +428,17 @@ function repositoryOf(pws: PolicyWorkspace, label: string): string | null {
   const path = join(pws.root, ...label.split('/'))
   if (path === pws.rnessDir || inside(pws.rnessDir, path) !== null)
     return pws.rnessDir
-  return cloneHolding(pws.root, pws.manifest.repos, path)?.dir ?? null
+  const clone = cloneHolding(pws.root, pws.manifest.repos, path)
+  if (clone !== null) return clone.dir
+  // A declared repository named in another case (`org/Web` for `web`): the
+  // same directory where the file system ignores case, and taken for that
+  // clone where it does not, so that its policies apply (fail closed).
+  const [top, name] = label.split('/')
+  return top === 'org' &&
+    name !== undefined &&
+    Object.hasOwn(pws.manifest.repos, name.toLowerCase())
+    ? join(pws.root, 'org', name)
+    : null
 }
 
 /** The session the hook input names, as the git hooks record it: Claude Code's id. */
