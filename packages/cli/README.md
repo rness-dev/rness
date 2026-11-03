@@ -1009,7 +1009,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.23.1 - a key on every element of a /rness:status row
 
 - The `/rness:status` pane gives every element of a row a key: the
   status, and the blank before a row not selected, had none. A
