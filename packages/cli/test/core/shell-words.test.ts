@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { literalOf, shellCommands } from '../../src/core/shell-words.ts'
+import {
+  literalOf,
+  patternOf,
+  shellCommands,
+} from '../../src/core/shell-words.ts'
 
 // The shell reader under the guard's Bash branch (spec 0040 §4.3): words as
 // a POSIX shell splits them, read without running anything.
 
 /** The words of each command, `enter`/`leave` for a subshell. */
-const shape = (script: string) =>
-  shellCommands(script)?.map((item) =>
+const shape = (script: string, dialect?: 'bash' | 'zsh') =>
+  shellCommands(script, dialect)?.map((item) =>
     item.kind === 'command' ? item.words.map(literalOf) : item.kind
   ) ?? null
 
@@ -122,4 +126,60 @@ test('shellCommands: arithmetic is one piece: its << is no here-document, its su
     'leave',
   ])
   assert.equal(shellCommands('echo $((1 + 2'), null)
+})
+
+test('shellCommands: quotes inside $((...)), ((...)) and ${...} are quotes, as bash reads them', () => {
+  const after = ['git', 'commit', '-n', '-m', 'x']
+  for (const script of [
+    `echo $(( ')' )) ; git commit -n -m x`,
+    `echo $(( "))" )) ; git commit -n -m x`,
+    `echo $(( $'))' )) ; git commit -n -m x`,
+    `echo $(( \\) )) ; git commit -n -m x`,
+    `echo \${x:-'}'} ; git commit -n -m x`,
+    `echo "\${x:-"}"}" ; git commit -n -m x`,
+    `echo \${x:-\\}} ; git commit -n -m x`,
+  ])
+    assert.deepEqual(shape(script), [['echo', null], after], script)
+  assert.deepEqual(shape(`(( "))" )) ; git commit -n -m x`), [after])
+  // What a substitution inside ${...} runs is read.
+  assert.deepEqual(shape('echo ${x:-$(git commit -n)}'), [
+    'enter',
+    ['git', 'commit', '-n'],
+    'leave',
+    ['echo', null],
+  ])
+  // A quote that does not close: bash refuses the line.
+  assert.equal(shellCommands(`echo $(( '1 )) ; git commit -n -m x`), null)
+})
+
+test('shellCommands: read as zsh, a single quote in a double-quoted ${...} is a character, and arithmetic ignores quotes', () => {
+  const script = `echo "\${x:-'a}" ; git commit -n -m x`
+  assert.equal(shellCommands(script), null, 'bash: the quote never closes')
+  assert.deepEqual(shape(script, 'zsh'), [
+    ['echo', null],
+    ['git', 'commit', '-n', '-m', 'x'],
+  ])
+  assert.deepEqual(shape(`echo $(( '1 )) ; git commit -n -m x`, 'zsh'), [
+    ['echo', null],
+    ['git', 'commit', '-n', '-m', 'x'],
+  ])
+})
+
+test('patternOf: an unquoted glob or brace expression in a word', () => {
+  const [command] =
+    shellCommands(
+      `{gi,x}t /usr/bin/gi? "a*" x{a}y {a,b} {1..3} [ab] '{a,b}' plain`
+    ) ?? []
+  assert.ok(command?.kind === 'command')
+  assert.deepEqual(command.words.map(patternOf), [
+    'brace',
+    'glob',
+    null,
+    null,
+    'brace',
+    'brace',
+    'glob',
+    null,
+    null,
+  ])
 })

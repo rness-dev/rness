@@ -514,3 +514,47 @@ test('gitBypasses: an escaped git is git', () => {
       script
     )
 })
+
+// --- fix round 2: what the shell reads before it runs a word ----------------
+
+test('gitBypasses: a command name or a git word the shell expands (a glob, a brace expression) is judged by its shape', () => {
+  for (const script of [
+    '{gi,x}t commit -n -m x',
+    '/usr/bin/gi? commit -n -m x',
+    '/usr/bin/g[i]t commit -n -m x',
+    '{git,commit} -n -m x',
+    'git {commit,-n} -m x',
+    'git commit {-n,-m} x',
+    'sudo /usr/bin/gi? commit -n',
+  ])
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how: '-n', skips: COMMIT, maybe: true }],
+      script
+    )
+  for (const script of [
+    'git add *.ts',
+    'git commit -m x src/*.ts',
+    '/usr/bin/gi? push -n',
+    'ls {a,b}',
+  ])
+    assert.deepEqual(found(script), [], script)
+})
+
+test('gitBypasses: read as bash and as zsh, what either would run is judged', () => {
+  for (const script of [
+    `echo $(( "))" )) ; git commit -n -m x`,
+    `echo $(( $'))' )) ; git commit -n -m x`,
+    `(( "))" )) ; git commit -n -m x`,
+    `echo \${x:-'}'} ; git commit -n -m x`,
+    // bash: the quote never closes; zsh runs git.
+    `echo "\${x:-'a}" ; git commit -n -m x`,
+    `echo $(( '1 )) ; git commit -n -m x`,
+  ])
+    assert.deepEqual(
+      found(script),
+      [{ dir: '/w', how: '-n', skips: COMMIT }],
+      script
+    )
+  assert.equal(gitBypasses('git commit -n -m "never closed', AT), null)
+})

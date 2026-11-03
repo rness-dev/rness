@@ -440,7 +440,8 @@ function sessionIdOf(input: Input): string | null {
 /**
  * The added-lines policies of the file's scope (spec 0040 §4.3) on the lines
  * the edit adds. Proofs of rness's own outputs are read only for a file one
- * of whose lines is refused before them, as the pre-commit hook does.
+ * of whose lines is refused before them, as the pre-commit hook does; when
+ * they cannot be read, the failures found without them stand.
  */
 async function addedLineFailures(
   pws: PolicyWorkspace,
@@ -451,15 +452,17 @@ async function addedLineFailures(
 ): Promise<PolicyFailure[]> {
   if (added.length === 0) return []
   const file = { path: label, added, after }
-  if (checkAddedLines([file], policiesOf).length === 0) return []
+  const bare = checkAddedLines([file], policiesOf)
+  if (bare.length === 0) return []
   try {
     return checkAddedLines(
       [{ ...file, ...(await rnessOutputProofs(pws, [label])) }],
       policiesOf
     )
   } catch {
-    // The proofs cannot be read: no policy refusal, the other guards run.
-    return []
+    // The proofs cannot be read: they only ever remove a failure, so
+    // without them every failure stands.
+    return bare
   }
 }
 
@@ -643,8 +646,9 @@ async function bashGuard(input: Input, io: HookIo): Promise<number> {
   if (toolInput === null || typeof toolInput !== 'object') return 0
   const command = (toolInput as Input)['command']
   if (typeof command !== 'string') return 0
-  // At once only when nothing in it could spell git (`g\it`, `$'\x67it'`).
-  if (!/git/i.test(command) && !/[\\'"$`]/.test(command)) return 0
+  // At once only when nothing in it could spell git: an escape or a quote
+  // (`g\it`, `$'\x67it'`), an expansion, a glob or a brace (`{gi,x}t`).
+  if (!/git/i.test(command) && !/[\\'"$`*?[{]/.test(command)) return 0
   const cwd = cwdOf(input, io.env)
   const bypasses = gitBypasses(command, { cwd, env: io.env })
   if (bypasses === null || bypasses.length === 0) return 0

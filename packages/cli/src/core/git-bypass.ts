@@ -1,9 +1,11 @@
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
 
 import {
+  type Dialect,
   type ShellItem,
   VARIABLE_NAME,
   type Word,
+  patternOf,
   shellCommands,
 } from './shell-words.ts'
 
@@ -119,6 +121,12 @@ function valueOf(word: Word | undefined, state: State): string | null {
     } else return null
   }
   return out
+}
+
+/** A command name: its value, or null when the shell expands it (a glob, a brace expression) or it cannot be read. */
+function nameOf(word: Word | undefined, state: State): string | null {
+  if (word === undefined || patternOf(word) !== null) return null
+  return valueOf(word, state)
 }
 
 /** `NAME=value`: its name and value (null when not known); null for no assignment. */
@@ -316,7 +324,7 @@ function run(
 ): Read {
   let rest = [...words]
   let dir = state.dir
-  let name = valueOf(rest.shift(), state)
+  let name = nameOf(rest.shift(), state)
   // Wrappers that run the command after them.
   for (;;) {
     if (name === null) return 'unread'
@@ -374,7 +382,7 @@ function run(
       }
     } else break
     if (rest.length === 0) return 'read'
-    name = valueOf(rest.shift(), state)
+    name = nameOf(rest.shift(), state)
   }
   const env: Env = new Map([...state.exported, ...prefix])
   const base = basename(name)
@@ -867,6 +875,8 @@ function gitCall(
   text: string,
   out: GitBypass[]
 ): Read {
+  // A brace expression makes other words of these: judged by its parts.
+  if (words.some((w) => patternOf(w) === 'brace')) return 'unread'
   const values = words.map((w) => valueOf(w, state))
   let dir = from
   // The command line's options before the environment's variables; both
@@ -967,16 +977,39 @@ function backstop(
   text: string,
   out: GitBypass[]
 ): void {
-  const values = words.map((w) => valueOf(w, state))
+  // The words as the shell may run them: a brace expression's alternatives
+  // in their order, a glob not known.
+  const values: (string | null)[] = []
+  const wordAt: number[] = []
+  words.forEach((w, k) => {
+    const pattern = patternOf(w)
+    const parts =
+      pattern === 'brace'
+        ? w.segments
+            .map((seg) => (seg.kind === 'text' ? seg.text : ''))
+            .join('')
+            .split(/[{},]/)
+            .filter((p) => p !== '')
+        : [pattern === 'glob' ? null : valueOf(w, state)]
+    for (const part of parts) {
+      values.push(part)
+      wordAt.push(k)
+    }
+  })
   const first = values[0]
   if (first !== null && first !== undefined && NEVER_RUNS.has(basename(first)))
     return
   let g = values.findIndex((v) => v !== null && /^git$/i.test(basename(v)))
   const named = g !== -1
   if (!named) {
-    // A command name that cannot be read may be git: git's own shape only.
-    if (first !== null) return
-    g = 0
+    // A word that cannot be read, or a brace expression none of whose parts
+    // is git (`{gi,x}t`), may be git: git's own shape only.
+    g = values.findIndex(
+      (v, k) =>
+        v === null ||
+        patternOf(words[wordAt[k] ?? 0] ?? { segments: [] }) === 'brace'
+    )
+    if (g === -1) return
   }
   const after = values.slice(g + 1)
   const found = (how: string, skips: readonly SkippedHook[]): void => {
@@ -1004,7 +1037,7 @@ function backstop(
   }
   if (!named) return
   const env = new Map([...state.exported, ...prefix])
-  for (const w of words.slice(0, g)) {
+  for (const w of words.slice(0, wordAt[g] ?? 0)) {
     const a = assignmentOf(w, state)
     if (a !== null) env.set(a.name, a.value)
   }
@@ -1057,12 +1090,28 @@ export function gitBypasses(
   command: string,
   start: ShellStart
 ): GitBypass[] | null {
-  const items = shellCommands(command)
-  if (items === null) return null
-  const vars = new Map<string, string>()
-  for (const [k, v] of Object.entries(start.env))
-    if (v !== undefined) vars.set(k, v)
+  // Claude Code's Bash tool may run bash or zsh: what either would run is
+  // judged, each bypass once; null only when neither would read it.
+  let read = false
   const out: GitBypass[] = []
-  walk(items, { dir: resolve(start.cwd), vars, exported: new Map() }, out)
-  return out
+  const seen = new Set<string>()
+  for (const dialect of DIALECTS) {
+    const items = shellCommands(command, dialect)
+    if (items === null) continue
+    read = true
+    const vars = new Map<string, string>()
+    for (const [k, v] of Object.entries(start.env))
+      if (v !== undefined) vars.set(k, v)
+    const found: GitBypass[] = []
+    walk(items, { dir: resolve(start.cwd), vars, exported: new Map() }, found)
+    for (const b of found) {
+      const key = JSON.stringify([b.dir, b.text, b.how, b.skips])
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(b)
+    }
+  }
+  return read ? out : null
 }
+
+const DIALECTS: readonly Dialect[] = ['bash', 'zsh']

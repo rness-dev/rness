@@ -1470,6 +1470,34 @@ test('pre-tool-use: policies that cannot be read never skip the block and contra
   )
 })
 
+test('pre-tool-use: a command name the shell expands to git, or a quoted parenthesis in arithmetic, does not hide a bypass', async (t) => {
+  const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  for (const command of [
+    '{gi,x}t commit -n -m x',
+    '/usr/bin/gi? commit -n -m x',
+    `echo $(( "))" )) ; git commit -n -m x`,
+    `echo $(( ')' )) ; git commit -n -m x`,
+  ])
+    assert.equal(
+      (await hook('pre-tool-use', bash(command, web))).code,
+      2,
+      command
+    )
+})
+
+test('pre-tool-use: proofs that cannot be read leave a refused added line refused', async (t) => {
+  const { root, web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
+  await writeFile(join(web, 'AGENTS.md'), AGENTS)
+  // A directory named like a standard: the fresh render of the block fails.
+  await mkdir(join(root, '.rness', 'standards', 'broken.md'))
+  const r = await hook(
+    'pre-tool-use',
+    editOf(join(web, 'AGENTS.md'), web, 'Notes.', `Notes ${DASH} more.`)
+  )
+  assert.equal(r.code, 2)
+  assert.match(r.err, /^rness: policy no-em-dash refused this edit\n/)
+})
+
 test('pre-tool-use: a Bash command without git returns at once', async (t) => {
   const { web } = await policed(t, { 'policy/no-em-dash.md': POLICY })
   for (const command of ['ls -la && echo done', 'echo --no-verify -n'])

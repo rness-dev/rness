@@ -44,13 +44,22 @@ const ANSI_C: Readonly<Record<string, string>> = {
   '?': '?',
 }
 
+/**
+ * Which shell's reading, where bash and zsh read a command differently: a
+ * single quote inside a double-quoted `${...}` (a quote to bash, a
+ * character to zsh), quotes inside arithmetic (skipped by bash, not by zsh).
+ */
+export type Dialect = 'bash' | 'zsh'
+
 class Parser {
   private readonly src: string
+  private readonly dialect: Dialect
   private pos = 0
   private heredocs: { delimiter: string; tabs: boolean }[] = []
 
-  constructor(src: string) {
+  constructor(src: string, dialect: Dialect) {
     this.src = src
+    this.dialect = dialect
   }
 
   parse(): ShellItem[] {
@@ -269,13 +278,7 @@ class Parser {
       }
       segments.push({ kind: 'unknown' })
     } else if (n === '{') {
-      let depth = 0
-      let i = this.pos + 1
-      for (; i < src.length; i++) {
-        if (src[i] === '{') depth += 1
-        else if (src[i] === '}' && --depth === 0) break
-      }
-      if (i >= src.length) throw new Unreadable('a ${ is not closed')
+      const i = this.braceEnd(this.pos + 1, quoted, before)
       const inner = src.slice(this.pos + 2, i)
       segments.push(
         VARIABLE_NAME.test(inner)
@@ -362,20 +365,16 @@ class Parser {
     let i = start + 2
     while (i < src.length) {
       const c = src[i]
-      if (c === '$' && src[i + 1] === '(') {
-        const end = src[i + 2] === '(' ? this.arithmetic(i + 1, found) : null
-        if (end !== null) i = end
-        else {
-          this.pos = i + 2
-          found.push({ kind: 'enter' }, ...this.list(true), { kind: 'leave' })
-          i = this.pos
-        }
-        continue
-      }
-      if (c === '`') {
-        this.pos = i
-        this.backquoted([], found)
-        i = this.pos
+      // bash skips quotes, escapes and expansions as parse_matched_pair does;
+      // zsh only the substitutions.
+      const piece =
+        this.dialect === 'bash'
+          ? this.skipPiece(i, false, found)
+          : c === '`' || (c === '$' && src[i + 1] === '(')
+            ? this.skipPiece(i, false, found)
+            : null
+      if (piece !== null) {
+        i = piece + 1
         continue
       }
       if (c === '(') depth += 1
@@ -394,6 +393,67 @@ class Parser {
     return null
   }
 
+  /**
+   * A quote, an escape or an expansion at `i`, inside `$((`, `((` or `${`,
+   * skipped as bash's parse_matched_pair skips it, the commands of its
+   * substitutions read into `found`: the index of its last character, or
+   * null when `src[i]` starts none. Read as zsh, a single quote inside a
+   * double-quoted `${...}` is a character.
+   */
+  private skipPiece(
+    i: number,
+    inDouble: boolean,
+    found: ShellItem[]
+  ): number | null {
+    const src = this.src
+    const c = src[i]
+    const n = src[i + 1]
+    const none = (): void => undefined
+    if (c === '\\') return i + 1
+    if (c === "'") {
+      if (inDouble && this.dialect === 'zsh') return null
+      const close = src.indexOf("'", i + 1)
+      if (close === -1) throw new Unreadable('a single quote is not closed')
+      return close
+    }
+    if (c === '"') {
+      this.pos = i + 1
+      this.doubleQuoted([], none, found)
+      return this.pos - 1
+    }
+    if (c === '`') {
+      this.pos = i
+      this.backquoted([], found)
+      return this.pos - 1
+    }
+    if (c === '$' && (n === '(' || n === '{' || (n === "'" && !inDouble))) {
+      this.pos = i
+      this.dollar([], none, found, inDouble)
+      return this.pos - 1
+    }
+    return null
+  }
+
+  /** The index of the `}` that closes the `${` whose `{` is at `open`. */
+  private braceEnd(
+    open: number,
+    inDouble: boolean,
+    found: ShellItem[]
+  ): number {
+    const src = this.src
+    let depth = 1
+    for (let i = open + 1; i < src.length; i++) {
+      const piece = this.skipPiece(i, inDouble, found)
+      if (piece !== null) {
+        i = piece
+        continue
+      }
+      if (src[i] === '{') depth += 1
+      else if (src[i] === '}' && --depth === 0) return i
+    }
+    throw new Unreadable('a ${ is not closed')
+  }
+
   private backquoted(segments: Segment[], before: ShellItem[]): void {
     const src = this.src
     let inner = ''
@@ -407,7 +467,7 @@ class Parser {
     }
     if (i >= src.length) throw new Unreadable('a backquote is not closed')
     this.pos = i + 1
-    before.push({ kind: 'enter' }, ...new Parser(inner).parse(), {
+    before.push({ kind: 'enter' }, ...new Parser(inner, this.dialect).parse(), {
       kind: 'leave',
     })
     segments.push({ kind: 'unknown' })
@@ -419,9 +479,12 @@ class Parser {
  * before the command holding it; null when the shell would refuse it (an
  * unbalanced quote, subshell or substitution).
  */
-export function shellCommands(script: string): ShellItem[] | null {
+export function shellCommands(
+  script: string,
+  dialect: Dialect = 'bash'
+): ShellItem[] | null {
   try {
-    return new Parser(script).parse()
+    return new Parser(script, dialect).parse()
   } catch (e) {
     if (e instanceof Unreadable) return null
     throw e
@@ -436,4 +499,19 @@ export function literalOf(word: Word): string | null {
     out += s.text
   }
   return out
+}
+
+/**
+ * An unquoted glob (`*`, `?`, `[`) or brace expression (`{a,b}`, `{1..3}`)
+ * in a word: the shell expands it before it runs anything, so the word as
+ * written is not the word run. Null for none.
+ */
+export function patternOf(word: Word): 'glob' | 'brace' | null {
+  let glob = false
+  for (const s of word.segments) {
+    if (s.kind !== 'text' || s.quoted) continue
+    if (/\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(s.text)) return 'brace'
+    if (/[*?[]/.test(s.text)) glob = true
+  }
+  return glob ? 'glob' : null
 }
