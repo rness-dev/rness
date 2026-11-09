@@ -1180,7 +1180,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.24.0 - policies as data
 
 - **Policies as data** (spec 0040): a `policy/` collection of rules refused
   at commit, at push and on edit, for every local agent. Three checks
@@ -1191,6 +1191,9 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   session summary and in a Policies tab of `rness status`. The scaffold gains
   `policy/no-force-push.md` (Disabled) and the `.githooks/` `commit-msg` and
   `pre-push`. See "Policies".
+- Known limit: a hook runs only the CLI of a `.rness` owned by the current
+  user. Where `.rness` belongs to another user (a devcontainer, a bind
+  mount), every commit prints one line and no policy is checked.
 
 ## 0.23.1 - a key on every element of a /rness:status row
 
