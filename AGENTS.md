@@ -1,7 +1,7 @@
 # rness workspace member — scope: rness
 
 <!-- BEGIN rness -->
-<!-- rness · scope: rness · contract: 1 · hash: f0b16e48e26c · generated: run `rness sync`, never edit inside this block -->
+<!-- rness · scope: rness · contract: 1 · hash: 66966f387dca · generated: run `rness sync`, never edit inside this block -->
 This directory is scope `rness` of rness workspace `rness-dev`. Full context lives in
 `../../.rness/`: start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
 live: `rness context --scope rness`. If `.rness/` is not reachable, this is a
@@ -248,4 +248,32 @@ scaffold does not mandate a CSS framework, component library, or theme tool.
 - Keep components focused and composable; avoid premature design-system
   abstractions.
 - Respect existing light, dark, and system-theme behavior when present.
+
+## Policies
+<!-- rness: policy/no-agent-trailers.md -->
+# No agent trailers
+- Refused at commit (the message): Remove the agent's Co-Authored-By trailer, then commit again.
+- Refused at commit (the message): Remove the Claude-Session trailer, then commit again.
+
+Commits are attributed to the developer who reviews them. Agents add their
+own trailer by default; this workspace does not keep it.
+
+<!-- rness: policy/no-em-dash.md -->
+# No em dash
+- Refused at commit (the message): Write " - ", a comma, a colon or a period instead of the em dash.
+- Refused at commit and on edit (added lines): Write " - ", a comma, a colon or a period instead of the em dash.
+- Standard: `standards/documentation.md`
+
+It reads as AI-generated. The rule and its reason are in the documentation
+standard.
+
+<!-- rness: policy/no-force-push.md -->
+# No force push
+- Refused at push (non-fast-forward): Rebase on the remote branch and push again, or push a new branch.
+
+Rewriting a shared branch breaks the clones of everyone who pulled it.
+This policy stops the push before it leaves the machine; the host's branch
+protection is the only guarantee on the server.
+
+To enable it, change `Disabled` to `Enabled` in a pull request.
 <!-- END rness -->
