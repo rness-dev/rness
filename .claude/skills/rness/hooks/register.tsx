@@ -418,7 +418,8 @@ export const register: Register = (on) => {
     const rows = current?.rows ?? []
     const sel = clamp(await read($, selected), 0, Math.max(0, rows.length - 1))
     const width = e.props.bodyColumns ?? 80
-    const pad = padOf(e.props.scroll?.bodyRows ?? 0, rows.length)
+    const notes = current?.notes ?? []
+    const pad = padOf(e.props.scroll?.bodyRows ?? 0, rows.length + notes.length)
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" gap={1} flexWrap="wrap">
@@ -507,6 +508,11 @@ export const register: Register = (on) => {
             )
           })
         )}
+        {notes.map((note, i) => (
+          <Box key={`note-${i}`}>
+            <Text dimColor={i > 0 || notes.length === 1}>{note}</Text>
+          </Box>
+        ))}
         {Array.from({ length: pad }, (_, i) => (
           <Box key={`pad-${i}`}>
             <Text> </Text>
