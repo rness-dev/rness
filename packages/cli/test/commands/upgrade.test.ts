@@ -245,7 +245,7 @@ test('upgrade merges the target scaffold, pins, installs, syncs through the new 
       '',
       'Next:',
       '  git -C .rness push',
-      '  # teammates: git pull - the next rness command installs it',
+      '  # teammates: git pull, then any rness command (rness status) before opening Claude Code',
       '',
     ].join('\n')
   )
@@ -384,7 +384,7 @@ test('a contract-1 rness.json: checked first, rewritten as contract 2 after the 
       '',
       'Next:',
       '  git -C .rness push',
-      '  # teammates: git pull - the next rness command installs it',
+      '  # teammates: git pull, then any rness command (rness status) before opening Claude Code',
       '',
     ].join('\n')
   )
@@ -534,7 +534,7 @@ test('at the target already, a contract-1 file is rewritten and committed: the s
       '',
       'Next:',
       '  git -C .rness push',
-      '  # teammates: git pull - the next rness command installs it',
+      '  # teammates: git pull, then any rness command (rness status) before opening Claude Code',
       '',
     ].join('\n')
   )
@@ -702,7 +702,7 @@ test('a scaffold merge left staged by an upgrade whose sync failed is concluded 
         '',
         'Next:',
         '  git -C .rness push',
-        '  # teammates: git pull - the next rness command installs it',
+        '  # teammates: git pull, then any rness command (rness status) before opening Claude Code',
         '',
       ].join('\n')
     )

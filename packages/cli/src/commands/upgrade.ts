@@ -299,8 +299,12 @@ function finish(
     next.push(
       `git -C ${c.dir} add ${c.paths.join(' ')} && git -C ${c.dir} commit -m "${message}"`
     )
+  // The hooks run the copy installed in .rness, which never installs the
+  // pin: until a command does, they read the new files with the old copy.
   if (ending.commit !== 'nothing')
-    next.push('# teammates: git pull - the next rness command installs it')
+    next.push(
+      '# teammates: git pull, then any rness command (rness status) before opening Claude Code'
+    )
   if (ui.session) {
     if (next.length > 0) ui.note('Next steps', next)
     ui.outro(`${label} runs @rness/cli ${target}`)
