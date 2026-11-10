@@ -17,6 +17,7 @@ import {
   writeManifest,
 } from '../core/manifest.ts'
 import {
+  CONTRACT_2_SINCE,
   EXACT_VERSION,
   compareVersions,
   lockfilesOf,
@@ -88,13 +89,6 @@ export interface UpgradeDeps {
   /** The first release reading contract 2 (default `CONTRACT_2_SINCE`). */
   contract2Since?: string
 }
-
-/**
- * The first @rness/cli reading `rness.json` contract 2 (ADR 0012), and
- * nothing else: `upgrade` rewrites a contract-1 file only toward it or a
- * later release, its pre-releases included.
- */
-const CONTRACT_2_SINCE = '0.25.0'
 
 /**
  * Where `version`'s scaffold is read from (spec 0013 §2): the running copy

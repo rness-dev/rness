@@ -14,6 +14,7 @@ import { MAX_PAGES, type OrgRepository, PER_PAGE } from '../core/github.ts'
 import { gitlabProvider } from '../core/gitlab-oauth-provider.ts'
 import { HOSTS, type HostSpec, hostFor, providerFlag } from '../core/hosts.ts'
 import {
+  CONTRACT_1_UPGRADE,
   GITLAB_CONTEXT_NAME,
   NAME,
   contextRepo,
@@ -31,7 +32,9 @@ import {
   targetProblem,
 } from '../core/new-workspace.ts'
 import {
+  CONTRACT_2_SINCE,
   EXACT_VERSION,
+  compareVersions,
   readPin,
   workspacePackageManager,
 } from '../core/pinned.ts'
@@ -1088,12 +1091,17 @@ export async function createCommand(
       }
       // A workspace still on contract 1 is joined with the CLI it pins: this
       // one cannot read it, and `upgrade` is the team's to run (spec 0038 §11).
+      // A pin that moved ahead of the file (the Dependabot pull request)
+      // names a copy that cannot read it either: the upgrade comes first.
       if (await isContract1(stagedDir)) {
         const pin = await readPin(stagedDir)
+        const exact = pin !== null && EXACT_VERSION.test(pin.spec)
         process.stderr.write(
-          pin !== null && EXACT_VERSION.test(pin.spec)
-            ? `${org} is on @rness/cli ${pin.spec} (rness.json contract 1). Join it with that version: npx @rness/cli@${pin.spec} create ${org}\n`
-            : `${org} is on a former @rness/cli (rness.json contract 1). Join it with the @rness/cli version pinned in its .rness/package.json\n`
+          !exact
+            ? `${org} is on a former @rness/cli (rness.json contract 1). Join it with the @rness/cli version pinned in its .rness/package.json\n`
+            : compareVersions(pin.spec, `${CONTRACT_2_SINCE}-0`) >= 0
+              ? `${org}/${context} pins @rness/cli ${pin.spec} already, but its rness.json is still contract 1: a teammate runs ${CONTRACT_1_UPGRADE} in its .rness and pushes, then run ${rnessCommand()} create ${org} again\n`
+              : `${org} is on @rness/cli ${pin.spec} (rness.json contract 1). Join it with that version: npx @rness/cli@${pin.spec} create ${org}\n`
         )
         return 1
       }

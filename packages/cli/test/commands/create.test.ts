@@ -2740,6 +2740,53 @@ test('joining a workspace on contract 1 stops with the version to join with, and
   )
 })
 
+test('joining a contract-1 workspace already pinned to a copy that reads contract 2 (the Dependabot window) asks for the upgrade, never that copy', async (t) => {
+  // That copy refuses contract 1 too: naming it would send the user round.
+  for (const pin of ['0.25.0', '0.25.0-beta.1', '0.26.1']) {
+    const { host, cwd } = await contract1Context(t, pin)
+    const r = await create([
+      'acme',
+      '--yes',
+      '--skip-install',
+      '--pm',
+      'npm',
+      '--host',
+      host,
+      '--cwd',
+      cwd,
+    ])
+    assert.equal(r.code, 1, pin)
+    assert.equal(
+      r.err,
+      `acme/.rness pins @rness/cli ${pin} already, but its rness.json is still contract 1: a teammate runs npx @rness/cli@latest upgrade in its .rness and pushes, then run rness create acme again\n`,
+      pin
+    )
+    assert.deepEqual(
+      (await readdir(cwd)).filter((e) => e !== '.git'),
+      [],
+      'no workspace directory, no clone'
+    )
+  }
+  // Below the threshold, the pinned copy reads contract 1 and joins.
+  const { host, cwd } = await contract1Context(t, '0.24.9')
+  const r = await create([
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    host,
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /^acme is on @rness\/cli 0\.24\.9 \(rness\.json contract 1\)\. Join it with that version: npx @rness\/cli@0\.24\.9 create acme/
+  )
+})
+
 test('joining a contract-1 workspace whose pin is not an exact version says where to look', async (t) => {
   for (const pin of [null, '^0.24.0']) {
     const { host, cwd } = await contract1Context(t, pin)

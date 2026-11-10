@@ -22,6 +22,14 @@ const PACKAGE = '@rness/cli'
 /** A released version, pre-releases included; never a range or a tag. */
 export const EXACT_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
 
+/**
+ * The first @rness/cli reading `rness.json` contract 2 (ADR 0012), and
+ * nothing else, its pre-releases included: `upgrade` rewrites a contract-1
+ * file only toward it or a later release, and `create` sends no one to join
+ * a contract-1 workspace with it.
+ */
+export const CONTRACT_2_SINCE = '0.25.0'
+
 /** Negative when `a` is the older version. A pre-release is older than its release. */
 export function compareVersions(a: string, b: string): number {
   const split = (v: string): [number[], string | null] => {
