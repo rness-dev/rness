@@ -13,7 +13,11 @@ import { type TestContext, test } from 'node:test'
 
 import { presetTemplate } from '../../src/core/presets.ts'
 import { mcpTools, serverTools } from '../../src/mcp/tools.ts'
-import { makeWorkspace } from '../helpers/workspace.ts'
+import {
+  CONTRACT_1_LINE,
+  makeContract1Workspace,
+  makeWorkspace,
+} from '../helpers/workspace.ts'
 
 const doc = (status: string, title: string, body = '') =>
   `---\ndate: 2026-09-29\nstatus: ${status}\n---\n\n# ${title}\n${body}`
@@ -314,4 +318,30 @@ test('rness_note: its session required, a strict schema; a refusal is an error t
   })
   assert.equal(kind.isError, true)
   assert.match(kind.text, /^--kind is one of/)
+})
+
+test('rness_context: a scope named as an inherited property is unknown, not a TypeError', async (t) => {
+  const root = await fixture(t)
+  for (const scope of ['constructor', 'toString', '__proto__']) {
+    const r = await call(root, 'rness_context', { scope })
+    assert.equal(r.isError, true, scope)
+    assert.equal(
+      r.text,
+      `unknown scope ${JSON.stringify(scope)}; known: api, platform, web`
+    )
+  }
+})
+
+test('contract 1: every tool answers with the line of upgrade as its error', async (t) => {
+  const root = await makeContract1Workspace(t)
+  for (const [tool, args] of [
+    ['rness_context', {}],
+    ['rness_list', { collection: 'adr' }],
+    ['rness_read', { path: 'standards/style.md' }],
+    ['rness_search', { query: 'style' }],
+  ] as const) {
+    const r = await call(root, tool, args)
+    assert.equal(r.isError, true, tool)
+    assert.equal(r.text, CONTRACT_1_LINE, tool)
+  }
 })

@@ -79,3 +79,29 @@ export async function ignoresCase(dir: string): Promise<boolean> {
     await rm(probe, { recursive: true, force: true })
   }
 }
+
+/** What a contract-1 `rness.json` (0.24.0) holds: `upgrade` rewrites it, nothing else reads it. */
+export const CONTRACT_1 = {
+  contract: 1,
+  org: 'acme',
+  repos: { web: { url: 'https://github.com/acme/web.git' } },
+  scopes: { web: { path: 'org/web' } },
+}
+
+/** A temporary workspace still on contract 1, removed when the test ends. Returns its (realpath) root. */
+export async function makeContract1Workspace(t: TestContext): Promise<string> {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'rness-ws1-')))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, '.rness', 'standards'), { recursive: true })
+  await mkdir(join(root, 'org', 'web'), { recursive: true })
+  await writeFile(
+    join(root, '.rness', 'rness.json'),
+    JSON.stringify(CONTRACT_1, null, 2)
+  )
+  await writeFile(join(root, '.rness', 'standards', 'style.md'), '# Style\n')
+  return root
+}
+
+/** The line every command but `upgrade` and `create` says on a contract-1 file (spec 0038 §2). */
+export const CONTRACT_1_LINE =
+  'rness.json is contract 1: run rness upgrade (ADR 0012)'

@@ -30,7 +30,12 @@ import {
 import { capture } from '../helpers/capture.ts'
 import { commitTo, git, makeBareRepo } from '../helpers/git.ts'
 import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
-import { ignoresCase, makeWorkspace } from '../helpers/workspace.ts'
+import {
+  CONTRACT_1_LINE,
+  ignoresCase,
+  makeContract1Workspace,
+  makeWorkspace,
+} from '../helpers/workspace.ts'
 
 const seo = '# SEO\n\nEvery page sets a title.\n'
 const coding = '# Coding\n\nTwo-space indent.\n'
@@ -1224,4 +1229,24 @@ test('freshBlockHash is the hash sync writes, for a scope with a policy', async 
       path
     )
   }
+})
+
+test('--scope names an own scope only: an inherited property is an unknown scope, not a TypeError', async (t) => {
+  const root = await basic(t)
+  // Lowercased as every scope name is, so the inherited names are lowercase.
+  for (const name of ['constructor', 'valueof', '__proto__']) {
+    const r = await sync(['--yes', '--scope', name, '--cwd', root])
+    assert.equal(r.code, 1, name)
+    assert.equal(r.err, `unknown scope: ${name}\n`)
+  }
+})
+
+test('contract 1: sync says the line of upgrade alone, exit 1, and writes nothing', async (t) => {
+  const root = await makeContract1Workspace(t)
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 1)
+  assert.equal(r.err, `${CONTRACT_1_LINE}\n`)
+  assert.equal(r.out, '')
+  assert.equal(await readOrNull(join(root, 'AGENTS.md')), null)
+  assert.equal(await readOrNull(join(root, 'org', 'web', 'AGENTS.md')), null)
 })

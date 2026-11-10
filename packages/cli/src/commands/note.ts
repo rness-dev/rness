@@ -14,7 +14,12 @@ import {
   JournalRefused,
   journalReference,
 } from '../core/github-journal.ts'
-import { contextRepo, providerOf, repositories } from '../core/manifest.ts'
+import {
+  Contract1Error,
+  contextRepo,
+  providerOf,
+  repositories,
+} from '../core/manifest.ts'
 import { cloneHolding } from '../core/repos.ts'
 import { resolveScope } from '../core/scope.ts'
 import { plansInProgress, statusTabs } from '../core/status.ts'
@@ -407,8 +412,10 @@ export async function noteCommand(opts: {
     process.stdout.write(`${posted.reference}\n`)
     return 0
   } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    // The line of `upgrade` is said alone (spec 0038 §2), as every command does.
     process.stderr.write(
-      `rness: ${e instanceof Error ? e.message : String(e)}\n`
+      e instanceof Contract1Error ? `${message}\n` : `rness: ${message}\n`
     )
     return 1
   }

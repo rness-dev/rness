@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { collectMarkdown } from '../core/collect.ts'
 import { NUMBERED, STATUSES } from '../core/contract.ts'
 import { documentNumber } from '../core/documents.ts'
+import { refuseContract1 } from '../core/manifest.ts'
 import { scaffoldDir } from '../core/scaffold.ts'
 import type { CollectionName } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
@@ -97,6 +98,7 @@ export async function docNewCommand(
   const name = collection as CollectionName
   try {
     const ws = await findWorkspace(opts.cwd ?? process.cwd())
+    await refuseContract1(ws.rnessDir)
     const dir = join(ws.rnessDir, name)
     // A collection the scaffold made empty, or a workspace without it yet.
     await mkdir(dir, { recursive: true })

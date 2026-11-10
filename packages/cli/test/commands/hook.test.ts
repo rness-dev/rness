@@ -27,7 +27,12 @@ import { presetTemplate } from '../../src/core/presets.ts'
 import { readRefusals } from '../../src/core/refusals.ts'
 import { VERSION } from '../../src/version.ts'
 import { commitDir, git } from '../helpers/git.ts'
-import { ignoresCase, makeWorkspace } from '../helpers/workspace.ts'
+import {
+  CONTRACT_1_LINE,
+  ignoresCase,
+  makeContract1Workspace,
+  makeWorkspace,
+} from '../helpers/workspace.ts'
 
 const binPath = fileURLToPath(
   new URL('../../src/bin/rness.ts', import.meta.url)
@@ -1932,4 +1937,50 @@ test('session end with a summary declared: the run told the scope and the clone 
       ['board', 'run', 'session-end', '--session', 'claude · 1a2b3c4d'],
     ]
   )
+})
+
+// --- a rness.json still on contract 1 (spec 0038 §6, §11) --------------------
+
+const CONTRACT_1_REASON = `${CONTRACT_1_LINE}\n`
+
+test('contract 1: the session-start hook shows the line as the context that cannot load, once per channel', async (t) => {
+  const root = await makeContract1Workspace(t)
+  const r = await hook('session-start', {
+    cwd: join(root, 'org', 'web'),
+    source: 'startup',
+  })
+  assert.equal(r.code, 0)
+  const answer = JSON.parse(r.out)
+  assert.equal(answer.systemMessage, `rness: ${CONTRACT_1_LINE}`)
+  assert.equal(
+    answer.hookSpecificOutput.additionalContext,
+    `rness: ${CONTRACT_1_LINE}`
+  )
+})
+
+test('contract 1: an Edit or a Write under .rness/ is refused, the line its reason; rness.json included', async (t) => {
+  const root = await makeContract1Workspace(t)
+  for (const rel of ['standards/style.md', 'rness.json', 'standards/new.md']) {
+    const file = join(root, '.rness', ...rel.split('/'))
+    const edit = await hook(
+      'pre-tool-use',
+      rel === 'standards/new.md'
+        ? writeOf(file, root, '# New\n')
+        : editOf(file, root, rel === 'rness.json' ? '"acme"' : 'Style', 'x')
+    )
+    assert.equal(edit.code, 2, rel)
+    assert.equal(edit.err, CONTRACT_1_REASON, rel)
+  }
+})
+
+test('contract 1: an edit outside .rness/ passes, the policies not checked', async (t) => {
+  const root = await makeContract1Workspace(t)
+  const web = join(root, 'org', 'web')
+  const file = join(web, 'app.ts')
+  await writeFile(file, 'const a = 1\n')
+  const r = await hook(
+    'pre-tool-use',
+    editOf(file, web, 'const a = 1', `const a = 2 // ${DASH}`)
+  )
+  assert.deepEqual(r, { code: 0, out: '', err: '' })
 })

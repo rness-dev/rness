@@ -149,7 +149,10 @@ export async function scopeSummary(
   manifest: Manifest,
   scope: string | null
 ): Promise<ScopeSummary> {
-  const entry = scope === null ? undefined : manifest.scopes[scope]
+  const entry =
+    scope === null || !Object.hasOwn(manifest.scopes, scope)
+      ? undefined
+      : manifest.scopes[scope]
   const where =
     scope === null || entry === undefined
       ? 'global scope'

@@ -226,7 +226,9 @@ function hookClones(
     const declared = new Set(repositories(manifest).map((r) => r.name))
     return [...new Set(clones.filter((n) => declared.has(n)))]
   }
-  const entry = manifest.scopes[only]
+  const entry = Object.hasOwn(manifest.scopes, only)
+    ? manifest.scopes[only]
+    : undefined
   const owner = entry?.path.split('/')[1]?.toLowerCase()
   return owner !== undefined && clones.includes(owner) ? [owner] : []
 }

@@ -567,6 +567,33 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
   return parseManifest(raw)
 }
 
+/**
+ * A `rness.json` still on contract 1: every command but `upgrade` and
+ * `create` says this one line, alone (spec 0038 §2). A class of its own so
+ * that the callers which wrap or soften a failure (the policy hooks, the
+ * guard, `note`) can tell it from a file that is merely broken.
+ */
+export class Contract1Error extends Error {
+  constructor() {
+    super(`rness.json is contract 1: run ${rnessCommand()} upgrade (ADR 0012)`)
+  }
+}
+
+/**
+ * Throws `Contract1Error` when the `rness.json` in `rnessDir` declares
+ * contract 1; says nothing of a file that is missing or broken. For the
+ * commands that read no manifest of their own (`doc new`).
+ */
+export async function refuseContract1(rnessDir: string): Promise<void> {
+  let data: unknown
+  try {
+    data = JSON.parse(await readFile(join(rnessDir, 'rness.json'), 'utf8'))
+  } catch {
+    return
+  }
+  if (isRecord(data) && data.contract === 1) throw new Contract1Error()
+}
+
 /** The text of a `rness.json` as an object, whatever its contract. */
 function readObject(raw: string): Record<string, unknown> {
   let data: unknown
@@ -584,10 +611,7 @@ export function parseManifest(raw: string): Manifest {
   const data = readObject(raw)
   // The former shape is `upgrade`'s to read and rewrite (ADR 0012): said
   // before its keys, which this contract does not know.
-  if (data.contract === 1)
-    throw new Error(
-      `rness.json is contract 1: run ${rnessCommand()} upgrade (ADR 0012)`
-    )
+  if (data.contract === 1) throw new Contract1Error()
   if (data.contract !== 2)
     fail(`unsupported contract: ${JSON.stringify(data.contract)} (expected 2)`)
   // Refuse what this contract does not define: a typo (`scope`, `repo`) or a

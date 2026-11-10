@@ -25,7 +25,13 @@ import {
   type SkippedHook,
   gitBypasses,
 } from '../core/git-bypass.ts'
-import { loadManifest, parseManifest, repositories } from '../core/manifest.ts'
+import {
+  Contract1Error,
+  loadManifest,
+  parseManifest,
+  refuseContract1,
+  repositories,
+} from '../core/manifest.ts'
 import {
   type PolicyFailure,
   checkAddedLines,
@@ -499,6 +505,11 @@ async function editGuard(input: Input, io: HookIo): Promise<number> {
   if (label === null) return 0
   if (ownedWhole(label)) return refuse(io, [ownedRefusal(label)])
   const rel = await within(ws.rnessDir, file)
+  // While rness.json is on contract 1 the fix is `upgrade`, not an edit
+  // under Claude (spec 0038 §6): `rness.json` itself included. A hand edit
+  // outside Claude stays possible, which this guard does not see.
+  const onContract1 = rel === null ? null : await contract1Reason(ws)
+  if (onContract1 !== null) return refuse(io, [onContract1])
   const blocked = BLOCK_FILES.includes(posix.basename(label))
   const pws = await policyWorkspace(ws)
   // Policies that cannot be read are no policy here: the block and contract
@@ -721,6 +732,16 @@ async function preToolUse(input: Input, io: HookIo): Promise<number> {
       : await editGuard(input, io)
   } catch {
     return 0
+  }
+}
+
+/** The line of `upgrade` when this workspace's rness.json is on contract 1, else null. */
+async function contract1Reason(ws: Workspace): Promise<string | null> {
+  try {
+    await refuseContract1(ws.rnessDir)
+    return null
+  } catch (e) {
+    return e instanceof Contract1Error ? e.message : null
   }
 }
 

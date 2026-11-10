@@ -25,7 +25,7 @@ import { POLICY_REFUSED_EXIT } from '../../src/core/git-hooks.ts'
 import { findBlock } from '../../src/core/merge.ts'
 import { readRefusals } from '../../src/core/refusals.ts'
 import { capture } from '../helpers/capture.ts'
-import { makeWorkspace } from '../helpers/workspace.ts'
+import { makeContract1Workspace, makeWorkspace } from '../helpers/workspace.ts'
 
 // The developer's git configuration never reaches these repositories: a
 // global `commit.verbose` or `core.hooksPath` would change what they show.
@@ -885,5 +885,20 @@ test('through the CLI: hidden, its own command (never installs, never delegates)
     )
   } finally {
     await rm(base, { recursive: true, force: true })
+  }
+})
+
+test('contract 1: every hook fails open with one line naming upgrade, exit 0', async (t) => {
+  const root = await makeContract1Workspace(t)
+  const web = join(root, 'org', 'web')
+  await git(['init', '-q', '-b', 'main'], web)
+  for (const hook of ['pre-commit', 'commit-msg', 'pre-push']) {
+    const r = await check(hook, web, { input: '' })
+    assert.equal(r.code, 0, hook)
+    assert.equal(
+      r.err,
+      'rness: policies not checked: rness.json is contract 1: run rness upgrade\n',
+      hook
+    )
   }
 })

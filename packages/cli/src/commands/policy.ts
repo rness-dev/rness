@@ -4,7 +4,8 @@ import { basename, dirname, posix, resolve } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
 import { POLICY_REFUSED_EXIT } from '../core/git-hooks.ts'
-import { loadManifest } from '../core/manifest.ts'
+import { Contract1Error, loadManifest } from '../core/manifest.ts'
+import { rnessCommand } from '../core/pm.ts'
 import {
   type AddedLinesFile,
   type Ancestry,
@@ -73,6 +74,9 @@ const defaultIo = (): PolicyIo => ({
 })
 
 const NOT_CHECKED = 'rness: policies not checked: '
+/** Why policies are not checked on a contract-1 `rness.json`, as the hooks say it. */
+const contract1Cause = (): string =>
+  `rness.json is contract 1: run ${rnessCommand()} upgrade`
 const NOT_APPLIED = 'rness: policy not applied (invalid, run rness validate): '
 
 /** A large staged diff is still read whole; past this, the hook fails open. */
@@ -515,7 +519,10 @@ export async function policyCheckCommand(
     )
     return POLICY_REFUSED_EXIT
   } catch (e) {
-    say(`${NOT_CHECKED}${message(e)}`)
+    // The line of `upgrade` without the ADR pointer: the hook says why in one line (spec 0038 §11).
+    say(
+      `${NOT_CHECKED}${e instanceof Contract1Error ? contract1Cause() : message(e)}`
+    )
     return 0
   }
 }
