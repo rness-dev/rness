@@ -102,6 +102,11 @@ const LOCKFILES: readonly (readonly [string, PackageManager])[] = [
   ['package-lock.json', 'npm'],
 ]
 
+/** The lockfiles `pm` writes, by name. */
+export function lockfilesOf(pm: PackageManager): string[] {
+  return LOCKFILES.filter(([, of]) => of === pm).map(([name]) => name)
+}
+
 /** The package manager a workspace installs with: `packageManager`, else its lockfile, else npm. */
 export async function workspacePackageManager(
   rnessDir: string

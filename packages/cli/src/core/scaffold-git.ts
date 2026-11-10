@@ -130,6 +130,39 @@ export async function pendingScaffoldMerge(
   return unmerged.code === 0 && unmerged.stdout.trim() === ''
 }
 
+/**
+ * Whether `rnessDir`, holding a merge in progress, has nothing beside it but
+ * changes to `allowed` (a file, or a directory ending in `/`): the staged
+ * changes are the merge's own; any other unstaged change or untracked file
+ * is someone's work, never swept into the upgrade's commit.
+ */
+export async function cleanBesideMerge(
+  rnessDir: string,
+  allowed: readonly string[]
+): Promise<boolean> {
+  const r = await run(rnessDir, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+  ])
+  if (r.code !== 0) return false
+  const ours = (path: string): boolean =>
+    allowed.some((a) => (a.endsWith('/') ? path.startsWith(a) : path === a))
+  const fields = r.stdout.split('\0')
+  for (let i = 0; i < fields.length; i += 1) {
+    const entry = fields[i] ?? ''
+    if (entry === '') continue
+    const [x = ' ', y = ' '] = entry
+    const path = entry.slice(3)
+    // A rename or a copy names its origin in the next field.
+    if ('RC'.includes(x) || 'RC'.includes(y)) i += 1
+    const staged = x !== ' ' && x !== '?' && y === ' '
+    if (!staged && !ours(path)) return false
+  }
+  return true
+}
+
 /** `path` staged in `rnessDir`, as the merge in progress staged the rest. */
 export async function stageFile(rnessDir: string, path: string): Promise<void> {
   await must(rnessDir, ['add', '--', path])

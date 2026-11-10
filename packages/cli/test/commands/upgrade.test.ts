@@ -725,6 +725,63 @@ test('a scaffold merge left staged by an upgrade whose sync failed is concluded 
   }
 })
 
+test('concluding its merge, upgrade takes its own files only: an unrelated untracked or modified file stops it, nothing changed; the lockfile goes in', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0', bin: await failingSyncBin(t) })
+  /** A workspace whose upgrade to 0.5.0 stopped at the sync, its merge staged. */
+  const staged = async (): Promise<string> => {
+    const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+    await commitManifest(root, API_CONTRACT_2, {
+      'notes.md': 'ours\n',
+      'package-lock.json': '{}\n',
+    })
+    process.env['FAKE_SYNC_FAIL'] = '1'
+    const first = await upgrade(undefined, { yes: true, cwd: root })
+    delete process.env['FAKE_SYNC_FAIL']
+    assert.equal(first.code, 1)
+    await git(join(root, '.rness'), 'rev-parse', '-q', '--verify', 'MERGE_HEAD')
+    return root
+  }
+  for (const [rel, content] of [
+    ['draft.md', 'wip\n'],
+    ['notes.md', 'ours, edited\n'],
+  ] as const) {
+    const root = await staged()
+    const rnessDir = join(root, '.rness')
+    await writeFile(join(rnessDir, rel), content)
+    const head = await git(rnessDir, 'rev-parse', 'HEAD')
+    const index = await git(rnessDir, 'write-tree')
+    const r = await upgrade(undefined, { yes: true, cwd: root })
+    assert.equal(r.code, 1, rel)
+    assert.equal(
+      r.err,
+      `${basename(root)}/.rness has uncommitted changes; commit or stash them, then rness upgrade\n`,
+      rel
+    )
+    assert.doesNotMatch(r.out, /resume|PINNED|committed/, rel)
+    await git(rnessDir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')
+    assert.equal(await git(rnessDir, 'rev-parse', 'HEAD'), head, rel)
+    assert.equal(await git(rnessDir, 'write-tree'), index, rel)
+    assert.equal(await read(root, rel), content, rel)
+  }
+
+  // The lockfile, as the install rewrote it: concluded, the lockfile in.
+  const root = await staged()
+  const rnessDir = join(root, '.rness')
+  await writeFile(
+    join(rnessDir, 'package-lock.json'),
+    '{ "lockfileVersion": 3 }\n'
+  )
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^resume {3}the upgrade to @rness\/cli 0\.5\.0/m)
+  assert.match(r.out, /^committed .*: chore: rness 0\.5\.0$/m)
+  assert.equal(await git(rnessDir, 'status', '--porcelain'), '')
+  assert.equal(
+    await git(rnessDir, 'show', 'HEAD:package-lock.json'),
+    '{ "lockfileVersion": 3 }'
+  )
+})
+
 test('rewritten during a merge, rness.json is staged with it: after a failed sync, git merge --abort puts contract 1 back', async (t) => {
   await fakeNpm(t, { latest: '0.5.0', bin: await failingSyncBin(t) })
   const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })

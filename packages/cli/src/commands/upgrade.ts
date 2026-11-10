@@ -19,6 +19,7 @@ import {
 import {
   EXACT_VERSION,
   compareVersions,
+  lockfilesOf,
   readPin,
   workspacePackageManager,
   writePin,
@@ -32,6 +33,7 @@ import {
 import { renderScaffold } from '../core/scaffold-copy.ts'
 import {
   buildScaffoldCommit,
+  cleanBesideMerge,
   commitUpgrade,
   findScaffoldBase,
   isRepository,
@@ -384,9 +386,7 @@ export async function upgradeCommand(
     }
     // The scaffold merge of this target, staged by an upgrade whose sync
     // failed (0.24.0's on a contract-1 file, spec 0038 §11), nothing
-    // unmerged: concluded by this run. The install that followed it may have
-    // written the lockfile, so its changes are not told apart from the
-    // merge's. Any other merge stops.
+    // unmerged: concluded by this run. Any other merge stops.
     const resuming = await pendingScaffoldMerge(ws.rnessDir, target)
     if (!resuming && (await mergeInProgress(ws.rnessDir))) {
       process.stderr.write(
@@ -394,7 +394,19 @@ export async function upgradeCommand(
       )
       return 1
     }
-    if (!resuming && !(await isClean(ws.rnessDir))) {
+    const pm = await workspacePackageManager(ws.rnessDir)
+    // Concluding it, the staged changes are the merge's; beside them only
+    // what the upgrade itself writes (the pin, the install, the rewrite):
+    // nobody's other work goes into its commit.
+    const clean = resuming
+      ? await cleanBesideMerge(ws.rnessDir, [
+          'package.json',
+          ...lockfilesOf(pm),
+          'rness.json',
+          'node_modules/',
+        ])
+      : await isClean(ws.rnessDir)
+    if (!clean) {
       process.stderr.write(
         `${label} has uncommitted changes; commit or stash them, then ${rnessCommand()} upgrade\n`
       )
@@ -447,7 +459,6 @@ export async function upgradeCommand(
       return 1
     }
 
-    const pm = await workspacePackageManager(ws.rnessDir)
     if (resuming)
       ui.line(
         'resume',
