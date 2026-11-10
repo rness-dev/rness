@@ -104,4 +104,4 @@ export async function makeContract1Workspace(t: TestContext): Promise<string> {
 
 /** The line every command but `upgrade` and `create` says on a contract-1 file (spec 0038 §2). */
 export const CONTRACT_1_LINE =
-  'rness.json is contract 1: run rness upgrade (ADR 0012)'
+  'rness.json is contract 1: run npx @rness/cli@latest upgrade (ADR 0012)'

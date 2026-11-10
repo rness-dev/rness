@@ -892,12 +892,20 @@ test('contract 1: every hook fails open with one line naming upgrade, exit 0', a
   const root = await makeContract1Workspace(t)
   const web = join(root, 'org', 'web')
   await git(['init', '-q', '-b', 'main'], web)
+  // The same line whatever ran the hook: `upgrade` never delegates, so it
+  // names the latest copy, not the runner of this one.
+  const saved = process.env['npm_config_user_agent']
+  t.after(() => {
+    if (saved === undefined) delete process.env['npm_config_user_agent']
+    else process.env['npm_config_user_agent'] = saved
+  })
+  process.env['npm_config_user_agent'] = 'pnpm/12.5.1 npm/? node/v24.0.0'
   for (const hook of ['pre-commit', 'commit-msg', 'pre-push']) {
     const r = await check(hook, web, { input: '' })
     assert.equal(r.code, 0, hook)
     assert.equal(
       r.err,
-      'rness: policies not checked: rness.json is contract 1: run rness upgrade\n',
+      'rness: policies not checked: rness.json is contract 1: run npx @rness/cli@latest upgrade\n',
       hook
     )
   }

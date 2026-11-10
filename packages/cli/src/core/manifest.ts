@@ -8,7 +8,6 @@ import {
   readPresetEntry,
 } from './board-declaration.ts'
 import { writeFileAtomic } from './fs.ts'
-import { rnessCommand } from './pm.ts'
 import { currentSshUrl, repoUrl } from './remote.ts'
 import { scopeChain } from './scope.ts'
 import type {
@@ -568,6 +567,14 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
 }
 
 /**
+ * The upgrade a contract-1 `rness.json` asks for, the second of the two
+ * steps of spec 0038 §11. `upgrade` never delegates, so a bare `rness
+ * upgrade` may run a global copy below 0.25.0, which cannot rewrite the
+ * file; the latest copy can, whatever ran this one.
+ */
+export const CONTRACT_1_UPGRADE = 'npx @rness/cli@latest upgrade'
+
+/**
  * A `rness.json` still on contract 1: every command but `upgrade` and
  * `create` says this one line, alone (spec 0038 §2). A class of its own so
  * that the callers which wrap or soften a failure (the policy hooks, the
@@ -575,7 +582,7 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
  */
 export class Contract1Error extends Error {
   constructor() {
-    super(`rness.json is contract 1: run ${rnessCommand()} upgrade (ADR 0012)`)
+    super(`rness.json is contract 1: run ${CONTRACT_1_UPGRADE} (ADR 0012)`)
   }
 }
 

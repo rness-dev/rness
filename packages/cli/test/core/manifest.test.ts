@@ -429,9 +429,27 @@ test('contract 1 names upgrade; another contract is unsupported', async (t) => {
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     await assert.rejects(
       () => loadManifest(d),
-      new Error('rness.json is contract 1: run rness upgrade (ADR 0012)')
+      new Error(
+        'rness.json is contract 1: run npx @rness/cli@latest upgrade (ADR 0012)'
+      )
     )
   }
+  // `upgrade` never delegates: the line names the latest copy whatever ran
+  // this one, never a runner that may resolve to a copy reading no contract 1.
+  const saved = process.env['npm_config_user_agent']
+  t.after(() => {
+    if (saved === undefined) delete process.env['npm_config_user_agent']
+    else process.env['npm_config_user_agent'] = saved
+  })
+  process.env['npm_config_user_agent'] = 'pnpm/12.5.1 npm/? node/v24.0.0'
+  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  await assert.rejects(
+    () => loadManifest(d),
+    new Error(
+      'rness.json is contract 1: run npx @rness/cli@latest upgrade (ADR 0012)'
+    )
+  )
   for (const contract of [3, '2', undefined]) {
     const d = await fixture({ contract, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))

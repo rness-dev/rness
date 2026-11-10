@@ -57,7 +57,9 @@ test('the contract-1 copies of ws-basic, ws-routing, ws-scoped: written back as 
     // Every other command refuses the former file (spec 0038 §2).
     assert.throws(
       () => parseManifest(before),
-      new Error('rness.json is contract 1: run rness upgrade (ADR 0012)')
+      new Error(
+        'rness.json is contract 1: run npx @rness/cli@latest upgrade (ADR 0012)'
+      )
     )
     const { manifest, notes } = shaped(before)
     assert.deepEqual(notes, [], ws)

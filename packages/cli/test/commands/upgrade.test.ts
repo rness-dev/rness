@@ -628,7 +628,7 @@ async function failingSyncBin(t: TestContext): Promise<string> {
     [
       'const args = process.argv.slice(2)',
       "if (args[0] === 'sync' && process.env.FAKE_SYNC_FAIL === '1') {",
-      "  console.error('rness.json is contract 1: run rness upgrade (ADR 0012)')",
+      "  console.error('rness.json is contract 1: run npx @rness/cli@latest upgrade (ADR 0012)')",
       '  process.exit(1)',
       '}',
       "console.log('PINNED 0.5.0 ' + args.join(' '))",
@@ -671,7 +671,10 @@ test('a scaffold merge left staged by an upgrade whose sync failed is concluded 
     delete process.env['FAKE_SYNC_FAIL']
     assert.equal(first.code, 1)
     assert.match(first.out, /^installed dependencies with npm$/m)
-    assert.match(first.err, /rness\.json is contract 1: run rness upgrade/)
+    assert.match(
+      first.err,
+      /rness\.json is contract 1: run npx @rness\/cli@latest upgrade/
+    )
     await git(rnessDir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')
     assert.equal(await read(root, 'rness.json'), text)
 
