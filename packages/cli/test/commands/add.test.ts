@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdir, readdir } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -115,7 +115,7 @@ test('add <repo> expands with the org and --host; --scopes declares sub-scopes',
   assert.equal(subs.code, 0, subs.err)
   assert.match(
     subs.out,
-    /^adopted {2}org\/platform\ndeclared scope platform \(org\/platform\)\ndeclared scope web \(org\/platform\/apps\/web, extends platform\)\n/
+    /^adopted {2}org\/platform\ndeclared scope platform \(org\/platform\)\ndeclared scope web \(apps\/web, in platform\)\n/
   )
   const m = await loadManifest(join(root, '.rness'))
   assert.deepEqual(m.scopes['web'], {
@@ -125,6 +125,54 @@ test('add <repo> expands with the org and --host; --scopes declares sub-scopes',
     extends: ['platform'],
   })
   await access(join(root, 'org', 'platform', 'apps', 'web', 'AGENTS.md'))
+  const file = await readFile(join(root, '.rness', 'rness.json'), 'utf8')
+  assert.match(
+    file,
+    /"platform": \{\n {6}"url": "[^"]+",\n {6}"scopes": \{\n {8}"web": \{ "path": "apps\/web" \}\n/
+  )
+  assert.doesNotMatch(file, /extends/)
+})
+
+test('add --scopes refuses a name taken under another repository, and removes a clone whose sub-scope is missing', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('platform', { 'README.md': '# platform\n' })
+  await remote.addRepo('app', { 'README.md': '# app\n' })
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    dirs: ['org', 'org/platform/apps/web'],
+    scopes: {
+      platform: {
+        url: `${remote.host}acme/platform.git`,
+        scopes: { web: { path: 'apps/web' } },
+      },
+    },
+  })
+  const missing = await add([
+    '--yes',
+    '--cwd',
+    root,
+    '--host',
+    remote.host,
+    '--scopes',
+    'apps/none',
+    'app',
+  ])
+  assert.equal(missing.code, 1)
+  assert.match(missing.err, /org\/app\/apps\/none does not exist/)
+  await assert.rejects(access(join(root, 'org', 'app')))
+  await mkdir(join(root, 'org', 'app', 'apps', 'web'), { recursive: true })
+  const taken = await add([
+    '--yes',
+    '--cwd',
+    root,
+    '--host',
+    remote.host,
+    '--scopes',
+    'apps/web',
+    'app',
+  ])
+  assert.equal(taken.code, 1)
+  assert.match(taken.err, /scope "web" is already declared under platform/)
 })
 
 test('refuses without a TTY and --yes, outside a workspace, and on a bad name', async (t) => {

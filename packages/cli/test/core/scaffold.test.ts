@@ -42,6 +42,16 @@ test('the scaffold manifest is a valid empty workspace', async () => {
   })
 })
 
+test('the scaffold manifest is written as contract 2, and WORKSPACE.md describes it', async () => {
+  assert.equal(
+    await readFile(join(scaffoldDir(), 'rness.json'), 'utf8'),
+    '{ "contract": 2, "scopes": {} }\n'
+  )
+  const doc = await readFile(join(scaffoldDir(), 'WORKSPACE.md'), 'utf8')
+  assert.match(doc, /`scopes`/)
+  assert.doesNotMatch(doc, /`repos`/)
+})
+
 test('the scaffold passes the contract (template ADR is skipped)', async () => {
   assert.deepEqual(await checkContract(scaffoldDir()), [])
 })

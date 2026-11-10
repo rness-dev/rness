@@ -37,7 +37,7 @@ import { reportError } from '../report.ts'
 import { syncCommand } from './sync.ts'
 
 export interface AddOptions {
-  /** Comma-separated sub-directories to declare as scopes extending the repository scope. */
+  /** Comma-separated sub-directories of the repository to declare as scopes nested under it. */
   scopes?: string
   /** Force `git@github.com:` without the SSH test. */
   ssh?: boolean
@@ -60,9 +60,16 @@ function printDeclared(
     if (already.has(name)) continue
     const entry = result.manifest.scopes[name]
     if (entry === undefined) continue
-    const ext =
-      entry.extends.length === 0 ? '' : `, extends ${entry.extends.join(', ')}`
-    ui.line('declared', `scope ${name} (${entry.path}${ext})`)
+    const parent =
+      entry.parent === null ? undefined : result.manifest.scopes[entry.parent]
+    // A part reads as in the file: its path from its repository, then where it sits.
+    if (entry.parent === null || parent === undefined)
+      ui.line('declared', `scope ${name} (${entry.path})`)
+    else
+      ui.line(
+        'declared',
+        `scope ${name} (${entry.path.slice(`${parent.path}/`.length)}, in ${entry.parent})`
+      )
   }
 }
 

@@ -388,7 +388,7 @@ test('declares sub-scopes that extend the repository scope; missing dirs and col
       host: 'file:///unused/',
       scopes: ['tools/web'],
     }),
-    /scope "web" already points at org\/platform\/apps\/web/
+    /scope "web" is already declared under platform/
   )
 })
 
@@ -414,7 +414,7 @@ test('refuses a repository scope already pointing elsewhere, and keeps a hand-ad
       host: 'file:///unused/',
       scopes: [],
     }),
-    /scope "api" already points at org\/other\/apps\/api/
+    /scope "api" is already declared under other/
   )
   assert.equal(
     await exists(join(taken, 'org', 'api')),

@@ -41,6 +41,13 @@ export interface AddRepositoryResult {
   declared: string[]
 }
 
+/** A name already in the tree: where it sits, so the fix is in the line (spec 0038 §4). */
+function taken(name: string, existing: ScopeEntry): string {
+  return existing.parent === null
+    ? `scope "${name}" is already declared`
+    : `scope "${name}" is already declared under ${existing.parent}`
+}
+
 /** Clone (or adopt) a repository under `org/` and declare it — manifest written last (spec 0003 §3). */
 export async function addRepository(
   input: AddRepositoryInput
@@ -70,7 +77,7 @@ export async function addRepository(
     ? input.manifest.scopes[name]
     : undefined
   if (current !== undefined && current.path.toLowerCase() !== repoPath)
-    throw new Error(`scope "${name}" already points at ${current.path}`)
+    throw new Error(taken(name, current))
   const scopes: Record<string, ScopeEntry> = {
     ...input.manifest.scopes,
     [name]: {
@@ -101,8 +108,14 @@ export async function addRepository(
       existing !== undefined &&
       existing.path.toLowerCase() !== path.toLowerCase()
     )
-      throw new Error(`scope "${base}" already points at ${existing.path}`)
-    scopes[base] = { path, url: null, parent: name, extends: [name] }
+      throw new Error(taken(base, existing))
+    // At the same path the part keeps its `extends`, as the repository does.
+    scopes[base] = {
+      path,
+      url: null,
+      parent: name,
+      extends: existing?.extends ?? [name],
+    }
     subs.push({ clean, base })
   }
 

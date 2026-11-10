@@ -272,6 +272,36 @@ test("a scaffold change reaches an untouched file; the team's edit of another st
   assert.match(await read(root, 'README.md'), /^Team intro\./)
 })
 
+test("the scaffold's rness.json is not merged: a workspace's contract-1 file is left to the rewrite, no conflict", async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  // As 0.24.0 created it: the scaffold's one line, then the team's edit of it.
+  await writeFile(
+    join(rnessDir, 'rness.json'),
+    '{ "contract": 1, "repos": {}, "scopes": {} }\n'
+  )
+  await git(rnessDir, 'commit', '-qa', '--amend', '--no-edit')
+  const edited = `${JSON.stringify(
+    {
+      contract: 1,
+      org: 'acme',
+      repos: { api: 'https://github.com/acme/api.git' },
+      scopes: { api: { path: 'org/api' } },
+    },
+    null,
+    2
+  )}\n`
+  await writeFile(join(rnessDir, 'rness.json'), edited)
+  await git(rnessDir, 'commit', '-qam', 'chore: our repositories')
+  // The scaffold of this version is contract 2: rness.json is not among the
+  // files the merge writes (spec 0013 §1), so git has nothing to conflict on.
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.doesNotMatch(r.err, /conflict/)
+  assert.doesNotMatch(r.out, /rness\.json/)
+  assert.equal(await read(root, 'rness.json'), edited)
+})
+
 const POLICY_FILES = [
   '.githooks/commit-msg',
   '.githooks/pre-push',

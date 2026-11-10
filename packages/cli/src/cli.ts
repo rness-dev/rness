@@ -277,12 +277,12 @@ function buildProgram(state: RunState): Command {
   program
     .command('add')
     .description(
-      'Clone (or adopt) a repository under org/ and declare it in rness.json'
+      'Clone (or adopt) a repository under org/ and declare it in the scopes of rness.json'
     )
     .argument('<repo>', '<repo>, <owner>/<repo>, or a clone URL')
     .option(
       '--scopes <list>',
-      'comma-separated sub-directories to declare as scopes extending the repository'
+      'comma-separated sub-directories of the repository, declared as scopes nested under it'
     )
     .option(
       '--ssh',
