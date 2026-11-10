@@ -1157,19 +1157,21 @@ dependency does this: `util.styleText`, and a banner kept as a constant.
 ### Upgrade
 
     rness upgrade            # the latest release; `rness upgrade 0.5.0` for another
-    npx @rness/cli@latest upgrade     # your global rness is below 0.8.0, or the pin is below 0.5.0
+    npx @rness/cli@latest upgrade     # your global rness is below 0.8.0, or the pin is below 0.5.0, or below 0.25.0 on a contract-1 workspace
     pnpm rness upgrade       # inside .rness: the pinned copy merges its own scaffold
 
 The version is written in one place, `.rness/package.json`. `upgrade` pins it
 there (exact, the rest of the file untouched), installs with the workspace's
 package manager, syncs through the new copy, then commits `.rness`
 (`chore: rness <version>`); a failed install restores the file. Push
-`.rness`. Teammates pull, and the next `rness` command in that
-workspace installs the new pin itself — frozen, so the working tree stays
-clean — and carries on: nothing to remember, nothing to run.
-`RNESS_NO_INSTALL=1` turns that off and restores the warning, for CI, a
-container image, or a machine that cannot install. A workspace still on 0.5.0
-has no such catch-up: moving it to 0.5.1 is the last manual install.
+`.rness`. Teammates pull, then run any `rness` command (`rness status`)
+before opening Claude Code: it installs the new pin itself, frozen, so the
+working tree stays clean, and carries on. The hooks run the copy installed in
+`.rness` and never install a pin: until a command has, they run the earlier
+version. `RNESS_NO_INSTALL=1` turns the install off and restores the warning,
+for CI, a container image, or a machine that cannot install. A workspace
+still on 0.5.0 has no such catch-up: moving it to 0.5.1 is the last manual
+install.
 
 The catch-up needs one of two things: a launcher — the `rness` you typed,
 usually the global install — at 0.5.1 or later, or an installed copy at 0.5.3
@@ -1193,8 +1195,13 @@ scope at org/api`, `scope "api" at org/api has no repository: add its url, or
 remove it`, `scope "web" at org/platform/apps/web is inside no repository of
 rness.json`, `scope "tools" at tools/ is outside org/`, `repo "web": its scope
 at org/web is named "frontend"; rename it web`), exit 1, nothing changed and
-the pin where it was, so the earlier version keeps working while the team
-edits the file by hand. Otherwise, after the install and before the sync, it
+the pin where it was. With the pin below 0.25.0, the earlier version keeps
+working while the team edits the file by hand. With the pin already at 0.25.0
+or later (a Dependabot pull request merged first), every command refuses the
+file and the Claude Code guard refuses edits under `.rness/`: edit
+`rness.json` outside Claude, or step back first with
+`npx @rness/cli@0.24.0 upgrade 0.24.0`, which reads contract 1. Otherwise,
+after the install and before the sync, it
 writes the file (`rewrote rness.json as contract 2 (ADR 0012)`), says what
 nesting changed (`scope "web" now inherits platform (nested)`), and
 `chore: rness <version>` holds it. A downgrade below 0.25.0 of a contract-2
@@ -1203,24 +1210,32 @@ file is refused.
 - One step: `npx @rness/cli@latest upgrade`, which runs the new copy.
 - Two steps: `pnpm rness upgrade` (or any copy below 0.25.0) installs 0.25
   and stops on the sync, as the new copy reads no contract 1 (`rness.json is
-contract 1: run rness upgrade`). Run `rness upgrade` again: it finishes the
-  merge, rewrites the file, syncs and commits. If a newer release came out
-  between the two runs, `rness upgrade <version>` finishes it.
+contract 1: run npx @rness/cli@latest upgrade`). Run that, or the pinned copy
+  from `.rness` (`pnpm rness upgrade`, `npm exec -- rness upgrade`): it
+  finishes the merge, rewrites the file, syncs and commits. A global `rness`
+  below 0.25.0 cannot: it answers "merge in progress" or "already at". If a
+  newer release came out between the two runs, `upgrade <version>`, with the
+  version the first run installed, finishes it.
 - In a workspace whose `packageManager` is npm, `pnpm rness` fails: use
   `npm exec -- rness upgrade` or `npx rness upgrade`.
 - Every command but `upgrade` (and `login`, `logout`) refuses a contract-1
   file with that one line, exit 1. `rness policy check` and the hooks do not
   block: they print `rness: policies not checked: rness.json is contract 1:
-run rness upgrade`.
+run npx @rness/cli@latest upgrade`.
 - `rness create <org>` of 0.25 joining a workspace still on contract 1 stops
   before cloning more, naming the version to use: `npx @rness/cli@<pin>
-create <org>`.
+create <org>`, with the `--provider` and `--host` given. When the pin already
+  names 0.25.0 or later, it names the upgrade instead: a teammate runs
+  `npx @rness/cli@latest upgrade` in `.rness` and pushes, then `create` again.
 
 After the Dependabot pull request moves the pin, `rness validate` fails in its
-CI, saying `run rness upgrade`: until the file is rewritten the new copy
-reads no contract 1. One developer runs `rness upgrade` (on the pull request's
-branch before merging it, or on `main` after) and pushes; the others
-`git pull`.
+CI, saying `run npx @rness/cli@latest upgrade`: until the file is rewritten
+the new copy reads no contract 1. Tell the team: one developer runs
+`npx @rness/cli@latest upgrade` in `.rness` (on the pull request's branch
+before merging it, or on `main` after) and pushes; the others `git pull`, then
+run any `rness` command (`rness status`) before opening Claude Code. Until a
+command installs the new pin, the copy still installed reads no contract 2,
+and the hooks it runs say `rness.json: unsupported contract: 2 (expected 1)`.
 
 `upgrade` also merges the scaffold of the target version into `.rness`, with
 git: the CI workflow, the hooks, the starter documents. After a Dependabot
@@ -1274,12 +1289,20 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - `rness add` writes `scopes.<repo> = { url }` and each `--scopes` part under
   it, with its `path` and no `extends`.
 - `rness create` writes contract 2, `--blank` too; joining a workspace on
-  contract 1 stops with the command to use at its pin.
+  contract 1 stops with the command to use at its pin, with the `--provider`
+  and `--host` given, or asks for the upgrade first when the pin already
+  reads contract 2.
 - `rness upgrade` checks `rness.json` first, then rewrites a contract-1 file
   once, in its `chore: rness <version>` commit; every other command refuses
-  a contract-1 file with `run rness upgrade`. Upgrade with
-  `npx @rness/cli@latest upgrade` to do it in one step; see "Upgrade".
+  a contract-1 file with `run npx @rness/cli@latest upgrade`, which does it
+  in one step; see "Upgrade". Its next steps tell teammates to run a `rness`
+  command after `git pull`, before opening Claude Code.
 - `rness validate` reports a redundant `extends` (an ancestor).
+- Library API: `RepoEntry` and `Manifest.repos` are gone; `ScopeEntry.url`
+  and `ScopeEntry.parent` are required and `Manifest.contract` is `1 | 2`;
+  `repositories()` (its `Repository` type) lists the repositories;
+  `loadManifest` throws on a contract-1 file and `writeManifest` writes
+  contract 2 only.
 
 ## 0.24.0 - policies as data
 
