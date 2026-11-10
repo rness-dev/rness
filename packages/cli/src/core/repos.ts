@@ -109,11 +109,12 @@ export async function addRepository(
       existing.path.toLowerCase() !== path.toLowerCase()
     )
       throw new Error(taken(base, existing))
-    // At the same path the part keeps its `extends`, as the repository does.
+    // At the same path the part keeps its `extends`, as the repository does,
+    // and its parent: one nested deeper by hand stays where it is.
     scopes[base] = {
       path,
       url: null,
-      parent: name,
+      parent: existing?.parent ?? name,
       extends: existing?.extends ?? [name],
     }
     subs.push({ clean, base })

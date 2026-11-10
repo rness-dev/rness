@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { exists } from '../../src/core/fs.ts'
 import { originUrl } from '../../src/core/git.ts'
-import { loadManifest, repositories } from '../../src/core/manifest.ts'
+import {
+  loadManifest,
+  repositories,
+  writeManifest,
+} from '../../src/core/manifest.ts'
 import {
   addRepository,
   cloneHolding,
@@ -389,6 +393,69 @@ test('declares sub-scopes that extend the repository scope; missing dirs and col
       scopes: ['tools/web'],
     }),
     /scope "web" is already declared under platform/
+  )
+})
+
+test('re-adding a repository keeps a part nested deeper where it is: its parent and its extends', async (t) => {
+  const url = await makeBareRepo(t, 'app')
+  const { root, rnessDir, manifest } = await ws(t)
+  await addRepository({
+    root,
+    rnessDir,
+    manifest,
+    spec: url,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: [],
+  })
+  // A part of a part, as a maintainer would nest it by hand, extending
+  // another repository.
+  await writeFile(
+    join(rnessDir, 'rness.json'),
+    JSON.stringify({
+      contract: 2,
+      org: 'acme',
+      scopes: {
+        shared: { url: 'https://github.com/acme/shared.git' },
+        app: {
+          url,
+          scopes: {
+            platform: {
+              path: 'platform',
+              scopes: { web: { path: 'web', extends: ['shared'] } },
+            },
+          },
+        },
+      },
+    })
+  )
+  const nested = await loadManifest(rnessDir)
+  await writeManifest(rnessDir, nested)
+  const before = await readFile(join(rnessDir, 'rness.json'), 'utf8')
+  assert.match(before, /"web": \{ "path": "web", "extends": \["shared"\] \}/)
+  await mkdir(join(root, 'org', 'app', 'platform', 'web'), { recursive: true })
+
+  const readded = await addRepository({
+    root,
+    rnessDir,
+    manifest: nested,
+    spec: url,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: ['platform/web'],
+  })
+  assert.equal(readded.action, 'adopted')
+  assert.deepEqual(readded.declared, ['app', 'web'])
+  assert.deepEqual(readded.manifest.scopes['web'], {
+    path: 'org/app/platform/web',
+    url: null,
+    parent: 'platform',
+    extends: ['platform', 'shared'],
+  })
+  assert.equal(
+    await readFile(join(rnessDir, 'rness.json'), 'utf8'),
+    before,
+    'the file is unchanged: web stays under platform, its extends as written'
   )
 })
 
