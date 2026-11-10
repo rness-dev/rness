@@ -10,6 +10,7 @@ import {
 import { writeFileAtomic } from './fs.ts'
 import { rnessCommand } from './pm.ts'
 import { currentSshUrl, repoUrl } from './remote.ts'
+import { scopeChain } from './scope.ts'
 import type {
   BoardEntry,
   Boards,
@@ -199,6 +200,12 @@ const KEYS = [
   'scopes',
 ]
 
+/**
+ * The top-level keys of contract 1, as 0.24.0 read them: `repos` beside a
+ * flat `scopes`, and `projects` and `pulse`, the former names of `boards`.
+ */
+const FORMER_KEYS = [...KEYS, 'projects', 'pulse', 'repos']
+
 function fail(message: string): never {
   throw new Error(`rness.json: ${message}`)
 }
@@ -207,13 +214,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function checkPath(scope: string, path: unknown): string {
+/**
+ * A scope's `path`: relative, without `..` or an empty segment. A `.`
+ * segment is refused by contract 2; 0.24.0 read it in contract 1, and so
+ * does `readContract1`, which refuses it as it shapes the file.
+ */
+function checkPath(scope: string, path: unknown, contract: 1 | 2 = 2): string {
   if (typeof path !== 'string' || path === '')
     fail(`scope "${scope}" needs a string "path"`)
   if (path.startsWith('/')) fail(`scope "${scope}" path must be relative`)
   if (path.split('/').includes('..'))
     fail(`scope "${scope}" path must not contain ".."`)
-  if (path.split('/').includes('.'))
+  if (contract === 2 && path.split('/').includes('.'))
     fail(`scope "${scope}" path must not contain "."`)
   if (path.split('/').some((segment) => segment === ''))
     fail(`scope "${scope}" path must not contain empty segments`)
@@ -555,8 +567,8 @@ export async function loadManifest(rnessDir: string): Promise<Manifest> {
   return parseManifest(raw)
 }
 
-/** Validate the text of a `rness.json`, as `loadManifest` does the file's. */
-export function parseManifest(raw: string): Manifest {
+/** The text of a `rness.json` as an object, whatever its contract. */
+function readObject(raw: string): Record<string, unknown> {
   let data: unknown
   try {
     data = JSON.parse(raw)
@@ -564,6 +576,12 @@ export function parseManifest(raw: string): Manifest {
     fail(`invalid JSON (${e instanceof Error ? e.message : String(e)})`)
   }
   if (!isRecord(data)) fail('must be a JSON object')
+  return data
+}
+
+/** Validate the text of a `rness.json`, as `loadManifest` does the file's. */
+export function parseManifest(raw: string): Manifest {
+  const data = readObject(raw)
   // The former shape is `upgrade`'s to read and rewrite (ADR 0012): said
   // before its keys, which this contract does not know.
   if (data.contract === 1)
@@ -590,6 +608,320 @@ export function parseManifest(raw: string): Manifest {
     ...(refused.length === 0 ? {} : { refused }),
     ...(formerKey === undefined ? {} : { formerKey }),
     scopes: readScopes(data.scopes),
+  }
+}
+
+/** A scope of contract 1, as 0.24.0 read it: its path from the workspace root, the names it extends. */
+interface FormerScope {
+  path: string
+  extends: string[]
+}
+
+/**
+ * `repos` of contract 1, names to clone URLs, as 0.24.0 read it. A key
+ * besides `url` was read as nothing; contract 2 has no place for it, so it
+ * is a line of `refusals` rather than lost in the rewrite.
+ */
+function readFormerRepos(
+  value: unknown,
+  refusals: string[]
+): Map<string, string> {
+  const raw = value ?? {}
+  if (!isRecord(raw)) fail('"repos" must be an object')
+  const repos = new Map<string, string>()
+  for (const [name, entry] of Object.entries(raw)) {
+    if (!NAME.test(name))
+      fail(`repo name "${name}" may only contain ${NAME_RULE}`)
+    if (!isRecord(entry) || typeof entry.url !== 'string')
+      fail(`repo "${name}" needs a string "url"`)
+    for (const key of Object.keys(entry))
+      if (key !== 'url')
+        refusals.push(`repo "${name}": unknown key ${JSON.stringify(key)}`)
+    repos.set(name, entry.url)
+  }
+  return repos
+}
+
+/**
+ * The flat `scopes` of contract 1, as 0.24.0 read it; a key besides `path`
+ * and `extends` is a line of `refusals`, as in `readFormerRepos`.
+ */
+function readFormerScopes(
+  value: unknown,
+  refusals: string[]
+): Map<string, FormerScope> {
+  const raw = value ?? {}
+  if (!isRecord(raw)) fail('"scopes" must be an object')
+  const scopes = new Map<string, FormerScope>()
+  for (const [name, entry] of Object.entries(raw)) {
+    if (!NAME.test(name))
+      fail(`scope name "${name}" may only contain ${NAME_RULE}`)
+    if (!isRecord(entry)) fail(`scope "${name}" must be an object`)
+    const path = checkPath(name, entry.path, 1)
+    const ext = entry.extends ?? []
+    if (!Array.isArray(ext) || !ext.every((t) => typeof t === 'string'))
+      fail(`scope "${name}" extends must be an array of scope names`)
+    for (const key of Object.keys(entry))
+      if (key !== 'path' && key !== 'extends')
+        refusals.push(`scope "${name}": unknown key ${JSON.stringify(key)}`)
+    scopes.set(name, { path, extends: ext as string[] })
+  }
+  for (const [name, scope] of scopes)
+    for (const target of scope.extends)
+      if (!scopes.has(target))
+        fail(`scope "${name}" extends unknown scope "${target}"`)
+  return scopes
+}
+
+/** A scope of contract 1 in its repository: `rel` its path below `org/<repo>`, empty for the repository's own. */
+interface Placed {
+  name: string
+  repo: string
+  rel: string
+  /** The path as the file wrote it, for the lines. */
+  written: string
+  extends: string[]
+}
+
+/**
+ * The extends loop `start` reaches, as the names around it (`a, b, a`);
+ * null when its chain ends. The walk of `scopeChain`, which throws there.
+ */
+function loopFrom(
+  extendsOf: ReadonlyMap<string, readonly string[]>,
+  start: string
+): string[] | null {
+  const stack: string[] = []
+  const done = new Set<string>()
+  const visit = (name: string): string[] | null => {
+    const at = stack.indexOf(name)
+    if (at !== -1) return [...stack.slice(at), name]
+    if (done.has(name)) return null
+    stack.push(name)
+    for (const target of extendsOf.get(name) ?? []) {
+      const loop = visit(target)
+      if (loop !== null) return loop
+    }
+    stack.pop()
+    done.add(name)
+    return null
+  }
+  return visit(start)
+}
+
+/** A manifest of `scopes` alone, for `scopeChain`. */
+const ofScopes = (scopes: Record<string, ScopeEntry>): Manifest => ({
+  contract: 2,
+  provider: null,
+  org: null,
+  agents: null,
+  boards: null,
+  scopes,
+})
+
+/**
+ * Contract 1's repositories and flat scopes as contract 2's tree (spec 0038
+ * §2, §11). Each repository meets the scope at `org/<name>`, compared
+ * case-insensitively; a scope below nests under the deepest scope whose
+ * path holds it, segment by segment, as written, its ancestors dropped from
+ * `extends`. What contract 2 cannot hold is a line of `refusals`, one per
+ * cause, the repositories first, then the scopes in the order written. A
+ * scope whose chain nesting changes is a line of `notes`.
+ */
+function shapeFormer(
+  repos: ReadonlyMap<string, string>,
+  former: ReadonlyMap<string, FormerScope>
+): { scopes: Record<string, ScopeEntry>; refusals: string[]; notes: string[] } {
+  const segments = (path: string) => {
+    const [first, seg, ...below] = path.split('/')
+    const top = first?.toLowerCase() === 'org' ? seg?.toLowerCase() : undefined
+    return { inOrg: first?.toLowerCase() === 'org', top, below }
+  }
+  // The directories `org/<name>` some scope is at, by lowercase name.
+  const atTop = new Set<string>()
+  for (const { path } of former.values()) {
+    const { top, below } = segments(path)
+    if (top !== undefined && below.length === 0) atTop.add(top)
+  }
+
+  const placed: Placed[] = []
+  const scopeLines: string[] = []
+  for (const [name, scope] of former) {
+    const { inOrg, top, below } = segments(scope.path)
+    const rel = below.join('/')
+    if (!inOrg)
+      // The path as a directory, as the line names `org/`.
+      scopeLines.push(`scope "${name}" at ${scope.path}/ is outside org/`)
+    else if (top === undefined || (!repos.has(top) && rel !== '')) {
+      // Below a scope that has no repository, that scope's line says it.
+      if (top === undefined || !atTop.has(top))
+        scopeLines.push(
+          `scope "${name}" at ${scope.path} is inside no repository of rness.json`
+        )
+    } else if (!repos.has(top))
+      scopeLines.push(
+        `scope "${name}" at ${scope.path} has no repository: add its url, or remove it`
+      )
+    else if (below.includes('.'))
+      scopeLines.push(`scope "${name}" path must not contain "."`)
+    else {
+      if (rel !== '' && repos.has(name))
+        scopeLines.push(
+          `scope "${name}" at ${scope.path} has the name of repo "${name}": rename it`
+        )
+      placed.push({
+        name,
+        repo: top,
+        rel,
+        written: scope.path,
+        extends: scope.extends,
+      })
+    }
+  }
+
+  const repoLines: string[] = []
+  const roots = new Map<string, Placed>()
+  for (const repo of repos.keys()) {
+    const here = placed.filter((p) => p.repo === repo && p.rel === '')
+    const own = here.find((p) => p.name === repo) ?? here[0]
+    if (own === undefined)
+      repoLines.push(`repo "${repo}" has no scope at org/${repo}`)
+    else if (own.name !== repo)
+      repoLines.push(
+        `repo "${repo}": its scope at org/${repo} is named "${own.name}"; rename it ${repo}`
+      )
+    else roots.set(repo, own)
+    for (const p of here)
+      if (p !== own)
+        repoLines.push(
+          `scope "${p.name}" at ${p.written} is a second scope of repo "${repo}": remove it`
+        )
+  }
+  const refusals = [...repoLines, ...scopeLines]
+  if (refusals.length > 0) return { scopes: {}, refusals, notes: [] }
+
+  // The deepest scope holding each part; of two at one path, the first written.
+  const depth = (rel: string) => (rel === '' ? 0 : rel.split('/').length)
+  const parentOf = new Map<Placed, Placed>()
+  for (const part of placed) {
+    let parent = roots.get(part.repo)
+    if (part.rel === '' || parent === undefined) continue
+    for (const p of placed)
+      if (
+        p.repo === part.repo &&
+        p.rel !== '' &&
+        part.rel.startsWith(`${p.rel}/`) &&
+        depth(p.rel) > depth(parent.rel)
+      )
+        parent = p
+    parentOf.set(part, parent)
+  }
+
+  // Read flat as `parseManifest` reads the written tree: a scope, then its parts.
+  const scopes: Record<string, ScopeEntry> = {}
+  const visit = (p: Placed, above: string[]): void => {
+    scopes[p.name] = {
+      path: p.rel === '' ? `org/${p.repo}` : `org/${p.repo}/${p.rel}`,
+      url: p.rel === '' ? (repos.get(p.repo) ?? null) : null,
+      parent: above[0] ?? null,
+      extends: [
+        ...above.slice(0, 1),
+        ...p.extends.filter((t) => !above.includes(t)),
+      ],
+    }
+    for (const part of placed)
+      if (parentOf.get(part) === p) visit(part, [p.name, ...above])
+  }
+  for (const root of roots.values()) visit(root, [])
+
+  // Nesting adds a parent to each part's chain: a loop it closes would make
+  // every scopeChain through it throw once the file is rewritten.
+  const before = new Map([...former].map(([n, s]) => [n, s.extends]))
+  const after = new Map(Object.entries(scopes).map(([n, s]) => [n, s.extends]))
+  const flat = ofScopes(
+    Object.fromEntries(
+      [...former].map(([n, s]) => [
+        n,
+        { path: s.path, url: null, parent: null, extends: s.extends },
+      ])
+    )
+  )
+  const notes: string[] = []
+  const loops = new Set<string>()
+  for (const name of Object.keys(scopes)) {
+    // A loop 0.24.0 had already: left to scopeChain, as contract 2 leaves it.
+    if (loopFrom(before, name) !== null) continue
+    const loop = loopFrom(after, name)
+    if (loop !== null) {
+      const key = [...new Set(loop)].sort().join(' ')
+      if (!loops.has(key))
+        refusals.push(
+          `scope "${name}": once nested, its chain loops (${loop.join(', ')}); remove an extends on that loop`
+        )
+      loops.add(key)
+      continue
+    }
+    const was = scopeChain(flat, name)
+    const now = scopeChain(ofScopes(scopes), name)
+    if (now.join(' ') !== was.join(' '))
+      notes.push(
+        `scope "${name}" now inherits ${now.slice(1).join(', ')} (nested)`
+      )
+  }
+  return refusals.length > 0
+    ? { scopes: {}, refusals, notes: [] }
+    : { scopes, refusals, notes }
+}
+
+/**
+ * What `readContract1` gives `upgrade` (spec 0038 §2, §11): the manifest to
+ * write as contract 2 and the notes to say; or, with no manifest, every
+ * line that stops it before anything changes.
+ */
+export type Contract1 =
+  | { manifest: Manifest; refusals: []; notes: string[] }
+  | { manifest: null; refusals: string[]; notes: [] }
+
+/**
+ * The former `rness.json`, contract 1, for `upgrade` alone (ADR 0012, spec
+ * 0038 §2, §11): read as 0.24.0 read it, then shaped as contract 2. A file
+ * 0.24.0 refused throws its line, prefixed `rness.json: `, as does a text
+ * that is not JSON or not contract 1: the team's CLI refuses it too. What
+ * contract 1 held and contract 2 cannot is given as lines, all of them.
+ * `projects` or `pulse` is read as `boards`, `formerKey` naming it, through
+ * the reader of 0.24.0; `jira` as it is.
+ */
+export function readContract1(raw: string): Contract1 {
+  const data = readObject(raw)
+  if (data.contract !== 1)
+    fail(`unsupported contract: ${JSON.stringify(data.contract)} (expected 1)`)
+  for (const key of Object.keys(data))
+    if (!FORMER_KEYS.includes(key)) fail(`unknown key ${JSON.stringify(key)}`)
+  const provider = readProvider(data.provider)
+  const { boards, refused, formerKey } = readBoardsOrFormer(data, provider)
+  const jira = readJira(data.jira, provider)
+  const org = readOrg(data.org, provider)
+  const agents = readAgents(data.agents)
+  const refusals: string[] = []
+  const repos = readFormerRepos(data.repos, refusals)
+  const former = readFormerScopes(data.scopes, refusals)
+  const shape = shapeFormer(repos, former)
+  refusals.push(...shape.refusals)
+  if (refusals.length > 0) return { manifest: null, refusals, notes: [] }
+  return {
+    manifest: {
+      contract: 2,
+      provider,
+      org,
+      ...(jira === undefined ? {} : { jira }),
+      agents,
+      boards,
+      ...(refused.length === 0 ? {} : { refused }),
+      ...(formerKey === undefined ? {} : { formerKey }),
+      scopes: shape.scopes,
+    },
+    refusals: [],
+    notes: shape.notes,
   }
 }
 

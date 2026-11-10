@@ -8,7 +8,7 @@ import {
   migrateBoards,
   withoutDeclarations,
 } from '../../src/core/board-migration.ts'
-import { loadManifest } from '../../src/core/manifest.ts'
+import { loadManifest, readContract1 } from '../../src/core/manifest.ts'
 import { presetTemplate } from '../../src/core/presets.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
@@ -49,16 +49,20 @@ test('the former projects is renamed boards, its boards as they were; a preset n
     preset: 'agent-pulse/1',
     ...presetTemplate('agent-pulse/1', { collection: 'pulse' }),
   }
-  // Contract 2 refuses the key: the former name is set as the contract-1
-  // reader gives it (spec 0038 §2).
-  const root = await makeWorkspace(t, {
-    org: 'acme',
-    boards: { pulse: board, marketing: 'collection' },
-  })
-  const manifest = {
-    ...(await loadManifest(rnessOf(root))),
-    formerKey: 'projects' as const,
-  }
+  // Contract 2 refuses the key: `upgrade` reads it from contract 1 (spec
+  // 0038 §2), the former name kept for the line said.
+  const root = await makeWorkspace(t, { org: 'acme' })
+  const { manifest } = readContract1(
+    JSON.stringify({
+      contract: 1,
+      org: 'acme',
+      projects: { pulse: board, marketing: 'collection' },
+      repos: {},
+      scopes: {},
+    })
+  )
+  assert.ok(manifest !== null)
+  assert.equal(manifest.formerKey, 'projects')
   const m = await migrateBoards(rnessOf(root), manifest)
   assert.equal(m.changed, true)
   assert.deepEqual(m.lines, [

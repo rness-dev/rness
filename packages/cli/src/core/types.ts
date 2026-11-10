@@ -80,7 +80,10 @@ export interface JiraTarget {
 }
 
 export interface Manifest {
-  /** 2 for what `parseManifest` reads; 1 only for the former shape `upgrade` reads. */
+  /**
+   * 2 from both readers: `parseManifest`, and `readContract1`, which gives
+   * the former shape as contract 2 for `upgrade` to write. No reader gives 1.
+   */
   contract: 1 | 2
   /** Null when not written: `providerOf()` infers it. */
   provider: ProviderName | null
@@ -91,7 +94,7 @@ export interface Manifest {
   agents: string[] | null
   /** Null when none is declared. */
   boards: Boards | null
-  /** The key the boards were read from, when it is a former one: `sync` renames it `boards`. */
+  /** The former key `readContract1` read the boards from: written back as `boards`. */
   formerKey?: 'projects' | 'pulse'
   /** The boards refused, absent when there are none. */
   refused?: RefusedBoard[]
