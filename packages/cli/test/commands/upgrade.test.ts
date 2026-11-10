@@ -15,9 +15,12 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { type TestContext, test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { type UpgradeDeps, upgradeCommand } from '../../src/commands/upgrade.ts'
+import { parseManifest } from '../../src/core/manifest.ts'
+import { presetTemplate } from '../../src/core/presets.ts'
 import { renderScaffold } from '../../src/core/scaffold-copy.ts'
 import { scaffoldDir } from '../../src/core/scaffold.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
@@ -286,7 +289,7 @@ test("the scaffold's rness.json is not merged: a workspace's contract-1 file is 
     {
       contract: 1,
       org: 'acme',
-      repos: { api: 'https://github.com/acme/api.git' },
+      repos: { api: { url: 'https://github.com/acme/api.git' } },
       scopes: { api: { path: 'org/api' } },
     },
     null,
@@ -295,11 +298,317 @@ test("the scaffold's rness.json is not merged: a workspace's contract-1 file is 
   await writeFile(join(rnessDir, 'rness.json'), edited)
   await git(rnessDir, 'commit', '-qam', 'chore: our repositories')
   // The scaffold of this version is contract 2: rness.json is not among the
-  // files the merge writes (spec 0013 §1), so git has nothing to conflict on.
+  // files the merge writes (spec 0013 §1), so git has nothing to conflict on;
+  // the rewrite after the install is what changes it (spec 0038 §7).
   const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 0, r.err)
   assert.doesNotMatch(r.err, /conflict/)
-  assert.doesNotMatch(r.out, /rness\.json/)
-  assert.equal(await read(root, 'rness.json'), edited)
+  assert.match(r.out, /^merging {2}the @rness\/cli 0\.5\.0 scaffold$/m)
+  assert.doesNotMatch(r.out, /^(added|updated|merged|removed) +rness\.json$/m)
+  assert.equal(
+    await read(root, 'rness.json'),
+    '{\n  "contract": 2,\n  "org": "acme",\n  "scopes": {\n    "api": { "url": "https://github.com/acme/api.git" }\n  }\n}\n'
+  )
+})
+
+/** `rness.json` replaced by `text` and committed, as a team's edit lands. */
+async function commitManifest(
+  root: string,
+  text: string,
+  files: Record<string, string> = {}
+): Promise<void> {
+  const rnessDir = join(root, '.rness')
+  await writeFile(join(rnessDir, 'rness.json'), text)
+  for (const [rel, content] of Object.entries(files)) {
+    const to = join(rnessDir, ...rel.split('/'))
+    await mkdir(dirname(to), { recursive: true })
+    await writeFile(to, content)
+  }
+  await git(rnessDir, 'add', '-A')
+  await git(rnessDir, 'commit', '-qm', 'chore: our rness.json')
+}
+
+/** A contract-1 file as 0.24.0 wrote it: two-space JSON. */
+const contract1 = (data: Record<string, unknown>): string =>
+  `${JSON.stringify({ contract: 1, ...data }, null, 2)}\n`
+
+/** The version of the @rness/cli copy installed in `.rness`. */
+const installedVersion = async (root: string): Promise<string> =>
+  (
+    JSON.parse(
+      await read(root, 'node_modules', '@rness', 'cli', 'package.json')
+    ) as { version: string }
+  ).version
+
+test('a contract-1 rness.json: checked first, rewritten as contract 2 after the install, the notes said, the commit holds it (spec 0038 §7)', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  const label = `${basename(root)}/.rness`
+  await commitManifest(
+    root,
+    contract1({
+      org: 'acme',
+      projects: { pulse: 3 },
+      repos: { platform: { url: 'https://github.com/acme/platform.git' } },
+      scopes: {
+        platform: { path: 'org/platform' },
+        // A part that did not extend its repository: nesting gives it one.
+        web: { path: 'org/platform/apps/web' },
+      },
+    })
+  )
+  const before = await git(rnessDir, 'rev-parse', 'HEAD')
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 0, r.err)
+  assert.equal(
+    r.out,
+    [
+      `upgrade  @rness/cli 0.4.0 → 0.5.0 in ${label} (npm)`,
+      'notes    https://github.com/rness-dev/rness/tree/main/packages/cli#readme',
+      'merging  the @rness/cli 0.5.0 scaffold',
+      'updated  package.json',
+      'installed dependencies with npm',
+      'rewrote  rness.json as contract 2 (ADR 0012)',
+      'renamed  projects to boards in .rness/rness.json',
+      'scope "web" now inherits platform (nested)',
+      'PINNED 0.5.0 sync --yes',
+      `committed ${label}: chore: rness 0.5.0`,
+      '',
+      `upgraded ${label} to @rness/cli 0.5.0`,
+      '',
+      'Next:',
+      '  git -C .rness push',
+      '  # teammates: git pull - the next rness command installs it',
+      '',
+    ].join('\n')
+  )
+  const after = `{
+  "contract": 2,
+  "org": "acme",
+  "boards": { "pulse": 3 },
+  "scopes": {
+    "platform": {
+      "url": "https://github.com/acme/platform.git",
+      "scopes": {
+        "web": { "path": "apps/web" }
+      }
+    }
+  }
+}
+`
+  assert.equal(await read(root, 'rness.json'), after)
+  assert.equal(parseManifest(after).scopes['web']?.parent, 'platform')
+  // The commit `chore: rness 0.5.0` holds it; nothing is left out of it.
+  assert.equal(
+    await git(rnessDir, 'log', '-1', '--format=%s'),
+    'chore: rness 0.5.0'
+  )
+  assert.match(
+    await git(rnessDir, 'diff', '--name-only', before, 'HEAD'),
+    /^rness\.json$/m
+  )
+  assert.equal(await git(rnessDir, 'show', 'HEAD:rness.json'), after.trimEnd())
+  assert.equal(await git(rnessDir, 'status', '--porcelain'), '')
+})
+
+const MARKETING_README = '---\ndescription: The launch.\n---\n# L\n'
+
+test('a contract-1 file contract 2 cannot hold stops upgrade before the merge: its lines, the fix, the pin, the files and the base unchanged', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const url = (name: string) => `https://github.com/acme/${name}.git`
+  const marketing = {
+    number: 8,
+    ...presetTemplate('collection/1', { collection: 'marketing' }),
+    description: 'Another.',
+  }
+  const cases: [string, Record<string, string>, string[]][] = [
+    [
+      contract1({ repos: { api: { url: url('api') } }, scopes: {} }),
+      {},
+      ['repo "api" has no scope at org/api'],
+    ],
+    [
+      contract1({ repos: {}, scopes: { api: { path: 'org/api' } } }),
+      {},
+      ['scope "api" at org/api has no repository: add its url, or remove it'],
+    ],
+    [
+      contract1({
+        repos: {},
+        scopes: { web: { path: 'org/platform/apps/web' } },
+      }),
+      {},
+      [
+        'scope "web" at org/platform/apps/web is inside no repository of rness.json',
+      ],
+    ],
+    [
+      contract1({
+        repos: { web: { url: url('web') } },
+        scopes: { frontend: { path: 'org/web' }, tools: { path: 'tools' } },
+      }),
+      {},
+      // Every line at once.
+      [
+        'repo "web": its scope at org/web is named "frontend"; rename it web',
+        'scope "tools" at tools/ is outside org/',
+      ],
+    ],
+    // A boards conflict the reader sync uses refuses (spec 0038 §11).
+    [
+      contract1({ boards: { marketing }, repos: {}, scopes: {} }),
+      { 'marketing/README.md': MARKETING_README },
+      [
+        'marketing/README.md declares description otherwise than boards.marketing: keep one, in rness.json',
+      ],
+    ],
+    // A file 0.24.0 refused already: its line, the same fix.
+    [
+      contract1({ repos: { api: url('api') }, scopes: {} }),
+      {},
+      ['rness.json: repo "api" needs a string "url"'],
+    ],
+  ]
+  for (const [text, files, lines] of cases) {
+    const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+    const rnessDir = join(root, '.rness')
+    await commitManifest(root, text, files)
+    const head = await git(rnessDir, 'rev-parse', 'HEAD')
+    const r = await upgrade(undefined, { yes: true, cwd: root })
+    assert.equal(r.code, 1, text)
+    assert.equal(
+      r.err,
+      [
+        ...lines,
+        'edit .rness/rness.json by hand, then rness upgrade again',
+        '',
+      ].join('\n'),
+      text
+    )
+    // Nothing merged, nothing installed, nothing synced or written.
+    assert.doesNotMatch(r.out, /merging|installed|PINNED|rewrote/, text)
+    assert.equal(await git(rnessDir, 'rev-parse', 'HEAD'), head, text)
+    assert.equal(await git(rnessDir, 'status', '--porcelain'), '', text)
+    await assert.rejects(
+      git(rnessDir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')
+    )
+    assert.equal(await read(root, 'rness.json'), text)
+    assert.equal(
+      await read(root, 'package.json'),
+      await scaffoldPackage('0.4.0')
+    )
+    assert.equal(await installedVersion(root), '0.4.0')
+  }
+})
+
+test('at the target already, a contract-1 file is rewritten and committed: the second step of an upgrade an earlier copy began', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.5.0', installed: '0.5.0' })
+  const rnessDir = join(root, '.rness')
+  const label = `${basename(root)}/.rness`
+  await commitManifest(
+    root,
+    contract1({
+      org: 'acme',
+      repos: { api: { url: 'https://github.com/acme/api.git' } },
+      scopes: { api: { path: 'org/api' } },
+    })
+  )
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 0, r.err)
+  assert.equal(
+    r.out,
+    [
+      `rewrite  rness.json in ${label} as contract 2, for @rness/cli 0.5.0 (ADR 0012)`,
+      'rewrote  rness.json as contract 2 (ADR 0012)',
+      'PINNED 0.5.0 sync --yes',
+      `committed ${label}: chore: rness 0.5.0`,
+      '',
+      `upgraded ${label} to @rness/cli 0.5.0`,
+      '',
+      'Next:',
+      '  git -C .rness push',
+      '  # teammates: git pull - the next rness command installs it',
+      '',
+    ].join('\n')
+  )
+  assert.equal(
+    await git(rnessDir, 'diff', '--name-only', 'HEAD^', 'HEAD'),
+    'rness.json'
+  )
+  assert.equal(parseManifest(await read(root, 'rness.json')).contract, 2)
+  // Done: the next run is at the target, contract included.
+  const again = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(again.code, 0, again.err)
+  assert.equal(again.out, 'already at 0.5.0\n')
+})
+
+test('a contract-2 file is left alone: no rewrite, no line, at the target or not', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const text = `{
+  "contract": 2,
+  "org": "acme",
+  "scopes": {
+    "api": { "url": "https://github.com/acme/api.git" }
+  }
+}
+`
+  for (const pin of ['0.4.0', '0.5.0']) {
+    const root = await workspace(t, { pin, installed: pin })
+    await commitManifest(root, text)
+    const r = await upgrade(undefined, { yes: true, cwd: root })
+    assert.equal(r.code, 0, r.err)
+    assert.doesNotMatch(r.out, /rewrit|contract/, pin)
+    assert.equal(await read(root, 'rness.json'), text, pin)
+    if (pin === '0.5.0') assert.equal(r.out, 'already at 0.5.0\n')
+  }
+})
+
+test("this workspace's own shape (three repositories with their scopes, boards declared whole, no jira): rewritten, the boards byte for byte", async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  // A copy of rness-dev's .rness/rness.json, 2026-11-10: frozen, since that
+  // file moves to contract 2 once this release is out.
+  const before = await readFile(
+    fileURLToPath(
+      new URL('../fixtures/upgrade/rness-dev.contract-1.json', import.meta.url)
+    ),
+    'utf8'
+  )
+  await commitManifest(root, before)
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^rewrote {2}rness\.json as contract 2 \(ADR 0012\)$/m)
+  assert.doesNotMatch(r.out, /nested|renamed/)
+  const after = await read(root, 'rness.json')
+  assert.equal(
+    after,
+    before
+      .replace('"contract": 1,', '"contract": 2,')
+      .replace(
+        / {2}"repos": \{[\s\S]*$/,
+        [
+          '  "scopes": {',
+          '    "web": { "url": "git@github.com:rness-dev/web.git" },',
+          '    "rness": { "url": "git@github.com:rness-dev/rness.git" },',
+          '    "docs": { "url": "git@github.com:rness-dev/docs.git" }',
+          '  }',
+          '}',
+          '',
+        ].join('\n')
+      )
+  )
+  const boards = (text: string) =>
+    text.slice(
+      text.indexOf('  "boards": {'),
+      text.search(/^ {2}"(repos|scopes)"/m)
+    )
+  assert.ok(boards(before).length > 1000)
+  assert.equal(boards(after), boards(before))
+  const manifest = parseManifest(after)
+  assert.equal(manifest.jira, undefined)
+  assert.deepEqual(Object.keys(manifest.scopes), ['web', 'rness', 'docs'])
 })
 
 const POLICY_FILES = [

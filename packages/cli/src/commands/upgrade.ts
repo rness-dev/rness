@@ -5,10 +5,17 @@ import { basename, join, relative } from 'node:path'
 import { promisify } from 'node:util'
 
 import { writtenFiles } from '../core/agent-targets.ts'
+import { migrateBoards } from '../core/board-migration.ts'
 import { readPinnedCli } from '../core/delegate.ts'
 import { exists, writeFileAtomic } from '../core/fs.ts'
 import { changedPaths, isClean } from '../core/git.ts'
-import { loadManifest, repositories } from '../core/manifest.ts'
+import {
+  type Contract1,
+  loadManifest,
+  readContract1,
+  repositories,
+  writeManifest,
+} from '../core/manifest.ts'
 import {
   EXACT_VERSION,
   compareVersions,
@@ -135,6 +142,41 @@ async function declaredManager(
     // the install below reports an unreadable package.json
   }
   return `${pm}@${await packageManagerVersion(pm)}`
+}
+
+/**
+ * A `rness.json` of contract 1, for this command alone (ADR 0012, spec 0038
+ * §7, §11): read as 0.24.0 read it, shaped as contract 2, its boards checked
+ * as `sync` migrates them; every line that stops the rewrite at once. A file
+ * 0.24.0 refused gives its line too: the team's CLI refuses it already.
+ * Null for any other file, contract 2 or unreadable: today's flow, the new
+ * copy's sync saying what is wrong with it.
+ */
+async function readFormer(rnessDir: string): Promise<Contract1 | null> {
+  let raw: string
+  let contract: unknown
+  try {
+    raw = await readFile(join(rnessDir, 'rness.json'), 'utf8')
+    contract = (JSON.parse(raw) as { contract?: unknown } | null)?.contract
+  } catch {
+    return null
+  }
+  if (contract !== 1) return null
+  let read: Contract1
+  try {
+    read = readContract1(raw)
+  } catch (e) {
+    return {
+      manifest: null,
+      refusals: [e instanceof Error ? e.message : String(e)],
+      notes: [],
+    }
+  }
+  if (read.manifest === null) return read
+  const refusals = (await migrateBoards(rnessDir, read.manifest)).lines
+    .filter(([verb]) => verb === 'refused')
+    .map(([, rest]) => rest)
+  return refusals.length === 0 ? read : { manifest: null, refusals, notes: [] }
 }
 
 /** A clone whose files sync writes changed: its path from `cwd`, and those files. */
@@ -319,9 +361,24 @@ export async function upgradeCommand(
       )
       return 1
     }
+    // A contract-1 rness.json is checked before anything changes (spec 0038
+    // §11): stopped here, the earlier CLI still reads it while the team
+    // fixes it by hand.
+    const former = await readFormer(ws.rnessDir)
+    if (former !== null && former.manifest === null) {
+      for (const line of former.refusals) ui.error(line)
+      ui.hint(
+        `edit ${relative(cwd, join(ws.rnessDir, 'rness.json'))} by hand, then ${rnessCommand()} upgrade again`,
+        'stderr'
+      )
+      return 1
+    }
     const base = await findScaffoldBase(ws.rnessDir)
     const scaffoldCurrent = base !== null && base.version === target
-    if (pin.spec === target && installed === target && scaffoldCurrent) {
+    const current = pin.spec === target && installed === target
+    // At the target with a contract-1 file: the rewrite is what is left, as
+    // after an upgrade begun by a copy that did not know contract 2.
+    if (current && scaffoldCurrent && former === null) {
       if (ui.session) ui.outro(`Already at ${target}`)
       else process.stdout.write(`already at ${target}\n`)
       return 0
@@ -336,7 +393,13 @@ export async function upgradeCommand(
     }
 
     const pm = await workspacePackageManager(ws.rnessDir)
-    if (pin.spec === target && installed === target)
+    if (current && scaffoldCurrent)
+      ui.line(
+        'rewrite',
+        `rness.json in ${label} as contract 2, for @rness/cli ${target} (ADR 0012)`,
+        `Rewriting rness.json in ${label} as contract 2, for @rness/cli ${target}`
+      )
+    else if (current)
       ui.line(
         'scaffold',
         `@rness/cli ${target}: merging it into ${label}`,
@@ -357,7 +420,10 @@ export async function upgradeCommand(
     if (interactive) {
       const p = await terminal.prompts()
       const ok = await p.confirm({
-        message: `Upgrade @rness/cli to ${target}?`,
+        message:
+          current && scaffoldCurrent
+            ? 'Rewrite rness.json as contract 2?'
+            : `Upgrade @rness/cli to ${target}?`,
       })
       if (p.isCancel(ok) || ok !== true) {
         ui.cancelled()
@@ -429,7 +495,7 @@ export async function upgradeCommand(
       await writePin(ws.rnessDir, moved.spec, target)
 
     // Only the scaffold was behind: the pinned copy is already installed.
-    const mustInstall = !(pin.spec === target && installed === target)
+    const mustInstall = !current
     if (mustInstall) {
       try {
         await ui.step(
@@ -468,6 +534,25 @@ export async function upgradeCommand(
         )
         return 1
       }
+    }
+
+    // rness.json of contract 1, read and checked before the merge: written as
+    // contract 2 once the copy that reads it is installed, before its sync
+    // reads it; the commit below holds it (spec 0038 §7). After the rewrite
+    // the sync no longer sees a former key of boards: said here.
+    if (former !== null) {
+      await writeManifest(ws.rnessDir, former.manifest)
+      ui.line(
+        'rewrote',
+        'rness.json as contract 2 (ADR 0012)',
+        'Rewrote rness.json as contract 2 (ADR 0012)'
+      )
+      if (former.manifest.formerKey !== undefined)
+        ui.line(
+          'renamed',
+          `${former.manifest.formerKey} to boards in .rness/rness.json`
+        )
+      for (const note of former.notes) ui.hint(note)
     }
 
     // Whatever the upgrade had to do: a release may add to the agent files

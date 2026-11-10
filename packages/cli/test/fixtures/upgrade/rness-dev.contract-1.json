@@ -1,0 +1,236 @@
+{
+  "contract": 1,
+  "provider": "github",
+  "org": "rness-dev",
+  "agents": ["claude"],
+  "boards": {
+    "pulse": {
+      "number": 4,
+      "preset": "agent-pulse/1",
+      "title": "Agent Pulse",
+      "collections": "all",
+      "colors": {
+        "Draft": "gray",
+        "Proposed": "blue",
+        "Ready": "blue",
+        "Approved": "purple",
+        "In progress": "yellow",
+        "Blocked": "red",
+        "Accepted": "green",
+        "Implemented": "green",
+        "Completed": "green",
+        "Rejected": "red",
+        "Superseded": "yellow",
+        "Abandoned": "gray",
+        "ADR": "purple",
+        "Specs": "blue",
+        "Plans": "orange",
+        "working": "green"
+      },
+      "fields": {
+        "Collection": {
+          "type": "select",
+          "from": "$collection"
+        },
+        "Agent": {
+          "type": "select",
+          "from": "$agent",
+          "options": [
+            "working"
+          ]
+        },
+        "Working session": {
+          "type": "text",
+          "from": "$session"
+        },
+        "Session history": {
+          "type": "text",
+          "from": "$sessions"
+        }
+      },
+      "views": [
+        {
+          "name": "All",
+          "layout": "table",
+          "fields": [
+            "Title",
+            "Collection",
+            "Status",
+            "Working session"
+          ]
+        },
+        {
+          "name": "ADR",
+          "layout": "board",
+          "collection": "adr",
+          "columns": "ADR status"
+        },
+        {
+          "name": "Specs",
+          "layout": "board",
+          "collection": "specs",
+          "columns": "Specs status"
+        },
+        {
+          "name": "Plans",
+          "layout": "board",
+          "collection": "plans",
+          "columns": "Plans status"
+        },
+        {
+          "name": "Working",
+          "layout": "table",
+          "filter": "agent:working",
+          "fields": [
+            "Title",
+            "Collection",
+            "Status",
+            "Working session"
+          ]
+        }
+      ],
+      "hooks": {
+        "session-start": [
+          "mark-in-progress",
+          {
+            "action": "journal",
+            "to": "plan",
+            "limit": 5
+          }
+        ],
+        "edit": [
+          "mark"
+        ],
+        "session-end": [
+          "clear-marks",
+          "journal-summary"
+        ]
+      }
+    },
+    "marketing": {
+      "number": 7,
+      "preset": "collection/1",
+      "title": "Marketing",
+      "description": "The public launch of Rness, 1 October to 12 November 2026 - goals, channels, calendar and the Monday review.",
+      "readme": "marketing/README.md",
+      "collections": {
+        "marketing": {
+          "label": "Marketing",
+          "statuses": [
+            "Idea",
+            "Draft",
+            "Ready",
+            "Scheduled",
+            "Published",
+            "Measured",
+            "Abandoned"
+          ]
+        }
+      },
+      "colors": {
+        "Draft": "gray",
+        "Proposed": "blue",
+        "Ready": "blue",
+        "Approved": "purple",
+        "In progress": "yellow",
+        "Blocked": "red",
+        "Accepted": "green",
+        "Implemented": "green",
+        "Completed": "green",
+        "Rejected": "red",
+        "Superseded": "yellow",
+        "Abandoned": "gray",
+        "working": "green"
+      },
+      "fields": {
+        "Collection": {
+          "type": "select",
+          "from": "$collection"
+        },
+        "Agent": {
+          "type": "select",
+          "from": "$agent",
+          "options": [
+            "working"
+          ]
+        },
+        "Working session": {
+          "type": "text",
+          "from": "$session"
+        },
+        "Session history": {
+          "type": "text",
+          "from": "$sessions"
+        },
+        "Publish date": {
+          "type": "date",
+          "from": [
+            "published_at",
+            "scheduled_at"
+          ]
+        },
+        "Kind": {
+          "type": "select",
+          "from": "kind",
+          "options": [
+            "post",
+            "action"
+          ]
+        },
+        "Language": {
+          "type": "select",
+          "from": "language",
+          "options": [
+            "en",
+            "fr"
+          ]
+        }
+      },
+      "labels": "directory",
+      "views": [
+        {
+          "name": "All",
+          "layout": "table",
+          "fields": [
+            "Title",
+            "Collection",
+            "Status",
+            "Working session"
+          ]
+        },
+        {
+          "name": "Marketing",
+          "layout": "board",
+          "collection": "marketing"
+        },
+        {
+          "name": "Calendar",
+          "layout": "roadmap",
+          "collection": "marketing",
+          "date": "Publish date"
+        },
+        {
+          "name": "Working",
+          "layout": "table",
+          "filter": "agent:working",
+          "fields": [
+            "Title",
+            "Collection",
+            "Status",
+            "Working session"
+          ]
+        }
+      ]
+    }
+  },
+  "repos": {
+    "web": { "url": "git@github.com:rness-dev/web.git" },
+    "rness": { "url": "git@github.com:rness-dev/rness.git" },
+    "docs": { "url": "git@github.com:rness-dev/docs.git" }
+  },
+  "scopes": {
+    "web": { "path": "org/web" },
+    "rness": { "path": "org/rness" },
+    "docs": { "path": "org/docs" }
+  }
+}
