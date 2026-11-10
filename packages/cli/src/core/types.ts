@@ -18,13 +18,27 @@ export interface MarkdownItem {
   content: string
 }
 
-export interface RepoEntry {
-  url: string
+/**
+ * A scope of `rness.json` (ADR 0012): a repository, by its `url`, or a part
+ * of one, nested under its parent. The file's tree is read flat, in the order
+ * written, each scope with what `resolveScope` and `scopeChain` read.
+ */
+export interface ScopeEntry {
+  /** From the workspace root: `org/platform` for a repository, `org/platform/apps/web` for a part. */
+  path: string
+  /** A repository's clone URL; null for a part. */
+  url: string | null
+  /** The scope a part is nested under; null for a repository. */
+  parent: string | null
+  /** The parent first, when there is one, then the names `extends` lists. */
+  extends: string[]
 }
 
-export interface ScopeEntry {
-  path: string
-  extends: string[]
+/** A scope with a `url`, as `repositories()` gives it: cloned at `dir`, `org/<name>`. */
+export interface Repository {
+  name: string
+  url: string
+  dir: string
 }
 
 /** The hosting providers a workspace can name (spec 0017 §2.1). */
@@ -60,7 +74,8 @@ export interface JiraTarget {
 }
 
 export interface Manifest {
-  contract: 1
+  /** 2 for what `parseManifest` reads; 1 only for the former shape `upgrade` reads. */
+  contract: 1 | 2
   /** Null when not written: `providerOf()` infers it. */
   provider: ProviderName | null
   org: string | null
@@ -74,7 +89,7 @@ export interface Manifest {
   formerKey?: 'projects' | 'pulse'
   /** The boards refused, absent when there are none. */
   refused?: RefusedBoard[]
-  repos: Record<string, RepoEntry>
+  /** Every scope of the tree, by its name: names are unique across it. */
   scopes: Record<string, ScopeEntry>
 }
 

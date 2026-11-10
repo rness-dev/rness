@@ -6,6 +6,7 @@ import { test } from 'node:test'
 
 import {
   EXCLUDED_NAMES,
+  NAME_RULE,
   contextRepo,
   isMemberRepo,
   isWorkspaceClone,
@@ -13,9 +14,11 @@ import {
   parseRepoSpec,
   projectNumber,
   providerOf,
+  repositories,
   workspaceName,
   writeManifest,
 } from '../../src/core/manifest.ts'
+import { resolveScope, scopeChain } from '../../src/core/scope.ts'
 import type { Manifest } from '../../src/core/types.ts'
 
 async function fixture(json: unknown): Promise<string> {
@@ -29,73 +32,316 @@ async function fixture(json: unknown): Promise<string> {
   return rnessDir
 }
 
-test('loads a valid manifest and defaults extends to []', async (t) => {
+/** Spec 0038 §1: two repositories, one with two parts, `ui` sharing `web`. */
+const EXAMPLE = `{
+  "contract": 2,
+  "provider": "github",
+  "org": "acme",
+  "agents": ["claude"],
+  "boards": { "pulse": 3 },
+  "scopes": {
+    "app": { "url": "git@github.com:acme/app.git" },
+    "platform": {
+      "url": "https://github.com/acme/platform.git",
+      "scopes": {
+        "web": { "path": "apps/web" },
+        "ui": { "path": "packages/ui", "extends": ["web"] }
+      }
+    }
+  }
+}
+`
+
+test('contract 2: a repository by its url at org/<name>, a part nested by its path; parents first in extends', async (t) => {
+  const d = await fixture(EXAMPLE)
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const m = await loadManifest(d)
+  assert.equal(m.contract, 2)
+  assert.deepEqual(Object.keys(m.scopes), ['app', 'platform', 'web', 'ui'])
+  assert.deepEqual(m.scopes, {
+    app: {
+      path: 'org/app',
+      url: 'git@github.com:acme/app.git',
+      parent: null,
+      extends: [],
+    },
+    platform: {
+      path: 'org/platform',
+      url: 'https://github.com/acme/platform.git',
+      parent: null,
+      extends: [],
+    },
+    web: {
+      path: 'org/platform/apps/web',
+      url: null,
+      parent: 'platform',
+      extends: ['platform'],
+    },
+    ui: {
+      path: 'org/platform/packages/ui',
+      url: null,
+      parent: 'platform',
+      extends: ['platform', 'web'],
+    },
+  })
+  assert.deepEqual(scopeChain(m, 'ui'), ['ui', 'platform', 'web'])
+  assert.equal(resolveScope(m, 'org/platform/apps/web/src'), 'web')
+  assert.deepEqual(repositories(m), [
+    { name: 'app', url: 'git@github.com:acme/app.git', dir: 'org/app' },
+    {
+      name: 'platform',
+      url: 'https://github.com/acme/platform.git',
+      dir: 'org/platform',
+    },
+  ])
+})
+
+test('contract 2: nesting is recursive, each part under its parent', async (t) => {
   const d = await fixture({
-    contract: 1,
-    repos: { web: { url: 'https://github.com/acme/web.git' } },
+    contract: 2,
     scopes: {
-      web: { path: 'org/web' },
-      ui: { path: 'org/p/pkg/ui', extends: ['web'] },
+      platform: {
+        url: 'https://github.com/acme/platform.git',
+        scopes: {
+          web: { path: 'apps/web', scopes: { icons: { path: 'src/icons' } } },
+        },
+      },
     },
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const m = await loadManifest(d)
-  assert.equal(m.contract, 1)
-  assert.deepEqual(m.repos.web, { url: 'https://github.com/acme/web.git' })
-  assert.deepEqual(m.scopes.web?.extends, [])
-  assert.deepEqual(m.scopes.ui?.extends, ['web'])
+  assert.deepEqual(m.scopes['icons'], {
+    path: 'org/platform/apps/web/src/icons',
+    url: null,
+    parent: 'web',
+    extends: ['web'],
+  })
+  assert.deepEqual(scopeChain(m, 'icons'), ['icons', 'web', 'platform'])
+  assert.deepEqual(
+    repositories(m).map((r) => r.name),
+    ['platform']
+  )
 })
 
-test('rejects wrong contract version', async (t) => {
-  const d = await fixture({ contract: 2, repos: {}, scopes: {} })
-  t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  await assert.rejects(() => loadManifest(d), /rness\.json:.*contract/)
+test('contract 2: what a scope cannot be is refused, each with its line', async (t) => {
+  const url = 'https://github.com/acme/platform.git'
+  for (const [scopes, message] of [
+    [
+      { app: { url: 'git@github.com:acme/app.git', path: 'org/app' } },
+      'scope "app": a repository has no path; it is org/app',
+    ],
+    [{ app: {} }, 'scope "app" needs a string "url"'],
+    [
+      { app: { path: 'org/app' } },
+      'scope "app": a repository has no path; it is org/app',
+    ],
+    [
+      { platform: { url, scopes: { web: { path: 'apps/web', url } } } },
+      'scope "web": a part has no url; its repository is platform',
+    ],
+    [
+      {
+        platform: {
+          url,
+          scopes: { web: { path: 'apps/web', scopes: { icons: { url } } } },
+        },
+      },
+      'scope "icons": a part has no url; its repository is platform',
+    ],
+    [
+      { platform: { url, scopes: { web: {} } } },
+      'scope "web" needs a string "path"',
+    ],
+    [
+      { platform: { url, scopes: { web: { path: '/apps/web' } } } },
+      'scope "web" path must be relative',
+    ],
+    [
+      { platform: { url, scopes: { web: { path: '../escape' } } } },
+      'scope "web" path must not contain ".."',
+    ],
+    [
+      { platform: { url, scopes: { web: { path: 'apps/web/' } } } },
+      'scope "web" path must not contain empty segments',
+    ],
+    [
+      {
+        platform: {
+          url,
+          scopes: { web: { path: 'apps/web', extends: ['platform'] } },
+        },
+      },
+      'scope "web" extends "platform", already its parent',
+    ],
+    [
+      {
+        platform: {
+          url,
+          scopes: {
+            web: {
+              path: 'apps/web',
+              scopes: { icons: { path: 'icons', extends: ['platform'] } },
+            },
+          },
+        },
+      },
+      'scope "icons" extends "platform", already its ancestor',
+    ],
+    [
+      {
+        platform: { url, scopes: { web: { path: 'apps/web' } } },
+        app: { url, scopes: { web: { path: 'web' } } },
+      },
+      'scope "web" is declared twice: under platform and under app',
+    ],
+    [
+      {
+        web: { url },
+        platform: { url, scopes: { web: { path: 'apps/web' } } },
+      },
+      'scope "web" is declared twice: as a repository and under platform',
+    ],
+    [
+      { platform: { url, scopes: { Web: { path: 'apps/web' } } } },
+      `scope name "Web" may only contain ${NAME_RULE}`,
+    ],
+    [
+      { platform: { url, scopes: { web: 'apps/web' } } },
+      'scope "web" must be an object',
+    ],
+    [
+      { platform: { url, scopes: [] } },
+      'scope "platform": "scopes" must be an object',
+    ],
+    [
+      { platform: { url, extends: 'web' } },
+      'scope "platform" extends must be an array of scope names',
+    ],
+    [
+      {
+        platform: {
+          url,
+          scopes: { web: { path: 'apps/web', extends: ['ghost'] } },
+        },
+      },
+      'scope "web" extends unknown scope "ghost"',
+    ],
+    [
+      { web: { url, extends: ['constructor'] } },
+      'scope "web" extends unknown scope "constructor"',
+    ],
+  ] as const) {
+    const d = await fixture({ contract: 2, scopes })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      new Error(`rness.json: ${message}`),
+      message
+    )
+  }
 })
 
-test('rejects an extends target that is not a scope', async (t) => {
+test('contract 2: extends names any scope of the tree, a cycle left to scopeChain', async (t) => {
   const d = await fixture({
-    contract: 1,
-    repos: {},
-    scopes: { web: { path: 'org/web', extends: ['ghost'] } },
+    contract: 2,
+    scopes: {
+      app: { url: 'git@github.com:acme/app.git', extends: ['web'] },
+      platform: {
+        url: 'https://github.com/acme/platform.git',
+        extends: ['app'],
+        scopes: { web: { path: 'apps/web' } },
+      },
+    },
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  await assert.rejects(() => loadManifest(d), /rness\.json:.*ghost/)
+  const m = await loadManifest(d)
+  assert.deepEqual(m.scopes['app']?.extends, ['web'])
+  assert.throws(() => scopeChain(m, 'app'), /extends cycle/)
 })
 
-test('rejects an extends target that only exists on the prototype chain', async (t) => {
-  const d = await fixture({
-    contract: 1,
-    repos: {},
-    scopes: { web: { path: 'org/web', extends: ['constructor'] } },
-  })
-  t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  await assert.rejects(() => loadManifest(d), /rness\.json:.*constructor/)
+test('contract 1 names upgrade; another contract is unsupported', async (t) => {
+  for (const json of [
+    { contract: 1, repos: {}, scopes: {} },
+    { contract: 1, repos: { web: { url: 'x' } }, projects: { pulse: 3 } },
+  ]) {
+    const d = await fixture(json)
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      new Error('rness.json is contract 1: run rness upgrade (ADR 0012)')
+    )
+  }
+  for (const contract of [3, '2', undefined]) {
+    const d = await fixture({ contract, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      new Error(
+        `rness.json: unsupported contract: ${JSON.stringify(contract)} (expected 2)`
+      )
+    )
+  }
 })
 
-test('rejects a path with ..', async (t) => {
-  const d = await fixture({
-    contract: 1,
-    repos: {},
-    scopes: { web: { path: '../escape' } },
-  })
-  t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  await assert.rejects(() => loadManifest(d), /rness\.json:/)
+test('repos, projects and pulse are unknown keys of contract 2', async (t) => {
+  for (const [key, value] of [
+    ['repos', {}],
+    ['projects', { pulse: 3 }],
+    ['pulse', { project: 3 }],
+  ] as const) {
+    const d = await fixture({ contract: 2, [key]: value, scopes: {} })
+    t.after(() => rm(dirname(d), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(d),
+      new Error(`rness.json: unknown key "${key}"`)
+    )
+  }
 })
 
-test('rejects a path with an empty segment', async (t) => {
-  const d = await fixture({
-    contract: 1,
-    repos: {},
-    scopes: { web: { path: 'org/web/' } },
-  })
+test('contract 2 is written as read: a repository on one line, its parts nested; a second write changes nothing', async (t) => {
+  const d = await fixture(EXAMPLE)
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  await assert.rejects(() => loadManifest(d), /rness\.json:.*empty segments/)
+  const read = await loadManifest(d)
+  await writeManifest(d, read)
+  assert.equal(await readFile(join(d, 'rness.json'), 'utf8'), EXAMPLE)
+  assert.deepEqual(await loadManifest(d), read)
+  await writeManifest(d, await loadManifest(d))
+  assert.equal(await readFile(join(d, 'rness.json'), 'utf8'), EXAMPLE)
 })
 
-test('rejects a repo without a string url', async (t) => {
-  const d = await fixture({ contract: 1, repos: { web: {} }, scopes: {} })
+test('writeManifest: extends only when it has names, a part with parts expanded, no scope as {}', async (t) => {
+  const text = `{
+  "contract": 2,
+  "scopes": {
+    "shared": { "url": "https://github.com/acme/shared.git" },
+    "app": { "url": "git@github.com:acme/app.git", "extends": ["shared"] },
+    "platform": {
+      "url": "https://github.com/acme/platform.git",
+      "extends": ["shared"],
+      "scopes": {
+        "web": {
+          "path": "apps/web",
+          "extends": ["app"],
+          "scopes": {
+            "icons": { "path": "src/icons" }
+          }
+        }
+      }
+    }
+  }
+}
+`
+  const d = await fixture(text)
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  await assert.rejects(() => loadManifest(d), /rness\.json:.*"url"/)
+  const read = await loadManifest(d)
+  assert.deepEqual(read.scopes['web']?.extends, ['platform', 'app'])
+  await writeManifest(d, read)
+  assert.equal(await readFile(join(d, 'rness.json'), 'utf8'), text)
+  await writeManifest(d, { ...read, scopes: {} })
+  assert.equal(
+    await readFile(join(d, 'rness.json'), 'utf8'),
+    '{\n  "contract": 2,\n  "scopes": {}\n}\n'
+  )
 })
 
 test('missing file throws', async (t) => {
@@ -124,8 +370,7 @@ test('rejects genuinely malformed JSON with a prefixed error', async (t) => {
 
 test('rejects an unknown top-level key', async (t) => {
   const d = await fixture({
-    contract: 1,
-    repos: {},
+    contract: 2,
     scopes: {},
     scope: { web: { path: 'org/web' } },
   })
@@ -138,24 +383,22 @@ test('rejects an unknown top-level key', async (t) => {
 
 test('org is optional, validated as a GitHub organization name', async (t) => {
   const withOrgDir = await fixture({
-    contract: 1,
+    contract: 2,
     org: 'acme-dev',
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(withOrgDir), { recursive: true, force: true }))
   const withOrg = await loadManifest(withOrgDir)
   assert.equal(withOrg.org, 'acme-dev')
 
-  const withoutDir = await fixture({ contract: 1, repos: {}, scopes: {} })
+  const withoutDir = await fixture({ contract: 2, scopes: {} })
   t.after(() => rm(dirname(withoutDir), { recursive: true, force: true }))
   const without = await loadManifest(withoutDir)
   assert.equal(without.org, null)
 
   const badDir = await fixture({
-    contract: 1,
+    contract: 2,
     org: 'Acme Inc',
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(badDir), { recursive: true, force: true }))
@@ -164,7 +407,7 @@ test('org is optional, validated as a GitHub organization name', async (t) => {
 
 test('org follows GitHub: case kept, single inner hyphens, at most 39 characters', async (t) => {
   const org = async (value: string) => {
-    const d = await fixture({ contract: 1, org: value, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 2, org: value, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     return loadManifest(d)
   }
@@ -180,7 +423,7 @@ test('org follows GitHub: case kept, single inner hyphens, at most 39 characters
 })
 
 test('workspaceName: the org, else the root directory name, without a warning', async (t) => {
-  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  const d = await fixture({ contract: 2, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const manifest = await loadManifest(d)
   // A workspace without "org" is a blank one (spec 0012): a normal state.
@@ -192,55 +435,63 @@ test('workspaceName: the org, else the root directory name, without a warning', 
 })
 
 test('writeManifest keeps the key order and omits empty extends and a null org', async (t) => {
-  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  const d = await fixture({ contract: 2, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   await writeManifest(d, {
-    contract: 1,
+    contract: 2,
     provider: null,
     org: null,
     agents: null,
     boards: null,
-    repos: { web: { url: 'https://github.com/acme/web.git' } },
     scopes: {
-      web: { path: 'org/web', extends: [] },
-      ui: { path: 'org/web/packages/ui', extends: ['web'] },
+      web: {
+        path: 'org/web',
+        url: 'https://github.com/acme/web.git',
+        parent: null,
+        extends: [],
+      },
+      ui: {
+        path: 'org/web/packages/ui',
+        url: null,
+        parent: 'web',
+        extends: ['web'],
+      },
     },
   })
   const text = await readFile(join(d, 'rness.json'), 'utf8')
   assert.equal(
     text,
     `{
-  "contract": 1,
-  "repos": {
-    "web": { "url": "https://github.com/acme/web.git" }
-  },
+  "contract": 2,
   "scopes": {
-    "web": { "path": "org/web" },
-    "ui": { "path": "org/web/packages/ui", "extends": ["web"] }
+    "web": {
+      "url": "https://github.com/acme/web.git",
+      "scopes": {
+        "ui": { "path": "packages/ui" }
+      }
+    }
   }
 }
 `
   )
   await writeManifest(d, {
-    contract: 1,
+    contract: 2,
     provider: null,
     org: 'acme',
     agents: null,
     boards: null,
-    repos: {},
     scopes: {},
   })
   assert.match(
     await readFile(join(d, 'rness.json'), 'utf8'),
-    /^\{\n {2}"contract": 1,\n {2}"org": "acme",\n/
+    /^\{\n {2}"contract": 2,\n {2}"org": "acme",\n/
   )
   assert.deepEqual(await loadManifest(d), {
-    contract: 1,
+    contract: 2,
     provider: null,
     org: 'acme',
     agents: null,
     boards: null,
-    repos: {},
     scopes: {},
   })
 })
@@ -257,7 +508,7 @@ test('agents: absent is null ("never asked"), a list is kept, [] included', asyn
       ['claude', 'codex'],
     ],
   ] as const) {
-    const d = await fixture({ contract: 1, agents, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 2, agents, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     assert.deepEqual((await loadManifest(d)).agents, expected)
   }
@@ -271,7 +522,7 @@ test('agents: a list of unique lowercase names, or an error', async (t) => {
     [''],
     ['claude', 'claude'],
   ]) {
-    const d = await fixture({ contract: 1, agents, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 2, agents, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     await assert.rejects(
       () => loadManifest(d),
@@ -282,33 +533,31 @@ test('agents: a list of unique lowercase names, or an error', async (t) => {
 })
 
 test('writeManifest puts agents after org, and writes [] too', async (t) => {
-  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  const d = await fixture({ contract: 2, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   await writeManifest(d, {
-    contract: 1,
+    contract: 2,
     provider: null,
     org: 'acme',
     agents: ['claude'],
     boards: null,
-    repos: {},
     scopes: {},
   })
   assert.match(
     await readFile(join(d, 'rness.json'), 'utf8'),
-    /^\{\n {2}"contract": 1,\n {2}"org": "acme",\n {2}"agents": \["claude"\],\n {2}"repos"/
+    /^\{\n {2}"contract": 2,\n {2}"org": "acme",\n {2}"agents": \["claude"\],\n {2}"scopes"/
   )
   await writeManifest(d, {
-    contract: 1,
+    contract: 2,
     provider: null,
     org: null,
     agents: [],
     boards: null,
-    repos: {},
     scopes: {},
   })
   assert.match(
     await readFile(join(d, 'rness.json'), 'utf8'),
-    /^\{\n {2}"contract": 1,\n {2}"agents": \[\],\n/
+    /^\{\n {2}"contract": 2,\n {2}"agents": \[\],\n/
   )
   assert.deepEqual((await loadManifest(d)).agents, [])
 })
@@ -322,12 +571,12 @@ test('provider: one of the three names, absent is null, anything else is an erro
     ['gitlab', 'gitlab'],
     ['atlassian', 'atlassian'],
   ] as const) {
-    const d = await fixture({ contract: 1, provider, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 2, provider, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     assert.equal((await loadManifest(d)).provider, expected)
   }
   for (const provider of ['svn', 'GitHub', 1, null]) {
-    const d = await fixture({ contract: 1, provider, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 2, provider, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     await assert.rejects(
       () => loadManifest(d),
@@ -359,7 +608,7 @@ test('boards: a name to a project number or a preset; absent is null', async (t)
       { pulse: 'agent-pulse/1', marketing: 'collection' },
     ],
   ] as const) {
-    const d = await fixture({ contract: 1, boards, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 2, boards, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     assert.deepEqual((await loadManifest(d)).boards, expected)
   }
@@ -368,10 +617,9 @@ test('boards: a name to a project number or a preset; absent is null', async (t)
 test('on GitLab a board is named by ids, in view order; number is refused there, ids elsewhere', async (t) => {
   const load = async (provider: string, boards: unknown) => {
     const d = await fixture({
-      contract: 1,
+      contract: 2,
       provider,
       boards,
-      repos: {},
       scopes: {},
     })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -408,48 +656,13 @@ test('on GitLab a board is named by ids, in view order; number is refused there,
 
 test('boards keeps the order it is written in', async (t) => {
   const d = await fixture({
-    contract: 1,
+    contract: 2,
     boards: { marketing: 5, pulse: 4, roadmap: 6 },
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const boards = (await loadManifest(d)).boards
   assert.deepEqual(Object.keys(boards ?? {}), ['marketing', 'pulse', 'roadmap'])
-})
-
-test('the former pulse: { "project": n } reads as boards.pulse (spec 0025 §2), its key said', async (t) => {
-  const d = await fixture({
-    contract: 1,
-    pulse: { project: 3 },
-    repos: {},
-    scopes: {},
-  })
-  t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  const m = await loadManifest(d)
-  assert.deepEqual(m.boards, { pulse: 3 })
-  assert.equal(m.formerKey, 'pulse')
-})
-
-test('the former projects reads as boards (spec 0033 §3), its key said; boards says none', async (t) => {
-  const d = await fixture({
-    contract: 1,
-    projects: { pulse: 4, marketing: 'collection' },
-    repos: {},
-    scopes: {},
-  })
-  t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  const m = await loadManifest(d)
-  assert.deepEqual(m.boards, { pulse: 4, marketing: 'collection' })
-  assert.equal(m.formerKey, 'projects')
-  const e = await fixture({
-    contract: 1,
-    boards: { pulse: 4 },
-    repos: {},
-    scopes: {},
-  })
-  t.after(() => rm(dirname(e), { recursive: true, force: true }))
-  assert.equal((await loadManifest(e)).formerKey, undefined)
 })
 
 test('boards: anything but names to boards on distinct projects is an error', async (t) => {
@@ -468,7 +681,7 @@ test('boards: anything but names to boards on distinct projects is an error', as
     { 'a b': 5 },
     { '': 5 },
   ]) {
-    const d = await fixture({ contract: 1, boards, repos: {}, scopes: {} })
+    const d = await fixture({ contract: 2, boards, scopes: {} })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     await assert.rejects(
       () => loadManifest(d),
@@ -481,7 +694,7 @@ test('boards: anything but names to boards on distinct projects is an error', as
 
 test('boards: a preset not of its name, or not of this rness, is refused, the others read (spec 0033 §4)', async (t) => {
   const d = await fixture({
-    contract: 1,
+    contract: 2,
     boards: {
       pulse: 'collection',
       marketing: 'agent-pulse',
@@ -489,7 +702,6 @@ test('boards: a preset not of its name, or not of this rness, is refused, the ot
       roadmap: '3',
       specs: 'collection/1',
     },
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -517,9 +729,8 @@ test('boards: a preset not of its name, or not of this rness, is refused, the ot
 
 test('boards: a board declared without its number is not created yet; the numbers of the others stay distinct', async (t) => {
   const d = await fixture({
-    contract: 1,
+    contract: 2,
     boards: { pulse: 5, marketing: UNNUMBERED, research: UNNUMBERED },
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -531,77 +742,27 @@ test('boards: a board declared without its number is not created yet; the number
   assert.equal(projectNumber(5), 5)
 })
 
-test('the former pulse: anything but { "project": <positive integer> } is an error', async (t) => {
-  for (const pulse of [
-    3,
-    null,
-    {},
-    { project: 0 },
-    { project: -1 },
-    { project: 1.5 },
-    { project: '3' },
-    { project: 3, extra: true },
-  ]) {
-    const d = await fixture({ contract: 1, pulse, repos: {}, scopes: {} })
-    t.after(() => rm(dirname(d), { recursive: true, force: true }))
-    await assert.rejects(
-      () => loadManifest(d),
-      new Error(
-        `rness.json: "pulse" must be { "project": <number> } (got ${JSON.stringify(pulse)})`
-      )
-    )
-  }
-})
-
-test('more than one of boards, projects and pulse at once is refused, naming them', async (t) => {
-  for (const [keys, message] of [
-    [
-      { projects: { pulse: 3 }, pulse: { project: 3 } },
-      '"projects" and "pulse" at once',
-    ],
-    [
-      { boards: { pulse: 3 }, projects: { pulse: 3 } },
-      '"boards" and "projects" at once',
-    ],
-    [
-      { boards: { pulse: 3 }, projects: { pulse: 3 }, pulse: { project: 3 } },
-      '"boards" and "projects" and "pulse" at once',
-    ],
-  ] as const) {
-    const d = await fixture({ contract: 1, ...keys, repos: {}, scopes: {} })
-    t.after(() => rm(dirname(d), { recursive: true, force: true }))
-    await assert.rejects(
-      () => loadManifest(d),
-      new Error(`rness.json: ${message}: keep "boards" only`)
-    )
-  }
-})
-
 test('writeManifest writes provider after contract and boards after agents', async (t) => {
-  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  const d = await fixture({ contract: 2, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const manifest: Manifest = {
-    contract: 1,
+    contract: 2,
     provider: 'github',
     org: 'acme',
     agents: ['claude'],
     boards: { pulse: 3, marketing: 5 },
-    repos: {},
     scopes: {},
   }
   await writeManifest(d, manifest)
   assert.equal(
     await readFile(join(d, 'rness.json'), 'utf8'),
     `{
-  "contract": 1,
+  "contract": 2,
   "provider": "github",
   "org": "acme",
   "agents": ["claude"],
   "boards": { "pulse": 3, "marketing": 5 },
-  "repos": {
-  },
-  "scopes": {
-  }
+  "scopes": {}
 }
 `
   )
@@ -621,9 +782,8 @@ const BOARD = {
 
 test('boards: a board declared whole is read as one, its source kept; a number stays a number', async (t) => {
   const d = await fixture({
-    contract: 1,
+    contract: 2,
     boards: { pulse: 4, marketing: BOARD },
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -639,10 +799,9 @@ test('boards: a board declared whole is read as one, its source kept; a number s
 test('boards: a board refused is set aside with its reason, the others and the rest of rness.json read', async (t) => {
   const bad = { ...BOARD, number: 6, views: [] }
   const d = await fixture({
-    contract: 1,
+    contract: 2,
     org: 'acme',
     boards: { pulse: 4, marketing: bad, research: { ...BOARD, number: 7 } },
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -660,9 +819,8 @@ test('boards: a board refused is set aside with its reason, the others and the r
 
 test('boards: two boards on one project number are refused, whatever their form', async (t) => {
   const d = await fixture({
-    contract: 1,
+    contract: 2,
     boards: { pulse: 5, marketing: BOARD },
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -675,9 +833,8 @@ test('boards: two boards on one project number are refused, whatever their form'
 test('writeManifest: a board declared whole on several lines, numbers as they are, a refused board kept; read back the same', async (t) => {
   const bad = { ...BOARD, number: 6, views: [] }
   const d = await fixture({
-    contract: 1,
+    contract: 2,
     boards: { pulse: 4, marketing: BOARD, research: bad },
-    repos: {},
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -686,7 +843,7 @@ test('writeManifest: a board declared whole on several lines, numbers as they ar
   assert.equal(
     await readFile(join(d, 'rness.json'), 'utf8'),
     `{
-  "contract": 1,
+  "contract": 2,
   "boards": {
     "pulse": 4,
     "marketing": {
@@ -713,71 +870,40 @@ test('writeManifest: a board declared whole on several lines, numbers as they ar
       "views": []
     }
   },
-  "repos": {
-  },
-  "scopes": {
-  }
+  "scopes": {}
 }
 `
   )
   assert.deepEqual(await loadManifest(d), read)
 })
 
-test('a manifest read with the former pulse or projects is written back with boards', async (t) => {
-  const d = await fixture({
-    contract: 1,
-    org: 'acme',
-    pulse: { project: 3 },
-    repos: {},
-    scopes: {},
-  })
-  t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  await writeManifest(d, await loadManifest(d))
-  const text = await readFile(join(d, 'rness.json'), 'utf8')
-  assert.equal(text.includes('"boards": { "pulse": 3 },'), true)
-  assert.equal(text.includes('"pulse": {'), false)
-  const e = await fixture({
-    contract: 1,
-    projects: { pulse: 3, marketing: 'collection' },
-    repos: {},
-    scopes: {},
-  })
-  t.after(() => rm(dirname(e), { recursive: true, force: true }))
-  await writeManifest(e, await loadManifest(e))
-  const written = await readFile(join(e, 'rness.json'), 'utf8')
-  assert.equal(
-    written.includes('"boards": { "pulse": 3, "marketing": "collection" },'),
-    true
-  )
-  assert.equal(written.includes('projects'), false)
-})
-
 test('providerOf: the key wins, else the first repository host, else github', () => {
   const base: Manifest = {
-    contract: 1,
+    contract: 2,
     provider: null,
     org: null,
     agents: null,
     boards: null,
-    repos: {},
     scopes: {},
   }
-  const web = (url: string) => ({ web: { url } })
+  const web = (url: string) => ({
+    web: { path: 'org/web', url, parent: null, extends: [] },
+  })
   assert.equal(providerOf(base), 'github')
   assert.equal(
     providerOf({
       ...base,
       provider: 'atlassian',
-      repos: web('https://gitlab.com/acme/web.git'),
+      scopes: web('https://gitlab.com/acme/web.git'),
     }),
     'atlassian'
   )
   assert.equal(
-    providerOf({ ...base, repos: web('https://gitlab.com/acme/web.git') }),
+    providerOf({ ...base, scopes: web('https://gitlab.com/acme/web.git') }),
     'gitlab'
   )
   assert.equal(
-    providerOf({ ...base, repos: web('git@github.com:acme/web.git') }),
+    providerOf({ ...base, scopes: web('git@github.com:acme/web.git') }),
     'github'
   )
 })
@@ -891,10 +1017,9 @@ test('parseRepoSpec without an organization: owner/repo and URLs only', () => {
 test('org on GitLab is a group path: dots and underscores, no subgroup, the message names GitLab', async (t) => {
   const org = async (value: string, provider = 'gitlab') => {
     const d = await fixture({
-      contract: 1,
+      contract: 2,
       provider,
       org: value,
-      repos: {},
       scopes: {},
     })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -976,10 +1101,9 @@ test('the exclusion list is one place, shared by both rules', () => {
 test('org on Atlassian is a Bitbucket workspace slug: lowercase, digits, - and _; the message names Bitbucket', async (t) => {
   const org = async (value: string) => {
     const d = await fixture({
-      contract: 1,
+      contract: 2,
       provider: 'atlassian',
       org: value,
-      repos: {},
       scopes: {},
     })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
@@ -998,7 +1122,7 @@ test('org on Atlassian is a Bitbucket workspace slug: lowercase, digits, - and _
 test('jira: read with provider atlassian only; a site on atlassian.net and a space key; written after org', async (t) => {
   const jira = { site: 'rness-dev.atlassian.net', space: 'RNESS' }
   const read = async (json: Record<string, unknown>) => {
-    const d = await fixture({ contract: 1, repos: {}, scopes: {}, ...json })
+    const d = await fixture({ contract: 2, scopes: {}, ...json })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))
     return loadManifest(d)
   }
@@ -1038,31 +1162,35 @@ test('jira: read with provider atlassian only; a site on atlassian.net and a spa
       JSON.stringify(bad)
     )
 
-  const d = await fixture({ contract: 1, repos: {}, scopes: {} })
+  const d = await fixture({ contract: 2, scopes: {} })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   const manifest: Manifest = {
-    contract: 1,
+    contract: 2,
     provider: 'atlassian',
     org: 'rness-dev',
     jira,
     agents: ['claude'],
     boards: null,
-    repos: { cli: { url: 'git@ssh.bitbucket.org:rness-dev/cli.git' } },
-    scopes: {},
+    scopes: {
+      cli: {
+        path: 'org/cli',
+        url: 'git@ssh.bitbucket.org:rness-dev/cli.git',
+        parent: null,
+        extends: [],
+      },
+    },
   }
   await writeManifest(d, manifest)
   assert.equal(
     await readFile(join(d, 'rness.json'), 'utf8'),
     `{
-  "contract": 1,
+  "contract": 2,
   "provider": "atlassian",
   "org": "rness-dev",
   "jira": { "site": "rness-dev.atlassian.net", "space": "RNESS" },
   "agents": ["claude"],
-  "repos": {
-    "cli": { "url": "git@ssh.bitbucket.org:rness-dev/cli.git" }
-  },
   "scopes": {
+    "cli": { "url": "git@ssh.bitbucket.org:rness-dev/cli.git" }
   }
 }
 `
@@ -1072,12 +1200,11 @@ test('jira: read with provider atlassian only; a site on atlassian.net and a spa
 
 test('providerOf: a Bitbucket URL, either SSH host, is Atlassian', () => {
   const base: Manifest = {
-    contract: 1,
+    contract: 2,
     provider: null,
     org: null,
     agents: null,
     boards: null,
-    repos: {},
     scopes: {},
   }
   for (const url of [
@@ -1087,7 +1214,10 @@ test('providerOf: a Bitbucket URL, either SSH host, is Atlassian', () => {
     'https://x-bitbucket-api-token-auth@bitbucket.org/acme/api.git',
   ])
     assert.equal(
-      providerOf({ ...base, repos: { api: { url } } }),
+      providerOf({
+        ...base,
+        scopes: { api: { path: 'org/api', url, parent: null, extends: [] } },
+      }),
       'atlassian',
       url
     )
@@ -1125,10 +1255,9 @@ test('parseRepoSpec: a URL on the old Bitbucket SSH host is written on the new o
 test('on Atlassian a board names nothing: number and ids are refused, naming the key (spec 0039 §2)', async (t) => {
   const load = async (boards: unknown) => {
     const d = await fixture({
-      contract: 1,
+      contract: 2,
       provider: 'atlassian',
       boards,
-      repos: {},
       scopes: {},
     })
     t.after(() => rm(dirname(d), { recursive: true, force: true }))

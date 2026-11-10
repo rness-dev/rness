@@ -350,7 +350,7 @@ async function workspace(
   await mkdir(join(root, '.rness'))
   await writeFile(
     join(root, '.rness', 'rness.json'),
-    JSON.stringify({ contract: 1, org: 'acme', ...extra })
+    JSON.stringify({ contract: 2, org: 'acme', ...extra })
   )
   return root
 }
@@ -361,7 +361,7 @@ const deviceScope = (gh: { requests: Recorded[] }) =>
 test('login asks for the project scope where a pulse is declared, and only there', async (t) => {
   await machine(t)
   const gh = await fakeGithub(t, github)
-  const pulse = await workspace(t, { pulse: { project: 3 } })
+  const pulse = await workspace(t, { boards: { pulse: 3 } })
   const plain = await workspace(t, {})
 
   const a = await run(() =>

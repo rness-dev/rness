@@ -84,7 +84,7 @@ test('validate reports a stale block as a problem and a missing one as a warning
   const { join } = await import('node:path')
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: { 'standards/web/seo.md': '# SEO\n' },
     dirs: ['org/web'],
   })
@@ -162,7 +162,7 @@ test('in a terminal, validate reports one line per target, the conforming ones g
   // and a conforming target is what this test is about.
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: { 'standards/coding.md': '# Coding\n' },
     dirs: ['org/web'],
   })
@@ -242,8 +242,7 @@ test('off a terminal the bytes do not change, whatever the reporter could do', a
 test('validate refuses an agent this version cannot compile, and a missing guaranteed value', async (t) => {
   const spec = {
     org: 'acme',
-    repos: { api: { url: 'https://github.com/acme/api.git' } },
-    scopes: { api: { path: 'org/api' } },
+    scopes: { api: { url: 'https://github.com/acme/api.git' } },
     dirs: ['org/api'],
   }
   const codex = await makeWorkspace(t, { ...spec, agents: ['codex'] })
@@ -382,7 +381,7 @@ test('a standalone checkout of .rness with claude declared validates: the root h
   await mkdir(ctx)
   await writeFile(
     join(ctx, 'rness.json'),
-    JSON.stringify({ contract: 1, agents: ['claude'], repos: {}, scopes: {} })
+    JSON.stringify({ contract: 2, agents: ['claude'], scopes: {} })
   )
   const c = capture()
   const code = await run(['validate', '--cwd', ctx])
@@ -401,7 +400,7 @@ test('an Atlassian workspace validates: the provider is supported (plan 0053 tas
 
 test('a host detected from a repository URL is not a problem', async (t) => {
   const cwd = await makeWorkspace(t, {
-    repos: { api: { url: 'https://gitlab.com/acme/api.git' } },
+    scopes: { api: { url: 'https://gitlab.com/acme/api.git' } },
   })
   const c = capture()
   const code = await run(['validate', '--cwd', cwd])
@@ -558,16 +557,20 @@ test('boards: a preset not created yet, named after a collection or pulse; else 
   )
 })
 
-test('boards: the former projects is still valid (spec 0033 §3)', async (t) => {
+test('boards: the former projects is a key of contract 1, unknown to contract 2 (spec 0038 §1)', async (t) => {
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 4 },
     files: { 'marketing/a.md': '---\nstatus: Idea\n---\n# A\n' },
   })
+  await writeFile(
+    join(cwd, '.rness', 'rness.json'),
+    JSON.stringify({ contract: 2, org: 'acme', projects: { pulse: 4 } })
+  )
   const c = capture()
   const code = await run(['validate', '--cwd', cwd])
   c.restore()
-  assert.equal(code, 0, c.err())
+  assert.equal(code, 1)
+  assert.match(c.err(), /rness\.json: unknown key "projects"/)
 })
 
 test('boards: a readme or updates not there', async (t) => {

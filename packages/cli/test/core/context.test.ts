@@ -98,9 +98,11 @@ test('a 3-deep extends chain orders a-group, b-group, c-group, then global', asy
 test('policy is a collection of the contract, resolved by scope as the others', async (t) => {
   const root = await makeWorkspace(t, {
     scopes: {
-      platform: { path: 'org/platform' },
-      web: { path: 'org/platform/web', extends: ['platform'] },
-      api: { path: 'org/api' },
+      platform: {
+        url: 'https://github.com/acme/platform.git',
+        scopes: { web: { path: 'web' } },
+      },
+      api: { url: 'https://github.com/acme/api.git' },
     },
     files: {
       'policy/no-em-dash.md': '# No em dash\n',

@@ -120,7 +120,7 @@ async function workspace(t: TestContext, agents?: string[]) {
   const root = await makeWorkspace(t, {
     org: 'acme',
     ...(agents === undefined ? {} : { agents }),
-    repos: {
+    scopes: {
       api: { url: 'https://github.com/acme/api.git' },
       web: { url: 'https://github.com/acme/web.git' },
     },

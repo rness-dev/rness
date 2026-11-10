@@ -32,6 +32,7 @@ export {
   NAME_RULE,
   ORG_NAME,
   parseRepoSpec,
+  repositories,
   writeManifest,
 } from './core/manifest.ts'
 export { findWorkspace } from './core/workspace.ts'

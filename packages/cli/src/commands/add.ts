@@ -8,6 +8,7 @@ import {
   loadManifest,
   parseRepoSpec,
   providerOf,
+  repositories,
   workspaceName,
 } from '../core/manifest.ts'
 import type { GitCredentials } from '../core/provider.ts'
@@ -152,7 +153,7 @@ export async function addCommand(
       )
       if (unattended || !access.ok) ui.gitIsSilent = true
       else ui.hint(passphraseHint(), 'stderr')
-      const overSsh = Object.values(manifest.repos).some((r) =>
+      const overSsh = repositories(manifest).some((r) =>
         isSshUrl(r.url, transport.hosts)
       )
       if (access.ok || !overSsh) {

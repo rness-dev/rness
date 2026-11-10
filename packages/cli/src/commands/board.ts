@@ -1101,7 +1101,7 @@ export interface RunOptions {
   paths: string[]
   /** `session-start`, `session-end`: the session's scope; absent, the workspace's root. */
   scope?: string
-  /** `session-end`: the clone the session worked in, a name of `repos`. */
+  /** `session-end`: the clone the session worked in, the name of a repository of `rness.json`. */
   clone?: string
   /** Internal (tests): how the lock's poll sleeps. */
   sleep?: (ms: number) => Promise<void>

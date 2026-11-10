@@ -30,13 +30,14 @@ import {
 } from '../../src/commands/create.ts'
 import type { CommandDeps } from '../../src/core/deps.ts'
 import { originUrl } from '../../src/core/git.ts'
-import { loadManifest } from '../../src/core/manifest.ts'
+import { loadManifest, repositories } from '../../src/core/manifest.ts'
 import type { Provider } from '../../src/core/provider.ts'
 import {
   INSTEAD_OF_LINES,
   type Transport,
   sshWorkspaceLines,
 } from '../../src/core/transport.ts'
+import type { Manifest } from '../../src/core/types.ts'
 import { VERSION } from '../../src/version.ts'
 import { capture } from '../helpers/capture.ts'
 import { fakeGithub, withEnv as withTestEnv } from '../helpers/fake-github.ts'
@@ -93,19 +94,13 @@ async function fakeBin(
   })
 }
 
+/** A catalogue of contract 2: each repository a scope with its `url`. */
 const manifestText = (repos: Record<string, { url: string }>) =>
-  `${JSON.stringify(
-    {
-      contract: 1,
-      org: 'acme',
-      repos,
-      scopes: Object.fromEntries(
-        Object.keys(repos).map((name) => [name, { path: `org/${name}` }])
-      ),
-    },
-    null,
-    2
-  )}\n`
+  `${JSON.stringify({ contract: 2, org: 'acme', scopes: repos }, null, 2)}\n`
+
+/** The repositories of a manifest by name, the scopes with a `url`. */
+const declaredRepos = (m: Manifest): Record<string, { url: string }> =>
+  Object.fromEntries(repositories(m).map((r) => [r.name, { url: r.url }]))
 
 test('new: ./<org> is scaffolded with org and tokens, commits it, adds --repos, writes the blocks', async (t) => {
   const remote = await makeRemoteOrg(t, 'acme')
@@ -136,7 +131,7 @@ test('new: ./<org> is scaffolded with org and tokens, commits it, adds --repos, 
   assert.match(r.out, / {2}# then, for every teammate: npm create rness acme\n/)
   const m = await loadManifest(join(root, '.rness'))
   assert.equal(m.org, 'acme')
-  assert.deepEqual(Object.keys(m.repos), ['api'])
+  assert.deepEqual(Object.keys(declaredRepos(m)), ['api'])
   const pkg = JSON.parse(
     await readFile(join(root, '.rness', 'package.json'), 'utf8')
   ) as { devDependencies: Record<string, string>; packageManager: string }
@@ -260,7 +255,7 @@ test('join --repos: catalogue entries are cloned without rewriting rness.json; o
     /\ncloned {3}org\/api\ncloned {3}org\/newrepo\ndeclared scope newrepo \(org\/newrepo\)\nnot cloned: web /
   )
   const m = await loadManifest(join(other, 'acme', '.rness'))
-  assert.deepEqual(m.repos, {
+  assert.deepEqual(declaredRepos(m), {
     api: { url: apiUrl },
     web: { url: webUrl },
     newrepo: { url: `${remote.host}acme/newrepo.git` },
@@ -574,7 +569,7 @@ test('a repository that fails is reported and skipped; the workspace is still fi
     /Next:\n {2}cd acme\/\.rness\n {2}rness add ghost {3}# failed: git clone failed: /
   )
   assert.deepEqual(
-    Object.keys((await loadManifest(join(root, '.rness'))).repos),
+    Object.keys(declaredRepos(await loadManifest(join(root, '.rness')))),
     ['api']
   )
   const { stdout: committed } = await execFileP(
@@ -632,7 +627,7 @@ test('an organization name keeps its case in the directory, the URLs and rness.j
   assert.match(r.out, /npm create rness Acme-Corp\n/)
   const m = await loadManifest(join(cwd, 'Acme-Corp', '.rness'))
   assert.equal(m.org, 'Acme-Corp')
-  assert.deepEqual(m.repos, {
+  assert.deepEqual(declaredRepos(m), {
     api: { url: `${remote.host}Acme-Corp/api.git` },
   })
   assert.match(
@@ -949,7 +944,7 @@ test('wizard, new: the organization, then the listed repositories; nothing pre-s
   const root = join(cwd, 'acme')
   const m = await loadManifest(join(root, '.rness'))
   assert.equal(m.org, 'acme')
-  assert.deepEqual(m.repos, {
+  assert.deepEqual(declaredRepos(m), {
     api: { url: `${remote.host}acme/api.git` },
     website: { url: `${remote.host}acme/website.git` },
   })
@@ -1005,8 +1000,15 @@ test('wizard, join: the catalogue is pre-selected and completed; unpicked stays 
   await assert.rejects(access(join(root, 'org', 'web')))
   await assert.rejects(access(join(root, 'org', 'secret')))
   const m = await loadManifest(join(root, '.rness'))
-  assert.deepEqual(Object.keys(m.repos), ['api', 'web', 'secret', 'other'])
-  assert.deepEqual(m.repos['other'], { url: `${remote.host}acme/other.git` })
+  assert.deepEqual(Object.keys(declaredRepos(m)), [
+    'api',
+    'web',
+    'secret',
+    'other',
+  ])
+  assert.deepEqual(declaredRepos(m)['other'], {
+    url: `${remote.host}acme/other.git`,
+  })
 })
 
 test('wizard, join: a cancelled picker exits 0, writes nothing and leaves no staged clone', async (t) => {
@@ -1178,9 +1180,12 @@ test('create <org> is --org <org>; two different names are refused', async (t) =
   const cwd = await scratch(t)
   const r = await create(['acme', ...rest, '--repos', 'api', '--cwd', cwd])
   assert.equal(r.code, 0, r.err)
-  assert.deepEqual((await loadManifest(join(cwd, 'acme', '.rness'))).repos, {
-    api: { url: `${remote.host}acme/api.git` },
-  })
+  assert.deepEqual(
+    declaredRepos(await loadManifest(join(cwd, 'acme', '.rness'))),
+    {
+      api: { url: `${remote.host}acme/api.git` },
+    }
+  )
 
   const twice = await scratch(t)
   const same = await create(['acme', '--org', 'acme', ...rest, '--cwd', twice])
@@ -1221,9 +1226,12 @@ test('new workspace: URLs are written over SSH when the SSH test passes, over HT
     r.out
   )
   assert.deepEqual(ok.calls, [{ interactive: false }])
-  assert.deepEqual((await loadManifest(join(cwd, 'acme', '.rness'))).repos, {
-    api: { url: `${ok.ssh.host}acme/api.git` },
-  })
+  assert.deepEqual(
+    declaredRepos(await loadManifest(join(cwd, 'acme', '.rness'))),
+    {
+      api: { url: `${ok.ssh.host}acme/api.git` },
+    }
+  )
 
   const denied = await fakeTransport(t, 'acme', SSH_DENIED)
   await denied.https.addRepo('api', { 'README.md': '# api\n' })
@@ -1240,9 +1248,12 @@ test('new workspace: URLs are written over SSH when the SSH test passes, over HT
     ),
     r2.out
   )
-  assert.deepEqual((await loadManifest(join(cwd2, 'acme', '.rness'))).repos, {
-    api: { url: `${denied.https.host}acme/api.git` },
-  })
+  assert.deepEqual(
+    declaredRepos(await loadManifest(join(cwd2, 'acme', '.rness'))),
+    {
+      api: { url: `${denied.https.host}acme/api.git` },
+    }
+  )
 })
 
 test('--https and --ssh decide without the SSH test', async (t) => {
@@ -1257,9 +1268,12 @@ test('--https and --ssh decide without the SSH test', async (t) => {
   )
   assert.equal(r.code, 0, r.err)
   assert.doesNotMatch(r.out, /^using /m)
-  assert.deepEqual((await loadManifest(join(cwd, 'acme', '.rness'))).repos, {
-    api: { url: `${forced.https.host}acme/api.git` },
-  })
+  assert.deepEqual(
+    declaredRepos(await loadManifest(join(cwd, 'acme', '.rness'))),
+    {
+      api: { url: `${forced.https.host}acme/api.git` },
+    }
+  )
   const cwd2 = await scratch(t)
   const r2 = await wizard(
     { ...FLAGS, ssh: true, repos: 'web', cwd: cwd2 },
@@ -1267,9 +1281,12 @@ test('--https and --ssh decide without the SSH test', async (t) => {
     forced.transport
   )
   assert.equal(r2.code, 0, r2.err)
-  assert.deepEqual((await loadManifest(join(cwd2, 'acme', '.rness'))).repos, {
-    web: { url: `${forced.ssh.host}acme/web.git` },
-  })
+  assert.deepEqual(
+    declaredRepos(await loadManifest(join(cwd2, 'acme', '.rness'))),
+    {
+      web: { url: `${forced.ssh.host}acme/web.git` },
+    }
+  )
   assert.deepEqual(forced.calls, [])
 })
 
@@ -1778,7 +1795,7 @@ test('GitLab wizard: its words, the group then the account, the subgroup hint, t
   )
   const m = await loadManifest(join(cwd, 'acme', '.rness'))
   assert.equal(m.provider, 'gitlab')
-  assert.deepEqual(m.repos, {
+  assert.deepEqual(declaredRepos(m), {
     api: { url: `${remote.host}acme/api.git` },
     mobile: { url: `${remote.host}acme/platform/mobile.git` },
   })
@@ -2060,7 +2077,7 @@ test('blank: .rness without "org", an empty org/ and the root files — and no G
   assert.deepEqual(await readdir(join(root, 'org')), [])
   const m = await loadManifest(join(root, '.rness'))
   assert.equal(m.org, null)
-  assert.deepEqual(m.repos, {})
+  assert.deepEqual(declaredRepos(m), {})
   assert.deepEqual(m.scopes, {})
   assert.doesNotMatch(
     await readFile(join(root, '.rness', 'rness.json'), 'utf8'),
@@ -2962,7 +2979,9 @@ test('Atlassian wizard: its words, the workspaces named and no account, the proj
   const m = await loadManifest(join(cwd, 'acme', '.rness'))
   assert.equal(m.provider, 'atlassian')
   assert.deepEqual(m.jira, { site: 'acme.atlassian.net', space: 'RNESS' })
-  assert.deepEqual(m.repos, { api: { url: `${remote.host}acme/api.git` } })
+  assert.deepEqual(declaredRepos(m), {
+    api: { url: `${remote.host}acme/api.git` },
+  })
   assert.match(
     r.out,
     / {2}# then, for every teammate: npm create rness -- acme --provider atlassian\n/

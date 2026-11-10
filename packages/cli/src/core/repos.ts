@@ -12,7 +12,7 @@ import {
 } from './manifest.ts'
 import type { GitCredentials } from './provider.ts'
 import { sameRemote } from './remote.ts'
-import type { Manifest, ScopeEntry } from './types.ts'
+import type { Manifest, Repository, ScopeEntry } from './types.ts'
 import { entryFor } from './workspace.ts'
 
 export interface AddRepositoryInput {
@@ -24,7 +24,7 @@ export interface AddRepositoryInput {
   /** The owner of a bare `<repo>`; null in a blank workspace, which refuses one. */
   org: string | null
   host: string
-  /** Sub-scopes relative to the repository (`apps/web`); each becomes scope `<basename>` extending `<repo>`. */
+  /** Sub-scopes relative to the repository (`apps/web`); each becomes scope `<basename>`, a part of `<repo>`. */
   scopes: readonly string[]
   /** HTTPS credentials for the URL the spec resolves to, when there are any. */
   credentialsFor?: (url: string) => GitCredentials | null
@@ -70,7 +70,12 @@ export async function addRepository(
     throw new Error(`scope "${name}" already points at ${current.path}`)
   const scopes: Record<string, ScopeEntry> = {
     ...input.manifest.scopes,
-    [name]: { path: repoPath, extends: current?.extends ?? [] },
+    [name]: {
+      path: repoPath,
+      url,
+      parent: null,
+      extends: current?.extends ?? [],
+    },
   }
   const subs: { clean: string; base: string }[] = []
   for (const sub of input.scopes) {
@@ -94,7 +99,7 @@ export async function addRepository(
       existing.path.toLowerCase() !== path.toLowerCase()
     )
       throw new Error(`scope "${base}" already points at ${existing.path}`)
-    scopes[base] = { path, extends: [name] }
+    scopes[base] = { path, url: null, parent: name, extends: [name] }
     subs.push({ clean, base })
   }
 
@@ -131,11 +136,7 @@ export async function addRepository(
   const renamed = entry !== null && entry !== name ? entry : null
   if (renamed !== null) await renameCase(orgDir, renamed, name)
 
-  const manifest: Manifest = {
-    ...input.manifest,
-    repos: { ...input.manifest.repos, [name]: { url } },
-    scopes,
-  }
+  const manifest: Manifest = { ...input.manifest, scopes }
   await writeManifest(input.rnessDir, manifest)
   return { manifest, name, url, action, renamed, declared }
 }
@@ -165,17 +166,21 @@ async function renameCase(
   }
 }
 
-/** The clone of `repos` that holds `dir`: its name, directory and URL; null in `.rness/`, at the root, or outside. */
+/**
+ * The repository whose clone holds `dir`, a part's directory included: its
+ * name, absolute directory and URL; null in `.rness/`, at the root, or
+ * outside.
+ */
 export function cloneHolding(
   root: string,
-  repos: Manifest['repos'],
+  repos: readonly Repository[],
   dir: string
 ): { name: string; dir: string; url: string } | null {
-  for (const [name, repo] of Object.entries(repos)) {
-    const clone = resolve(root, 'org', name)
+  for (const repo of repos) {
+    const clone = resolve(root, ...repo.dir.split('/'))
     const r = relative(clone, resolve(dir))
     if (r === '' || (!r.startsWith('..') && !isAbsolute(r)))
-      return { name, dir: clone, url: repo.url }
+      return { name: repo.name, dir: clone, url: repo.url }
   }
   return null
 }

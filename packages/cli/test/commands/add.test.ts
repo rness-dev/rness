@@ -5,18 +5,23 @@ import { test } from 'node:test'
 
 import { run } from '../../src/cli.ts'
 import { type AddOptions, addCommand } from '../../src/commands/add.ts'
-import { loadManifest } from '../../src/core/manifest.ts'
+import { loadManifest, repositories } from '../../src/core/manifest.ts'
 import type { Prompts, Terminal } from '../../src/core/terminal.ts'
 import {
   type Transport,
   httpsFlagLine,
   sshWorkspaceLines,
 } from '../../src/core/transport.ts'
+import type { Manifest } from '../../src/core/types.ts'
 import { capture } from '../helpers/capture.ts'
 import { git, makeBareRepo } from '../helpers/git.ts'
 import { makeRemoteOrg } from '../helpers/remote-org.ts'
 import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
+
+/** The repositories of a manifest by name, the scopes with a `url`. */
+const reposOf = (m: Manifest): Record<string, { url: string }> =>
+  Object.fromEntries(repositories(m).map((r) => [r.name, { url: r.url }]))
 
 process.env['GIT_AUTHOR_NAME'] = 'rness-test'
 process.env['GIT_AUTHOR_EMAIL'] = 'test@rness.invalid'
@@ -47,7 +52,7 @@ test('add <url> clones, declares, and syncs the new scope and the root', async (
   for (const hook of ['pre-commit', 'commit-msg', 'pre-push'])
     await access(join(root, 'org', 'api', '.git', 'hooks', hook))
   const m = await loadManifest(join(root, '.rness'))
-  assert.deepEqual(m.repos, { api: { url } })
+  assert.deepEqual(reposOf(m), { api: { url } })
 })
 
 test('without "org" (a blank workspace): a bare name is refused, a URL is added without a warning', async (t) => {
@@ -75,7 +80,7 @@ test('without "org" (a blank workspace): a bare name is refused, a URL is added 
   assert.equal(full.err, '')
   const m = await loadManifest(join(root, '.rness'))
   assert.equal(m.org, null)
-  assert.deepEqual(m.repos, { api: { url } })
+  assert.deepEqual(reposOf(m), { api: { url } })
 })
 
 test('add <repo> expands with the org and --host; --scopes declares sub-scopes', async (t) => {
@@ -91,7 +96,7 @@ test('add <repo> expands with the org and --host; --scopes declares sub-scopes',
     'platform',
   ])
   assert.equal(r.code, 0, r.err)
-  assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {
+  assert.deepEqual(reposOf(await loadManifest(join(root, '.rness'))), {
     platform: { url: `${remote.host}acme/platform.git` },
   })
   await mkdir(join(root, 'org', 'platform', 'apps', 'web'), {
@@ -115,6 +120,8 @@ test('add <repo> expands with the org and --host; --scopes declares sub-scopes',
   const m = await loadManifest(join(root, '.rness'))
   assert.deepEqual(m.scopes['web'], {
     path: 'org/platform/apps/web',
+    url: null,
+    parent: 'platform',
     extends: ['platform'],
   })
   await access(join(root, 'org', 'platform', 'apps', 'web', 'AGENTS.md'))
@@ -126,7 +133,7 @@ test('refuses without a TTY and --yes, outside a workspace, and on a bad name', 
   const refused = await add(['--cwd', root, url])
   assert.equal(refused.code, 2)
   assert.match(refused.err, /pass --yes/)
-  assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {})
+  assert.deepEqual(reposOf(await loadManifest(join(root, '.rness'))), {})
   const outside = await add(['--yes', '--cwd', '/', url])
   assert.equal(outside.code, 1)
   assert.match(outside.err, /no rness workspace/)
@@ -140,7 +147,7 @@ test('a clone failure leaves the manifest untouched and exits 1', async (t) => {
   const r = await add(['--yes', '--cwd', root, 'file:///no/such/ghost.git'])
   assert.equal(r.code, 1)
   assert.match(r.err, /git clone failed/)
-  assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {})
+  assert.deepEqual(reposOf(await loadManifest(join(root, '.rness'))), {})
 })
 
 test("add's sync clones nothing else from the catalogue", async (t) => {
@@ -148,8 +155,7 @@ test("add's sync clones nothing else from the catalogue", async (t) => {
   const apiUrl = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { web: { url: webUrl } },
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: webUrl } },
     dirs: ['org'],
   })
   const r = await add(['--yes', '--cwd', root, apiUrl])
@@ -160,7 +166,7 @@ test("add's sync clones nothing else from the catalogue", async (t) => {
   )
   await assert.rejects(access(join(root, 'org', 'web')))
   assert.deepEqual(
-    Object.keys((await loadManifest(join(root, '.rness'))).repos),
+    Object.keys(reposOf(await loadManifest(join(root, '.rness')))),
     ['web', 'api']
   )
 })
@@ -221,7 +227,7 @@ test('add <repo> writes the SSH URL when the SSH test passes', async (t) => {
     r.out
   )
   assert.deepEqual(ok.calls, [{ interactive: false }])
-  assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {
+  assert.deepEqual(reposOf(await loadManifest(join(root, '.rness'))), {
     api: { url: `${ok.ssh.host}acme/api.git` },
   })
 })
@@ -283,8 +289,7 @@ test('without SSH access, a workspace that does not clone over SSH falls back to
   const webUrl = await denied.https.addRepo('web', { 'README.md': '# web\n' })
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { web: { url: webUrl } },
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: webUrl } },
     dirs: ['org'],
   })
   const r = await addWith(
@@ -296,7 +301,7 @@ test('without SSH access, a workspace that does not clone over SSH falls back to
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /^using {4}https \(ssh to github\.com unavailable: /)
   assert.equal(
-    (await loadManifest(join(root, '.rness'))).repos['api']?.url,
+    reposOf(await loadManifest(join(root, '.rness')))['api']?.url,
     `${denied.https.host}acme/api.git`
   )
 })
@@ -307,13 +312,12 @@ test('an SSH workspace does not fall back silently: a message, then --https or t
   const workspace = () =>
     makeWorkspace(t, {
       org: 'acme',
-      repos: { web: { url: `${denied.ssh.host}acme/web.git` } },
-      scopes: { web: { path: 'org/web' } },
+      scopes: { web: { url: `${denied.ssh.host}acme/web.git` } },
       dirs: ['org'],
     })
   const untouched = async (root: string): Promise<void> => {
     assert.deepEqual(
-      Object.keys((await loadManifest(join(root, '.rness'))).repos),
+      Object.keys(reposOf(await loadManifest(join(root, '.rness')))),
       ['web']
     )
     await assert.rejects(access(join(root, 'org', 'api')))
@@ -361,7 +365,7 @@ test('an SSH workspace does not fall back silently: a message, then --https or t
   assert.equal(yes.asked[0], 'Clone api over HTTPS instead?')
   assert.match(yes.asked[1] ?? '', /^clone .*acme\/api\.git into org\/api/)
   assert.equal(
-    (await loadManifest(join(root3, '.rness'))).repos['api']?.url,
+    reposOf(await loadManifest(join(root3, '.rness')))['api']?.url,
     `${denied.https.host}acme/api.git`
   )
 
@@ -377,7 +381,7 @@ test('an SSH workspace does not fall back silently: a message, then --https or t
   assert.equal(r4.code, 0, r4.err)
   assert.deepEqual(denied.calls, [])
   assert.equal(
-    (await loadManifest(join(root4, '.rness'))).repos['api']?.url,
+    reposOf(await loadManifest(join(root4, '.rness')))['api']?.url,
     `${denied.https.host}acme/api.git`
   )
 })
@@ -438,8 +442,13 @@ test('add takes a name in any case, as create does: key and directory lowercase,
   // readdir, not exists(): on macOS exists('org/dapp') is true for org/dApp.
   assert.deepEqual(await readdir(join(root, 'org')), ['dapp'])
   const m = await loadManifest(join(root, '.rness'))
-  assert.deepEqual(m.repos, { dapp: { url: `${remote.host}acme/dApp.git` } })
-  assert.deepEqual(m.scopes['dapp'], { path: 'org/dapp', extends: [] })
+  assert.deepEqual(reposOf(m), { dapp: { url: `${remote.host}acme/dApp.git` } })
+  assert.deepEqual(m.scopes['dapp'], {
+    path: 'org/dapp',
+    url: `${remote.host}acme/dApp.git`,
+    parent: null,
+    extends: [],
+  })
 })
 
 test('add refuses the context repository, whatever organization it is named with', async (t) => {
@@ -472,7 +481,7 @@ test('on GitLab, a project of a subgroup is added by its full path: the key its 
     'acme/platform/Mobile',
   ])
   assert.equal(r.code, 0, r.err)
-  assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {
+  assert.deepEqual(reposOf(await loadManifest(join(root, '.rness'))), {
     mobile: { url: `${remote.host}acme/platform/Mobile.git` },
   })
   await access(join(root, 'org', 'mobile', 'README.md'))
@@ -531,7 +540,7 @@ test('on Atlassian, a bare name is the workspace, owner/name another; .rness is 
     'other/tools',
   ])
   assert.equal(r2.code, 0, r2.err)
-  assert.deepEqual((await loadManifest(join(root, '.rness'))).repos, {
+  assert.deepEqual(reposOf(await loadManifest(join(root, '.rness'))), {
     api: { url: `${remote.host}acme/api.git` },
     tools: { url: `${other.host}other/tools.git` },
   })

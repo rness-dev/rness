@@ -307,7 +307,7 @@ test("a clone of a subgroup project is the workspace's; another group's is not",
   })
   const c = {
     org: 'acme',
-    manifest: { provider: 'gitlab', repos: {} },
+    manifest: { provider: 'gitlab', scopes: {} },
   } as never
   assert.deepEqual(
     workspaceRepo(c, 'https://gitlab.com/acme/platform/mobile.git'),

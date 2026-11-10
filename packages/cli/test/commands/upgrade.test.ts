@@ -138,7 +138,7 @@ async function workspace(
   }
   await writeFile(
     join(rnessDir, 'rness.json'),
-    JSON.stringify({ contract: 1, org: 'acme', repos: {}, scopes: {} })
+    JSON.stringify({ contract: 2, org: 'acme', scopes: {} })
   )
   await git(rnessDir, 'init', '-q', '-b', 'main')
   await git(rnessDir, 'add', '-A')
@@ -675,14 +675,13 @@ test('next steps name, per repository, the files sync writes that changed — no
   await writeFile(
     join(rnessDir, 'rness.json'),
     JSON.stringify({
-      contract: 1,
+      contract: 2,
       org: 'acme',
       agents: ['claude'],
-      repos: {
+      scopes: {
         api: { url: 'https://github.com/acme/api.git' },
         web: { url: 'https://github.com/acme/web.git' },
       },
-      scopes: {},
     })
   )
   await git(rnessDir, 'commit', '-qam', 'chore: two repositories')
@@ -727,11 +726,10 @@ test('next steps also name the files only the new copy writes: it is asked, this
   await writeFile(
     join(rnessDir, 'rness.json'),
     JSON.stringify({
-      contract: 1,
+      contract: 2,
       org: 'acme',
       agents: ['claude'],
-      repos: { api: { url: 'https://github.com/acme/api.git' } },
-      scopes: {},
+      scopes: { api: { url: 'https://github.com/acme/api.git' } },
     })
   )
   await git(rnessDir, 'commit', '-qam', 'chore: a repository')

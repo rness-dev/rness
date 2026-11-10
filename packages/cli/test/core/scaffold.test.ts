@@ -33,12 +33,11 @@ test('the scaffold ships _gitignore, never .gitignore', async () => {
 test('the scaffold manifest is a valid empty workspace', async () => {
   const m = await loadManifest(scaffoldDir())
   assert.deepEqual(m, {
-    contract: 1,
+    contract: 2,
     provider: null,
     org: null,
     agents: null,
     boards: null,
-    repos: {},
     scopes: {},
   })
 })

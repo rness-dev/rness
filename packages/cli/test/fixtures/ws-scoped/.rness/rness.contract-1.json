@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "repos": {
+    "web": { "url": "https://github.com/acme/web.git" },
+    "platform": { "url": "https://github.com/acme/platform.git" }
+  },
+  "scopes": {
+    "web": { "path": "org/web", "extends": ["platform"] },
+    "platform": { "path": "org/platform" }
+  }
+}

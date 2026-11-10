@@ -85,6 +85,8 @@ async function journaled(
     files?: Record<string, string>
     /** The session end's actions; default `clear-marks`, `journal-summary`. */
     end?: string[]
+    /** A part of `api` declared, `docs` at `org/api/apps/docs` (spec 0038 §1). */
+    part?: boolean
   } = {}
 ) {
   await machine(t)
@@ -102,11 +104,17 @@ async function journaled(
     org: 'acme',
     // Written, as a team whose repository lives elsewhere writes it.
     provider: 'github',
-    repos: { api: { url: opts.url ?? 'git@github.com:acme/api.git' } },
-    scopes: { api: { path: 'org/api' } },
+    scopes: {
+      api: {
+        url: opts.url ?? 'git@github.com:acme/api.git',
+        ...(opts.part === true
+          ? { scopes: { docs: { path: 'apps/docs' } } }
+          : {}),
+      },
+    },
     boards: { pulse: 'agent-pulse' },
     files: opts.files ?? FILES,
-    dirs: ['org/api'],
+    dirs: opts.part === true ? ['org/api/apps/docs'] : ['org/api'],
   })
   const c = capture()
   try {
@@ -211,6 +219,16 @@ test("to the repository: the implementation issue made once — labelled, its ma
   assert.equal(g.issues.filter((i) => i.repository === 'acme/api').length, 1)
   assert.match(g.comments[1]?.body ?? '', /^\*\*Deviation\*\* · /)
   assert.match(g.comments[1]?.body ?? '', /\n\nKept the old header\.\n\n/)
+})
+
+test('a session in a part of the repository notes on the repository, as from its clone (spec 0038 §9)', async (t) => {
+  const { g, api } = await journaled(t, { part: true })
+  const r = await note(g, join(api, 'apps', 'docs'))
+  assert.equal(r.code, 0, r.err)
+  const impl = g.issues.find((i) => i.repository === 'acme/api')
+  assert.ok(impl !== undefined)
+  assert.equal(r.out, `acme/api#${impl.number}`)
+  assert.match(g.comments[0]?.body ?? '', /`feat\/limits` @ `[0-9a-f]{7}`/)
 })
 
 test("to the plan: the note on the plan's issue in .rness, nothing made elsewhere", async (t) => {
@@ -387,7 +405,11 @@ test("rness_note: the same note through the MCP server, its session given; the i
 // --- the session-end summary (spec 0030 §6) ---------------------------------
 
 /** `board run session-end`, as the hook spawns it for a session in `api`. */
-async function sessionEnd(g: { base: string }, root: string) {
+async function sessionEnd(
+  g: { base: string },
+  root: string,
+  scope: string = 'api'
+) {
   const c = capture()
   try {
     return await boardRunCommand({
@@ -396,7 +418,7 @@ async function sessionEnd(g: { base: string }, root: string) {
       event: 'session-end',
       session: SESSION,
       paths: [],
-      scope: 'api',
+      scope,
       clone: 'api',
     })
   } finally {
@@ -442,6 +464,22 @@ test("summary with commits and a pull request, no note: on the one plan's issue,
     },
   ])
   assert.equal(await startOf(api, SESSION), null)
+})
+
+test("summary of a session in a part: its repository's commits, as the session end names the clone (spec 0038 §9)", async (t) => {
+  const { g, root, api } = await journaled(t, { part: true })
+  await recordStart(api, SESSION, Date.now() - 5 * 60_000)
+  const sha = await commitIn(api, 'a.ts')
+  assert.equal(await sessionEnd(g, root, 'docs'), 0)
+  assert.equal(await takeFailure(), null)
+  const summaries = g.comments.filter((c) => c.body.includes('summary -->'))
+  assert.equal(summaries.length, 1)
+  assert.ok(
+    (summaries[0]?.body ?? '').includes(
+      `\nBranch \`feat/limits\` · 1 commit (\`${sha}\`)\n`
+    ),
+    summaries[0]?.body
+  )
 })
 
 test('summary with notes and no commit: on the issue the notes went to; it is no note of the limit', async (t) => {

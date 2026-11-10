@@ -164,8 +164,7 @@ async function snapshot(args: string[]) {
 async function scoped(t: TestContext, files: Record<string, string> = {}) {
   return makeWorkspace(t, {
     org: 'acme',
-    repos: { web: { url: 'https://github.com/acme/web.git' } },
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: {
       'standards/style.md': '# Style\n',
       'adr/0001-org.md': doc('Accepted', '0001 - A workspace is an org'),

@@ -1,4 +1,7 @@
-{ "contract": 1, "repos": {}, "scopes": {
-  "alpha": { "path": "org/alpha", "extends": ["beta"] },
-  "beta": { "path": "org/beta", "extends": ["alpha"] }
-} }
+{
+  "contract": 2,
+  "scopes": {
+    "alpha": { "url": "https://github.com/acme/alpha.git", "extends": ["beta"] },
+    "beta": { "url": "https://github.com/acme/beta.git", "extends": ["alpha"] }
+  }
+}

@@ -153,14 +153,12 @@ async function workspace(t: TestContext, opts: Options = {}) {
   const root = await makeWorkspace(t, {
     org: 'acme',
     ...(opts.agents === undefined ? {} : { agents: opts.agents }),
-    repos: {
-      web: { url: 'file:///nowhere/web.git' },
-      mono: { url: 'file:///nowhere/mono.git' },
-    },
     scopes: {
-      web: { path: 'org/web' },
-      mono: { path: 'org/mono' },
-      pkg: { path: 'org/mono/packages/pkg', extends: ['mono'] },
+      web: { url: 'file:///nowhere/web.git' },
+      mono: {
+        url: 'file:///nowhere/mono.git',
+        scopes: { pkg: { path: 'packages/pkg' } },
+      },
     },
     files: {
       'policy/no-em-dash.md': NO_EM_DASH,

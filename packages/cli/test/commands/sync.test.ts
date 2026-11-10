@@ -38,7 +38,10 @@ const coding = '# Coding\n\nTwo-space indent.\n'
 function basic(t: Parameters<typeof makeWorkspace>[0]) {
   return makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    scopes: {
+      web: { url: 'https://github.com/acme/web.git' },
+      api: { url: 'https://github.com/acme/api.git' },
+    },
     files: { 'standards/web/seo.md': seo, 'standards/coding.md': coding },
     dirs: ['org/web'],
   })
@@ -51,13 +54,13 @@ async function sync(args: string[]) {
   return { code, out: c.out(), err: c.err() }
 }
 
-test('writes the root and scope blocks and the CLAUDE.md pointers; skips scopes not present', async (t) => {
+test('writes the root and scope blocks and the CLAUDE.md pointers; a repository not cloned is said once', async (t) => {
   const root = await basic(t)
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
   assert.match(
     r.out,
-    /^updated {2}AGENTS\.md\nupdated {2}org\/web\/AGENTS\.md\nskipped {2}org\/api\/AGENTS\.md \(directory not present\)\n$/
+    /^not cloned: api \(rness add <name>, or rness sync --all\)\nupdated {2}AGENTS\.md\nupdated {2}org\/web\/AGENTS\.md\n$/
   )
   const web = await readFile(join(root, 'org', 'web', 'AGENTS.md'), 'utf8')
   assert.match(web, /^<!-- BEGIN rness -->\n<!-- rness · scope: web ·/)
@@ -86,7 +89,10 @@ test('the root CLAUDE.md pointer is converted once; --check reports it until the
 
   const check = await sync(['--check', '--cwd', root])
   assert.equal(check.code, 1)
-  assert.match(check.out, /^unchanged AGENTS\.md\nstale {4}CLAUDE\.md\n/)
+  assert.match(
+    check.out,
+    /^not cloned: api \(rness add <name>, or rness sync --all\)\nunchanged AGENTS\.md\nstale {4}CLAUDE\.md\n/
+  )
   assert.match(
     await readFile(join(root, 'CLAUDE.md'), 'utf8'),
     /@AGENTS\.md/,
@@ -95,7 +101,10 @@ test('the root CLAUDE.md pointer is converted once; --check reports it until the
 
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
-  assert.match(r.out, /^unchanged AGENTS\.md\nupdated {2}CLAUDE\.md\n/)
+  assert.match(
+    r.out,
+    /^not cloned: api \(rness add <name>, or rness sync --all\)\nunchanged AGENTS\.md\nupdated {2}CLAUDE\.md\n/
+  )
   const text = await readFile(join(root, 'CLAUDE.md'), 'utf8')
   assert.match(text, /^# Mine\n\n<!-- BEGIN rness -->/)
   assert.match(text, /<!-- END rness -->\n\nkeep me\n$/)
@@ -111,7 +120,10 @@ test('at the root a symlinked CLAUDE.md is left as it is, and AGENTS.md is still
   await symlink('AGENTS.md', join(root, 'CLAUDE.md'))
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
-  assert.match(r.out, /^updated {2}AGENTS\.md\nupdated {2}org\/web/)
+  assert.match(
+    r.out,
+    /^not cloned: api \(rness add <name>, or rness sync --all\)\nupdated {2}AGENTS\.md\nupdated {2}org\/web/
+  )
   assert.doesNotMatch(r.out, /skipped {2}AGENTS\.md/)
   assert.equal((await lstat(join(root, 'CLAUDE.md'))).isSymbolicLink(), true)
   assert.match(await readFile(join(root, 'CLAUDE.md'), 'utf8'), /BEGIN rness/)
@@ -126,7 +138,7 @@ test('a second run changes nothing; --check agrees; editing a standard makes --c
   assert.equal(again.code, 0)
   assert.match(
     again.out,
-    /^unchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md\n/
+    /^not cloned: api \(rness add <name>, or rness sync --all\)\nunchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md\n/
   )
   const check = await sync(['--check', '--cwd', root])
   assert.equal(check.code, 0)
@@ -194,11 +206,14 @@ test('unknown --scope and a workspace without org/ are handled', async (t) => {
   assert.match(cased.out, /^updated {2}org\/web\/AGENTS\.md$/m)
   const bare = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
   })
   const r = await sync(['--yes', '--cwd', bare])
   assert.equal(r.code, 0)
-  assert.match(r.out, /^skipped {2}blocks \(no org\/ directory here\)\n$/)
+  assert.match(
+    r.out,
+    /^not cloned: web \(rness add <name>, or rness sync --all\)\nskipped {2}blocks \(no org\/ directory here\)\n$/
+  )
 })
 
 test('hints spell rness the way it was launched: pnpm dlx here', async (t) => {
@@ -211,8 +226,7 @@ test('hints spell rness the way it was launched: pnpm dlx here', async (t) => {
   const url = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { api: { url } },
-    scopes: { api: { path: 'org/api' } },
+    scopes: { api: { url } },
     dirs: ['org'],
   })
   const check = await sync(['--check', '--cwd', root])
@@ -231,11 +245,7 @@ test('a missing clone is reported, not cloned; --check agrees; no per-scope line
   const url = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { api: { url } },
-    scopes: {
-      api: { path: 'org/api' },
-      'api-docs': { path: 'org/api/docs', extends: ['api'] },
-    },
+    scopes: { api: { url, scopes: { 'api-docs': { path: 'docs' } } } },
     files: { 'standards/coding.md': coding },
     dirs: ['org'],
   })
@@ -268,8 +278,7 @@ test('--all clones missing repositories, pulls with --pull, skips dirty trees, a
   const url = await makeBareRepo(t, 'api')
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { api: { url } },
-    scopes: { api: { path: 'org/api' } },
+    scopes: { api: { url } },
     files: { 'standards/coding.md': coding },
   })
   const first = await sync(['--yes', '--all', '--cwd', root])
@@ -299,8 +308,10 @@ test('--all clones missing repositories, pulls with --pull, skips dirty trees, a
 test('--pull on a directory that is not a clone is a reported problem; other output survives', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { web: { url: 'file:///unused/web.git' } },
-    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    scopes: {
+      web: { url: 'file:///unused/web.git' },
+      api: { url: 'file:///unused/api.git' },
+    },
     files: { 'standards/web/seo.md': seo, 'standards/coding.md': coding },
     dirs: ['org/web'],
   })
@@ -329,7 +340,7 @@ for (const [link, target] of [
     assert.equal(r.code, 0, r.err)
     assert.match(
       r.out,
-      /^updated {2}AGENTS\.md\nskipped {2}org\/web\/AGENTS\.md \(symlink\)\n/
+      /^not cloned: api \(rness add <name>, or rness sync --all\)\nupdated {2}AGENTS\.md\nskipped {2}org\/web\/AGENTS\.md \(symlink\)\n/
     )
     assert.equal(
       await readFile(join(dir, target), 'utf8'),
@@ -358,8 +369,7 @@ for (const [link, target] of [
 test('with --all, a clone failure is reported, the manifest is untouched, other work continues', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { ghost: { url: 'file:///no/such/ghost.git' } },
-    scopes: {},
+    scopes: { ghost: { url: 'file:///no/such/ghost.git' } },
     files: { 'standards/coding.md': coding },
     dirs: ['org'],
   })
@@ -445,8 +455,7 @@ async function catalogueWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
   return makeWorkspace(t, {
     org: 'acme',
     agents: [],
-    repos: { api: { url: api }, docs: { url: docs } },
-    scopes: { api: { path: 'org/api' }, docs: { path: 'org/docs' } },
+    scopes: { api: { url: api }, docs: { url: docs } },
     files: { 'standards/coding.md': coding },
     dirs: ['org'],
   })
@@ -496,7 +505,7 @@ test('terminal: nothing to offer asks for confirmation; a clone rness.json does 
   const root = await makeWorkspace(t, {
     org: 'acme',
     agents: [],
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: { 'standards/coding.md': coding },
     dirs: ['org/web', 'org/extra'],
   })
@@ -549,8 +558,7 @@ test('a git@ catalogue entry is not cloned without SSH access: sync stops before
   await denied.ssh.addRepo('api', { 'README.md': '# api\n' })
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { api: { url: `${denied.ssh.host}acme/api.git` } },
-    scopes: { api: { path: 'org/api' } },
+    scopes: { api: { url: `${denied.ssh.host}acme/api.git` } },
     dirs: ['org'],
   })
   const c = capture()
@@ -579,11 +587,10 @@ test('with SSH access the git@ entry is cloned; the SSH test runs only when such
   const webUrl = await ok.https.addRepo('web', { 'README.md': '# web\n' })
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: {
+    scopes: {
       api: { url: `${ok.ssh.host}acme/api.git` },
       web: { url: webUrl },
     },
-    scopes: { api: { path: 'org/api' }, web: { path: 'org/web' } },
     dirs: ['org'],
   })
   const run = async (opts: SyncOptions) => {
@@ -636,7 +643,7 @@ test('a block whose header still names an older CLI is current by its hash: upgr
   assert.equal(again.code, 0, again.err)
   assert.match(
     again.out,
-    /^unchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md\n/
+    /^not cloned: api \(rness add <name>, or rness sync --all\)\nunchanged AGENTS\.md\nunchanged org\/web\/AGENTS\.md\n/
   )
   assert.deepEqual(
     await Promise.all(files.map((f) => readFile(f, 'utf8'))),
@@ -652,7 +659,7 @@ test('a block whose header still names an older CLI is current by its hash: upgr
   assert.equal(changed.code, 0, changed.err)
   assert.match(
     changed.out,
-    /^updated {2}AGENTS\.md\nupdated {2}org\/web\/AGENTS\.md\n/
+    /^not cloned: api \(rness add <name>, or rness sync --all\)\nupdated {2}AGENTS\.md\nupdated {2}org\/web\/AGENTS\.md\n/
   )
   assert.match(
     await readFile(files[1] ?? '', 'utf8'),
@@ -665,7 +672,7 @@ test('a clone whose name begins with a dot is a clone like any other', async (t)
   // repository a member works on, so sync must see it under org/ (spec 0009).
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { '.github': { path: 'org/.github' } },
+    scopes: { '.github': { url: 'https://github.com/acme/.github.git' } },
     files: { 'standards/coding.md': coding },
     dirs: ['org/.github'],
   })
@@ -683,7 +690,7 @@ test('a clone whose name begins with a dot is a clone like any other', async (t)
 test('an excluded directory under org/ is not taken for an undeclared clone', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: { 'standards/coding.md': coding },
     // An install run one directory too high: never a clone, never named.
     dirs: ['org/web', 'org/node_modules'],
@@ -697,7 +704,7 @@ test("on GitLab, org/rness is the context project's name: neither undeclared nor
   const root = await makeWorkspace(t, {
     provider: 'gitlab',
     org: 'acme',
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: { 'standards/coding.md': coding },
     dirs: ['org/web', 'org/rness'],
   })
@@ -709,7 +716,7 @@ test("on GitLab, org/rness is the context project's name: neither undeclared nor
 test('a directory under org/ that is no name rness.json can hold is named, not skipped silently', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: { 'standards/coding.md': coding },
     dirs: ['org/web', 'org/WebSite', 'org/-rf', 'org/Api.rness-rename'],
   })
@@ -727,8 +734,7 @@ test('a declared repository whose directory differs only by case is neither clon
   const url = await makeBareRepo(t, 'dapp')
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { dapp: { url } },
-    scopes: { dapp: { path: 'org/dapp' } },
+    scopes: { dapp: { url } },
     files: { 'standards/coding.md': coding },
     dirs: ['org/dApp'],
   })
@@ -746,7 +752,7 @@ test('a declared repository whose directory differs only by case is neither clon
 test('a case variant next to the exact directory is named, the exact one synced (Linux)', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: { 'standards/coding.md': coding },
     dirs: ['org/web'],
   })
@@ -776,8 +782,7 @@ async function agentWorkspace(
   return makeWorkspace(t, {
     org: 'acme',
     ...(agents === undefined ? {} : { agents }),
-    repos: { api: { url: 'https://github.com/acme/api.git' } },
-    scopes: { api: { path: 'org/api' } },
+    scopes: { api: { url: 'https://github.com/acme/api.git' } },
     dirs: ['org/api'],
   })
 }
@@ -953,8 +958,7 @@ test('--pull still pulls a clone whose only changes are the agent files sync wro
   const root = await makeWorkspace(t, {
     org: 'acme',
     agents: ['claude'],
-    repos: { api: { url } },
-    scopes: { api: { path: 'org/api' } },
+    scopes: { api: { url } },
   })
   const first = await sync(['--yes', '--all', '--cwd', root])
   assert.equal(first.code, 0, first.err)
@@ -977,48 +981,39 @@ test('a written provider this copy lacks does not stop sync: git does the clonin
   const root = await makeWorkspace(t, {
     org: 'acme',
     provider: 'gitlab',
-    repos: { api: { url: 'git@gitlab.com:acme/api.git' } },
+    scopes: { api: { url: 'git@gitlab.com:acme/api.git' } },
     dirs: ['org/api'],
-    scopes: { api: { path: 'org/api' } },
   })
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, /updated {2}AGENTS\.md/)
 })
 
-test('the former projects becomes boards, its boards read back the same; --check and --scope leave it (spec 0033 §3)', async (t) => {
+test('the former projects is a key of contract 1: sync stops on it, the file untouched; upgrade renames it (spec 0038 §1)', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    projects: { pulse: 4, marketing: 'collection' },
     files: { 'marketing/a.md': '---\nstatus: Idea\n---\n# A\n' },
   })
   const file = join(root, '.rness', 'rness.json')
-  const checked = await sync(['--check', '--cwd', root])
-  assert.doesNotMatch(checked.out, /renamed/)
-  assert.match(await readFile(file, 'utf8'), /"projects"/)
+  const text = JSON.stringify({
+    contract: 2,
+    org: 'acme',
+    projects: { pulse: 4, marketing: 'collection' },
+  })
+  await writeFile(file, text)
   const r = await sync(['--yes', '--cwd', root])
-  assert.equal(r.code, 0, r.err)
-  assert.match(
-    r.out,
-    /^renamed {2}projects to boards in \.rness\/rness\.json$/m
-  )
-  const text = await readFile(file, 'utf8')
-  assert.doesNotMatch(text, /"projects"/)
-  const after = await loadManifest(join(root, '.rness'))
-  assert.equal(after.formerKey, undefined)
-  assert.equal(after.boards?.['marketing'], 'collection')
-  const pulse = after.boards?.['pulse']
-  assert.ok(typeof pulse === 'object')
-  assert.equal(pulse.number, 4)
-  const again = await sync(['--yes', '--cwd', root])
-  assert.doesNotMatch(again.out, /renamed|wrote/)
+  assert.equal(r.code, 1)
+  assert.match(r.err, /rness\.json: unknown key "projects"/)
   assert.equal(await readFile(file, 'utf8'), text)
 })
 
 async function hooksWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    scopes: {
+      web: { url: 'https://github.com/acme/web.git' },
+      api: { url: 'https://github.com/acme/api.git' },
+    },
     files: { 'standards/coding.md': coding },
     dirs: ['org/web', 'org/api'],
   })
@@ -1068,15 +1063,20 @@ test('hooks: a clone rness.json does not declare gets none, and no line but its 
   await assert.rejects(access(join(stray, '.git', 'hooks', 'pre-commit')))
 })
 
-test('hooks: a clone a scope names in another case is declared, and gets them', async (t) => {
+test('hooks: a part gets none of its own; its repository gets them, with --scope on the part too (spec 0038 §9)', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/Web' } },
+    scopes: {
+      web: {
+        url: 'https://github.com/acme/web.git',
+        scopes: { docs: { path: 'apps/docs' } },
+      },
+    },
     files: { 'standards/coding.md': coding },
-    dirs: ['org/web'],
+    dirs: ['org/web/apps/docs'],
   })
   await git(['init', '-q', '-b', 'main'], join(root, 'org', 'web'))
-  const scoped = await sync(['--yes', '--scope', 'web', '--cwd', root])
+  const scoped = await sync(['--yes', '--scope', 'docs', '--cwd', root])
   assert.equal(scoped.code, 0, scoped.err)
   assert.match(scoped.out, /updated {2}org\/web git hooks/)
   await rm(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
@@ -1084,6 +1084,7 @@ test('hooks: a clone a scope names in another case is declared, and gets them', 
   assert.equal(r.code, 0, r.err)
   assert.doesNotMatch(r.out, /not in rness\.json/)
   assert.match(r.out, /updated {2}org\/web git hooks \(pre-commit\)/)
+  assert.doesNotMatch(r.out, /apps\/docs git hooks/)
   await access(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
 })
 

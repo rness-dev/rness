@@ -21,6 +21,7 @@ import {
   loadManifest,
   orgNameRule,
   parseRepoSpec,
+  repositories,
 } from '../core/manifest.ts'
 import {
   buildContext,
@@ -270,7 +271,8 @@ async function pickRepositories(input: {
   providerName: ProviderName
   prompts: Prompts
   ui: Ui
-  catalogue: Readonly<Record<string, unknown>>
+  /** The names of the catalogue's repositories. */
+  catalogue: readonly string[]
 }): Promise<{ picked: string[]; prompted: boolean } | null> {
   const { org, prompts, provider, providerName, ui } = input
   const words = wordsOf(providerName)
@@ -313,8 +315,7 @@ async function pickRepositories(input: {
     failed = true
     ui.warn(firstLine(e instanceof Error ? e.message : String(e)))
   }
-  const inCatalogue = (name: string): boolean =>
-    Object.hasOwn(input.catalogue, name)
+  const inCatalogue = (name: string): boolean => input.catalogue.includes(name)
   // Every active repository of the organization is a candidate but its context
   // repository, which is already cloned as `<root>/.rness` and is not a member
   // of the workspace it defines (spec 0009). A name beginning with a dot is an
@@ -359,7 +360,7 @@ async function pickRepositories(input: {
       return { value, label, ...(h === null ? {} : { hint: h }) }
     })
   const offered = new Set(declarable.map((o) => o.value))
-  for (const name of Object.keys(input.catalogue)) {
+  for (const name of input.catalogue) {
     if (!offered.has(name))
       declarable.push({ value: name, label: name, hint: 'in .rness' })
   }
@@ -390,7 +391,7 @@ async function pickRepositories(input: {
     if (!failed) ui.warn(`no ${many} to list for ${org}`)
     return { picked: [], prompted: false }
   }
-  const initialValues = Object.keys(input.catalogue)
+  const initialValues = [...input.catalogue]
   // Disabled options go last: clack focuses the first option before any key
   // is pressed, and Tab would select it even when it is disabled.
   const answer = await prompts.autocompleteMultiselect<string>({
@@ -445,7 +446,10 @@ async function cloneSelection(input: {
       } catch {
         // `addRepository` reports the malformed spec below.
       }
-      const entry = name === null ? undefined : manifest.repos[name]
+      const entry =
+        name === null
+          ? undefined
+          : repositories(manifest).find((r) => r.name === name)
       if (name !== null && entry !== undefined) {
         const repo = name
         await ui.step(
@@ -1028,12 +1032,11 @@ export async function createCommand(
     // Joining: the catalogue is read from a clone staged outside the target,
     // so the picker can offer it before anything is written there.
     let catalogue: Manifest = {
-      contract: 1,
+      contract: 2,
       provider: chosenProvider,
       org,
       agents: null,
       boards: null,
-      repos: {},
       scopes: {},
     }
     const staged = async (): Promise<string> => {
@@ -1080,7 +1083,7 @@ export async function createCommand(
       // An SSH workspace is not negotiable: without SSH access its
       // repositories cannot be cloned, so stop before any question or write.
       // `--ssh` is the user's word that SSH works; git reports otherwise.
-      const overSsh = Object.values(catalogue.repos).some((r) =>
+      const overSsh = repositories(catalogue).some((r) =>
         isSshUrl(r.url, transport.hosts)
       )
       if (overSsh && opts.ssh !== true && opts.host === undefined) {
@@ -1103,14 +1106,14 @@ export async function createCommand(
         providerName: chosenProvider,
         ui,
         prompts: await prompts(),
-        catalogue: catalogue.repos,
+        catalogue: repositories(catalogue).map((r) => r.name),
       })
       if (result === null) return cancelled(ui)
       specs = result.picked
       prompted ||= result.prompted
     } else {
       // Scripts and CI: a join takes the whole catalogue, a new workspace nothing.
-      specs = Object.keys(catalogue.repos)
+      specs = repositories(catalogue).map((r) => r.name)
     }
     // Where a new workspace's cards live, when not beside the repositories
     // (Atlassian's Jira): asked now, the space made after the last write of
@@ -1187,9 +1190,9 @@ export async function createCommand(
       // What is left to do, never what just scrolled past: the `cloned` lines
       // are right above (spec 0009 §6).
       const cloned = await clonesIn(root, chosenProvider)
-      const remaining = Object.keys(catalogue.repos).filter(
-        (name) => !cloned.has(name)
-      )
+      const remaining = repositories(catalogue)
+        .map((r) => r.name)
+        .filter((name) => !cloned.has(name))
       const rness = rnessCommand()
       const next = [
         `cd ${shown}`,

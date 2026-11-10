@@ -53,9 +53,8 @@ async function workspace(
 ) {
   return makeWorkspace(t, {
     org: 'acme',
-    ...(pulse === undefined ? {} : { pulse }),
-    repos: { web: { url: 'https://github.com/acme/web.git' } },
-    scopes: { web: { path: 'org/web' } },
+    ...(pulse === undefined ? {} : { boards: { pulse: pulse.project } }),
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: {
       'standards/style.md': '# Style\n',
       'standards/web/seo.md': '# SEO\n',
@@ -355,7 +354,7 @@ test('a plan written without a number: exit 2, the next number given', async (t)
 test('an edit of rness.json that rness refuses: exit 2 with the reason', async (t) => {
   const root = await workspace(t)
   const file = join(root, '.rness', 'rness.json')
-  await writeFile(file, JSON.stringify({ contract: 1, repos: {}, scope: {} }))
+  await writeFile(file, JSON.stringify({ contract: 2, scopes: {}, scope: {} }))
   const r = await hook('post-tool-use', edit(file, root))
   assert.equal(r.code, 2)
   assert.match(r.err, /^rness: rness\.json: unknown key "scope"\n/)
@@ -1159,8 +1158,7 @@ test('pre-tool-use: a file of the rness plugin, as sync writes it, gets the plug
   const root = await makeWorkspace(t, {
     org: 'acme',
     agents: ['claude'],
-    repos: { web: { url: 'https://github.com/acme/web.git' } },
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
     files: {
       // Every file of the plugin names rness.
       'policy/no-rness.md': POLICY.replace("'\\u2014'", 'rness'),
@@ -1334,7 +1332,7 @@ test('pre-tool-use: in a standalone checkout of the context repository, a bypass
   await mkdir(join(ctx, 'policy'), { recursive: true })
   await writeFile(
     join(ctx, 'rness.json'),
-    JSON.stringify({ contract: 1, repos: {}, scopes: {} })
+    JSON.stringify({ contract: 2, scopes: {} })
   )
   await writeFile(join(ctx, 'policy', 'no-em-dash.md'), POLICY)
   await git(['init', '-q', '-b', 'main'], ctx)
@@ -1495,11 +1493,10 @@ test('pre-tool-use: another configuration given to git may skip the hooks, and t
 test('pre-tool-use: a bypass in a clone answers to that clone scope, not to another scope', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: {
+    scopes: {
       web: { url: 'https://github.com/acme/web.git' },
       api: { url: 'https://github.com/acme/api.git' },
     },
-    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
     files: { 'policy/api/no-em-dash.md': POLICY },
     dirs: ['org/web', 'org/api'],
   })
@@ -1529,10 +1526,9 @@ test('pre-tool-use: policies that cannot be read never skip the block and contra
   // An extends cycle: the policies of the scope cannot be resolved.
   const root = await makeWorkspace(t, {
     org: 'acme',
-    repos: { web: { url: 'https://github.com/acme/web.git' } },
     scopes: {
-      web: { path: 'org/web', extends: ['api'] },
-      api: { path: 'org/api', extends: ['web'] },
+      web: { url: 'https://github.com/acme/web.git', extends: ['api'] },
+      api: { url: 'https://github.com/acme/api.git', extends: ['web'] },
     },
     files: {
       'standards/style.md': '# Style\n',
@@ -1866,6 +1862,46 @@ test("the session's start is recorded in the clone it works in, for the summary;
     ),
     recorded,
     'a resumed session keeps its first start'
+  )
+})
+
+test('a session in a part of a repository: its start recorded in the repository clone, the run told the part and the repository (spec 0038 §9)', async (t) => {
+  const root = await declaredBoards(
+    t,
+    { pulse: journalBoard('repo') },
+    PULSE_FILES
+  )
+  const file = join(root, '.rness', 'rness.json')
+  const manifest = JSON.parse(readFileSync(file, 'utf8'))
+  manifest.scopes.web.scopes = { docs: { path: 'apps/docs' } }
+  await writeFile(file, JSON.stringify(manifest))
+  const web = join(root, 'org', 'web')
+  const docs = join(web, 'apps', 'docs')
+  await mkdir(docs, { recursive: true })
+  await writeFile(join(web, 'a.md'), 'a\n')
+  await commitDir(web)
+  await hook('session-start', { cwd: docs, source: 'startup', session_id: ID })
+  const recorded = JSON.parse(
+    readFileSync(join(web, '.git', 'rness', 'sessions', '1a2b3c4d'), 'utf8')
+  )
+  assert.match(recorded.head, /^[0-9a-f]{40}$/)
+  const spawned: Spawned[] = []
+  await hook('session-end', { cwd: docs, session_id: ID }, {}, spawned)
+  assert.deepEqual(
+    spawned.map((s) => s.args),
+    [
+      [
+        'board',
+        'run',
+        'session-end',
+        '--session',
+        'claude · 1a2b3c4d',
+        '--scope',
+        'docs',
+        '--clone',
+        'web',
+      ],
+    ]
   )
 })
 

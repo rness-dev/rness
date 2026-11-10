@@ -8,7 +8,7 @@ import { writtenFiles } from '../core/agent-targets.ts'
 import { readPinnedCli } from '../core/delegate.ts'
 import { exists, writeFileAtomic } from '../core/fs.ts'
 import { changedPaths, isClean } from '../core/git.ts'
-import { loadManifest } from '../core/manifest.ts'
+import { loadManifest, repositories } from '../core/manifest.ts'
 import {
   EXACT_VERSION,
   compareVersions,
@@ -155,8 +155,8 @@ async function clonesToCommit(
   files: readonly string[]
 ): Promise<CloneChanges[]> {
   const clones: CloneChanges[] = []
-  for (const repo of Object.keys(manifest.repos)) {
-    const dir = join(root, 'org', repo)
+  for (const repo of repositories(manifest)) {
+    const dir = join(root, ...repo.dir.split('/'))
     if (!(await exists(dir))) continue
     try {
       const paths = await changedPaths(dir, files)

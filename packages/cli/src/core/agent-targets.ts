@@ -13,6 +13,7 @@ import {
   ensureGuarantees,
   missingGuarantees,
 } from './json-guarantees.ts'
+import { repositories } from './manifest.ts'
 import { workspacePackageManager } from './pinned.ts'
 import type { Manifest } from './types.ts'
 
@@ -72,15 +73,16 @@ async function filesOf(
           file: join(root, ...owned.file.split('/')),
           label: owned.file,
         })
-  for (const repo of Object.keys(manifest.repos)) {
-    if (!(await exists(join(root, 'org', repo)))) continue
+  for (const repo of repositories(manifest)) {
+    const dir = join(root, ...repo.dir.split('/'))
+    if (!(await exists(dir))) continue
     for (const target of targets)
       for (const owned of target.files(ctx))
         if (owned.at === 'clones')
           files.push({
             ...owned,
-            file: join(root, 'org', repo, ...owned.file.split('/')),
-            label: `org/${repo}/${owned.file}`,
+            file: join(dir, ...owned.file.split('/')),
+            label: `${repo.dir}/${owned.file}`,
           })
   }
   return files

@@ -33,9 +33,8 @@ async function workspace(root: string): Promise<void> {
   await writeFile(
     join(root, '.rness', 'rness.json'),
     JSON.stringify({
-      contract: 1,
-      repos: {},
-      scopes: { web: { path: 'org/web' } },
+      contract: 2,
+      scopes: { web: { url: 'https://github.com/acme/web.git' } },
     })
   )
 }

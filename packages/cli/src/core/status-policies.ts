@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
+import { repositories } from './manifest.ts'
 import { policiesFor } from './policy.ts'
 import { type Refusal, readRefusals } from './refusals.ts'
 import type { StatusTab } from './status.ts'
@@ -24,7 +25,7 @@ const minute = (ms: number): string =>
 /** The clones the refusals are read from: those of `org/` that exist, then `.rness`. */
 async function clonesOf(ws: Workspace, manifest: Manifest): Promise<string[]> {
   const dirs = [
-    ...Object.keys(manifest.repos).map((name) => resolve(ws.root, 'org', name)),
+    ...repositories(manifest).map((r) => resolve(ws.root, ...r.dir.split('/'))),
     ws.rnessDir,
   ]
   const present: string[] = []

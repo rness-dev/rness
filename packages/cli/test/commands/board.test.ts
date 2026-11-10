@@ -237,7 +237,7 @@ async function settled(
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const sync = () =>
@@ -323,7 +323,7 @@ test('a board to create where the repositories look like another provider, none 
   const cwd = await makeWorkspace(t, {
     org: 'acme',
     boards: { pulse: 'agent-pulse' },
-    repos: { api: { url: 'https://gitlab.com/acme/api.git' } },
+    scopes: { api: { url: 'https://gitlab.com/acme/api.git' } },
     files: FILES,
   })
   const before = await readFile(join(cwd, '.rness', 'rness.json'), 'utf8')
@@ -353,7 +353,7 @@ test('a board created where the repositories are on GitHub writes the detected p
   const cwd = await makeWorkspace(t, {
     org: 'acme',
     boards: { pulse: 'agent-pulse' },
-    repos: { api: { url: 'git@github.com:acme/api.git' } },
+    scopes: { api: { url: 'git@github.com:acme/api.git' } },
     files: FILES,
   })
   const r = await run(() =>
@@ -817,7 +817,7 @@ test('a new document: its issue (labelled, the first line as body), added to the
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const r = await run(() =>
@@ -1079,7 +1079,7 @@ test("the first sync with 0.13.0: 0.12.0's drafts converted in place, labelled, 
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const sync = () =>
@@ -1173,7 +1173,7 @@ test("the team's items are left alone: a draft without Path, another repository'
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const r = await run(() =>
@@ -1196,7 +1196,7 @@ test('a body links another document to its issue, both new in the same sync: two
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: {
       'adr/0001-a.md': `${doc('Accepted', '0001 - A')}\nSee [B](../plans/0002-b.md).\n`,
       'plans/0002-b.md': `${doc('In progress', '0002 - B')}\nFollows [ADR 0001](../adr/0001-a.md#context).\n`,
@@ -1231,7 +1231,7 @@ test('Issues off on .rness: sync refused before any write', async (t) => {
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const r = await run(() =>
@@ -1317,7 +1317,7 @@ test('a secondary rate limit is waited on as GitHub says, and said', async (t) =
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const slept: number[] = []
@@ -1353,7 +1353,7 @@ test('a rate limit past the 10 minutes stops the sync with what is left; the nex
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const slept: number[] = []
@@ -1395,7 +1395,7 @@ async function declared(
   const g = await board(t, { fields: seededFields(), views: VIEWS, ...seed })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const slept: number[] = []
@@ -1538,7 +1538,7 @@ test('sync says what it added to the layout first', async (t) => {
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const r = await run(() =>
@@ -1593,7 +1593,7 @@ test('mark sets Agent and Session on the items of the paths; --end clears only t
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const sets = () =>
@@ -1640,7 +1640,7 @@ async function recordedBy(
 ): Promise<string | null> {
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const r = await run(() =>
@@ -1744,7 +1744,7 @@ test("rness's own errors keep their words: only GitHub's are named GitHub's", as
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const r = await run(() =>
@@ -1781,7 +1781,7 @@ test('--end clears the session and its subagents (same id, any agent type), not 
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const r = await run(() =>
@@ -1898,7 +1898,7 @@ test('a board made by 0.14.0 gains Sessions at its first 0.15.0 sync, which writ
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: {
       ...FILES,
       'plans/0002-b.md':
@@ -2037,7 +2037,7 @@ async function withThirdDocument(
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: { ...FILES, 'specs/0003-c.md': doc('Draft', '0003 - C') },
   })
   const r = await run(() =>
@@ -2135,7 +2135,7 @@ test('a 0.15 board: sync renames Session and Sessions in place, values and ids k
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const r = await run(() =>
@@ -2176,7 +2176,7 @@ test('a 0.15 board before its first 0.16 sync: a mark sets, and a session end cl
   })
   const cwd = await makeWorkspace(t, {
     org: 'acme',
-    pulse: { project: 7 },
+    boards: { pulse: 7 },
     files: FILES,
   })
   const mark = (end: boolean) =>

@@ -113,12 +113,11 @@ export async function createBlank(input: {
     root,
     shown,
     manifest: {
-      contract: 1,
+      contract: 2,
       provider: null,
       org: null,
       agents,
       boards: null,
-      repos: {},
       scopes: {},
     },
     pm,

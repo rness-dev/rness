@@ -28,7 +28,7 @@ async function drifting(
   await mkdir(join(rnessDir, 'standards'), { recursive: true })
   await writeFile(
     join(rnessDir, 'rness.json'),
-    JSON.stringify({ contract: 1, repos: {}, scopes: {} })
+    JSON.stringify({ contract: 2, scopes: {} })
   )
   await writeFile(
     join(rnessDir, 'package.json'),

@@ -25,7 +25,7 @@ import {
   type SkippedHook,
   gitBypasses,
 } from '../core/git-bypass.ts'
-import { loadManifest, parseManifest } from '../core/manifest.ts'
+import { loadManifest, parseManifest, repositories } from '../core/manifest.ts'
 import {
   type PolicyFailure,
   checkAddedLines,
@@ -170,7 +170,7 @@ async function journalStart(
         const plans = await plansInProgress(ws, manifest, scope)
         if (plans.length === 0) return []
         const session = sessionOf(input)
-        const clone = cloneHolding(ws.root, manifest.repos, cwd)
+        const clone = cloneHolding(ws.root, repositories(manifest), cwd)
         const summarised = (declaration.hooks['session-end'] ?? []).some(
           (e) => e.action === 'journal-summary'
         )
@@ -428,7 +428,8 @@ function repositoryOf(pws: PolicyWorkspace, label: string): string | null {
   const path = join(pws.root, ...label.split('/'))
   if (path === pws.rnessDir || inside(pws.rnessDir, path) !== null)
     return pws.rnessDir
-  const clone = cloneHolding(pws.root, pws.manifest.repos, path)
+  const repos = repositories(pws.manifest)
+  const clone = cloneHolding(pws.root, repos, path)
   if (clone !== null) return clone.dir
   // A declared repository named in another case (`org/Web` for `web`): the
   // same directory where the file system ignores case, and taken for that
@@ -436,7 +437,7 @@ function repositoryOf(pws: PolicyWorkspace, label: string): string | null {
   const [top, name] = label.split('/')
   return top === 'org' &&
     name !== undefined &&
-    Object.hasOwn(pws.manifest.repos, name.toLowerCase())
+    repos.some((r) => r.name === name.toLowerCase())
     ? join(pws.root, 'org', name)
     : null
 }
@@ -743,7 +744,7 @@ async function sessionEnd(input: Input, io: HookIo): Promise<number> {
       // The summary's plan is the scope's; its commits, the clone's.
       const manifest = await loadManifest(ws.rnessDir)
       const scope = resolveScope(manifest, toPosix(relative(ws.root, cwd)))
-      const clone = cloneHolding(ws.root, manifest.repos, cwd)
+      const clone = cloneHolding(ws.root, repositories(manifest), cwd)
       return [
         '--session',
         session,

@@ -4,7 +4,7 @@ import { type Context, type Declared, fromGithub } from '../commands/board.ts'
 import { journalOf, planIssue, workspaceRepo } from '../commands/note.ts'
 import { branchOf, commitsBetween } from '../core/git.ts'
 import { journalReference } from '../core/github-journal.ts'
-import { providerOf } from '../core/manifest.ts'
+import { providerOf, repositories } from '../core/manifest.ts'
 import { readRefusals } from '../core/refusals.ts'
 import { plansInProgress } from '../core/status.ts'
 import {
@@ -30,7 +30,7 @@ export interface SummaryInput {
   session: string
   /** The session's scope; null, the root's. */
   scope: string | null
-  /** The clone the session worked in: a name of `repos`. */
+  /** The clone the session worked in: the name of a repository of `rness.json`. */
   clone?: string
 }
 
@@ -95,7 +95,9 @@ async function onePlan(
 export async function postSummary(input: SummaryInput): Promise<string[]> {
   const { c, session } = input
   const url =
-    input.clone === undefined ? undefined : c.manifest.repos[input.clone]?.url
+    input.clone === undefined
+      ? undefined
+      : repositories(c.manifest).find((r) => r.name === input.clone)?.url
   const dir =
     url === undefined || input.clone === undefined
       ? null

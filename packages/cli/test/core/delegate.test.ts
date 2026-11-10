@@ -11,7 +11,7 @@ async function workspaceWithPinned(version: string | null): Promise<string> {
   await mkdir(join(root, '.rness'), { recursive: true })
   await writeFile(
     join(root, '.rness', 'rness.json'),
-    '{"contract":1,"repos":{},"scopes":{}}'
+    '{"contract":2,"scopes":{}}'
   )
   if (version !== null) {
     const pkg = join(root, '.rness', 'node_modules', '@rness', 'cli')

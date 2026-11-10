@@ -14,7 +14,7 @@ import {
   JournalRefused,
   journalReference,
 } from '../core/github-journal.ts'
-import { contextRepo, providerOf } from '../core/manifest.ts'
+import { contextRepo, providerOf, repositories } from '../core/manifest.ts'
 import { cloneHolding } from '../core/repos.ts'
 import { resolveScope } from '../core/scope.ts'
 import { plansInProgress, statusTabs } from '../core/status.ts'
@@ -300,7 +300,7 @@ export async function postNote(input: NoteInput): Promise<Posted> {
       'journal full for this session: put the rest in the pull request'
     )
   const parent = await planIssue(c, kept.board, plan)
-  const clone = cloneHolding(c.root, c.manifest.repos, input.cwd)
+  const clone = cloneHolding(c.root, repositories(c.manifest), input.cwd)
 
   let target: JournalIssue = parent
   let why: string | null = null

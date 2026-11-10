@@ -8,6 +8,7 @@ import {
   readPresetEntry,
 } from './board-declaration.ts'
 import { writeFileAtomic } from './fs.ts'
+import { rnessCommand } from './pm.ts'
 import { currentSshUrl, repoUrl } from './remote.ts'
 import type {
   BoardEntry,
@@ -16,7 +17,7 @@ import type {
   Manifest,
   ProviderName,
   RefusedBoard,
-  RepoEntry,
+  Repository,
   ScopeEntry,
 } from './types.ts'
 
@@ -181,7 +182,10 @@ function readJira(
   return { site: value['site'], space: value['space'] }
 }
 
-/** Every top-level key contract 1 defines. */
+/**
+ * Every top-level key contract 2 defines (spec 0038 §1). `repos`, and
+ * `projects` and `pulse`, the former names of `boards`, are contract 1's.
+ */
 const KEYS = [
   'contract',
   'provider',
@@ -189,10 +193,6 @@ const KEYS = [
   'jira',
   'agents',
   'boards',
-  // Former names of `boards`, still read: `sync` renames them (spec 0033 §3).
-  'projects',
-  'pulse',
-  'repos',
   'scopes',
 ]
 
@@ -413,10 +413,20 @@ function readBoardsOrFormer(
   return key === 'boards' ? read : { ...read, formerKey: key }
 }
 
+/**
+ * The repositories of `rness.json`: the scopes with a `url`, in the order
+ * written, each cloned at `org/<name>` (spec 0038 §2).
+ */
+export function repositories(manifest: Manifest): Repository[] {
+  return Object.entries(manifest.scopes).flatMap(([name, scope]) =>
+    scope.url === null ? [] : [{ name, url: scope.url, dir: `org/${name}` }]
+  )
+}
+
 /** The key, else the first repository URL's host (github.com → github), else github. */
 export function providerOf(manifest: Manifest): ProviderName {
   if (manifest.provider !== null) return manifest.provider
-  const url = Object.values(manifest.repos)[0]?.url ?? ''
+  const url = repositories(manifest)[0]?.url ?? ''
   const host = /^(?:[a-z+]+:\/\/(?:[^@/]*@)?|[^@/]+@)([^/:]+)/i.exec(url)?.[1]
   const name = host?.toLowerCase()
   if (name?.includes('gitlab')) return 'gitlab'
@@ -425,45 +435,89 @@ export function providerOf(manifest: Manifest): ProviderName {
   return 'github'
 }
 
-function readRepos(value: unknown): Record<string, RepoEntry> {
-  const raw = value ?? {}
-  if (!isRecord(raw)) fail('"repos" must be an object')
-  const repos: Record<string, RepoEntry> = {}
-  for (const [name, entry] of Object.entries(raw)) {
-    if (!NAME.test(name))
-      fail(`repo name "${name}" may only contain ${NAME_RULE}`)
-    if (!isRecord(entry) || typeof entry.url !== 'string')
-      fail(`repo "${name}" needs a string "url"`)
-    repos[name] = { url: entry.url }
-  }
-  return repos
-}
-
+/**
+ * `scopes`, a tree (spec 0038 §1), read flat in the order written: a
+ * repository at the top by its `url`, at `org/<name>`; a part under its
+ * parent by a `path` relative to it, its parent first in `extends`. A name
+ * is unique across the tree, and `extends` never names an ancestor.
+ */
 function readScopes(value: unknown): Record<string, ScopeEntry> {
   const raw = value ?? {}
   if (!isRecord(raw)) fail('"scopes" must be an object')
   const scopes: Record<string, ScopeEntry> = {}
-  for (const [name, entry] of Object.entries(raw)) {
-    if (!NAME.test(name))
-      fail(`scope name "${name}" may only contain ${NAME_RULE}`)
-    if (!isRecord(entry)) fail(`scope "${name}" must be an object`)
-    const path = checkPath(name, entry.path)
-    const ext = entry.extends ?? []
-    if (!Array.isArray(ext) || !ext.every((t) => typeof t === 'string')) {
-      fail(`scope "${name}" extends must be an array of scope names`)
-    }
-    scopes[name] = { path, extends: ext as string[] }
+  /** The names `extends` lists, without the parent the reader puts first. */
+  const named = new Map<string, string[]>()
+  const ancestors = (name: string): string[] => {
+    const parent = scopes[name]?.parent ?? null
+    return parent === null ? [] : [parent, ...ancestors(parent)]
   }
-  for (const [name, entry] of Object.entries(scopes)) {
-    for (const target of entry.extends) {
+  const declared = (parent: string | null): string =>
+    parent === null ? 'as a repository' : `under ${parent}`
+
+  const readLevel = (
+    level: Record<string, unknown>,
+    parent: string | null
+  ): void => {
+    for (const [name, entry] of Object.entries(level)) {
+      if (!NAME.test(name))
+        fail(`scope name "${name}" may only contain ${NAME_RULE}`)
+      if (Object.hasOwn(scopes, name))
+        fail(
+          `scope "${name}" is declared twice: ${declared(scopes[name]?.parent ?? null)} and ${declared(parent)}`
+        )
+      if (!isRecord(entry)) fail(`scope "${name}" must be an object`)
+      let path: string
+      let url: string | null = null
+      if (parent === null) {
+        if (entry.path !== undefined)
+          fail(`scope "${name}": a repository has no path; it is org/${name}`)
+        if (typeof entry.url !== 'string')
+          fail(`scope "${name}" needs a string "url"`)
+        path = `org/${name}`
+        url = entry.url
+      } else {
+        if (entry.url !== undefined)
+          fail(
+            `scope "${name}": a part has no url; its repository is ${[parent, ...ancestors(parent)].at(-1)}`
+          )
+        path = `${scopes[parent]?.path}/${checkPath(name, entry.path)}`
+      }
+      const ext = entry.extends ?? []
+      if (!Array.isArray(ext) || !ext.every((t) => typeof t === 'string'))
+        fail(`scope "${name}" extends must be an array of scope names`)
+      named.set(name, ext as string[])
+      scopes[name] = {
+        path,
+        url,
+        parent,
+        extends: parent === null ? [...ext] : [parent, ...ext],
+      }
+      if (entry.scopes === undefined) continue
+      if (!isRecord(entry.scopes))
+        fail(`scope "${name}": "scopes" must be an object`)
+      readLevel(entry.scopes, name)
+    }
+  }
+  readLevel(raw, null)
+
+  for (const [name, targets] of named) {
+    const above = ancestors(name)
+    for (const target of targets) {
       if (!Object.hasOwn(scopes, target))
         fail(`scope "${name}" extends unknown scope "${target}"`)
+      if (above.includes(target))
+        fail(
+          `scope "${name}" extends "${target}", already its ${target === above[0] ? 'parent' : 'ancestor'}`
+        )
     }
   }
   return scopes
 }
 
-/** Read and validate `<rnessDir>/rness.json`. Every error starts with `rness.json:`. */
+/**
+ * Read and validate `<rnessDir>/rness.json`. Every error starts with
+ * `rness.json`: `rness.json: <what is wrong>`, or the contract-1 line.
+ */
 export async function loadManifest(rnessDir: string): Promise<Manifest> {
   let raw: string
   try {
@@ -483,8 +537,14 @@ export function parseManifest(raw: string): Manifest {
     fail(`invalid JSON (${e instanceof Error ? e.message : String(e)})`)
   }
   if (!isRecord(data)) fail('must be a JSON object')
-  if (data.contract !== 1)
-    fail(`unsupported contract: ${JSON.stringify(data.contract)} (expected 1)`)
+  // The former shape is `upgrade`'s to read and rewrite (ADR 0012): said
+  // before its keys, which this contract does not know.
+  if (data.contract === 1)
+    throw new Error(
+      `rness.json is contract 1: run ${rnessCommand()} upgrade (ADR 0012)`
+    )
+  if (data.contract !== 2)
+    fail(`unsupported contract: ${JSON.stringify(data.contract)} (expected 2)`)
   // Refuse what this contract does not define: a typo (`scope`, `repo`) or a
   // key from a later contract would otherwise be read as nothing at all.
   for (const key of Object.keys(data)) {
@@ -494,7 +554,7 @@ export function parseManifest(raw: string): Manifest {
   const { boards, refused, formerKey } = readBoardsOrFormer(data, provider)
   const jira = readJira(data.jira, provider)
   return {
-    contract: 1,
+    contract: 2,
     provider,
     org: readOrg(data.org, provider),
     ...(jira === undefined ? {} : { jira }),
@@ -502,7 +562,6 @@ export function parseManifest(raw: string): Manifest {
     boards,
     ...(refused.length === 0 ? {} : { refused }),
     ...(formerKey === undefined ? {} : { formerKey }),
-    repos: readRepos(data.repos),
     scopes: readScopes(data.scopes),
   }
 }
@@ -541,23 +600,56 @@ function boardsLines(manifest: Manifest): string[] {
   ]
 }
 
-/** Serialise in the contract's key order; atomic write. */
+/**
+ * The scopes nested under `parent` (null: the repositories), as written
+ * (spec 0038 §3): a scope on one line, `url` or `path` then `extends` when
+ * it names any; one with parts on several, its `scopes` indented under it.
+ */
+function scopeLines(
+  scopes: Record<string, ScopeEntry>,
+  parent: string | null,
+  indent: string
+): string[] {
+  const entries = Object.entries(scopes).filter(([, s]) => s.parent === parent)
+  return entries.map(([name, scope], i) => {
+    const own: string[] = []
+    if (parent === null) {
+      if (scope.url === null)
+        throw new Error(`rness.json: scope "${name}" has no url and no parent`)
+      own.push(`"url": ${JSON.stringify(scope.url)}`)
+    } else {
+      const base = `${scopes[parent]?.path}/`
+      if (!scope.path.startsWith(base))
+        throw new Error(
+          `rness.json: scope "${name}" at ${scope.path} is not inside ${parent}`
+        )
+      own.push(`"path": ${JSON.stringify(scope.path.slice(base.length))}`)
+    }
+    // The parent is inherited by nesting, never written (ADR 0012).
+    const named = scope.extends.filter((e) => e !== parent)
+    if (named.length > 0)
+      own.push(`"extends": [${named.map((e) => JSON.stringify(e)).join(', ')}]`)
+    const comma = i === entries.length - 1 ? '' : ','
+    const parts = scopeLines(scopes, name, `${indent}    `)
+    if (parts.length === 0)
+      return `${indent}${JSON.stringify(name)}: { ${own.join(', ')} }${comma}`
+    return [
+      `${indent}${JSON.stringify(name)}: {`,
+      ...own.map((line) => `${indent}  ${line},`),
+      `${indent}  "scopes": {`,
+      ...parts,
+      `${indent}  }`,
+      `${indent}}${comma}`,
+    ].join('\n')
+  })
+}
+
+/** Serialise as contract 2, in its key order (spec 0038 §1, §3); atomic write. */
 export async function writeManifest(
   rnessDir: string,
   manifest: Manifest
 ): Promise<void> {
-  const repos = Object.entries(manifest.repos).map(
-    ([name, r]) =>
-      `    ${JSON.stringify(name)}: { "url": ${JSON.stringify(r.url)} }`
-  )
-  const scopes = Object.entries(manifest.scopes).map(([name, s]) => {
-    const ext =
-      s.extends.length === 0
-        ? ''
-        : `, "extends": [${s.extends.map((e) => JSON.stringify(e)).join(', ')}]`
-    return `    ${JSON.stringify(name)}: { "path": ${JSON.stringify(s.path)}${ext} }`
-  })
-  const lines = ['{', '  "contract": 1,']
+  const lines = ['{', '  "contract": 2,']
   if (manifest.provider !== null)
     lines.push(`  "provider": ${JSON.stringify(manifest.provider)},`)
   if (manifest.org !== null)
@@ -571,17 +663,11 @@ export async function writeManifest(
       `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`
     )
   lines.push(...boardsLines(manifest))
-  lines.push(
-    '  "repos": {',
-    repos.join(',\n'),
-    '  },',
-    '  "scopes": {',
-    scopes.join(',\n'),
-    '  }',
-    '}'
-  )
-  const text = `${lines.filter((l) => l !== '').join('\n')}\n`
-  await writeFileAtomic(join(rnessDir, 'rness.json'), text)
+  const scopes = scopeLines(manifest.scopes, null, '    ')
+  if (scopes.length === 0) lines.push('  "scopes": {}')
+  else lines.push('  "scopes": {', ...scopes, '  }')
+  lines.push('}')
+  await writeFileAtomic(join(rnessDir, 'rness.json'), `${lines.join('\n')}\n`)
 }
 
 const FULL_URL = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/

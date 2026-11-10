@@ -14,12 +14,11 @@ import type { Manifest } from '../../src/core/types.ts'
 import { VERSION } from '../../src/version.ts'
 
 const manifest = (provider: Manifest['provider']): Manifest => ({
-  contract: 1,
+  contract: 2,
   provider,
   org: 'acme',
   agents: null,
   boards: null,
-  repos: {},
   scopes: {},
 })
 
@@ -73,7 +72,14 @@ test('openProvider opens GitHub for a manifest without a key, or none', async ()
 test('a host detected from a repository URL still opens GitHub', async () => {
   const m = {
     ...manifest(null),
-    repos: { api: { url: 'https://gitlab.com/acme/api.git' } },
+    scopes: {
+      api: {
+        path: 'org/api',
+        url: 'https://gitlab.com/acme/api.git',
+        parent: null,
+        extends: [],
+      },
+    },
   }
   assert.ok((await openProvider(m)) instanceof GitHubOAuthProvider)
   assert.ok((await openGitProvider(m)) instanceof GitHubOAuthProvider)

@@ -5,8 +5,12 @@ import { test } from 'node:test'
 
 import { exists } from '../../src/core/fs.ts'
 import { originUrl } from '../../src/core/git.ts'
-import { loadManifest } from '../../src/core/manifest.ts'
-import { addRepository, workspaceDirs } from '../../src/core/repos.ts'
+import { loadManifest, repositories } from '../../src/core/manifest.ts'
+import {
+  addRepository,
+  cloneHolding,
+  workspaceDirs,
+} from '../../src/core/repos.ts'
 import { git, makeBareRepo } from '../helpers/git.ts'
 import { makeRemoteOrg } from '../helpers/remote-org.ts'
 import { ignoresCase, makeWorkspace } from '../helpers/workspace.ts'
@@ -39,8 +43,12 @@ test('clones a new repository, declares repo and scope, writes the manifest afte
   assert.deepEqual(result.declared, ['api'])
   assert.equal(await originUrl(join(root, 'org', 'api')), url)
   const written = await loadManifest(rnessDir)
-  assert.deepEqual(written.repos, { api: { url } })
-  assert.deepEqual(written.scopes, { api: { path: 'org/api', extends: [] } })
+  assert.deepEqual(repositories(written), [
+    { name: 'api', url, dir: 'org/api' },
+  ])
+  assert.deepEqual(written.scopes, {
+    api: { path: 'org/api', url, parent: null, extends: [] },
+  })
 })
 
 test('adopts an existing clone of the same URL; refuses a different origin or a plain directory', async (t) => {
@@ -92,7 +100,7 @@ test('adopts an existing clone of the same URL; refuses a different origin or a 
     /org\/plain exists and is not a git clone/
   )
   assert.deepEqual(
-    Object.keys((await loadManifest(rnessDir)).repos),
+    repositories(await loadManifest(rnessDir)).map((r) => r.name),
     ['api'],
     'failures write nothing'
   )
@@ -115,9 +123,9 @@ test('adopts a clone whose origin differs only by transport or case; the URL cho
     scopes: [],
   })
   assert.equal(adopted.action, 'adopted')
-  assert.deepEqual((await loadManifest(rnessDir)).repos, {
-    api: { url: 'git@github.com:acme/api.git' },
-  })
+  assert.deepEqual(repositories(await loadManifest(rnessDir)), [
+    { name: 'api', url: 'git@github.com:acme/api.git', dir: 'org/api' },
+  ])
   // Another repository is still another repository.
   await assert.rejects(
     addRepository({
@@ -154,13 +162,20 @@ test('a clone whose directory differs from its key only by case is renamed to th
   assert.deepEqual(await readdir(join(root, 'org')), ['dapp'])
   assert.equal(await originUrl(join(root, 'org', 'dapp')), url)
   const written = await loadManifest(rnessDir)
-  assert.deepEqual(written.repos, {
-    dapp: { url: `${remote.host}acme/dapp.git` },
-  })
   // A sub-scope's key is lowercase too; its path is the directory as it is.
   assert.deepEqual(written.scopes, {
-    dapp: { path: 'org/dapp', extends: [] },
-    web: { path: 'org/dapp/apps/Web', extends: ['dapp'] },
+    dapp: {
+      path: 'org/dapp',
+      url: `${remote.host}acme/dapp.git`,
+      parent: null,
+      extends: [],
+    },
+    web: {
+      path: 'org/dapp/apps/Web',
+      url: null,
+      parent: 'dapp',
+      extends: ['dapp'],
+    },
   })
 })
 
@@ -183,7 +198,7 @@ test('a case variant cloned from another repository is refused and left as it is
     /^Error: org\/dApp is a clone of .*\/acme\/other\.git, not .*\/acme\/dApp\.git$/
   )
   assert.deepEqual(await readdir(join(root, 'org')), ['dApp'])
-  assert.deepEqual((await loadManifest(rnessDir)).repos, {})
+  assert.deepEqual(repositories(await loadManifest(rnessDir)), [])
 })
 
 test('a scope path that differs from the clone only by case is repaired, not a collision', async (t) => {
@@ -191,10 +206,11 @@ test('a scope path that differs from the clone only by case is repaired, not a c
   const url = await remote.addRepo('dApp', { 'README.md': '# dApp\n' })
   const { root, rnessDir, manifest } = await ws(t)
   await git(['clone', '-q', url, join(root, 'org', 'dApp')], root)
+  // Contract 2 computes a repository's path: only a manifest built in
+  // memory can hold this one.
   const stale = {
     ...manifest,
-    repos: { dapp: { url } },
-    scopes: { dapp: { path: 'org/dApp', extends: [] } },
+    scopes: { dapp: { path: 'org/dApp', url, parent: null, extends: [] } },
   }
   const result = await addRepository({
     root,
@@ -206,7 +222,7 @@ test('a scope path that differs from the clone only by case is repaired, not a c
     scopes: [],
   })
   assert.deepEqual(result.manifest.scopes, {
-    dapp: { path: 'org/dapp', extends: [] },
+    dapp: { path: 'org/dapp', url: result.url, parent: null, extends: [] },
   })
   assert.deepEqual(await readdir(join(root, 'org')), ['dapp'])
 })
@@ -304,9 +320,9 @@ test('a fresh clone is removed when a sub-scope directory does not exist', async
     'the clone this call made is rolled back'
   )
   assert.deepEqual(
-    Object.keys((await loadManifest(rnessDir)).repos),
+    repositories(await loadManifest(rnessDir)),
     [],
-    'the manifest still has no repos entry'
+    'the manifest still has no repository'
   )
 })
 
@@ -338,6 +354,8 @@ test('declares sub-scopes that extend the repository scope; missing dirs and col
   assert.deepEqual(withSubs.declared, ['platform', 'web', 'ui'])
   assert.deepEqual(withSubs.manifest.scopes['web'], {
     path: 'org/platform/apps/web',
+    url: null,
+    parent: 'platform',
     extends: ['platform'],
   })
   await assert.rejects(
@@ -380,8 +398,10 @@ test('refuses a repository scope already pointing elsewhere, and keeps a hand-ad
     org: 'acme',
     dirs: ['org'],
     scopes: {
-      other: { path: 'org/other' },
-      api: { path: 'org/other/apps/api', extends: ['other'] },
+      other: {
+        url: 'https://github.com/acme/other.git',
+        scopes: { api: { path: 'apps/api' } },
+      },
     },
   })
   await assert.rejects(
@@ -417,8 +437,13 @@ test('refuses a repository scope already pointing elsewhere, and keeps a hand-ad
   const edited = {
     ...cloned.manifest,
     scopes: {
-      shared: { path: '.rness/shared', extends: [] },
-      api: { path: 'org/api', extends: ['shared'] },
+      shared: {
+        path: 'org/shared',
+        url: 'https://github.com/acme/shared.git',
+        parent: null,
+        extends: [],
+      },
+      api: { path: 'org/api', url, parent: null, extends: ['shared'] },
     },
   }
   const adopted = await addRepository({
@@ -433,12 +458,49 @@ test('refuses a repository scope already pointing elsewhere, and keeps a hand-ad
   assert.equal(adopted.action, 'adopted')
   assert.deepEqual(adopted.manifest.scopes['api'], {
     path: 'org/api',
+    url,
+    parent: null,
     extends: ['shared'],
   })
   assert.deepEqual((await loadManifest(rnessDir)).scopes['api'], {
     path: 'org/api',
+    url,
+    parent: null,
     extends: ['shared'],
   })
+})
+
+test('cloneHolding: the repository whose clone holds a directory, a part of it included; none elsewhere', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: {
+      app: { url: 'git@github.com:acme/app.git' },
+      platform: {
+        url: 'https://github.com/acme/platform.git',
+        scopes: { web: { path: 'apps/web' } },
+      },
+    },
+  })
+  const repos = repositories(await loadManifest(join(root, '.rness')))
+  const platform = {
+    name: 'platform',
+    dir: join(root, 'org', 'platform'),
+    url: 'https://github.com/acme/platform.git',
+  }
+  assert.deepEqual(
+    cloneHolding(root, repos, join(root, 'org', 'platform', 'apps', 'web')),
+    platform
+  )
+  assert.deepEqual(
+    cloneHolding(root, repos, join(root, 'org', 'platform')),
+    platform
+  )
+  assert.equal(
+    cloneHolding(root, repos, join(root, 'org', 'app', 'src'))?.name,
+    'app'
+  )
+  for (const dir of [root, join(root, '.rness'), join(root, 'org', 'other')])
+    assert.equal(cloneHolding(root, repos, dir), null, dir)
 })
 
 test('workspaceDirs lists the package directories declared in package.json#workspaces', async (t) => {

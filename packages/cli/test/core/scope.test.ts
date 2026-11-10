@@ -4,18 +4,34 @@ import { test } from 'node:test'
 import { resolveScope, scopeChain } from '../../src/core/scope.ts'
 import type { Manifest } from '../../src/core/types.ts'
 
+const repository = (name: string) => ({
+  path: `org/${name}`,
+  url: `https://github.com/acme/${name}.git`,
+  parent: null,
+  extends: [],
+})
+
 const manifest: Manifest = {
-  contract: 1,
+  contract: 2,
   provider: null,
   org: null,
   agents: null,
   boards: null,
-  repos: {},
   scopes: {
-    web: { path: 'org/platform/apps/web', extends: ['platform'] },
-    platform: { path: 'org/platform', extends: [] },
-    ui: { path: 'org/platform/packages/ui', extends: ['platform'] },
-    sdk: { path: 'org/sdk', extends: [] },
+    platform: repository('platform'),
+    web: {
+      path: 'org/platform/apps/web',
+      url: null,
+      parent: 'platform',
+      extends: ['platform'],
+    },
+    ui: {
+      path: 'org/platform/packages/ui',
+      url: null,
+      parent: 'platform',
+      extends: ['platform'],
+    },
+    sdk: repository('sdk'),
   },
 }
 
@@ -39,12 +55,37 @@ test('scopeChain is nearest-first and deduped', () => {
   assert.deepEqual(scopeChain(manifest, null), [])
 })
 
+test('scopeChain of a nested scope: its parents nearest first, then what it extends', () => {
+  const nested: Manifest = {
+    ...manifest,
+    scopes: {
+      ...manifest.scopes,
+      icons: {
+        path: 'org/platform/packages/ui/icons',
+        url: null,
+        parent: 'ui',
+        extends: ['ui', 'web'],
+      },
+    },
+  }
+  assert.deepEqual(scopeChain(nested, 'icons'), [
+    'icons',
+    'ui',
+    'platform',
+    'web',
+  ])
+  assert.equal(
+    resolveScope(nested, 'org/platform/packages/ui/icons/svg'),
+    'icons'
+  )
+})
+
 test('scopeChain detects a cycle', () => {
   const cyclic: Manifest = {
     ...manifest,
     scopes: {
-      a: { path: 'a', extends: ['b'] },
-      b: { path: 'b', extends: ['a'] },
+      a: { ...repository('a'), extends: ['b'] },
+      b: { ...repository('b'), extends: ['a'] },
     },
   }
   assert.throws(() => scopeChain(cyclic, 'a'), /cycle/)

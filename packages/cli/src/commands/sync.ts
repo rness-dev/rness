@@ -33,6 +33,7 @@ import {
   NAME_RULE,
   loadManifest,
   providerOf,
+  repositories,
   workspaceName,
   writeManifest,
 } from '../core/manifest.ts'
@@ -210,23 +211,21 @@ function unreadWhy(dir: string, clones: ReadonlySet<string>): string {
 }
 
 /**
- * The clones whose hooks are written: those `rness.json` declares (a
- * repository, or the home of a scope), or the one owning `--scope`. An
- * undeclared clone gets none: no policy applies there, and its hooks would
- * only say so on every commit.
+ * The clones whose hooks are written: the repositories `rness.json` declares
+ * (the scopes with a `url`, spec 0038 §9), or the one owning `--scope`. A
+ * part gets none of its own: its repository's apply. An undeclared clone
+ * gets none: no policy applies there, and its hooks would only say so on
+ * every commit.
  */
 function hookClones(
   manifest: Manifest,
   only: string | undefined,
-  clones: readonly string[],
-  scoped: ReadonlySet<string | undefined>
+  clones: readonly string[]
 ): string[] {
-  if (only === undefined)
-    return [
-      ...new Set(
-        clones.filter((n) => Object.hasOwn(manifest.repos, n) || scoped.has(n))
-      ),
-    ]
+  if (only === undefined) {
+    const declared = new Set(repositories(manifest).map((r) => r.name))
+    return [...new Set(clones.filter((n) => declared.has(n)))]
+  }
   const entry = manifest.scopes[only]
   const owner = entry?.path.split('/')[1]?.toLowerCase()
   return owner !== undefined && clones.includes(owner) ? [owner] : []
@@ -408,6 +407,8 @@ export async function syncCommand(
     }
 
     const { clones, unread } = await orgDirs(ws.root, providerOf(manifest))
+    const repos = repositories(manifest)
+    const declared = new Set(repos.map((r) => r.name))
     // A declared repository whose directory differs only by case (`org/dApp`
     // for `dapp`) is not missing: cloning `org/dapp` would fail where the file
     // system ignores case and make a second copy where it does not. It gets
@@ -415,11 +416,11 @@ export async function syncCommand(
     const misnamed = new Set(
       unread
         .map((d) => d.toLowerCase())
-        .filter((n) => Object.hasOwn(manifest.repos, n) && !clones.has(n))
+        .filter((n) => declared.has(n) && !clones.has(n))
     )
-    const missing = Object.keys(manifest.repos).filter(
-      (n) => !clones.has(n) && !misnamed.has(n)
-    )
+    const missing = repos
+      .map((r) => r.name)
+      .filter((n) => !clones.has(n) && !misnamed.has(n))
     let toClone = new Set<string>(opts.all === true && !check ? missing : [])
     if (!check && opts.yes !== true) {
       const answer = await askWhatToSync({
@@ -436,10 +437,9 @@ export async function syncCommand(
 
     // rness.json is authoritative: a git@ entry is cloned over SSH or not at
     // all. Without SSH access, stop before the first clone (spec 0005 §3).
-    const overSsh = [...toClone].some((name) => {
-      const repo = manifest.repos[name]
-      return repo !== undefined && isSshUrl(repo.url, transport.hosts)
-    })
+    const overSsh = repos.some(
+      (repo) => toClone.has(repo.name) && isSshUrl(repo.url, transport.hosts)
+    )
     // Only a clone over SSH can make git ask something on the terminal.
     if (!overSsh) ui.gitIsSilent = true
     if (overSsh) {
@@ -468,10 +468,11 @@ export async function syncCommand(
       // only clean trees.
       const notCloned = new Set<string>()
       const clonedNow = new Set<string>()
-      for (const [name, repo] of Object.entries(manifest.repos)) {
+      for (const repo of repos) {
+        const { name } = repo
         if (misnamed.has(name)) continue
-        const dir = join(ws.root, 'org', name)
-        const label = `org/${name}`
+        const dir = join(ws.root, ...repo.dir.split('/'))
+        const label = repo.dir
         if (!(await exists(dir))) {
           if (!toClone.has(name)) {
             notCloned.add(name)
@@ -519,16 +520,9 @@ export async function syncCommand(
         )
       // A clone the catalogue does not know gets no block: no scope declares
       // its rules. Say how to bring it in rather than skipping it silently.
-      // A scope path in another case (`org/Web`) still names clone `web`:
-      // the same directory where the file system ignores case.
-      const scoped = new Set(
-        Object.values(manifest.scopes).map((s) =>
-          s.path.split('/')[1]?.toLowerCase()
-        )
-      )
-      const undeclared = [...clones].filter(
-        (n) => !Object.hasOwn(manifest.repos, n) && !scoped.has(n)
-      )
+      // Every scope is a repository or a part of one (ADR 0012): the
+      // repositories name every declared clone.
+      const undeclared = [...clones].filter((n) => !declared.has(n))
       if (undeclared.length > 0)
         lines.push(
           `not in rness.json: ${undeclared.join(', ')} (${rnessCommand()} add <name> declares it)`
@@ -659,12 +653,10 @@ export async function syncCommand(
       // 4. The git hooks of the policies, and the refusal records, in every
       // declared clone of the selection: never `.rness`, never under --check.
       if (!check && (await exists(join(ws.root, 'org')))) {
-        for (const name of hookClones(
-          manifest,
-          opts.scope,
-          [...clones, ...clonedNow],
-          scoped
-        )) {
+        for (const name of hookClones(manifest, opts.scope, [
+          ...clones,
+          ...clonedNow,
+        ])) {
           if (misnamed.has(name)) continue
           const dir = join(ws.root, 'org', name)
           if (!(await exists(dir))) continue

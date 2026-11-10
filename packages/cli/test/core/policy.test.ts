@@ -375,7 +375,10 @@ test('checkContract: the three policies of spec 0040 pass, and a policy is never
 
 test('checkContract: a standard that is not there, a name both global and scoped, the problems of a file', async (t) => {
   const root = await makeWorkspace(t, {
-    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    scopes: {
+      web: { url: 'https://github.com/acme/web.git' },
+      api: { url: 'https://github.com/acme/api.git' },
+    },
     files: {
       'policy/no-em-dash.md': NO_EM_DASH,
       'policy/web/no-em-dash.md': NO_TRAILERS,
@@ -418,9 +421,11 @@ const disabled = (title: string) => policy(`status: Disabled\n${RULE}`, title)
 async function scoped(t: TestContext) {
   const root = await makeWorkspace(t, {
     scopes: {
-      platform: { path: 'org/platform' },
-      web: { path: 'org/platform/web', extends: ['platform'] },
-      api: { path: 'org/api' },
+      platform: {
+        url: 'https://github.com/acme/platform.git',
+        scopes: { web: { path: 'web' } },
+      },
+      api: { url: 'https://github.com/acme/api.git' },
     },
     files: {
       'policy/global-on.md': enabled('Global on'),

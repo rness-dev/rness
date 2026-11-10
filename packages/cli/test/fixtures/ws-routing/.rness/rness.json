@@ -1,5 +1,8 @@
-{ "contract": 1, "repos": {}, "scopes": {
-  "a": { "path": "org/a", "extends": ["b"] },
-  "b": { "path": "org/b", "extends": ["c"] },
-  "c": { "path": "org/c" }
-} }
+{
+  "contract": 2,
+  "scopes": {
+    "a": { "url": "https://github.com/acme/a.git", "extends": ["b"] },
+    "b": { "url": "https://github.com/acme/b.git", "extends": ["c"] },
+    "c": { "url": "https://github.com/acme/c.git" }
+  }
+}

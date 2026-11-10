@@ -217,8 +217,7 @@ const refusal = (
 
 async function withClones(t: TestContext) {
   const root = await makeWorkspace(t, {
-    repos: { api: { url: 'u' }, web: { url: 'v' } },
-    scopes: { api: { path: 'org/api' } },
+    scopes: { api: { url: 'u' }, web: { url: 'v' } },
     dirs: ['org/api', 'org/web'],
     files: {
       'policy/no-em-dash.md': policy('Enabled', 'No em dash'),

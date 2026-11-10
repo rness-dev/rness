@@ -22,9 +22,11 @@ async function fixture(t: TestContext) {
   return makeWorkspace(t, {
     org: 'acme',
     scopes: {
-      platform: { path: 'org/platform' },
-      web: { path: 'org/platform/apps/web', extends: ['platform'] },
-      api: { path: 'org/api' },
+      platform: {
+        url: 'https://github.com/acme/platform.git',
+        scopes: { web: { path: 'apps/web' } },
+      },
+      api: { url: 'https://github.com/acme/api.git' },
     },
     files: {
       'standards/coding.md': '# Coding style\n\nTwo spaces.\n',
@@ -142,7 +144,10 @@ test('rness_list: policies, as any collection, filtered by Enabled or Disabled; 
     `---\nstatus: ${status}\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new branch.\n---\n\n# ${title}\n`
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    scopes: {
+      web: { url: 'https://github.com/acme/web.git' },
+      api: { url: 'https://github.com/acme/api.git' },
+    },
     files: {
       'policy/no-force-push.md': policy('Disabled', 'No force push'),
       'policy/web/no-em-dash.md': policy('Enabled', 'No em dash'),

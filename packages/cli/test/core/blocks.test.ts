@@ -12,7 +12,10 @@ import { makeWorkspace } from '../helpers/workspace.ts'
 async function synced(t: Parameters<typeof makeWorkspace>[0]) {
   const root = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' }, api: { path: 'org/api' } },
+    scopes: {
+      web: { url: 'https://github.com/acme/web.git' },
+      api: { url: 'https://github.com/acme/api.git' },
+    },
     files: {
       'standards/web/seo.md': '# SEO\n',
       'standards/coding.md': '# Coding\n',
@@ -98,7 +101,7 @@ test('a malformed block is a problem; no org/ means nothing to check', async (t)
   )
   const bare = await makeWorkspace(t, {
     org: 'acme',
-    scopes: { web: { path: 'org/web' } },
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
   })
   const manifest = await loadManifest(join(bare, '.rness'))
   assert.deepEqual(
