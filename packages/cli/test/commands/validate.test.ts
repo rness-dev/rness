@@ -604,3 +604,37 @@ test("boards: a collection's README that still declares what rness.json declares
     /marketing\/README\.md: "statuses" is declared in rness\.json now: rness sync moves it/
   )
 })
+
+test('a redundant extends is reported as a warning, exit 0, in the plain style', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: {
+      platform: {
+        url: 'https://github.com/acme/platform.git',
+        scopes: {
+          web: {
+            path: 'apps/web',
+            extends: ['platform'],
+            scopes: { icons: { path: 'icons', extends: ['platform', 'web'] } },
+          },
+        },
+      },
+    },
+    files: { 'standards/style.md': '# Style\n' },
+    dirs: ['org/platform/apps/web/icons'],
+  })
+  const c = capture()
+  const code = await run(['validate', '--cwd', root])
+  c.restore()
+  assert.equal(code, 0, c.err())
+  const warned = c
+    .err()
+    .split('\n')
+    .filter((l) => l.includes('extends'))
+  assert.deepEqual(warned, [
+    'warning: scope "web": extends "platform" is already its parent; remove it',
+    'warning: scope "icons": extends "platform" is already its ancestor; remove it',
+    'warning: scope "icons": extends "web" is already its parent; remove it',
+  ])
+  assert.equal(c.out().trim(), 'context ok')
+})
