@@ -2421,10 +2421,9 @@ test('create without --agent and without a terminal writes no agents key', async
     cwd,
   ])
   assert.equal(r.code, 0, r.err)
-  assert.doesNotMatch(
-    await readFile(join(cwd, 'demo', '.rness', 'rness.json'), 'utf8'),
-    /"agents"/
-  )
+  const file = await readFile(join(cwd, 'demo', '.rness', 'rness.json'), 'utf8')
+  assert.doesNotMatch(file, /"agents"/)
+  assert.match(file, /^\{\n {2}"contract": 2,\n/)
 })
 
 test('wizard: a new workspace asks which agents, before the confirm; blank too', async (t) => {
@@ -2672,6 +2671,99 @@ test('joining an existing .rness asks nothing and leaves its rness.json as publi
     await readFile(join(cwd, 'acme', '.rness', 'rness.json'), 'utf8'),
     published
   )
+})
+
+test('a new workspace is written as contract 2, with each repository a scope', async (t) => {
+  const remote = await makeRemoteOrg(t, 'acme')
+  const apiUrl = await remote.addRepo('api', { 'README.md': '# api\n' })
+  const cwd = await scratch(t)
+  const r = await create([
+    '--org',
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    remote.host,
+    '--repos',
+    'api',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 0, r.err)
+  const file = await readFile(join(cwd, 'acme', '.rness', 'rness.json'), 'utf8')
+  assert.match(file, /^\{\n {2}"contract": 2,\n/)
+  assert.match(file, new RegExp(`"api": \\{ "url": "${apiUrl}" \\}`))
+  assert.doesNotMatch(file, /"repos"/)
+})
+
+/** A published .rness of contract 1, its package.json pinning `pin` (when given). */
+async function contract1Context(
+  t: TestContext,
+  pin: string | null
+): Promise<{ host: string; cwd: string }> {
+  const remote = await makeRemoteOrg(t, 'acme')
+  await remote.addRepo('api', { 'README.md': '# api\n' })
+  const files: Record<string, string> = {
+    'rness.json': `${JSON.stringify({ contract: 1, org: 'acme', repos: { api: 'x' } })}\n`,
+  }
+  if (pin !== null)
+    files['package.json'] =
+      `${JSON.stringify({ devDependencies: { '@rness/cli': pin } })}\n`
+  await remote.addRepo('.rness', files)
+  return { host: remote.host, cwd: await scratch(t) }
+}
+
+test('joining a workspace on contract 1 stops with the version to join with, and clones nothing', async (t) => {
+  const { host, cwd } = await contract1Context(t, '0.24.0')
+  const r = await create([
+    'acme',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    host,
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 1)
+  assert.equal(
+    r.err,
+    'acme is on @rness/cli 0.24.0 (rness.json contract 1). Join it with that version: npx @rness/cli@0.24.0 create acme\n'
+  )
+  assert.deepEqual(
+    (await readdir(cwd)).filter((e) => e !== '.git'),
+    [],
+    'no workspace directory, no clone'
+  )
+})
+
+test('joining a contract-1 workspace whose pin is not an exact version says where to look', async (t) => {
+  for (const pin of [null, '^0.24.0']) {
+    const { host, cwd } = await contract1Context(t, pin)
+    const r = await create([
+      'acme',
+      '--yes',
+      '--skip-install',
+      '--pm',
+      'npm',
+      '--host',
+      host,
+      '--cwd',
+      cwd,
+    ])
+    assert.equal(r.code, 1)
+    assert.equal(
+      r.err,
+      'acme is on a former @rness/cli (rness.json contract 1). Join it with the @rness/cli version pinned in its .rness/package.json\n'
+    )
+    assert.deepEqual(
+      (await readdir(cwd)).filter((e) => e !== '.git'),
+      []
+    )
+  }
 })
 
 test('an organization that has not approved rness wears the padlock and says so; the account is last', async (t) => {

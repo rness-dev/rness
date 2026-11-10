@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 
@@ -30,7 +30,11 @@ import {
   installContext,
   targetProblem,
 } from '../core/new-workspace.ts'
-import { workspacePackageManager } from '../core/pinned.ts'
+import {
+  EXACT_VERSION,
+  readPin,
+  workspacePackageManager,
+} from '../core/pinned.ts'
 import {
   PACKAGE_MANAGERS,
   type PackageManager,
@@ -81,6 +85,22 @@ import {
 } from './create-blank.ts'
 import { loginCommand } from './login.ts'
 import { syncCommand } from './sync.ts'
+
+/** Whether the staged context's `rness.json` declares contract 1; false when unreadable, `loadManifest` then says why. */
+async function isContract1(rnessDir: string): Promise<boolean> {
+  try {
+    const data: unknown = JSON.parse(
+      await readFile(join(rnessDir, 'rness.json'), 'utf8')
+    )
+    return (
+      data !== null &&
+      typeof data === 'object' &&
+      (data as { contract?: unknown }).contract === 1
+    )
+  } catch {
+    return false
+  }
+}
 
 export interface CreateOptions {
   /** The GitHub organization, exact name (`github.com/<org>`); prompted for when absent. */
@@ -1063,6 +1083,17 @@ export async function createCommand(
       if (!isWorkspace) {
         process.stderr.write(
           `${org}/${context} exists but holds no rness.json: it is not a workspace. Delete it, or push a rness.json to it, then run ${rnessCommand()} create again\n`
+        )
+        return 1
+      }
+      // A workspace still on contract 1 is joined with the CLI it pins: this
+      // one cannot read it, and `upgrade` is the team's to run (spec 0038 §11).
+      if (await isContract1(stagedDir)) {
+        const pin = await readPin(stagedDir)
+        process.stderr.write(
+          pin !== null && EXACT_VERSION.test(pin.spec)
+            ? `${org} is on @rness/cli ${pin.spec} (rness.json contract 1). Join it with that version: npx @rness/cli@${pin.spec} create ${org}\n`
+            : `${org} is on a former @rness/cli (rness.json contract 1). Join it with the @rness/cli version pinned in its .rness/package.json\n`
         )
         return 1
       }
