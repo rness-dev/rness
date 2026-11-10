@@ -65,7 +65,10 @@ export async function addRepository(
   // parent scope survives every later `add` of the repository.
   // A path that differs only by case (`org/dApp`) is this clone under its
   // former name, rewritten here as the directory is renamed below.
-  const current = input.manifest.scopes[name]
+  // By `Object.hasOwn`: `[]` alone would give `constructor` the object's own.
+  const current = Object.hasOwn(input.manifest.scopes, name)
+    ? input.manifest.scopes[name]
+    : undefined
   if (current !== undefined && current.path.toLowerCase() !== repoPath)
     throw new Error(`scope "${name}" already points at ${current.path}`)
   const scopes: Record<string, ScopeEntry> = {
@@ -93,7 +96,7 @@ export async function addRepository(
       throw new Error(
         `the last segment of sub-scope "${clean}" may only contain ${NAME_RULE}`
       )
-    const existing = scopes[base]
+    const existing = Object.hasOwn(scopes, base) ? scopes[base] : undefined
     if (
       existing !== undefined &&
       existing.path.toLowerCase() !== path.toLowerCase()

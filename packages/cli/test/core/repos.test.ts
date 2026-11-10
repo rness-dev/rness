@@ -470,6 +470,54 @@ test('refuses a repository scope already pointing elsewhere, and keeps a hand-ad
   })
 })
 
+test('a repository named constructor, a sub-scope named constructor: names like any other, never an object built-in', async (t) => {
+  const url = await makeBareRepo(t, 'constructor')
+  const first = await ws(t)
+  const added = await addRepository({
+    ...first,
+    spec: url,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: [],
+  })
+  assert.deepEqual(added.declared, ['constructor'])
+  assert.deepEqual(
+    repositories(await loadManifest(first.rnessDir)).map((r) => r.name),
+    ['constructor']
+  )
+
+  const platform = await makeBareRepo(t, 'platform')
+  const second = await ws(t)
+  const cloned = await addRepository({
+    ...second,
+    spec: platform,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: [],
+  })
+  await mkdir(join(second.root, 'org', 'platform', 'apps', 'constructor'), {
+    recursive: true,
+  })
+  const withSub = await addRepository({
+    ...second,
+    manifest: cloned.manifest,
+    spec: platform,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: ['apps/constructor'],
+  })
+  assert.deepEqual(withSub.declared, ['platform', 'constructor'])
+  assert.deepEqual(
+    (await loadManifest(second.rnessDir)).scopes['constructor'],
+    {
+      path: 'org/platform/apps/constructor',
+      url: null,
+      parent: 'platform',
+      extends: ['platform'],
+    }
+  )
+})
+
 test('cloneHolding: the repository whose clone holds a directory, a part of it included; none elsewhere', async (t) => {
   const root = await makeWorkspace(t, {
     org: 'acme',

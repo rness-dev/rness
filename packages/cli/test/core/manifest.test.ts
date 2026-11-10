@@ -182,14 +182,6 @@ test('contract 2: what a scope cannot be is refused, each with its line', async 
       'scope "web": unknown key "ext"',
     ],
     [
-      { constructor: { url } },
-      `scope name "constructor" may only contain ${NAME_RULE}`,
-    ],
-    [
-      { platform: { url, scopes: { prototype: { path: 'apps/web' } } } },
-      `scope name "prototype" may only contain ${NAME_RULE}`,
-    ],
-    [
       {
         platform: { url, scopes: { web: { path: 'apps/web' } } },
         app: { url, scopes: { web: { path: 'web' } } },
@@ -241,17 +233,64 @@ test('contract 2: what a scope cannot be is refused, each with its line', async 
       message
     )
   }
-  // As JSON.parse reads it: an own key, which an object literal cannot write.
-  const proto = await fixture(
-    '{ "contract": 2, "scopes": { "__proto__": { "url": "x" } } }'
-  )
-  t.after(() => rm(dirname(proto), { recursive: true, force: true }))
-  await assert.rejects(
-    () => loadManifest(proto),
-    new Error(
-      `rness.json: scope name "__proto__" may only contain ${NAME_RULE}`
+  // As JSON.parse reads it: an own key, which an object literal cannot
+  // write; assigned to a scope map, it would be the map's prototype.
+  for (const json of [
+    '{ "contract": 2, "scopes": { "__proto__": { "url": "x" } } }',
+    '{ "contract": 2, "scopes": { "web": { "url": "x", "scopes": { "__proto__": { "path": "p" } } } } }',
+  ]) {
+    const proto = await fixture(json)
+    t.after(() => rm(dirname(proto), { recursive: true, force: true }))
+    await assert.rejects(
+      () => loadManifest(proto),
+      new Error(
+        `rness.json: scope name "__proto__" may only contain ${NAME_RULE}`
+      ),
+      json
     )
+  }
+})
+
+test('a scope named prototype or constructor is a name like any other: read, written back, read again identical', async (t) => {
+  const text = `{
+  "contract": 2,
+  "scopes": {
+    "prototype": {
+      "url": "https://github.com/acme/prototype.git",
+      "scopes": {
+        "constructor": { "path": "apps/constructor" }
+      }
+    },
+    "web": { "url": "https://github.com/acme/web.git", "extends": ["constructor"] }
+  }
+}
+`
+  const d = await fixture(text)
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const read = await loadManifest(d)
+  assert.deepEqual(Object.keys(read.scopes), [
+    'prototype',
+    'constructor',
+    'web',
+  ])
+  assert.deepEqual(read.scopes['constructor'], {
+    path: 'org/prototype/apps/constructor',
+    url: null,
+    parent: 'prototype',
+    extends: ['prototype'],
+  })
+  assert.deepEqual(
+    repositories(read).map((r) => r.name),
+    ['prototype', 'web']
   )
+  assert.deepEqual(scopeChain(read, 'web'), ['web', 'constructor', 'prototype'])
+  assert.equal(
+    resolveScope(read, 'org/prototype/apps/constructor/src'),
+    'constructor'
+  )
+  await writeManifest(d, read)
+  assert.equal(await readFile(join(d, 'rness.json'), 'utf8'), text)
+  assert.deepEqual(await loadManifest(d), read)
 })
 
 test('contract 2: an ancestor named in extends is read, left out of extends for validate to report; never written back', async (t) => {
@@ -1210,9 +1249,11 @@ test('isWorkspaceClone: a name the catalogue could hold, and not an excluded one
   assert.equal(isWorkspaceClone('WebSite'), false)
   assert.equal(isWorkspaceClone('-dash'), false)
   assert.equal(isWorkspaceClone('..'), false)
-  // The names every JavaScript object has: a key of rness.json is read into one.
-  for (const name of ['__proto__', 'constructor', 'prototype'])
-    assert.equal(isWorkspaceClone(name), false, name)
+  // A key of rness.json is read into an object: `__proto__` would be its
+  // prototype. Its other built-in names are own keys there, harmless.
+  assert.equal(isWorkspaceClone('__proto__'), false)
+  assert.equal(isWorkspaceClone('constructor'), true)
+  assert.equal(isWorkspaceClone('prototype'), true)
 })
 
 test('the exclusion list is one place, shared by both rules', () => {

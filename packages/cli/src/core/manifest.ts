@@ -28,12 +28,12 @@ import type {
  * Lowercase because the key in `rness.json`, the directory `org/<name>` and
  * the scope directories must agree on every file system: `dApp` and `dapp`
  * are one directory on macOS and two on Linux. A name typed in another case
- * is lowercased (`parseRepoSpec`), never refused. Not `__proto__`,
- * `constructor` or `prototype` either: names every JavaScript object has,
- * where `rness.json` is read into one by name.
+ * is lowercased (`parseRepoSpec`), never refused. Not `__proto__` either:
+ * `rness.json` is read into objects by name, and that key would set the
+ * object's prototype. JavaScript's other built-in names are own keys there,
+ * read with `Object.hasOwn`, never `[]` alone.
  */
-export const NAME =
-  /^(?!\.{1,2}$)(?!(?:__proto__|constructor|prototype)$)[a-z0-9._][a-z0-9._-]*$/
+export const NAME = /^(?!\.{1,2}$)(?!__proto__$)[a-z0-9._][a-z0-9._-]*$/
 
 /**
  * The organization's context repository. It holds the catalogue and is cloned
@@ -117,7 +117,7 @@ export function isWorkspaceClone(
 }
 /** How the rule reads in an error message. */
 export const NAME_RULE =
-  "lowercase letters, digits, '.', '_' and '-', not starting with '-', not __proto__, constructor or prototype"
+  "lowercase letters, digits, '.', '_' and '-', not starting with '-', not __proto__"
 
 /**
  * A GitHub organization (or user) name: alphanumerics and single hyphens, not
