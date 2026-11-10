@@ -46,7 +46,8 @@ Node 22.17 or later and git are required.
    ```
 
 2. Bring repositories in: `rness add <repo>` clones one under `org/<repo>`
-   and declares it in `.rness/rness.json`.
+   and declares it in the `scopes` of `.rness/rness.json`; `--scopes apps/web`
+   declares parts of it.
 3. Write the organization's context as Markdown in `.rness/`:
    `standards/`, `adr/`, `specs/`, `plans/`, `policy/` (rules refused at
    commit, push and edit). `rness.json` maps them to the

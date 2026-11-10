@@ -82,6 +82,53 @@ when dropped, red `?` when missing.
   `yarn rness status` or `bunx rness status` — which runs the pinned copy
   without the network (verified with each manager on 2026-09-30).
 
+### `rness.json`
+
+`.rness/rness.json` is contract 2: one `scopes` key declares the repositories
+and the parts of them.
+
+```json
+{
+  "contract": 2,
+  "provider": "github",
+  "org": "acme",
+  "agents": ["claude"],
+  "boards": { "pulse": { "number": 3, "preset": "agent-pulse/1" } },
+  "scopes": {
+    "app": { "url": "git@github.com:acme/app.git" },
+    "platform": {
+      "url": "https://github.com/acme/platform.git",
+      "scopes": {
+        "web": { "path": "apps/web" },
+        "ui": { "path": "packages/ui", "extends": ["web"] }
+      }
+    }
+  }
+}
+```
+
+- A scope with a `url` is a repository, cloned at `org/<name>`. It has no
+  `path`: `scope "app": a repository has no path; it is org/app`.
+- A scope in the `scopes` of a repository is a part of it. Its `path` is
+  relative to its parent's directory (`org/platform/apps/web` above); it has
+  no `url`. Parts nest.
+- A scope inherits its parent first, then the scopes in its `extends`, which
+  may name any scope of the file. Naming its own parent is redundant:
+  `rness validate` says so (`scope "web": extends "platform" is already its
+parent; remove it`).
+- A name is used once in the whole tree, whatever its depth
+  (`scope "web" is declared twice: under platform and under app`). It is the
+  name `--scope`, `standards/<name>/` and the other collections use.
+- `repos` is not a key: the repositories are the scopes with a `url`. A
+  hand edit that breaks these rules is refused by `rness validate` and by the
+  Claude Code guard before it lands.
+
+`rness add platform --scopes apps/web` writes `platform` with its `url` and
+`web` under it with `path: "apps/web"`, and no `extends`: nesting is the
+inheritance. It prints `declared scope platform (org/platform)` and
+`declared scope web (apps/web, in platform)`. A name already declared
+elsewhere is refused (`scope "web" is already declared under app`).
+
 ### Agent targets
 
 The `AGENTS.md` block is what every agent reads. On top of it, rness writes
@@ -92,7 +139,7 @@ the files a given agent needs, for the agents the team declares in
     rness sync                    # in a terminal, with nothing declared, asks once
 
 ```json
-{ "contract": 1, "org": "acme", "agents": ["claude"], "repos": { … }, "scopes": { … } }
+{ "contract": 2, "org": "acme", "agents": ["claude"], "scopes": { … } }
 ```
 
 - `agents` is the team's: the files it produces are committed in each
@@ -887,9 +934,9 @@ git does (clone, pull, push, credentials), and the provider's API the rest
   create one while it detects a provider other than GitHub and the key is
   absent (`write "provider": "<provider>" in rness.json`). The
   order of keys is `contract`, `provider`, `org`, `jira`, `agents`,
-  `boards`, `repos`, `scopes`. The former `projects` and
-  `"pulse": { "project": <number> }` still read, as `boards`; more than one
-  of them at once is refused. A board in `boards` is written whole, on
+  `boards`, `scopes`. The former `projects` and
+  `"pulse": { "project": <number> }` are read by `rness upgrade` alone, which
+  writes them as `boards`; more than one of them at once is refused. A board in `boards` is written whole, on
   several lines, once created; a number still reads, as its preset, until
   `rness sync` writes it whole.
 - **GitLab**: the organization is a top-level group, by its path
@@ -1138,6 +1185,43 @@ holds any new version back for 3 days by default, a guard against a
 compromised release. The file's header says how to lift that delay for
 `@rness/cli`.
 
+`upgrade` rewrites `rness.json` once, from contract 1 (`repos` beside a flat
+`scopes`, and the former `projects` and `pulse`) to contract 2. It reads and
+checks the file first, before the scaffold merge and the install: a file
+contract 2 cannot hold stops it with one line per problem (`repo "api" has no
+scope at org/api`, `scope "api" at org/api has no repository: add its url, or
+remove it`, `scope "web" at org/platform/apps/web is inside no repository of
+rness.json`, `scope "tools" at tools/ is outside org/`, `repo "web": its scope
+at org/web is named "frontend"; rename it web`), exit 1, nothing changed and
+the pin where it was, so the earlier version keeps working while the team
+edits the file by hand. Otherwise, after the install and before the sync, it
+writes the file (`rewrote rness.json as contract 2 (ADR 0012)`), says what
+nesting changed (`scope "web" now inherits platform (nested)`), and
+`chore: rness <version>` holds it. A downgrade below 0.25.0 of a contract-2
+file is refused.
+
+- One step: `npx @rness/cli@latest upgrade`, which runs the new copy.
+- Two steps: `pnpm rness upgrade` (or any copy below 0.25.0) installs 0.25
+  and stops on the sync, as the new copy reads no contract 1 (`rness.json is
+contract 1: run rness upgrade`). Run `rness upgrade` again: it finishes the
+  merge, rewrites the file, syncs and commits. If a newer release came out
+  between the two runs, `rness upgrade <version>` finishes it.
+- In a workspace whose `packageManager` is npm, `pnpm rness` fails: use
+  `npm exec -- rness upgrade` or `npx rness upgrade`.
+- Every command but `upgrade` (and `login`, `logout`) refuses a contract-1
+  file with that one line, exit 1. `rness policy check` and the hooks do not
+  block: they print `rness: policies not checked: rness.json is contract 1:
+run rness upgrade`.
+- `rness create <org>` of 0.25 joining a workspace still on contract 1 stops
+  before cloning more, naming the version to use: `npx @rness/cli@<pin>
+create <org>`.
+
+After the Dependabot pull request moves the pin, `rness validate` fails in its
+CI, saying `run rness upgrade`: until the file is rewritten the new copy
+reads no contract 1. One developer runs `rness upgrade` (on the pull request's
+branch before merging it, or on `main` after) and pushes; the others
+`git pull`.
+
 `upgrade` also merges the scaffold of the target version into `.rness`, with
 git: the CI workflow, the hooks, the starter documents. After a Dependabot
 pull request, run it once more to merge the scaffold of the version the pin
@@ -1179,6 +1263,23 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## Unreleased
+
+- **`rness.json` contract 2**: one key, `scopes`; a scope is a repository
+  (`url`, cloned at `org/<name>`) or a part of one (nested in its `scopes`,
+  `path` relative to the parent). A part inherits its parent, then its
+  `extends`. `repos` is gone: the repositories are the scopes with a `url`.
+  See "`rness.json`".
+- `rness add` writes `scopes.<repo> = { url }` and each `--scopes` part under
+  it, with its `path` and no `extends`.
+- `rness create` writes contract 2, `--blank` too; joining a workspace on
+  contract 1 stops with the command to use at its pin.
+- `rness upgrade` checks `rness.json` first, then rewrites a contract-1 file
+  once, in its `chore: rness <version>` commit; every other command refuses
+  a contract-1 file with `run rness upgrade`. Upgrade with
+  `npx @rness/cli@latest upgrade` to do it in one step; see "Upgrade".
+- `rness validate` reports a redundant `extends` (an ancestor).
 
 ## 0.24.0 - policies as data
 
