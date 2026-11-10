@@ -104,6 +104,38 @@ export async function mergeInProgress(dir: string): Promise<boolean> {
 }
 
 /**
+ * Whether the merge waiting in `rnessDir` is the scaffold merge of `version`
+ * with no path left unmerged: what an upgrade leaves when the sync of the
+ * copy it installed fails (0.24.0's on a contract-1 file, spec 0038 §11),
+ * for the next `upgrade` to conclude. Any other merge: false.
+ */
+export async function pendingScaffoldMerge(
+  rnessDir: string,
+  version: string
+): Promise<boolean> {
+  const head = await run(rnessDir, [
+    'log',
+    '-1',
+    '--format=%s',
+    'MERGE_HEAD',
+    '--',
+  ])
+  if (head.code !== 0) return false
+  if (SCAFFOLD_SUBJECT.exec(head.stdout.trim())?.[1] !== version) return false
+  const unmerged = await run(rnessDir, [
+    'diff',
+    '--name-only',
+    '--diff-filter=U',
+  ])
+  return unmerged.code === 0 && unmerged.stdout.trim() === ''
+}
+
+/** `path` staged in `rnessDir`, as the merge in progress staged the rest. */
+export async function stageFile(rnessDir: string, path: string): Promise<void> {
+  await must(rnessDir, ['add', '--', path])
+}
+
+/**
  * The last commit in which rness wrote the scaffold (spec 0013 §1): the most
  * recent `chore: rness scaffold <v>`, else a root `chore: rness workspace
  * context`. The subject decides: a squash carries the trailer in its body

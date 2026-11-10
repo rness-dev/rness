@@ -163,12 +163,11 @@ test('a README declaring a value the board declares otherwise: refused, naming b
   }
   const m = await migrateBoards(rnessOf(root), manifest)
   assert.equal(m.readmes.size, 0)
-  assert.deepEqual(m.lines, [
-    [
-      'refused',
-      'marketing/README.md declares description otherwise than boards.marketing: keep one, in rness.json',
-    ],
-  ])
+  const line =
+    'marketing/README.md declares description otherwise than boards.marketing: keep one, in rness.json'
+  assert.deepEqual(m.lines, [['refused', line]])
+  // A declaration in two places: what upgrade stops on before a rewrite.
+  assert.deepEqual(m.conflicts, [line])
 })
 
 test('a README declaring what the board lacks: moved into the board', async (t) => {
@@ -251,6 +250,29 @@ test('a newer revision of the preset: merged value by value, the record moved, w
   )
   assert.equal(again.changed, false)
   assert.deepEqual(again.lines, [])
+})
+
+test('a merge of a newer preset the declaration refuses: a refused line, the board as it was, no conflict (upgrade lets it through)', async (t) => {
+  const root = await makeWorkspace(t, { org: 'acme' })
+  const manifest = await loadManifest(rnessOf(root))
+  const one = presetTemplate('agent-pulse/1', { collection: 'pulse' })
+  const pulse = parseBoard('pulse', {
+    number: 4,
+    preset: 'agent-pulse/1',
+    ...one,
+  })
+  manifest.boards = { pulse }
+  // Revision 2 merged, then unknown to the reader: refused, as sync says it.
+  const m = await migrateBoards(rnessOf(root), manifest, {
+    ...LATER,
+    knows: (ref) => ref !== 'agent-pulse/2',
+  })
+  assert.deepEqual(
+    m.lines.map(([verb]) => verb),
+    ['merged', 'refused']
+  )
+  assert.equal(m.boards?.['pulse'], pulse)
+  assert.deepEqual(m.conflicts, [])
 })
 
 test('a board without preset is never merged', async (t) => {

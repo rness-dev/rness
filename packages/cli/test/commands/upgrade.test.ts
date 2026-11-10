@@ -208,7 +208,12 @@ async function upgrade(
 ) {
   const c = capture()
   try {
-    const code = await upgradeCommand(version, opts, terminal, deps)
+    // The targets here are 0.x releases older than contract 2: every one
+    // reads it unless a test says otherwise.
+    const code = await upgradeCommand(version, opts, terminal, {
+      contract2Since: '0.1.0',
+      ...deps,
+    })
     return { code, out: c.out(), err: c.err() }
   } finally {
     c.restore()
@@ -611,6 +616,210 @@ test("this workspace's own shape (three repositories with their scopes, boards d
   assert.deepEqual(Object.keys(manifest.scopes), ['web', 'rness', 'docs'])
 })
 
+/**
+ * A pinned copy whose sync fails while FAKE_SYNC_FAIL is set, as 0.25.0's
+ * stops on a contract-1 file; otherwise it prints what it was asked.
+ */
+async function failingSyncBin(t: TestContext): Promise<string> {
+  const stub = join(await mkdtemp(join(tmpdir(), 'rness-bin-')), 'rness.js')
+  t.after(() => rm(dirname(stub), { recursive: true, force: true }))
+  await writeFile(
+    stub,
+    [
+      'const args = process.argv.slice(2)',
+      "if (args[0] === 'sync' && process.env.FAKE_SYNC_FAIL === '1') {",
+      "  console.error('rness.json is contract 1: run rness upgrade (ADR 0012)')",
+      '  process.exit(1)',
+      '}',
+      "console.log('PINNED 0.5.0 ' + args.join(' '))",
+      '',
+    ].join('\n')
+  )
+  const saved = process.env['FAKE_SYNC_FAIL']
+  t.after(() => {
+    if (saved === undefined) delete process.env['FAKE_SYNC_FAIL']
+    else process.env['FAKE_SYNC_FAIL'] = saved
+  })
+  return stub
+}
+
+const API_CONTRACT_1 = contract1({
+  org: 'acme',
+  repos: { api: { url: 'https://github.com/acme/api.git' } },
+  scopes: { api: { path: 'org/api' } },
+})
+const API_CONTRACT_2 =
+  '{\n  "contract": 2,\n  "org": "acme",\n  "scopes": {\n    "api": { "url": "https://github.com/acme/api.git" }\n  }\n}\n'
+
+test('a scaffold merge left staged by an upgrade whose sync failed is concluded by the next run: rewritten on contract 1, synced, one merge commit (spec 0038 §11)', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0', bin: await failingSyncBin(t) })
+  for (const [text, firstSince] of [
+    // As 0.24.0 ran it: it knows no contract 2, the copy it installed does.
+    [API_CONTRACT_1, '0.6.0'],
+    [API_CONTRACT_2, '0.1.0'],
+  ] as const) {
+    const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+    const rnessDir = join(root, '.rness')
+    const label = `${basename(root)}/.rness`
+    await commitManifest(root, text)
+    const head = await git(rnessDir, 'rev-parse', 'HEAD')
+    process.env['FAKE_SYNC_FAIL'] = '1'
+    const first = await upgrade(undefined, { yes: true, cwd: root }, NO_TTY, {
+      ...SAME_SCAFFOLD,
+      contract2Since: firstSince,
+    })
+    delete process.env['FAKE_SYNC_FAIL']
+    assert.equal(first.code, 1)
+    assert.match(first.out, /^installed dependencies with npm$/m)
+    assert.match(first.err, /rness\.json is contract 1: run rness upgrade/)
+    await git(rnessDir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')
+    assert.equal(await read(root, 'rness.json'), text)
+
+    // The scaffold merge of another target is not this run's to conclude.
+    const other = await upgrade('0.6.0', { yes: true, cwd: root })
+    assert.equal(other.code, 1)
+    assert.match(other.err, /\.rness has a merge in progress; commit it/)
+
+    const r = await upgrade(undefined, { yes: true, cwd: root })
+    assert.equal(r.code, 0, r.err)
+    assert.equal(
+      r.out,
+      [
+        `resume   the upgrade to @rness/cli 0.5.0: its scaffold merge is staged in ${label}`,
+        ...(text === API_CONTRACT_1
+          ? [
+              `rewrite  rness.json in ${label} as contract 2, for @rness/cli 0.5.0 (ADR 0012)`,
+              'rewrote  rness.json as contract 2 (ADR 0012)',
+            ]
+          : []),
+        'PINNED 0.5.0 sync --yes',
+        `committed ${label}: chore: rness 0.5.0`,
+        '',
+        `upgraded ${label} to @rness/cli 0.5.0`,
+        '',
+        'Next:',
+        '  git -C .rness push',
+        '  # teammates: git pull - the next rness command installs it',
+        '',
+      ].join('\n')
+    )
+    // One commit: the merge, the scaffold's history and the rewrite in it.
+    await assert.rejects(
+      git(rnessDir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')
+    )
+    assert.equal(
+      await git(rnessDir, 'log', '-1', '--format=%s'),
+      'chore: rness 0.5.0'
+    )
+    assert.equal(
+      (await git(rnessDir, 'log', '-1', '--format=%P')).split(' ').length,
+      2
+    )
+    assert.equal(await git(rnessDir, 'rev-parse', 'HEAD^1'), head)
+    assert.equal(await git(rnessDir, 'status', '--porcelain'), '')
+    assert.equal(await read(root, 'rness.json'), API_CONTRACT_2)
+    assert.equal(
+      await read(root, 'package.json'),
+      await scaffoldPackage('0.5.0')
+    )
+  }
+})
+
+test('rewritten during a merge, rness.json is staged with it: after a failed sync, git merge --abort puts contract 1 back', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0', bin: await failingSyncBin(t) })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  await commitManifest(root, API_CONTRACT_1)
+  process.env['FAKE_SYNC_FAIL'] = '1'
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  delete process.env['FAKE_SYNC_FAIL']
+  assert.equal(r.code, 1)
+  assert.match(r.out, /^rewrote {2}rness\.json as contract 2 \(ADR 0012\)$/m)
+  assert.equal(await read(root, 'rness.json'), API_CONTRACT_2)
+  assert.match(
+    await git(rnessDir, 'diff', '--cached', '--name-only'),
+    /^rness\.json$/m
+  )
+  assert.equal(await git(rnessDir, 'diff', '--name-only'), '')
+  await git(rnessDir, 'merge', '--abort')
+  assert.equal(await read(root, 'rness.json'), API_CONTRACT_1)
+  assert.equal(await git(rnessDir, 'status', '--porcelain'), '')
+})
+
+test('a failed install on a contract-1 file leaves rness.json as it was', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0', fail: true })
+  const root = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  const rnessDir = join(root, '.rness')
+  await commitManifest(root, API_CONTRACT_1)
+  const r = await upgrade(undefined, { yes: true, cwd: root })
+  assert.equal(r.code, 1)
+  assert.match(r.err, /npm install failed/)
+  assert.doesNotMatch(r.out, /rewrote/)
+  assert.equal(await read(root, 'rness.json'), API_CONTRACT_1)
+  await git(rnessDir, 'merge', '--abort')
+  assert.equal(await git(rnessDir, 'status', '--porcelain'), '')
+  assert.equal(await read(root, 'package.json'), await scaffoldPackage('0.4.0'))
+})
+
+test('toward a release before contract 2: a contract-1 file left as it is, a contract-2 one refused before anything; from that release on, its pre-releases count', async (t) => {
+  await fakeNpm(t, { latest: '0.5.0' })
+  const below: UpgradeDeps = { ...SAME_SCAFFOLD, contract2Since: '0.6.0' }
+
+  // The target reads contract 1: today's flow, its repositories read from it.
+  const old = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  await commitManifest(old, API_CONTRACT_1)
+  const api = join(old, 'org', 'api')
+  await mkdir(api, { recursive: true })
+  await git(api, 'init', '-q', '-b', 'main')
+  await git(api, 'commit', '-q', '--allow-empty', '-m', 'init')
+  await writeFile(join(api, 'AGENTS.md'), 'block\n')
+  const kept = await upgrade(undefined, { yes: true, cwd: old }, NO_TTY, below)
+  assert.equal(kept.code, 0, kept.err)
+  assert.doesNotMatch(kept.out, /rewrit/)
+  assert.match(kept.out, /^PINNED 0\.5\.0 sync --yes$/m)
+  assert.match(kept.out, /^committed .*: chore: rness 0\.5\.0$/m)
+  assert.match(kept.out, /^ {2}git -C org\/api add AGENTS\.md && /m)
+  assert.equal(await read(old, 'rness.json'), API_CONTRACT_1)
+
+  // A contract-2 file the target cannot read: nothing merged or installed.
+  const ahead = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  await commitManifest(ahead, API_CONTRACT_2)
+  const head = await git(join(ahead, '.rness'), 'rev-parse', 'HEAD')
+  const refused = await upgrade(
+    undefined,
+    { yes: true, cwd: ahead },
+    NO_TTY,
+    below
+  )
+  assert.equal(refused.code, 1)
+  assert.equal(
+    refused.err,
+    'rness.json is contract 2; @rness/cli 0.5.0 reads contract 1 only: upgrade to 0.6.0 or later, or rewrite rness.json by hand\n'
+  )
+  assert.doesNotMatch(refused.out, /merging|installed|PINNED/)
+  assert.equal(await git(join(ahead, '.rness'), 'rev-parse', 'HEAD'), head)
+  assert.equal(await git(join(ahead, '.rness'), 'status', '--porcelain'), '')
+  assert.equal(await read(ahead, 'rness.json'), API_CONTRACT_2)
+  assert.equal(
+    await read(ahead, 'package.json'),
+    await scaffoldPackage('0.4.0')
+  )
+  assert.equal(await installedVersion(ahead), '0.4.0')
+
+  // A pre-release of the first release reading contract 2 reads it too.
+  const rc = await workspace(t, { pin: '0.4.0', installed: '0.4.0' })
+  await commitManifest(rc, API_CONTRACT_1)
+  const rewritten = await upgrade(
+    '0.6.0-rc.1',
+    { yes: true, cwd: rc },
+    NO_TTY,
+    below
+  )
+  assert.equal(rewritten.code, 0, rewritten.err)
+  assert.match(rewritten.out, /^rewrote {2}rness\.json as contract 2/m)
+  assert.equal(await read(rc, 'rness.json'), API_CONTRACT_2)
+})
+
 const POLICY_FILES = [
   '.githooks/commit-msg',
   '.githooks/pre-push',
@@ -687,6 +896,16 @@ test('overlapping edits conflict: nothing is installed; once resolved, a second 
   assert.match(r.err, /conflict WORKSPACE\.md/)
   assert.match(r.err, /git checkout --ours <file> keeps yours/)
   assert.doesNotMatch(r.out, /PINNED/)
+  // The scaffold merge of the target, a path unmerged: not one to conclude.
+  const unresolved = await upgrade(
+    undefined,
+    { yes: true, cwd: root },
+    NO_TTY,
+    deps
+  )
+  assert.equal(unresolved.code, 1)
+  assert.match(unresolved.err, /\.rness has a merge in progress; commit it/)
+  assert.doesNotMatch(unresolved.out, /resume|PINNED/)
 
   await git(rnessDir, 'checkout', '--ours', 'WORKSPACE.md')
   await git(rnessDir, 'add', '-A')

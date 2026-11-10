@@ -124,6 +124,12 @@ export interface Migration {
   readmes: Map<string, string>
   /** What `sync` says, `[verb, rest]`. */
   lines: [string, string][]
+  /**
+   * The `refused` lines of a README declaring otherwise than its board:
+   * declarations a rewrite of rness.json would leave in two places, which
+   * `upgrade` stops on (spec 0038 §11). A refused preset merge is not one.
+   */
+  conflicts: string[]
 }
 
 /**
@@ -189,6 +195,7 @@ export async function migrateBoards(
     boards: manifest.boards,
     readmes: new Map(),
     lines: [],
+    conflicts: [],
   }
   if (manifest.formerKey !== undefined) {
     migration.lines.push([
@@ -229,6 +236,7 @@ export async function migrateBoards(
           : moveInto(name, collection, source, declared)
       if (refused !== null) {
         migration.lines.push(['refused', refused])
+        migration.conflicts.push(refused)
         continue
       }
       const text = await readmeOf(rnessDir, collection)
