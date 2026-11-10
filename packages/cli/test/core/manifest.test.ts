@@ -14,12 +14,13 @@ import {
   parseRepoSpec,
   projectNumber,
   providerOf,
+  redundantExtends,
   repositories,
   workspaceName,
   writeManifest,
 } from '../../src/core/manifest.ts'
 import { resolveScope, scopeChain } from '../../src/core/scope.ts'
-import type { Manifest } from '../../src/core/types.ts'
+import type { Manifest, ScopeEntry } from '../../src/core/types.ts'
 
 async function fixture(json: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'rness-'))
@@ -165,27 +166,28 @@ test('contract 2: what a scope cannot be is refused, each with its line', async 
       'scope "web" path must not contain empty segments',
     ],
     [
-      {
-        platform: {
-          url,
-          scopes: { web: { path: 'apps/web', extends: ['platform'] } },
-        },
-      },
-      'scope "web" extends "platform", already its parent',
+      { platform: { url, scopes: { web: { path: 'apps/./web' } } } },
+      'scope "web" path must not contain "."',
     ],
     [
-      {
-        platform: {
-          url,
-          scopes: {
-            web: {
-              path: 'apps/web',
-              scopes: { icons: { path: 'icons', extends: ['platform'] } },
-            },
-          },
-        },
-      },
-      'scope "icons" extends "platform", already its ancestor',
+      { platform: { url, scope: { web: { path: 'apps/web' } } } },
+      'scope "platform": unknown key "scope"',
+    ],
+    [
+      { platform: { url, scopes: { web: { path: 'apps/web', url: 1 } } } },
+      'scope "web": a part has no url; its repository is platform',
+    ],
+    [
+      { platform: { url, scopes: { web: { path: 'apps/web', ext: [] } } } },
+      'scope "web": unknown key "ext"',
+    ],
+    [
+      { constructor: { url } },
+      `scope name "constructor" may only contain ${NAME_RULE}`,
+    ],
+    [
+      { platform: { url, scopes: { prototype: { path: 'apps/web' } } } },
+      `scope name "prototype" may only contain ${NAME_RULE}`,
     ],
     [
       {
@@ -239,6 +241,126 @@ test('contract 2: what a scope cannot be is refused, each with its line', async 
       message
     )
   }
+  // As JSON.parse reads it: an own key, which an object literal cannot write.
+  const proto = await fixture(
+    '{ "contract": 2, "scopes": { "__proto__": { "url": "x" } } }'
+  )
+  t.after(() => rm(dirname(proto), { recursive: true, force: true }))
+  await assert.rejects(
+    () => loadManifest(proto),
+    new Error(
+      `rness.json: scope name "__proto__" may only contain ${NAME_RULE}`
+    )
+  )
+})
+
+test('contract 2: an ancestor named in extends is read, left out of extends for validate to report; never written back', async (t) => {
+  const text = JSON.stringify({
+    contract: 2,
+    scopes: {
+      app: { url: 'git@github.com:acme/app.git' },
+      platform: {
+        url: 'https://github.com/acme/platform.git',
+        scopes: {
+          web: {
+            path: 'apps/web',
+            extends: ['platform', 'app'],
+            scopes: { icons: { path: 'icons', extends: ['platform', 'web'] } },
+          },
+        },
+      },
+    },
+  })
+  const d = await fixture(text)
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const m = await loadManifest(d)
+  assert.deepEqual(m.scopes['web'], {
+    path: 'org/platform/apps/web',
+    url: null,
+    parent: 'platform',
+    extends: ['platform', 'app'],
+    redundant: ['platform'],
+  })
+  assert.deepEqual(m.scopes['icons'], {
+    path: 'org/platform/apps/web/icons',
+    url: null,
+    parent: 'web',
+    extends: ['web'],
+    redundant: ['platform', 'web'],
+  })
+  assert.equal(Object.hasOwn(m.scopes['platform'] ?? {}, 'redundant'), false)
+  assert.deepEqual(scopeChain(m, 'icons'), ['icons', 'web', 'platform', 'app'])
+  assert.deepEqual(redundantExtends(m), [
+    'scope "web": extends "platform" is already its parent; remove it',
+    'scope "icons": extends "platform" is already its ancestor; remove it',
+    'scope "icons": extends "web" is already its parent; remove it',
+  ])
+  await writeManifest(d, m)
+  const written = await readFile(join(d, 'rness.json'), 'utf8')
+  assert.match(
+    written,
+    /"web": \{\n {10}"path": "apps\/web",\n {10}"extends": \["app"\],/
+  )
+  assert.match(written, /"icons": \{ "path": "icons" \}/)
+  const again = await loadManifest(d)
+  assert.deepEqual(redundantExtends(again), [])
+  assert.deepEqual(again.scopes['icons']?.extends, ['web'])
+  await writeManifest(d, again)
+  assert.equal(await readFile(join(d, 'rness.json'), 'utf8'), written)
+})
+
+test('writeManifest refuses a manifest the reader could not have given: no url and no parent, a part with a url, a parent not declared, parents in a loop, a part outside its parent', async (t) => {
+  const d = await fixture({ contract: 2, scopes: {} })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const base: Manifest = await loadManifest(d)
+  const repo = (name: string): ScopeEntry => ({
+    path: `org/${name}`,
+    url: `https://github.com/acme/${name}.git`,
+    parent: null,
+    extends: [],
+  })
+  const part = (path: string, parent: string): ScopeEntry => ({
+    path,
+    url: null,
+    parent,
+    extends: [parent],
+  })
+  const cases: [Record<string, ScopeEntry>, string][] = [
+    [
+      { web: { ...repo('web'), url: null } },
+      'scope "web" has no url and no parent',
+    ],
+    [
+      {
+        platform: repo('platform'),
+        web: { ...part('org/platform/web', 'platform'), url: 'x' },
+      },
+      'scope "web" is a part of platform and has a url',
+    ],
+    [
+      { web: part('org/platform/web', 'platform') },
+      'scope "web" is a part of platform, which is not a scope',
+    ],
+    [
+      {
+        a: part('org/x/a', 'b'),
+        b: part('org/x/a/b', 'a'),
+      },
+      'scope "a": its parents never reach a repository',
+    ],
+    [
+      { platform: repo('platform'), web: part('org/web', 'platform') },
+      'scope "web" at org/web is not inside platform',
+    ],
+  ]
+  for (const [scopes, message] of cases) {
+    await assert.rejects(
+      () => writeManifest(d, { ...base, scopes }),
+      new Error(`rness.json: ${message}`),
+      message
+    )
+  }
+  assert.deepEqual(await loadManifest(d), base, 'nothing written')
 })
 
 test('contract 2: extends names any scope of the tree, a cycle left to scopeChain', async (t) => {
@@ -1088,6 +1210,9 @@ test('isWorkspaceClone: a name the catalogue could hold, and not an excluded one
   assert.equal(isWorkspaceClone('WebSite'), false)
   assert.equal(isWorkspaceClone('-dash'), false)
   assert.equal(isWorkspaceClone('..'), false)
+  // The names every JavaScript object has: a key of rness.json is read into one.
+  for (const name of ['__proto__', 'constructor', 'prototype'])
+    assert.equal(isWorkspaceClone(name), false, name)
 })
 
 test('the exclusion list is one place, shared by both rules', () => {

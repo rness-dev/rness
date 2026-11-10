@@ -28,9 +28,12 @@ import type {
  * Lowercase because the key in `rness.json`, the directory `org/<name>` and
  * the scope directories must agree on every file system: `dApp` and `dapp`
  * are one directory on macOS and two on Linux. A name typed in another case
- * is lowercased (`parseRepoSpec`), never refused.
+ * is lowercased (`parseRepoSpec`), never refused. Not `__proto__`,
+ * `constructor` or `prototype` either: names every JavaScript object has,
+ * where `rness.json` is read into one by name.
  */
-export const NAME = /^(?!\.{1,2}$)[a-z0-9._][a-z0-9._-]*$/
+export const NAME =
+  /^(?!\.{1,2}$)(?!(?:__proto__|constructor|prototype)$)[a-z0-9._][a-z0-9._-]*$/
 
 /**
  * The organization's context repository. It holds the catalogue and is cloned
@@ -114,7 +117,7 @@ export function isWorkspaceClone(
 }
 /** How the rule reads in an error message. */
 export const NAME_RULE =
-  "lowercase letters, digits, '.', '_' and '-', not starting with '-'"
+  "lowercase letters, digits, '.', '_' and '-', not starting with '-', not __proto__, constructor or prototype"
 
 /**
  * A GitHub organization (or user) name: alphanumerics and single hyphens, not
@@ -210,6 +213,8 @@ function checkPath(scope: string, path: unknown): string {
   if (path.startsWith('/')) fail(`scope "${scope}" path must be relative`)
   if (path.split('/').includes('..'))
     fail(`scope "${scope}" path must not contain ".."`)
+  if (path.split('/').includes('.'))
+    fail(`scope "${scope}" path must not contain "."`)
   if (path.split('/').some((segment) => segment === ''))
     fail(`scope "${scope}" path must not contain empty segments`)
   return path
@@ -435,22 +440,27 @@ export function providerOf(manifest: Manifest): ProviderName {
   return 'github'
 }
 
+/** The keys of a scope of contract 2 (spec 0038 §1): any other is a slip. */
+const SCOPE_KEYS = ['url', 'path', 'extends', 'scopes']
+
 /**
  * `scopes`, a tree (spec 0038 §1), read flat in the order written: a
  * repository at the top by its `url`, at `org/<name>`; a part under its
  * parent by a `path` relative to it, its parent first in `extends`. A name
- * is unique across the tree, and `extends` never names an ancestor.
+ * is unique across the tree. An ancestor named in `extends` is inherited by
+ * nesting already: left out of `extends`, kept in `redundant` for
+ * `validate` to say (ADR 0012).
  */
 function readScopes(value: unknown): Record<string, ScopeEntry> {
   const raw = value ?? {}
   if (!isRecord(raw)) fail('"scopes" must be an object')
   const scopes: Record<string, ScopeEntry> = {}
-  /** The names `extends` lists, without the parent the reader puts first. */
+  /** The names `extends` lists, as written, for the unknown ones. */
   const named = new Map<string, string[]>()
-  const ancestors = (name: string): string[] => {
-    const parent = scopes[name]?.parent ?? null
-    return parent === null ? [] : [parent, ...ancestors(parent)]
-  }
+  const ancestors = (parent: string | null): string[] =>
+    parent === null
+      ? []
+      : [parent, ...ancestors(scopes[parent]?.parent ?? null)]
   const declared = (parent: string | null): string =>
     parent === null ? 'as a repository' : `under ${parent}`
 
@@ -466,6 +476,10 @@ function readScopes(value: unknown): Record<string, ScopeEntry> {
           `scope "${name}" is declared twice: ${declared(scopes[name]?.parent ?? null)} and ${declared(parent)}`
         )
       if (!isRecord(entry)) fail(`scope "${name}" must be an object`)
+      for (const key of Object.keys(entry))
+        if (!SCOPE_KEYS.includes(key))
+          fail(`scope "${name}": unknown key ${JSON.stringify(key)}`)
+      const above = ancestors(parent)
       let path: string
       let url: string | null = null
       if (parent === null) {
@@ -478,19 +492,25 @@ function readScopes(value: unknown): Record<string, ScopeEntry> {
       } else {
         if (entry.url !== undefined)
           fail(
-            `scope "${name}": a part has no url; its repository is ${[parent, ...ancestors(parent)].at(-1)}`
+            `scope "${name}": a part has no url; its repository is ${above.at(-1)}`
           )
         path = `${scopes[parent]?.path}/${checkPath(name, entry.path)}`
       }
       const ext = entry.extends ?? []
       if (!Array.isArray(ext) || !ext.every((t) => typeof t === 'string'))
         fail(`scope "${name}" extends must be an array of scope names`)
-      named.set(name, ext as string[])
+      const names = ext as string[]
+      named.set(name, names)
+      const redundant = names.filter((t) => above.includes(t))
       scopes[name] = {
         path,
         url,
         parent,
-        extends: parent === null ? [...ext] : [parent, ...ext],
+        extends: [
+          ...above.slice(0, 1),
+          ...names.filter((t) => !above.includes(t)),
+        ],
+        ...(redundant.length === 0 ? {} : { redundant }),
       }
       if (entry.scopes === undefined) continue
       if (!isRecord(entry.scopes))
@@ -500,18 +520,25 @@ function readScopes(value: unknown): Record<string, ScopeEntry> {
   }
   readLevel(raw, null)
 
-  for (const [name, targets] of named) {
-    const above = ancestors(name)
-    for (const target of targets) {
+  for (const [name, targets] of named)
+    for (const target of targets)
       if (!Object.hasOwn(scopes, target))
         fail(`scope "${name}" extends unknown scope "${target}"`)
-      if (above.includes(target))
-        fail(
-          `scope "${name}" extends "${target}", already its ${target === above[0] ? 'parent' : 'ancestor'}`
-        )
-    }
-  }
   return scopes
+}
+
+/**
+ * The lines `validate` says of the ancestors a scope's `extends` names: one
+ * per name, in the order read (ADR 0012). Reported, never refused: nesting
+ * gives the scope what the name would.
+ */
+export function redundantExtends(manifest: Manifest): string[] {
+  return Object.entries(manifest.scopes).flatMap(([name, scope]) =>
+    (scope.redundant ?? []).map(
+      (target) =>
+        `scope "${name}": extends "${target}" is already its ${target === scope.parent ? 'parent' : 'ancestor'}; remove it`
+    )
+  )
 }
 
 /**
@@ -601,36 +628,70 @@ function boardsLines(manifest: Manifest): string[] {
 }
 
 /**
+ * The ancestors of each scope, nearest first, once the tree is checked as
+ * the reader would give it: otherwise the writer would drop a scope, or
+ * write a file the reader refuses. Each error is a manifest built wrong in
+ * memory, never one read from the file.
+ */
+function ancestorsOf(
+  scopes: Record<string, ScopeEntry>
+): Map<string, string[]> {
+  const wrong = (message: string): never => {
+    throw new Error(`rness.json: ${message}`)
+  }
+  for (const [name, scope] of Object.entries(scopes)) {
+    if (scope.parent === null) {
+      if (scope.url === null) wrong(`scope "${name}" has no url and no parent`)
+    } else if (scope.url !== null)
+      wrong(`scope "${name}" is a part of ${scope.parent} and has a url`)
+    else if (!Object.hasOwn(scopes, scope.parent))
+      wrong(
+        `scope "${name}" is a part of ${scope.parent}, which is not a scope`
+      )
+  }
+  const ancestors = new Map<string, string[]>()
+  for (const [name, scope] of Object.entries(scopes)) {
+    const above: string[] = []
+    for (let p = scope.parent; p !== null; p = scopes[p]?.parent ?? null) {
+      if (p === name || above.includes(p))
+        wrong(`scope "${name}": its parents never reach a repository`)
+      above.push(p)
+    }
+    const parent = scope.parent === null ? undefined : scopes[scope.parent]
+    if (parent !== undefined && !scope.path.startsWith(`${parent.path}/`))
+      wrong(`scope "${name}" at ${scope.path} is not inside ${scope.parent}`)
+    ancestors.set(name, above)
+  }
+  return ancestors
+}
+
+/**
  * The scopes nested under `parent` (null: the repositories), as written
  * (spec 0038 §3): a scope on one line, `url` or `path` then `extends` when
- * it names any; one with parts on several, its `scopes` indented under it.
+ * it names any but an ancestor; one with parts on several, its `scopes`
+ * indented under it.
  */
 function scopeLines(
   scopes: Record<string, ScopeEntry>,
+  ancestors: ReadonlyMap<string, string[]>,
   parent: string | null,
   indent: string
 ): string[] {
   const entries = Object.entries(scopes).filter(([, s]) => s.parent === parent)
   return entries.map(([name, scope], i) => {
-    const own: string[] = []
-    if (parent === null) {
-      if (scope.url === null)
-        throw new Error(`rness.json: scope "${name}" has no url and no parent`)
-      own.push(`"url": ${JSON.stringify(scope.url)}`)
-    } else {
-      const base = `${scopes[parent]?.path}/`
-      if (!scope.path.startsWith(base))
-        throw new Error(
-          `rness.json: scope "${name}" at ${scope.path} is not inside ${parent}`
-        )
-      own.push(`"path": ${JSON.stringify(scope.path.slice(base.length))}`)
-    }
-    // The parent is inherited by nesting, never written (ADR 0012).
-    const named = scope.extends.filter((e) => e !== parent)
+    const own =
+      parent === null
+        ? [`"url": ${JSON.stringify(scope.url)}`]
+        : [
+            `"path": ${JSON.stringify(scope.path.slice(`${scopes[parent]?.path}/`.length))}`,
+          ]
+    // An ancestor is inherited by nesting, never written (ADR 0012).
+    const above = ancestors.get(name) ?? []
+    const named = scope.extends.filter((e) => !above.includes(e))
     if (named.length > 0)
       own.push(`"extends": [${named.map((e) => JSON.stringify(e)).join(', ')}]`)
     const comma = i === entries.length - 1 ? '' : ','
-    const parts = scopeLines(scopes, name, `${indent}    `)
+    const parts = scopeLines(scopes, ancestors, name, `${indent}    `)
     if (parts.length === 0)
       return `${indent}${JSON.stringify(name)}: { ${own.join(', ')} }${comma}`
     return [
@@ -663,7 +724,12 @@ export async function writeManifest(
       `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`
     )
   lines.push(...boardsLines(manifest))
-  const scopes = scopeLines(manifest.scopes, null, '    ')
+  const scopes = scopeLines(
+    manifest.scopes,
+    ancestorsOf(manifest.scopes),
+    null,
+    '    '
+  )
   if (scopes.length === 0) lines.push('  "scopes": {}')
   else lines.push('  "scopes": {', ...scopes, '  }')
   lines.push('}')

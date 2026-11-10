@@ -30,8 +30,14 @@ export interface ScopeEntry {
   url: string | null
   /** The scope a part is nested under; null for a repository. */
   parent: string | null
-  /** The parent first, when there is one, then the names `extends` lists. */
+  /** The parent first, when there is one, then the names `extends` lists but its ancestors. */
   extends: string[]
+  /**
+   * The ancestors `extends` named, in the order written: inherited by
+   * nesting already, left out of `extends`, and said by
+   * `redundantExtends()` (ADR 0012). Absent when there is none.
+   */
+  redundant?: string[]
 }
 
 /** A scope with a `url`, as `repositories()` gives it: cloned at `dir`, `org/<name>`. */

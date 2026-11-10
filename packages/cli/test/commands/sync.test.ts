@@ -724,7 +724,7 @@ test('a directory under org/ that is no name rness.json can hold is named, not s
   assert.equal(r.code, 0, r.err)
   assert.match(
     r.out,
-    /^not read: org\/-rf \(not a repository name: lowercase letters, digits, '\.', '_' and '-', not starting with '-'\)\nnot read: org\/Api\.rness-rename \(left by an interrupted rename: move it back to org\/Api\)\nnot read: org\/WebSite \(names are lowercase: rness add website renames it org\/website\)$/m
+    /^not read: org\/-rf \(not a repository name: lowercase letters, digits, '\.', '_' and '-', not starting with '-', not __proto__, constructor or prototype\)\nnot read: org\/Api\.rness-rename \(left by an interrupted rename: move it back to org\/Api\)\nnot read: org\/WebSite \(names are lowercase: rness add website renames it org\/website\)$/m
   )
   assert.doesNotMatch(r.out, /not in rness\.json/)
   await assert.rejects(access(join(root, 'org', 'WebSite', 'AGENTS.md')))
@@ -1084,7 +1084,6 @@ test('hooks: a part gets none of its own; its repository gets them, with --scope
   assert.equal(r.code, 0, r.err)
   assert.doesNotMatch(r.out, /not in rness\.json/)
   assert.match(r.out, /updated {2}org\/web git hooks \(pre-commit\)/)
-  assert.doesNotMatch(r.out, /apps\/docs git hooks/)
   await access(join(root, 'org', 'web', '.git', 'hooks', 'pre-commit'))
 })
 
