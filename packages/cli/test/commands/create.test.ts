@@ -1806,6 +1806,30 @@ test('GitLab wizard: its words, the group then the account, the subgroup hint, t
   )
 })
 
+test('GitLab answered at the prompt: the version to join a contract-1 workspace with names the provider, as nothing else would ask it', async (t) => {
+  const { remote, gl } = await gitlabFixture(t)
+  await remote.addRepo('rness', {
+    'rness.json': `${JSON.stringify({ contract: 1, org: 'acme', repos: {} })}\n`,
+    'package.json': `${JSON.stringify({ devDependencies: { '@rness/cli': '0.24.0' } })}\n`,
+  })
+  const cwd = await scratch(t)
+  const r = await wizard(
+    { skipInstall: true, pm: 'npm', host: remote.host, cwd },
+    terminal({ provider: 'gitlab', select: ['acme'] }).deps,
+    undefined,
+    gl.provider
+  )
+  assert.equal(r.code, 1)
+  assert.equal(
+    r.err,
+    `acme is on @rness/cli 0.24.0 (rness.json contract 1). Join it with that version: npx @rness/cli@0.24.0 create acme --provider gitlab --host ${remote.host}\n`
+  )
+  assert.deepEqual(
+    (await readdir(cwd)).filter((e) => e !== '.git'),
+    []
+  )
+})
+
 test('GitLab, not published: the manual steps name the project _rness at the path rness, git first, glab second', async (t) => {
   const { remote, gl } = await gitlabFixture(t)
   const r = await wizard(
@@ -2729,14 +2753,56 @@ test('joining a workspace on contract 1 stops with the version to join with, and
     cwd,
   ])
   assert.equal(r.code, 1)
+  // The flags that say where the organization is reached go with it.
   assert.equal(
     r.err,
-    'acme is on @rness/cli 0.24.0 (rness.json contract 1). Join it with that version: npx @rness/cli@0.24.0 create acme\n'
+    `acme is on @rness/cli 0.24.0 (rness.json contract 1). Join it with that version: npx @rness/cli@0.24.0 create acme --host ${host}\n`
   )
   assert.deepEqual(
     (await readdir(cwd)).filter((e) => e !== '.git'),
     [],
     'no workspace directory, no clone'
+  )
+})
+
+test('the version to join a contract-1 workspace with keeps the provider, the host, the transport and the API bases typed', async (t) => {
+  const { host, cwd } = await contract1Context(t, '0.24.0')
+  const r = await create([
+    'acme',
+    '--provider',
+    'github',
+    '--https',
+    '--yes',
+    '--skip-install',
+    '--pm',
+    'npm',
+    '--host',
+    host,
+    '--github-api',
+    'http://127.0.0.1:9/',
+    '--cwd',
+    cwd,
+  ])
+  assert.equal(r.code, 1)
+  assert.equal(
+    r.err,
+    `acme is on @rness/cli 0.24.0 (rness.json contract 1). Join it with that version: npx @rness/cli@0.24.0 create acme --provider github --host ${host} --https --github-api http://127.0.0.1:9/\n`
+  )
+  const window = await contract1Context(t, '0.25.0')
+  const w = await create([
+    'acme',
+    '--ssh',
+    '--yes',
+    '--skip-install',
+    '--host',
+    window.host,
+    '--cwd',
+    window.cwd,
+  ])
+  assert.equal(w.code, 1)
+  assert.equal(
+    w.err,
+    `acme/.rness pins @rness/cli 0.25.0 already, but its rness.json is still contract 1: a teammate runs npx @rness/cli@latest upgrade in its .rness and pushes, then run rness create acme --host ${window.host} --ssh again\n`
   )
 })
 
@@ -2758,7 +2824,7 @@ test('joining a contract-1 workspace already pinned to a copy that reads contrac
     assert.equal(r.code, 1, pin)
     assert.equal(
       r.err,
-      `acme/.rness pins @rness/cli ${pin} already, but its rness.json is still contract 1: a teammate runs npx @rness/cli@latest upgrade in its .rness and pushes, then run rness create acme again\n`,
+      `acme/.rness pins @rness/cli ${pin} already, but its rness.json is still contract 1: a teammate runs npx @rness/cli@latest upgrade in its .rness and pushes, then run rness create acme --host ${host} again\n`,
       pin
     )
     assert.deepEqual(
@@ -2781,9 +2847,9 @@ test('joining a contract-1 workspace already pinned to a copy that reads contrac
     cwd,
   ])
   assert.equal(r.code, 1)
-  assert.match(
+  assert.equal(
     r.err,
-    /^acme is on @rness\/cli 0\.24\.9 \(rness\.json contract 1\)\. Join it with that version: npx @rness\/cli@0\.24\.9 create acme/
+    `acme is on @rness/cli 0.24.9 (rness.json contract 1). Join it with that version: npx @rness/cli@0.24.9 create acme --host ${host}\n`
   )
 })
 

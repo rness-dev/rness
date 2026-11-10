@@ -544,6 +544,26 @@ function blankConflict(opts: CreateOptions): string | null {
   return null
 }
 
+/**
+ * The flags of this run that say where the organization is reached, for a
+ * command `create` suggests instead: the provider (typed, or answered when
+ * not GitHub, since an organization on the command line asks none), the
+ * remote base and its transport, the API bases. Each as a ` --flag value`.
+ */
+function reachFlags(opts: CreateOptions, provider: ProviderName): string {
+  const flags: string[] = []
+  if (opts.provider !== undefined || provider !== 'github')
+    flags.push(`--provider ${provider}`)
+  if (opts.host !== undefined) flags.push(`--host ${opts.host}`)
+  if (opts.ssh === true) flags.push('--ssh')
+  if (opts.https === true) flags.push('--https')
+  if (opts.githubApi !== undefined) flags.push(`--github-api ${opts.githubApi}`)
+  if (opts.gitlabApi !== undefined) flags.push(`--gitlab-api ${opts.gitlabApi}`)
+  if (opts.bitbucketApi !== undefined)
+    flags.push(`--bitbucket-api ${opts.bitbucketApi}`)
+  return flags.map((f) => ` ${f}`).join('')
+}
+
 /** Refuses a `--provider` value that names no provider, or one not yet available. */
 function providerFlagError(value: string): string | null {
   if (!isProviderName(value))
@@ -1096,12 +1116,13 @@ export async function createCommand(
       if (await isContract1(stagedDir)) {
         const pin = await readPin(stagedDir)
         const exact = pin !== null && EXACT_VERSION.test(pin.spec)
+        const flags = reachFlags(opts, chosenProvider)
         process.stderr.write(
           !exact
             ? `${org} is on a former @rness/cli (rness.json contract 1). Join it with the @rness/cli version pinned in its .rness/package.json\n`
             : compareVersions(pin.spec, `${CONTRACT_2_SINCE}-0`) >= 0
-              ? `${org}/${context} pins @rness/cli ${pin.spec} already, but its rness.json is still contract 1: a teammate runs ${CONTRACT_1_UPGRADE} in its .rness and pushes, then run ${rnessCommand()} create ${org} again\n`
-              : `${org} is on @rness/cli ${pin.spec} (rness.json contract 1). Join it with that version: npx @rness/cli@${pin.spec} create ${org}\n`
+              ? `${org}/${context} pins @rness/cli ${pin.spec} already, but its rness.json is still contract 1: a teammate runs ${CONTRACT_1_UPGRADE} in its .rness and pushes, then run ${rnessCommand()} create ${org}${flags} again\n`
+              : `${org} is on @rness/cli ${pin.spec} (rness.json contract 1). Join it with that version: npx @rness/cli@${pin.spec} create ${org}${flags}\n`
         )
         return 1
       }
