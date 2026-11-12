@@ -199,6 +199,54 @@ test('a squash-like commit (trailer in the body, another subject) is never the b
   })
 })
 
+test('a merge commit named like a scaffold commit is never the base, so the next merge keeps the team edits', async (t) => {
+  const dir = await created(t)
+  const root = await git(dir, 'rev-parse', 'HEAD')
+  // The team edits a file the scaffold wrote.
+  await writeFile(join(dir, 'README.md'), 'Our own README.\n')
+  await git(dir, 'commit', '-qam', 'docs: our README')
+  // An upgrade to 0.9.0, its merge committed by hand under a scaffold-like subject.
+  const s9 = await buildScaffoldCommit(
+    dir,
+    root,
+    await nextScaffold((f) =>
+      f.path === 'AGENTS.md' ? { ...f, content: `${f.content}\nNine.\n` } : f
+    ),
+    '0.9.0'
+  )
+  const first = await mergeScaffold(dir, s9, root)
+  assert.deepEqual(first.conflicts, [])
+  await git(dir, 'commit', '-q', '-m', 'chore: rness scaffold 0.9.0')
+  const merge = await git(dir, 'rev-parse', 'HEAD')
+  assert.equal(
+    (await git(dir, 'log', '-1', '--format=%P', merge)).split(' ').length,
+    2,
+    'a merge commit'
+  )
+  // The base is the scaffold commit, not the merge that took its subject.
+  assert.deepEqual(await findScaffoldBase(dir), {
+    commit: s9,
+    version: '0.9.0',
+  })
+  // The next upgrade merges against it: the team's README stays theirs.
+  const s10 = await buildScaffoldCommit(
+    dir,
+    s9,
+    (await renderScaffold(scaffoldDir(), { ...TOKENS, version: '0.10.0' })).map(
+      (f) =>
+        f.path === 'AGENTS.md' ? { ...f, content: `${f.content}\nTen.\n` } : f
+    ),
+    '0.10.0'
+  )
+  const next = await mergeScaffold(dir, s10, s9)
+  assert.deepEqual(next.conflicts, [])
+  assert.equal(
+    await readFile(join(dir, 'README.md'), 'utf8'),
+    'Our own README.\n'
+  )
+  assert.match(await readFile(join(dir, 'AGENTS.md'), 'utf8'), /Ten\.\n$/)
+})
+
 test('adoption: no base, unrelated histories — identical files pass, a differing one conflicts, a missing one is added', async (t) => {
   const dir = await created(t, 'chore: baseline', null)
   await rm(join(dir, '.github', 'workflows', 'validate.yml'))

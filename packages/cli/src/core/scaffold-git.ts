@@ -172,7 +172,11 @@ export async function stageFile(rnessDir: string, path: string): Promise<void> {
  * The last commit in which rness wrote the scaffold (spec 0013 §1): the most
  * recent `chore: rness scaffold <v>`, else a root `chore: rness workspace
  * context`. The subject decides: a squash carries the trailer in its body
- * but mixes the team's edits in. Null when there is none — adoption.
+ * but mixes the team's edits in. A merge commit is never the base, whatever
+ * its subject: no scaffold commit has two parents, and a merge's tree holds
+ * the team's files (a hand resolution named like a scaffold commit made the
+ * next merge take the scaffold over every edit). Null when there is none:
+ * adoption.
  */
 export async function findScaffoldBase(
   rnessDir: string
@@ -200,6 +204,7 @@ export async function findScaffoldBase(
       return { hash, parents: parents.trim(), subject, trailer: trailer.trim() }
     })
   for (const c of commits) {
+    if (c.parents.includes(' ')) continue
     const m = SCAFFOLD_SUBJECT.exec(c.subject)
     if (m !== null) return { commit: c.hash, version: m[1] ?? null }
   }

@@ -1279,6 +1279,16 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## 0.25.1 - an upgrade never merges against a hand-made merge commit
+
+- `upgrade` finds the commit holding the previous scaffold to merge the new
+  one against. A merge commit is never taken for it, whatever its subject:
+  a conflict resolution committed by hand as `chore: rness scaffold
+<version>` used to become that base, and the next upgrade then took the
+  scaffold's version of every file over the team's edits. If an earlier
+  upgrade left such a commit in your `.rness`, this release merges against
+  the real scaffold commit and keeps your edits.
+
 ## 0.25.0 - rness.json contract 2: a scope is a repository, or a part of one
 
 - **`rness.json` contract 2**: one key, `scopes`; a scope is a repository
