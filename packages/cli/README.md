@@ -1279,7 +1279,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.25.0 - rness.json contract 2: a scope is a repository, or a part of one
 
 - **`rness.json` contract 2**: one key, `scopes`; a scope is a repository
   (`url`, cloned at `org/<name>`) or a part of one (nested in its `scopes`,
