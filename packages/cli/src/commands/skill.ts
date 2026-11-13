@@ -46,6 +46,7 @@ import { hasControl } from '../core/text.ts'
 import type { Manifest, SkillEntry, Workspace } from '../core/types.ts'
 import { type Ui, makeUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
+import { refreshBlocks } from '../core/write-blocks.ts'
 import { reportError } from '../report.ts'
 
 /** What `rness skill <command>` takes from the command line. */
@@ -204,6 +205,33 @@ const kilobytes = (bytes: number): string =>
 const plural = (n: number, one: string): string =>
   `${n} ${one}${n === 1 ? '' : 's'}`
 
+/**
+ * Bring the generated blocks (the root's and the clones') up to date with
+ * the skills just changed, as `sync` writes them: the `.rness` pre-commit
+ * hook runs `validate`, which refuses a stale block. Clones nothing, pulls
+ * nothing, installs nothing. A failure is said and makes the command fail;
+ * the change to `.rness` itself is kept.
+ */
+async function refresh(
+  ws: Workspace,
+  ui: Ui,
+  manifest: Manifest
+): Promise<number> {
+  try {
+    const { lines, problems } = await refreshBlocks(ws, manifest, (text) =>
+      ui.warn(text)
+    )
+    for (const [verb, rest] of lines) ui.line(verb, rest)
+    for (const p of problems) ui.error(p)
+    return problems.length > 0 ? 1 : 0
+  } catch (e) {
+    ui.error(
+      `the blocks could not be refreshed: ${e instanceof Error ? e.message : String(e)}; run ${rnessCommand()} sync`
+    )
+    return 1
+  }
+}
+
 /** Run `work` as a command: a refusal or failure is the one line of `reportError`, exit 1. */
 async function run(
   title: string,
@@ -294,16 +322,14 @@ export async function skillAddCommand(
           ...(opts.name === undefined ? {} : { name: opts.name }),
         })
         const files = (await skillFileDigests(copied.dir)).size
+        const declaredNow = withEntry(
+          manifest,
+          scope,
+          copied.name,
+          entryOf(source, opts, fetched.commit, copied.hash)
+        )
         try {
-          await writeManifest(
-            ws.rnessDir,
-            withEntry(
-              manifest,
-              scope,
-              copied.name,
-              entryOf(source, opts, fetched.commit, copied.hash)
-            )
-          )
+          await writeManifest(ws.rnessDir, declaredNow)
         } catch (e) {
           // An undeclared copy would read as a skill the team wrote.
           await rm(copied.dir, { recursive: true, force: true })
@@ -321,7 +347,7 @@ export async function skillAddCommand(
           'declared',
           `.rness/rness.json  ${keyPath(manifest, scope, copied.name)}`
         )
-        return 0
+        return refresh(ws, ui, declaredNow)
       } finally {
         await fetched.release()
       }
@@ -425,6 +451,7 @@ export async function skillUpdateCommand(
       }
       let manifest = first
       let failed = false
+      let changed = false
       for (const { name, scope, entry } of targets) {
         const key = keyPath(manifest, scope, name)
         try {
@@ -489,11 +516,13 @@ export async function skillUpdateCommand(
                 'unchanged',
                 `skill ${plainText(name)} (${plainText(version)})`
               )
-            else
+            else {
+              changed = true
               ui.line(
                 'updated',
                 `skill ${plainText(name)} (${plainText(version)}: ${diff.added.length} added, ${diff.changed.length} changed, ${diff.removed.length} removed)`
               )
+            }
           } finally {
             await fetched.release()
           }
@@ -502,7 +531,8 @@ export async function skillUpdateCommand(
           failed = true
         }
       }
-      return failed ? 1 : 0
+      const refreshed = changed ? await refresh(ws, ui, manifest) : 0
+      return failed || refreshed !== 0 ? 1 : 0
     }
   )
 }
@@ -529,12 +559,13 @@ export async function skillRemoveCommand(
     )
     const copy = skills.find((s) => s.name === name && s.scope === scope)
     const key = keyPath(manifest, scope, name)
-    await writeManifest(ws.rnessDir, withoutEntry(manifest, scope, name))
+    const without = withoutEntry(manifest, scope, name)
+    await writeManifest(ws.rnessDir, without)
     if (copy !== undefined) await rm(copy.dir, { recursive: true, force: true })
     ui.line('removed', `skill ${plainText(name)}`)
     if (copy !== undefined) ui.line('deleted', plainText(copyPath(ws, copy)))
     ui.line('undeclared', `.rness/rness.json  ${key}`)
-    return 0
+    return refresh(ws, ui, without)
   })
 }
 

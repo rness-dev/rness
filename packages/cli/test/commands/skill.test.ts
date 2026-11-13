@@ -22,6 +22,8 @@ import {
   skillRemoveCommand,
   skillUpdateCommand,
 } from '../../src/commands/skill.ts'
+import { syncCommand } from '../../src/commands/sync.ts'
+import { END } from '../../src/core/block.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import {
   appliedSkills,
@@ -1161,4 +1163,109 @@ test('add and update: a control character in the source, --path or --ref is refu
   assert.equal(r.code, 1)
   assert.match(r.err, /--ref "v\\u009b" holds a control character/)
   assert.equal((await manifestOf(root)).skills, undefined)
+})
+
+/** A workspace whose root and `org/web` blocks are current, with a clone to list skills in. */
+async function withBlocks(t: TestContext, spec: Parameters<typeof ws>[1] = {}) {
+  const root = await ws(t, { dirs: ['org/web', 'org/api'], ...spec })
+  const synced = await say(() => syncCommand({ cwd: root, yes: true }))
+  assert.equal(synced.code, 0, synced.err)
+  const valid = await say(() => run(['validate', '--cwd', root]))
+  assert.equal(valid.code, 0, valid.err)
+  return root
+}
+
+const block = (root: string, file: string) => readFile(join(root, file), 'utf8')
+
+test('add, update and remove keep the generated blocks current: validate exits 0', async (t) => {
+  const fx = await fixtureRepo(t)
+  const root = await withBlocks(t)
+  const added = await say(() =>
+    skillAddCommand(
+      `git:${fx.url}`,
+      { cwd: root, path: 'skills/demo', ref: 'v1', scope: 'web' },
+      deps()
+    )
+  )
+  assert.equal(added.code, 0, added.err)
+  assert.match(added.out, /updated +org\/web\/AGENTS\.md/)
+  assert.match(await block(root, 'org/web/AGENTS.md'), /## Team skills/)
+  assert.match(await block(root, 'org/web/AGENTS.md'), /demo/)
+  assert.doesNotMatch(await block(root, 'org/api/AGENTS.md'), /## Team skills/)
+  let valid = await say(() => run(['validate', '--cwd', root]))
+  assert.equal(valid.code, 0, valid.err)
+  assert.equal(valid.out.trim(), 'context ok')
+
+  // A top-level skill reaches the root and every clone.
+  const top = await say(() =>
+    skillAddCommand(
+      `git:${fx.url}`,
+      { cwd: root, ref: 'v1', name: 'everywhere' },
+      deps()
+    )
+  )
+  assert.equal(top.code, 0, top.err)
+  for (const f of ['AGENTS.md', 'CLAUDE.md', 'org/api/AGENTS.md'])
+    assert.match(await block(root, f), /everywhere/)
+  valid = await say(() => run(['validate', '--cwd', root]))
+  assert.equal(valid.code, 0, valid.err)
+
+  // A new description in the source refreshes the line.
+  await put(fx.work, {
+    'skills/demo/SKILL.md': SKILL_MD('demo').replace(
+      'A skill',
+      'A much better skill'
+    ),
+  })
+  await git(['add', '-A'], fx.work)
+  await git(['commit', '-q', '-m', 'three'], fx.work)
+  await git(['tag', 'v3'], fx.work)
+  const updated = await say(() =>
+    skillUpdateCommand(['demo'], { cwd: root, ref: 'v3', scope: 'web' }, deps())
+  )
+  assert.equal(updated.code, 0, updated.err)
+  assert.match(await block(root, 'org/web/AGENTS.md'), /A much better skill/)
+  valid = await say(() => run(['validate', '--cwd', root]))
+  assert.equal(valid.code, 0, valid.err)
+
+  // Unchanged: nothing is rewritten.
+  const same = await say(() => skillUpdateCommand([], { cwd: root }, deps()))
+  assert.doesNotMatch(same.out, /AGENTS\.md/)
+
+  for (const [name, scope] of [
+    ['demo', 'web'],
+    ['everywhere', undefined],
+  ] as const) {
+    const removed = await say(() =>
+      skillRemoveCommand(
+        name,
+        { cwd: root, ...(scope ? { scope } : {}) },
+        deps()
+      )
+    )
+    assert.equal(removed.code, 0, removed.err)
+  }
+  assert.doesNotMatch(await block(root, 'org/web/AGENTS.md'), /## Team skills/)
+  assert.doesNotMatch(await block(root, 'AGENTS.md'), /## Team skills/)
+  valid = await say(() => run(['validate', '--cwd', root]))
+  assert.equal(valid.code, 0, valid.err)
+})
+
+test('add: a block that cannot be refreshed is reported, exit 1, the skill stays declared', async (t) => {
+  const fx = await fixtureRepo(t)
+  const root = await withBlocks(t)
+  // A lone END marker: the file cannot be merged into.
+  const file = join(root, 'org/web/AGENTS.md')
+  await writeFile(file, `${await readFile(file, 'utf8')}\n${END}\n`)
+  const r = await say(() =>
+    skillAddCommand(
+      `git:${fx.url}`,
+      { cwd: root, path: 'skills/demo', ref: 'v1', scope: 'web' },
+      deps()
+    )
+  )
+  assert.equal(r.code, 1)
+  assert.match(r.err, /org\/web\/AGENTS\.md: .*END.*; run .*sync/)
+  assert.ok((await manifestOf(root)).scopes['web']?.skills?.['demo'])
+  assert.ok(await exists(join(root, '.rness/skills/scopes/web/demo/SKILL.md')))
 })
