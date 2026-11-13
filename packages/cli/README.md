@@ -555,7 +555,10 @@ organization. The team writes it as a directory of `.rness/skills/`
   pending (name, source and version or "written by the team", the
   `allowed-tools` it asks for) and asks `Install`, `Decline` or `Details`
   (default `Decline`; `Details` lists each skill's files). With names it
-  asks about those only; `-y` accepts without the question. Your answers
+  asks about those only; `-y` accepts without the question. A name that
+  two applied skills share (each repository declaring its own `deploy`)
+  is shown, and given, as `<scope>/<name>`; `-y` refuses the bare name.
+  Off a terminal without `-y`, it lists and exits 2. Your answers
   are kept in `rness/skills.json` inside the git directory of `.rness`:
   never committed, one record per workspace. `rness skill list` shows each
   skill that applies and its state: installed, pending, declined or changed
@@ -1415,6 +1418,9 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   the guard refuses an edit of an installed copy or of a declared copy in
   `.rness/skills/`.
 - Skills are never written in the home directory.
+- Existing directories under `.rness/skills/` become team skills: `validate`
+  checks them, the `AGENTS.md` and `CLAUDE.md` blocks list them, and every
+  developer is asked before they are installed.
 
 ## 0.25.1 - an upgrade never merges against a hand-made merge commit
 
