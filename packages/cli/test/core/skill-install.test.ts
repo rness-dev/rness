@@ -28,6 +28,7 @@ import {
   EXCLUDE_END,
   EXCLUDE_HEADER,
   type Projection,
+  inside,
   projectClone,
   projectRoot,
   readInstalled,
@@ -1101,5 +1102,18 @@ test("a team-written skill named like one of rness's own is invalid and never in
   assert.equal(
     await isThere(join(root, 'org/web/.claude/skills/rness/skills/status')),
     false
+  )
+})
+
+test('the rness plugin directory itself is never a target; the flat and plugin skill paths are', () => {
+  const base = join(tmpdir(), 'rness-inside')
+  assert.throws(() => inside(base, '.claude/skills/rness'), /refusing/)
+  assert.equal(
+    inside(base, '.claude/skills/release'),
+    join(base, '.claude/skills/release')
+  )
+  assert.equal(
+    inside(base, '.claude/skills/rness/skills/release'),
+    join(base, '.claude/skills/rness/skills/release')
   )
 })

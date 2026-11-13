@@ -273,8 +273,8 @@ export interface ProjectOptions {
 }
 
 /** `p` under `base`, absolute; throws unless `p` is a skill path and stays inside `base` (decision 7). */
-function inside(base: string, p: string): string {
-  if (!CLONE_PATH.test(p) && pluginSkill(p) === null)
+export function inside(base: string, p: string): string {
+  if (!isFlatPath('clone', p) && pluginSkill(p) === null)
     throw new Error(`refusing ${p}: not a path rness writes a team skill to`)
   const abs = join(base, ...p.split('/'))
   const rel = relative(base, abs)
