@@ -19,12 +19,14 @@ import { pathToFileURL } from 'node:url'
 import { fetchRef } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import {
+  allowedToolsText,
   checkSkillCopies,
   checkSkillDir,
   copySkill,
   diffSkillFiles,
   fetchSkill,
   hashSkillDir,
+  plainText,
   skillConflicts,
   skillFileDigests,
   skillSourceUrl,
@@ -741,4 +743,53 @@ test('fetchRef: credentials never follow a redirect to another host', async (t) 
   assert.deepEqual(hits, [])
   await assert.rejects(fetchRef(url, null, await tmp(t), null))
   assert.notDeepEqual(hits, [])
+})
+
+test('checkSkillDir: a control character in a description, allowed-tools or file name is refused; a multi-line description is not', async (t) => {
+  const withMd = async (md: string) => {
+    const dir = await skillDir(t, 'demo')
+    await writeFile(join(dir, 'SKILL.md'), md)
+    return dir
+  }
+  const md = (extra: string) => `---\nname: demo\n${extra}---\nBody\n`
+  await assert.rejects(
+    checkSkillDir(
+      await withMd(
+        md('description: "ok\\e[2Kfake"\n').replace('\\e', '\\u001b')
+      ),
+      'demo'
+    ),
+    /demo.*description holds a control character/
+  )
+  await assert.rejects(
+    checkSkillDir(
+      await withMd(md('description: x\nallowed-tools: "a\\u0007b"\n')),
+      'demo'
+    ),
+    /allowed-tools holds a control character/
+  )
+  await assert.rejects(
+    checkSkillDir(await withMd(md('description: "a\\u0085b"\n')), 'demo'),
+    /description holds a control character/
+  )
+  await checkSkillDir(
+    await withMd(md('description: |\n  line one\n  line\ttwo\n')),
+    'demo'
+  )
+  const named = await skillDir(t, 'demo', { 'bad\u001b[2Kname.md': 'x' })
+  await assert.rejects(
+    checkSkillDir(named, 'demo'),
+    /file name .* holds a control character/
+  )
+})
+
+test('plainText replaces control characters; allowedToolsText shows absent as null and others as they are', () => {
+  assert.equal(plainText('a\u001b[2Kb\u0085c'), 'a?[2Kb?c')
+  assert.equal(plainText('one\ttwo\r\nthree'), 'one two  three')
+  assert.equal(allowedToolsText(undefined), null)
+  assert.equal(allowedToolsText('Read, Grep'), 'Read, Grep')
+  assert.equal(allowedToolsText(['Read', 'Grep']), 'Read, Grep')
+  assert.equal(allowedToolsText({ a: 1 }), '{"a":1}')
+  assert.equal(allowedToolsText([]), '')
+  assert.equal(allowedToolsText(3), '3')
 })

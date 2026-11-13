@@ -24,10 +24,16 @@ import {
 } from '../../src/commands/skill.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import {
+  appliedSkills,
+  pendingCount,
+  readConsent,
+} from '../../src/core/skill-consent.ts'
+import {
   skillConflicts,
   skillConflictsByName,
   teamSkills,
 } from '../../src/core/skills.ts'
+import { findWorkspace } from '../../src/core/workspace.ts'
 import { capture } from '../helpers/capture.ts'
 import { git } from '../helpers/git.ts'
 import { fakeProvider } from '../helpers/provider.ts'
@@ -946,4 +952,100 @@ test('install and list are in the skill group of the command line', async (t) =>
   }
   assert.equal(code, 0)
   assert.match(c.out(), /no team skill/)
+})
+
+/** Three declared skills: `good`, `gone` (copy deleted) and `broken` (SKILL.md without a description). */
+const threeSkills = {
+  skills: {
+    good: { source: 'path:/g', hash: HASH },
+    gone: { source: 'path:/x', hash: HASH },
+    broken: { source: 'path:/b', hash: HASH },
+  },
+  files: {
+    'skills/good/SKILL.md': SKILL_MD('good'),
+    'skills/broken/SKILL.md': '---\nname: broken\n---\nBody\n',
+  },
+}
+
+test('invalid copies: list shows all three, install --yes accepts the valid one and skips the others, pendingCount counts one', async (t) => {
+  const root = await consentWs(t, threeSkills)
+  const c = consentTerminal([], false)
+  const l = await say(() =>
+    skillListCommand({ cwd: root }, { terminal: c.terminal })
+  )
+  assert.equal(l.code, 0, l.err)
+  assert.match(l.out, /^good +all +path:\/g +pending$/m)
+  assert.match(
+    l.out,
+    /^gone +all +path:\/x +invalid: skill "gone": its copy is missing$/m
+  )
+  assert.match(
+    l.out,
+    /^broken +all +path:\/b +invalid: skill "broken": SKILL\.md has no description$/m
+  )
+  const wsp = await findWorkspace(root)
+  const manifest = await manifestOf(root)
+  const applied = await appliedSkills(
+    wsp,
+    manifest,
+    await readConsent(wsp.rnessDir)
+  )
+  assert.equal(pendingCount(applied), 1)
+  assert.equal(applied.find((a) => a.skill.name === 'gone')?.hash, null)
+  const r = await install(root, [], consentTerminal([], false), { yes: true })
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^skipped +gone: skill "gone": its copy is missing; run rness validate$/m
+  )
+  assert.match(
+    r.out,
+    /^skipped +broken: .*no description; run rness validate$/m
+  )
+  assert.match(r.out, /^accepted +good$/m)
+  assert.deepEqual(Object.keys((await recordOf(root)).skills), ['good'])
+})
+
+test('invalid copies: a named invalid skill alone exits 1, recording nothing', async (t) => {
+  const root = await consentWs(t, threeSkills)
+  const r = await install(root, ['gone'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /^skipped +gone:/m)
+  assert.equal(await exists(join(root, '.rness/.git/rness/skills.json')), false)
+})
+
+test('install shows allowed-tools as JSON when it is not a string or a list, none when absent', async (t) => {
+  const root = await consentWs(t, {
+    skills: {
+      a: { source: 'path:/a', hash: HASH },
+      b: { source: 'path:/b', hash: HASH },
+    },
+    files: {
+      'skills/a/SKILL.md': SKILL_MD('a', 'allowed-tools:\n  Bash: 1\n'),
+      'skills/b/SKILL.md': SKILL_MD('b'),
+    },
+  })
+  const r = await install(root, [], consentTerminal([], false), { yes: true })
+  assert.match(r.out, /^ *a +path:\/a +1 KB +allowed-tools: \{"Bash":1\}$/m)
+  assert.match(r.out, /^ *b +path:\/b +1 KB +allowed-tools: none$/m)
+})
+
+test('install: values from a copy made before the check are sanitized on display', async (t) => {
+  const root = await consentWs(t, {
+    skills: { a: { source: 'path:/a', hash: HASH } },
+    files: {
+      'skills/a/SKILL.md': SKILL_MD('a'),
+    },
+  })
+  // A copy that predates the check: a description with an escape sequence.
+  await writeFile(
+    join(root, '.rness/skills/a/SKILL.md'),
+    '---\nname: a\ndescription: "x"\n---\nBody\n'
+  )
+  await writeFile(join(root, '.rness/skills/a/bad\u001b[2Kname.md'), 'x')
+  const r = await install(root, [], consentTerminal(['details', 'decline']))
+  assert.equal(r.code, 0, r.err)
+  assert.equal(r.out.includes('\u001b'), false)
 })

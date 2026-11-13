@@ -12,6 +12,7 @@ import {
   type AppliedSkill,
   appliedSkills,
   isPending,
+  isValid,
   originOf,
   readConsent,
   versionOf,
@@ -19,10 +20,12 @@ import {
 } from '../core/skill-consent.ts'
 import {
   type TeamSkill,
+  allowedToolsText,
   checkSkillDir,
   copySkill,
   diffSkillFiles,
   fetchSkill,
+  plainText,
   skillConflictsByName,
   skillFileDigests,
   skillSourceUrl,
@@ -508,10 +511,7 @@ export async function skillRemoveCommand(
 /** The `allowed-tools` a skill's SKILL.md asks for, as one line; `none` when it asks for none. */
 async function allowedToolsOf(dir: string): Promise<string> {
   const fields = parseFrontMatter(await readFile(join(dir, 'SKILL.md'), 'utf8'))
-  const value: unknown = fields?.['allowed-tools']
-  if (Array.isArray(value) && value.length > 0) return value.join(', ')
-  if (typeof value === 'string' && value.trim() !== '') return value.trim()
-  return 'none'
+  return allowedToolsText(fields?.['allowed-tools']) ?? 'none'
 }
 
 /** A skill's name, or its record id when another skill of the list has the same name. */
@@ -529,11 +529,19 @@ const pad = (cells: readonly string[], widths: readonly number[]): string =>
 const widthsOf = (rows: readonly (readonly string[])[]): number[] =>
   (rows[0] ?? []).map((_, i) => Math.max(...rows.map((r) => r[i]?.length ?? 0)))
 
+/** Print through the terminal sanitizer: skill and manifest values never reach it raw. */
+function say(ui: Ui, kind: 'line' | 'hint', ...args: string[]): void {
+  const [first = '', second] = args
+  if (kind === 'hint') ui.hint(plainText(first))
+  else ui.line(first, plainText(second ?? ''))
+}
+
 const STATE_WORDS = {
   installed: 'installed',
   declined: 'declined',
   pending: 'pending',
   changed: 'changed since accepted',
+  invalid: 'invalid',
 } as const
 
 /**
@@ -553,9 +561,20 @@ export async function skillInstallCommand(
       )
     )
     const applied = await appliedSkills(ws, manifest, consent)
-    let listed: AppliedSkill[]
-    if (names.length === 0) listed = applied.filter((a) => isPending(a.state))
-    else {
+    let listed: (AppliedSkill & { hash: string })[]
+    // Invalid copies are reported, never offered: validate says what to fix.
+    const skip = (a: AppliedSkill): void =>
+      say(
+        ui,
+        'line',
+        'skipped',
+        `${a.skill.name}: ${a.problem ?? 'invalid'}; run rness validate`
+      )
+    let onlyInvalid = false
+    if (names.length === 0) {
+      applied.filter((a) => a.state === 'invalid').forEach(skip)
+      listed = applied.filter(isValid).filter((a) => isPending(a.state))
+    } else {
       const unknown = names.filter(
         (n) => !applied.some((a) => a.skill.name === n)
       )
@@ -567,13 +586,21 @@ export async function skillInstallCommand(
       const done = named.filter((a) => a.state === 'installed')
       if (done.length > 0) {
         const label = labeller(named)
-        ui.line('skills', `${done.map(label).join(', ')}: already installed`)
+        say(
+          ui,
+          'line',
+          'skills',
+          `${done.map(label).join(', ')}: already installed`
+        )
       }
-      listed = named.filter((a) => a.state !== 'installed')
+      named.filter((a) => a.state === 'invalid').forEach(skip)
+      onlyInvalid = named.every((a) => a.state === 'invalid')
+      listed = named.filter(isValid).filter((a) => a.state !== 'installed')
     }
     if (listed.length === 0) {
+      if (onlyInvalid) return 1
       if (names.length === 0)
-        ui.line('skills', 'no team skill awaits your consent')
+        say(ui, 'line', 'skills', 'no team skill awaits your consent')
       return 0
     }
     const label = labeller(listed)
@@ -591,8 +618,13 @@ export async function skillInstallCommand(
     }
     const widths = widthsOf(rows)
     const where = workspaceName(manifest, ws.root)
-    ui.line('skills', `${plural(listed.length, 'team skill')} for ${where}:`)
-    for (const row of rows) ui.hint(`  ${pad(row, widths)}`)
+    say(
+      ui,
+      'line',
+      'skills',
+      `${plural(listed.length, 'team skill')} for ${where}:`
+    )
+    for (const row of rows) say(ui, 'hint', `  ${pad(row, widths)}`)
 
     let answer: 'accepted' | 'declined'
     if (opts.yes === true) answer = 'accepted'
@@ -622,9 +654,10 @@ export async function skillInstallCommand(
               await readFile(join(a.skill.dir, 'SKILL.md'), 'utf8')
             )
             const { files } = await checkSkillDir(a.skill.dir, a.skill.name)
-            ui.line('skill', label(a))
-            ui.hint(`  ${String(fields?.['description'] ?? '').trim()}`)
-            for (const f of files) ui.hint(`  ${f.path}  ${kilobytes(f.size)}`)
+            say(ui, 'line', 'skill', label(a))
+            say(ui, 'hint', `  ${String(fields?.['description'] ?? '').trim()}`)
+            for (const f of files)
+              say(ui, 'hint', `  ${f.path}  ${kilobytes(f.size)}`)
           }
           continue
         }
@@ -637,9 +670,11 @@ export async function skillInstallCommand(
     for (const a of listed) skills[a.id] = { hash: a.hash, answer, date }
     await writeConsent(ws.rnessDir, { version: 1, skills })
     const said = listed.map(label).join(', ')
-    if (answer === 'accepted') ui.line('accepted', said)
+    if (answer === 'accepted') say(ui, 'line', 'accepted', said)
     else
-      ui.line(
+      say(
+        ui,
+        'line',
         'declined',
         `${said}   (rness skill install <name> installs one later)`
       )
@@ -658,17 +693,19 @@ export async function skillListCommand(
     )
     const applied = await appliedSkills(ws, manifest, consent)
     if (applied.length === 0) {
-      ui.line('skills', 'no team skill in rness.json or .rness/skills')
+      say(ui, 'line', 'skills', 'no team skill in rness.json or .rness/skills')
       return 0
     }
     const rows = applied.map((a) => [
       a.skill.name,
       a.skill.scope ?? 'all',
       originOf(a.skill),
-      STATE_WORDS[a.state],
+      a.state === 'invalid'
+        ? `invalid: ${a.problem ?? ''}`
+        : STATE_WORDS[a.state],
     ])
     const widths = widthsOf(rows)
-    for (const row of rows) ui.hint(pad(row, widths))
+    for (const row of rows) say(ui, 'hint', pad(row, widths))
     return 0
   })
 }

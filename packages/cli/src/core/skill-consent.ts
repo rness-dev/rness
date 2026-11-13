@@ -6,6 +6,7 @@ import { gitPath } from './git.ts'
 import { repositories } from './manifest.ts'
 import {
   type TeamSkill,
+  checkSkillDir,
   hashSkillDir,
   skillsForClone,
   teamSkills,
@@ -31,17 +32,29 @@ export interface Consent {
   skills: Record<string, ConsentEntry>
 }
 
-/** installed = accepted at the current hash; changed = accepted at another one (pending). */
-export type SkillState = 'installed' | 'declined' | 'pending' | 'changed'
+/**
+ * installed = accepted at the current hash; changed = accepted at another
+ * one (pending); invalid = the copy is missing or fails the checks of
+ * spec 0041 §4: it cannot be offered or installed, `validate` says why.
+ */
+export type SkillState =
+  'installed' | 'declined' | 'pending' | 'changed' | 'invalid'
 
 /** A team skill that applies to this workspace, with what the consent decides on. */
 export interface AppliedSkill {
   id: string
   skill: TeamSkill
-  /** The hash of the copy in `.rness` now. */
-  hash: string
+  /** The hash of the copy in `.rness` now; null when the copy is invalid. */
+  hash: string | null
   state: SkillState
+  /** Why the copy is invalid (the check's message); set exactly when `state` is `invalid`. */
+  problem?: string
 }
+
+/** An applied skill whose copy passed the checks: it has a hash and can be offered. */
+export const isValid = (
+  a: AppliedSkill
+): a is AppliedSkill & { hash: string } => a.hash !== null
 
 /** The record's key: `<name>` at the top, `<scope>/<name>` for a scope's skill (two repositories may each declare `deploy`). */
 export const skillId = (skill: TeamSkill): string =>
@@ -154,8 +167,21 @@ export async function appliedSkills(
   const applied: AppliedSkill[] = []
   for (const skill of all.filter((s) => applying.has(s))) {
     const id = skillId(skill)
-    const hash = await hashSkillDir(skill.dir)
-    applied.push({ id, skill, hash, state: stateOf(consent, id, hash) })
+    try {
+      if (!(await exists(skill.dir)))
+        throw new Error(`skill "${skill.name}": its copy is missing`)
+      await checkSkillDir(skill.dir, skill.name)
+      const hash = await hashSkillDir(skill.dir)
+      applied.push({ id, skill, hash, state: stateOf(consent, id, hash) })
+    } catch (e) {
+      applied.push({
+        id,
+        skill,
+        hash: null,
+        state: 'invalid',
+        problem: e instanceof Error ? e.message : String(e),
+      })
+    }
   }
   return applied
 }

@@ -253,6 +253,31 @@ async function walk(dir: string, name: string): Promise<SkillFile[]> {
   )
 }
 
+// The pattern is the point: it names the control characters it refuses.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/
+/** Free text (a description) may span lines and hold tabs; a `\r` only before a `\n`. */
+const hasControlInText = (text: string): boolean =>
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(text.replace(/\r\n/g, '\n'))
+
+/**
+ * `text` safe to print on a terminal: a tab, a carriage return or a line feed
+ * becomes a space and every other control character (C0, DEL, C1) a `?`, so a value taken from a skill cannot move the cursor, clear a
+ * line or recolour the consent question.
+ */
+export const plainText = (text: string): string =>
+  text.replace(/[\t\r\n]/g, ' ').replace(new RegExp(CONTROL.source, 'g'), '?')
+
+/** The `allowed-tools` field as text: a string as is, a list of strings joined, anything else as JSON; null when absent. */
+export function allowedToolsText(value: unknown): string | null {
+  if (value === undefined) return null
+  if (typeof value === 'string') return value
+  if (Array.isArray(value) && value.every((v) => typeof v === 'string'))
+    return value.join(', ')
+  return JSON.stringify(value)
+}
+
 /**
  * Check the directory `dir` as the skill `name` (spec 0041 §4): the name
  * rule, regular files only, at most 1 MB, a `SKILL.md` whose `name` is the
@@ -266,6 +291,12 @@ export async function checkSkillDir(
   const bad = nameProblem(name)
   if (bad !== null) throw refusal(name, bad)
   const files = await walk(dir, name)
+  for (const f of files)
+    if (CONTROL.test(f.path))
+      throw refusal(
+        name,
+        `file name ${JSON.stringify(f.path)} holds a control character`
+      )
   const bytes = files.reduce((n, f) => n + f.size, 0)
   if (bytes > MAX_SKILL_BYTES)
     throw refusal(
@@ -291,6 +322,11 @@ export async function checkSkillDir(
   const description = fields['description']
   if (typeof description !== 'string' || description.trim() === '')
     throw refusal(name, 'SKILL.md has no description')
+  if (hasControlInText(description))
+    throw refusal(name, 'SKILL.md description holds a control character')
+  const tools = allowedToolsText(fields['allowed-tools'])
+  if (tools !== null && hasControlInText(tools))
+    throw refusal(name, 'SKILL.md allowed-tools holds a control character')
   return { bytes, files }
 }
 
