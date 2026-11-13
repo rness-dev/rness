@@ -1468,7 +1468,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.26.1 - a skill the team writes is /rness:<name>; the tools that see installed copies
 
 - **A skill the team writes is `/rness:<name>` in Claude Code.** It is
   installed in the `rness` plugin (`.claude/skills/rness/skills/<name>/`);
