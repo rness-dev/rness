@@ -590,18 +590,20 @@ organization. The team writes it as a directory of `.rness/skills/`
 - **Where they are installed.** Each accepted skill is copied into every
   clone it applies to (a top-level skill: every clone; a scope's skill: the
   clones of that scope and of the scopes that extend it; a part's skill: its
-  repository's clone root), as `.claude/skills/<name>/` when `agents`
-  declares `claude` and as `.agents/skills/<name>/`; the top-level skills
-  also at the workspace root's `.claude/skills/`. A copy keeps its files'
+  repository's clone root), as `.claude/skills/<name>/` (a declared skill)
+  or `.claude/skills/rness/skills/<name>/` (a team-written one) when `agents`
+  declares `claude`, and as `.agents/skills/<name>/` for both; the top-level
+  skills also at the workspace root, at the Claude path of each kind. A copy keeps its files'
   bytes and executable bits. In a clone, the paths are added to
   `.git/info/exclude` between `# rness: team skills` and
   `# rness: end of team skills`, and recorded with their tree in
   `.git/rness/skills.json`, so `git status` shows nothing and a `git pull`
   brings no skill. The workspace root is not a git repository: its record
   is `rness/root-skills.json` in the git directory of `.rness`. A clone
-  where `.claude/skills/<name>` or `.agents/skills/<name>` is tracked by
-  git, or holds a directory rness did not write, is skipped, and `sync`
-  and `install` say so.
+  where `.claude/skills/<name>`, `.claude/skills/rness/skills/<name>` or
+  `.agents/skills/<name>` is tracked by git, or holds a directory rness did
+  not write, is skipped, and `sync` and `install` say so (naming both Claude
+  paths).
 - **Two kinds of names.** A skill the team writes in `.rness/skills/` (no
   `source`) is installed for Claude Code inside the `rness` plugin,
   `.claude/skills/rness/skills/<name>/`, and invoked as `/rness:<name>`; the
@@ -617,13 +619,13 @@ organization. The team writes it as a directory of `.rness/skills/`
   exclude in `.git/info/exclude` hides the copies from git, not from every
   tool. prettier 3.10.1, eslint 10.14.0, vitest 5.1.0 and jest 30.5.2 read
   them (none reads `.git/info/exclude`), and biome 2.6.7 too unless
-  `vcs.useIgnoreFile` is on; tsc 7.0.2 and `node --test` skip dot
+  its `vcs` block is enabled for git with `useIgnoreFile`; tsc 7.0.2 and `node --test` skip dot
   directories. rness never edits these tools' files; add the line yourself:
   prettier `/.claude/skills/` and `/.agents/skills/` in `.prettierignore`;
   eslint `ignores: [".claude/skills/", ".agents/skills/"]`; vitest
   `test.exclude: [...configDefaults.exclude, ".claude/**", ".agents/**"]`;
-  jest `testPathIgnorePatterns: ["/\\.claude/", "/\\.agents/"]`; biome
-  `vcs.useIgnoreFile: true`.
+  jest `testPathIgnorePatterns: ["/node_modules/", "/\\.claude/", "/\\.agents/"]` (it replaces
+  jest's default); biome `vcs: { enabled: true, clientKind: "git", useIgnoreFile: true }`.
 - **Where never.** Not in your home directory (`~/.claude/skills`,
   `~/.agents/skills`), not outside the workspace, and not in `.rness`
   beyond the reviewed copy.
@@ -1471,7 +1473,9 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - **A skill the team writes is `/rness:<name>` in Claude Code.** It is
   installed in the `rness` plugin (`.claude/skills/rness/skills/<name>/`);
   Codex and Cursor read it under its plain name in `.agents/skills/<name>/`.
-  A declared skill keeps its name. A 0.26.0 copy moves at the next `sync`.
+  A declared skill keeps its name. A 0.26.0 copy moves at the next `sync`:
+  the first `sync` after the upgrade moves a team-written skill's copy into
+  the plugin and says `installed` and `removed` once for it.
   `status`, `adr`, `spec`, `plan` and `done` are refused as names of a
   team-written skill.
 - **Documented: the tools that see installed copies**, with the ignore line
