@@ -350,3 +350,25 @@ test('a skill committed with CRLF line ends, validated in a clone with core.auto
   const v = await cli(['validate', '--cwd', mate])
   assert.doesNotMatch(v.err, /skill "/)
 })
+
+test('a .rness that is no git repository yet, under a French locale: add and validate still take its tree', async (t) => {
+  noGlobalGit(t)
+  const saved = ['LC_ALL', 'LANG', 'LANGUAGE'].map(
+    (k) => [k, process.env[k]] as const
+  )
+  process.env['LC_ALL'] = 'fr_FR.UTF-8'
+  process.env['LANG'] = 'fr_FR.UTF-8'
+  process.env['LANGUAGE'] = 'fr'
+  t.after(() => {
+    for (const [k, v] of saved)
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+  })
+  const plain = await makeWorkspace(t, { org: 'acme' })
+  await put(join(plain, 'ops/deploy'), { 'SKILL.md': SKILL_MD('deploy') })
+  const r = await cli(['skill', 'add', 'path:../ops/deploy', '--cwd', plain])
+  assert.equal(r.code, 0, r.err)
+  assert.match(await treeOf(plain, 'deploy'), TREE)
+  const v = await cli(['validate', '--cwd', plain])
+  assert.equal(v.code, 0, v.err)
+})

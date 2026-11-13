@@ -952,10 +952,10 @@ export async function skillDeclineCommand(
       skills[a.id] = { answer: 'declined', date } satisfies ConsentEntry
     const answered: Consent = { version: 1, skills }
     await writeConsent(ws.rnessDir, answered)
-    // Those names only, their copies removed where they are declined now.
+    // Their recorded copies removed, by id, whatever their copy in .rness
+    // is now; nothing written, no other skill touched (ruling R40).
     const { places, failed } = await projectPlaces(ws, manifest, answered, {
-      only: new Set(declined.map((a) => a.skill.name)),
-      remove: true,
+      decline: new Set(declined.map((a) => a.id)),
     })
     const from = places.filter(([, p]) => p.removed.length > 0)
     say(
@@ -984,13 +984,16 @@ export async function skillListCommand(
       say(ui, 'line', 'skills', 'no team skill in rness.json or .rness/skills')
       return 0
     }
+    // A declined skill is declined, whatever its copy in .rness is.
     const rows = applied.map((a) => [
       a.skill.name,
       a.skill.scope ?? 'all',
       originOf(a.skill),
-      a.state === 'invalid'
-        ? `invalid: ${a.problem ?? ''}`
-        : STATE_WORDS[a.state],
+      a.answer === 'declined'
+        ? STATE_WORDS.declined
+        : a.state === 'invalid'
+          ? `invalid: ${a.problem ?? ''}`
+          : STATE_WORDS[a.state],
     ])
     const widths = widthsOf(rows)
     for (const row of rows) say(ui, 'hint', pad(row, widths))

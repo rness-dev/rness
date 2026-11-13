@@ -521,13 +521,12 @@ export async function withScratchIndex<T>(
   const tmp = await mkdtemp(join(tmpdir(), 'rness-index-'))
   try {
     let env: GitEnv = { ...ISOLATED, GIT_INDEX_FILE: join(tmp, 'index') }
-    const repository = await git(
-      ['rev-parse', '--git-dir'],
-      dir,
-      null,
-      [],
-      ISOLATED
-    ).then(
+    // git's words are told apart: in English, whatever the user's locale.
+    const repository = await git(['rev-parse', '--git-dir'], dir, null, [], {
+      ...ISOLATED,
+      LC_ALL: 'C',
+      LANGUAGE: undefined,
+    }).then(
       () => true,
       (e: unknown) => {
         if (/not a git repository/.test((e as Error).message)) return false

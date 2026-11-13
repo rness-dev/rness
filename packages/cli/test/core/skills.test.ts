@@ -1360,7 +1360,8 @@ test('a .rness git refuses to open is reported, never taken for no repository (n
   await git(['config', 'core.repositoryformatversion', '99'], rnessDir)
   await assert.rejects(
     checkSkillCopies(rnessDir, manifest, { trees: true }),
-    /Expected git repo version <= 1, found 99/
+    // git's own words depend on the locale: the command and the version.
+    /git rev-parse failed: .*99/
   )
 })
 

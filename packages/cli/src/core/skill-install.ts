@@ -208,23 +208,27 @@ interface Place {
   /** `.claude/skills`, `.agents/skills`, as `agents` and the place want. */
   dirs: string[]
   candidates: readonly AppliedSkill[]
-  /** Set: act on these names only (`ProjectOptions`). */
+  /** Set: write these names only, remove nothing (`ProjectOptions`). */
   only: ReadonlySet<string> | null
-  /** With `only`: whether the copies of those names may be removed. */
-  remove: boolean
+  /** Set: remove the recorded copies of these ids only, write nothing (`ProjectOptions`). */
+  decline: ReadonlySet<string> | null
 }
 
 /** How far one projection may go. */
 export interface ProjectOptions {
   /**
-   * Act on these skill names only, every other copy and record entry left
-   * as it is: `install` after reading an unreadable consent record, when
-   * the earlier answers are unknown (ruling R22), or the accepted skills
-   * of a bare `install` (ruling R38); `decline` (ruling R36).
+   * Write these skill names only, and remove nothing, every other copy and
+   * record entry left as it is: `install` after reading an unreadable
+   * consent record, when the earlier answers are unknown (ruling R22), or
+   * the accepted skills of a bare `install` (ruling R38).
    */
   only?: ReadonlySet<string>
-  /** With `only`: remove the copies of those names that are no longer accepted (`decline`); otherwise nothing is removed. */
-  remove?: boolean
+  /**
+   * Remove the recorded copies of these skill ids, whatever the state of
+   * their copy in `.rness`, and nothing else: no copy written, no other
+   * entry touched (`decline`, rulings R36, R40).
+   */
+  decline?: ReadonlySet<string>
 }
 
 /** `p` under `base`, absolute; throws unless `p` is a skill path and stays inside `base` (decision 7). */
@@ -553,7 +557,10 @@ async function project(place: Place): Promise<Projection> {
   const kept = new Set<string>()
   for (const [name, list] of byName) {
     const one = list.length === 1 ? list[0] : undefined
-    if (one === undefined) {
+    if (place.decline !== null) {
+      // A decline removes the copies of its ids and writes nothing (R40).
+      if (one === undefined || !place.decline.has(one.id)) kept.add(name)
+    } else if (one === undefined) {
       // Said once it matters: one of them accepted, or a copy here already.
       if (
         list.some((a) => a.state === 'installed') ||
@@ -573,6 +580,9 @@ async function project(place: Place): Promise<Projection> {
         kept.add(name)
         want.delete(name)
       }
+  if (place.decline !== null)
+    for (const name of Object.keys(onDisk.skills))
+      if (!byName.has(name)) kept.add(name)
   const names = [...new Set([...Object.keys(onDisk.skills), ...want.keys()])]
     .filter((n) => !kept.has(n))
     .sort()
@@ -581,7 +591,8 @@ async function project(place: Place): Promise<Projection> {
   // a deleted file).
   const adoptable = [...byName].flatMap(([name, list]) => {
     const a = list.length === 1 ? list[0] : undefined
-    return a !== undefined &&
+    return place.decline === null &&
+      a !== undefined &&
       a.state === 'installed' &&
       isValid(a) &&
       !Object.hasOwn(onDisk.skills, name)
@@ -727,10 +738,7 @@ async function project(place: Place): Promise<Projection> {
     // When nothing may be removed, it stays rness's, in the record.
     for (const p of entry?.paths ?? [])
       if (!paths.includes(p) && state.get(p) === 'ours')
-        (place.only === null || place.remove ? removals : retained).push({
-          name,
-          path: p,
-        })
+        (place.only === null ? removals : retained).push({ name, path: p })
     if (a === undefined || paths.length === 0) continue
     next.skills[name] = { tree: a.head.tree, paths }
     for (const p of paths)
@@ -879,7 +887,7 @@ export async function projectClone(
     dirs: dirsOf(manifest, 'clone'),
     candidates: applied.filter((a) => applies.has(a.skill)),
     only: opts.only ?? null,
-    remove: opts.remove === true,
+    decline: opts.decline ?? null,
   })
 }
 
@@ -913,7 +921,7 @@ export async function projectRoot(
     dirs: dirsOf(manifest, 'root'),
     candidates: applied.filter((a) => a.skill.scope === null),
     only: opts.only ?? null,
-    remove: opts.remove === true,
+    decline: opts.decline ?? null,
   })
 }
 
