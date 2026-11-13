@@ -317,8 +317,8 @@ async function project(place: Place): Promise<Projection> {
   const note = (line: string): void => {
     out.notes.push(`${place.label}: ${line}`)
   }
-  const record = await readInstalled(place.record, place.kind)
-  if (record === null) {
+  const onDisk = await readInstalled(place.record, place.kind)
+  if (onDisk === null) {
     note(
       `${relative(place.base, place.record)} is unreadable; team skills left as they are there`
     )
@@ -337,7 +337,7 @@ async function project(place: Place): Promise<Projection> {
       // Said once it matters: one of them accepted, or a copy here already.
       if (
         list.some((a) => a.state === 'installed') ||
-        Object.hasOwn(record.skills, name)
+        Object.hasOwn(onDisk.skills, name)
       )
         note(
           `team skill ${name} applies here more than once (${rnessCommand()} validate says where); left as it is`
@@ -349,15 +349,25 @@ async function project(place: Place): Promise<Projection> {
       want.set(name, one)
   }
   if (place.only !== null)
-    for (const name of [...Object.keys(record.skills), ...byName.keys()])
+    for (const name of [...Object.keys(onDisk.skills), ...byName.keys()])
       if (!place.only.has(name)) {
         kept.add(name)
         want.delete(name)
       }
-  const names = [...new Set([...Object.keys(record.skills), ...want.keys()])]
+  const names = [...new Set([...Object.keys(onDisk.skills), ...want.keys()])]
     .filter((n) => !kept.has(n))
     .sort()
-  if (names.length === 0) return out
+  // Ruling R29: a name applying once, accepted (at this hash or an earlier
+  // one), that the record does not name: its copies may be rness's, the
+  // record lost (a new clone of .rness, a deleted file).
+  const adoptable = [...byName].flatMap(([name, list]) => {
+    const a = list.length === 1 ? list[0] : undefined
+    return a?.accepted !== undefined && !Object.hasOwn(onDisk.skills, name)
+      ? [{ name, hash: a.accepted }]
+      : []
+  })
+  if (names.length === 0 && (adoptable.length === 0 || place.dirs.length === 0))
+    return out
 
   // Decision 7: the home directory is never a place.
   const home = await realpath(homedir()).catch(() => null)
@@ -372,16 +382,41 @@ async function project(place: Place): Promise<Projection> {
   const wantedPaths = (name: string): string[] =>
     want.has(name) ? place.dirs.map((d) => `${d}/${name}`) : []
   const all = names.flatMap((n) => [
-    ...new Set([...wantedPaths(n), ...(record.skills[n]?.paths ?? [])]),
+    ...new Set([...wantedPaths(n), ...(onDisk.skills[n]?.paths ?? [])]),
   ])
+  const adoptPaths = adoptable.flatMap((c) =>
+    place.dirs.map((d) => `${d}/${c.name}`)
+  )
   const topOf = (p: string): string => p.split('/')[0] ?? ''
   const tracked =
     place.kind === 'clone'
       ? await trackedPaths(
           place.base,
-          all.filter((p) => levels.get(topOf(p)) === null)
+          [...new Set([...all, ...adoptPaths])].filter(
+            (p) => levels.get(topOf(p)) === null
+          )
         )
       : new Set<string>()
+
+  // An untracked directory there whose bytes are the accepted ones is the
+  // copy rness wrote: recorded again, so it is excluded and managed. Any
+  // other directory stays foreign: left alone, and said.
+  const record: InstalledRecord = { version: 1, skills: { ...onDisk.skills } }
+  for (const c of adoptable) {
+    const paths: string[] = []
+    for (const d of place.dirs) {
+      const p = `${d}/${c.name}`
+      if (levels.get(topOf(p)) !== null || tracked.has(p)) continue
+      const abs = inside(place.base, p)
+      const st = await lstatOrNull(abs)
+      if (st === null || st.isSymbolicLink() || !st.isDirectory()) continue
+      if ((await hashSkillDir(abs).catch(() => null)) === c.hash) paths.push(p)
+    }
+    if (paths.length === 0) continue
+    record.skills[c.name] = { hash: c.hash, paths }
+    for (const p of paths)
+      note(`${p} is team skill ${c.name} as accepted; recorded again`)
+  }
   const state = new Map<string, PathState>()
   for (const p of all) {
     if (levels.get(topOf(p)) !== null) state.set(p, 'blocked')
@@ -483,10 +518,10 @@ async function project(place: Place): Promise<Projection> {
       Object.entries(next.skills).sort(([x], [y]) => (x < y ? -1 : 1))
     ),
   }
-  const had = Object.keys(record.skills).length > 0
+  const had = Object.keys(onDisk.skills).length > 0
   if (
     (had || Object.keys(sorted.skills).length > 0) &&
-    JSON.stringify(sorted) !== JSON.stringify(record)
+    JSON.stringify(sorted) !== JSON.stringify(onDisk)
   )
     await writeInstalled(place.record, sorted)
   if (place.exclude !== null) {
@@ -495,7 +530,7 @@ async function project(place: Place): Promise<Projection> {
       await updateExclude(
         file,
         Object.values(sorted.skills).flatMap((e) => e.paths),
-        Object.values(record.skills).flatMap((e) => e.paths)
+        Object.values(onDisk.skills).flatMap((e) => e.paths)
       )
   }
 

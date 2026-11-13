@@ -317,6 +317,74 @@ test('a foreign directory of the same name is never touched and the skill is not
   assert.doesNotMatch(await excludeOf(root, 'web'), /deploy/)
 })
 
+test('a lost record: a directory at the accepted hash is adopted (recorded, excluded, not rewritten); one with other content is left alone', async (t) => {
+  const root = await skillsWs(t)
+  await answer(root)
+  await project(root)
+  const file = join(root, 'org/web/.git/rness/skills.json')
+  const before = await recordOf(file)
+  await rm(file)
+  // brainstorming changed in the clone after the loss: no longer rness's bytes.
+  const mine = join(root, 'org/web/.claude/skills/brainstorming')
+  await writeFile(join(mine, 'SKILL.md'), 'my own brainstorming\n')
+  await rm(join(root, 'org/web/.agents/skills/brainstorming'), {
+    recursive: true,
+  })
+  const r = await project(root)
+  const web = r['org/web']
+  assert.deepEqual(web?.installed, [])
+  assert.deepEqual(web?.rewritten, [])
+  assert.deepEqual(web?.removed, [])
+  assert.deepEqual(web?.problems, [])
+  assert.ok(
+    web?.notes.includes(
+      'org/web: .claude/skills/brainstorming is not one rness wrote; team skill brainstorming not installed there'
+    ),
+    web?.notes.join('\n')
+  )
+  assert.equal(
+    await readFile(join(mine, 'SKILL.md'), 'utf8'),
+    'my own brainstorming\n'
+  )
+  const after = await recordOf(file)
+  assert.deepEqual(after.skills['release'], before.skills['release'])
+  assert.deepEqual(after.skills['deploy'], before.skills['deploy'])
+  assert.equal(after.skills['brainstorming'], undefined)
+  const exclude = await excludeOf(root, 'web')
+  for (const p of ['release', 'deploy'])
+    for (const d of ['.claude', '.agents'])
+      assert.match(
+        exclude,
+        new RegExp(`^/${d.replace('.', '\\.')}/skills/${p}/$`, 'm')
+      )
+  assert.equal(
+    await status(root, 'web'),
+    '?? .claude/skills/brainstorming/SKILL.md\n?? .claude/skills/brainstorming/scripts/run.sh\n'
+  )
+})
+
+test('a lost record: a skill accepted at an older hash keeps its copy, adopted at that hash', async (t) => {
+  const root = await skillsWs(t)
+  await answer(root, ['release'])
+  await project(root)
+  const file = join(root, 'org/web/.git/rness/skills.json')
+  const before = await recordOf(file)
+  await rm(file)
+  // A new version in .rness, not answered yet: "changed", left as it is.
+  await writeFile(
+    join(root, '.rness/skills/release/SKILL.md'),
+    SKILL_MD('release', 'v: 2\n')
+  )
+  const r = await project(root)
+  assert.deepEqual(r['org/web']?.removed, [])
+  assert.deepEqual(r['org/web']?.rewritten, [])
+  assert.deepEqual(
+    (await recordOf(file)).skills['release'],
+    before.skills['release']
+  )
+  assert.equal(await status(root, 'web'), '')
+})
+
 test('a tracked path of the same name is never written, even once rness had installed it', async (t) => {
   const root = await skillsWs(t)
   await answer(root)

@@ -1488,6 +1488,53 @@ test('skills: a workspace whose .rness is no git repository installs nothing and
   assert.equal(await there(join(root, 'org/web/.agents/skills/release')), false)
 })
 
+test('skills: a lost record of a clone or of the root: the copies at their accepted hash are adopted again, git never sees them', async (t) => {
+  const root = await skillsWorkspace(t)
+  assert.equal((await installSkills(root, ['release'])).code, 0)
+  const web = join(root, 'org/web')
+  const clean = await git(
+    ['status', '--porcelain', '--untracked-files=all'],
+    web
+  )
+  assert.equal(clean, '')
+  await rm(join(web, '.git/rness/skills.json'))
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.out, /^(removed|rewrote|installed)/m)
+  // sync's own files (the block, the plugin) are the clone's to commit.
+  assert.doesNotMatch(
+    await git(['status', '--porcelain', '--untracked-files=all'], web),
+    /skills\/release/
+  )
+  assert.match(
+    await readFile(join(web, '.git/info/exclude'), 'utf8'),
+    /^\/\.claude\/skills\/release\/$/m
+  )
+  const record = JSON.parse(
+    await readFile(join(web, '.git/rness/skills.json'), 'utf8')
+  )
+  assert.deepEqual(record.skills.release.paths, [
+    '.claude/skills/release',
+    '.agents/skills/release',
+  ])
+
+  // The consent and the root's record go together (a new clone of .rness):
+  // every skill is pending, then accepted again; the root's copy is adopted.
+  await rm(join(root, '.rness/.git/rness'), { recursive: true })
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0)
+  const again = await installSkills(root, ['release'])
+  assert.equal(again.code, 0, again.err)
+  const rootRecord = JSON.parse(
+    await readFile(join(root, '.rness/.git/rness/root-skills.json'), 'utf8')
+  )
+  assert.deepEqual(rootRecord.skills.release.paths, ['.claude/skills/release'])
+  // Managed again: undeclared, it goes.
+  await rm(join(root, '.rness/skills/release'), { recursive: true })
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0)
+  assert.equal(await there(join(root, '.claude/skills/release')), false)
+  assert.equal(await there(join(web, '.claude/skills/release')), false)
+})
+
 test('skills: sync and install write nothing under HOME', async (t) => {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'rness-home-')))
   t.after(() => rm(home, { recursive: true, force: true }))

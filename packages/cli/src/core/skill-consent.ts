@@ -51,6 +51,8 @@ export interface AppliedSkill {
   state: SkillState
   /** Why the copy is invalid (the check's message); set exactly when `state` is `invalid`. */
   problem?: string
+  /** The hash the developer accepted, at this content or an earlier one; absent when they did not accept it. */
+  accepted?: string
 }
 
 /** An applied skill whose copy passed the checks: it has a hash and can be offered. */
@@ -183,12 +185,23 @@ export async function appliedSkills(
   const applied: AppliedSkill[] = []
   for (const skill of all.filter((s) => applying.has(s))) {
     const id = skillId(skill)
+    const entry = Object.hasOwn(consent.skills, id)
+      ? consent.skills[id]
+      : undefined
+    const accepted =
+      entry?.answer === 'accepted' ? { accepted: entry.hash } : {}
     try {
       if (!(await exists(skill.dir)))
         throw new Error(`skill ${quoted(skill.name)}: its copy is missing`)
       await checkSkillDir(skill.dir, skill.name)
       const hash = await hashSkillDir(skill.dir)
-      applied.push({ id, skill, hash, state: stateOf(consent, id, hash) })
+      applied.push({
+        id,
+        skill,
+        hash,
+        state: stateOf(consent, id, hash),
+        ...accepted,
+      })
     } catch (e) {
       applied.push({
         id,
@@ -196,6 +209,7 @@ export async function appliedSkills(
         hash: null,
         state: 'invalid',
         problem: plainText(e instanceof Error ? e.message : String(e)),
+        ...accepted,
       })
     }
   }
