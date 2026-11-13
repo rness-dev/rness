@@ -54,6 +54,8 @@ export interface AppliedSkill {
   problem?: string
   /** True when the skill is not committed in `.rness` yet: invalid, for that reason alone. */
   uncommitted?: true
+  /** The developer's answer, whatever the state; absent when they gave none. */
+  answer?: ConsentAnswer
 }
 
 /** The line said for a skill not committed in `.rness` yet: it is installed from the commit. */
@@ -187,6 +189,10 @@ export async function appliedSkills(
   for (const skill of skills) {
     const id = skillId(skill)
     const head = heads.get(skill.dir) ?? null
+    const given = Object.hasOwn(consent.skills, id)
+      ? consent.skills[id]?.answer
+      : undefined
+    const answer = given === undefined ? {} : { answer: given }
     if (head === null)
       applied.push(
         // Not at HEAD: its copy waits for a commit, or there is none at all.
@@ -198,6 +204,7 @@ export async function appliedSkills(
               state: 'invalid',
               problem: COMMIT_FIRST,
               uncommitted: true,
+              ...answer,
             }
           : {
               id,
@@ -205,6 +212,7 @@ export async function appliedSkills(
               head: null,
               state: 'invalid',
               problem: `skill ${quoted(skill.name)}: its copy is missing`,
+              ...answer,
             }
       )
     else if (head instanceof Error)
@@ -214,8 +222,10 @@ export async function appliedSkills(
         head: null,
         state: 'invalid',
         problem: plainText(head.message),
+        ...answer,
       })
-    else applied.push({ id, skill, head, state: stateOf(consent, id) })
+    else
+      applied.push({ id, skill, head, state: stateOf(consent, id), ...answer })
   }
   return applied
 }

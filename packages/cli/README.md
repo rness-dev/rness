@@ -35,6 +35,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness skill update [<name>...] [--ref <ref>] [--scope <scope>]
     rness skill remove <name> [--scope <scope>]
     rness skill install [<name>...] [-y]
+    rness skill decline <name>...
     rness skill list
     rness validate
     rness mcp
@@ -526,6 +527,7 @@ organization. The team writes it as a directory of `.rness/skills/`
     rness skill update [<name>...] [--ref <ref>]
     rness skill remove <name>
     rness skill install [<name>...] [-y]
+    rness skill decline <name>...
     rness skill list
 
 - **Declaring.** `add` fetches the source, checks the skill, copies it into
@@ -557,8 +559,13 @@ organization. The team writes it as a directory of `.rness/skills/`
   the pull request that changes `.rness`, are installed by `sync` without
   a new question, and said: `updated   deploy (3ae403c -> 017c560)`, with
   `, allowed-tools: <before> -> <after>` when the two versions ask for
-  different tools. A declined skill is not proposed again, whatever its
+  different tools; a bare `rness skill install` with nothing pending
+  delivers them too. A declined skill is not proposed again, whatever its
   version; `rness skill install <name>` installs it later.
+  `rness skill decline <name>...` declines skills, accepted or not:
+  recorded, and their installed copies removed from every clone and the
+  root (`declined  deploy   removed (org/web, workspace root)`); a name two
+  skills share is refused, naming their ids.
   `rness skill install` lists what is pending (name, source and version
   or "written by the team", the `allowed-tools` it asks for) and asks
   `Install`, `Decline` or `Details`
@@ -638,9 +645,12 @@ its source in rness.json to make it the team's own`). Writes through
   the plugin's directory). A name declared twice in one clone, or both
   declared and written by the team, is refused by `validate`. The tree is
   taken in an index of its own, never the one of a commit in progress
-  (`validate` runs in the `.rness` pre-commit); the session start and
-  `rness status` take none and check each `SKILL.md` alone, read only when
-  it is a regular file of at most 1 MB in a directory that is no link.
+  (`validate` runs in the `.rness` pre-commit), started from `HEAD` as the
+  next commit is: a committed file an exclude now matches stays, and a
+  file committed with CRLF line ends is not converted again. The session
+  start and `rness status` take none and check each `SKILL.md` alone, read
+  only when it is a regular file of at most 1 MB in a directory that is no
+  link.
 - **What reads them (2026-11-13).** Claude Code reads `.claude/skills/`
   only, from the start directory up to the repository root, and loads a
   nested `.claude/skills/` when a file of that subdirectory is read. Codex

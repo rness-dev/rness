@@ -17,7 +17,10 @@ import { dirname, join } from 'node:path'
 import { type TestContext, test } from 'node:test'
 
 import { run } from '../../src/cli.ts'
-import { skillInstallCommand } from '../../src/commands/skill.ts'
+import {
+  skillDeclineCommand,
+  skillInstallCommand,
+} from '../../src/commands/skill.ts'
 import { capture } from '../helpers/capture.ts'
 import { commitRness, git } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
@@ -446,4 +449,153 @@ test('a crafted commit whose skill tree holds ".git" (or ".GIT", "git~1"): refus
     ])
       assert.equal(await there(join(root, at)), false, at)
   }
+})
+
+// ---- Rework fix round 1 (rulings R36 to R38) ----
+
+/** `rness skill decline <names>`, on 2026-11-13. */
+async function decline(root: string, ...names: string[]) {
+  const c = capture()
+  try {
+    const code = await skillDeclineCommand(
+      names,
+      { cwd: root },
+      { now: () => Date.parse('2026-11-13T10:00:00Z') }
+    )
+    return { code, out: c.out(), err: c.err() }
+  } finally {
+    c.restore()
+  }
+}
+
+test('a bare install with nothing pending delivers the new version of an accepted skill and says it (R38)', async (t) => {
+  const root = await teamWs(t)
+  assert.equal((await install(root, 'release')).code, 0)
+  await writeFile(
+    join(root, '.rness/skills/release/SKILL.md'),
+    SKILL_MD('release', 'allowed-tools: Read\nversion: 2\n')
+  )
+  await commitRness(root, 'release v2')
+  const r = await install(root)
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^skills +no team skill awaits your consent$/m)
+  assert.match(r.out, /^updated +release \([0-9a-f]{7} -> [0-9a-f]{7}\)$/m)
+  assert.equal(
+    await installed(root),
+    SKILL_MD('release', 'allowed-tools: Read\nversion: 2\n')
+  )
+})
+
+test('skill decline: an installed skill is recorded declined, removed from every place, never proposed again; install <name> brings it back (R36)', async (t) => {
+  const root = await teamWs(t)
+  assert.equal((await install(root, 'release')).code, 0)
+  const d = await decline(root, 'release')
+  assert.equal(d.code, 0, d.err)
+  assert.match(
+    d.out,
+    /^declined +release {3}removed \(org\/web, workspace root\)$/m
+  )
+  for (const at of [
+    'org/web/.claude/skills/release',
+    'org/web/.agents/skills/release',
+    '.claude/skills/release',
+  ])
+    assert.equal(await there(join(root, at)), false, at)
+  const record = JSON.parse(
+    await readFile(join(root, '.rness/.git/rness/skills.json'), 'utf8')
+  )
+  assert.deepEqual(record.skills.release, {
+    answer: 'declined',
+    date: '2026-11-13',
+  })
+  assert.doesNotMatch((await sync(root)).out, PENDING)
+  const again = await answer(root, 'install')
+  assert.deepEqual(again.asked, [])
+  const back = await install(root, 'release')
+  assert.equal(back.code, 0, back.err)
+  assert.equal(
+    await installed(root),
+    SKILL_MD('release', 'allowed-tools: Read\n')
+  )
+})
+
+/** acme with claude: `deploy` written by the team for web and for api, both cloned, `.rness` committed. */
+async function twoDeploysWs(t: TestContext): Promise<string> {
+  noGlobalGit(t)
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    agents: ['claude'],
+    scopes: {
+      web: { url: 'https://github.com/acme/web.git' },
+      api: { url: 'https://github.com/acme/api.git' },
+    },
+    files: {
+      'skills/scopes/web/deploy/SKILL.md': SKILL_MD('deploy', 'x: web\n'),
+      'skills/scopes/api/deploy/SKILL.md': SKILL_MD('deploy', 'x: api\n'),
+    },
+    dirs: ['org/web', 'org/api'],
+  })
+  for (const dir of ['.rness', 'org/web', 'org/api'])
+    await git(['init', '-q', '-b', 'main'], join(root, dir))
+  await commitRness(root, 'skills')
+  assert.equal((await sync(root)).code, 0)
+  return root
+}
+
+test('skill decline: a name two skills share is refused naming their ids; an id declines that one only (R36)', async (t) => {
+  const root = await twoDeploysWs(t)
+  assert.equal((await install(root, 'web/deploy', 'api/deploy')).code, 0)
+  // Through the command line: the command is registered.
+  const bare = await cli(['skill', 'decline', 'deploy', '--cwd', root])
+  assert.equal(bare.code, 1)
+  assert.match(
+    bare.err,
+    /skill "deploy" names more than one team skill: name one by its id, web\/deploy or api\/deploy/
+  )
+  const one = await decline(root, 'web/deploy')
+  assert.equal(one.code, 0, one.err)
+  assert.match(one.out, /^declined +web\/deploy {3}removed \(org\/web\)$/m)
+  assert.equal(await there(join(root, 'org/web/.agents/skills/deploy')), false)
+  assert.equal(await there(join(root, 'org/api/.agents/skills/deploy')), true)
+})
+
+test('an updated line names a skill by its id when its name applies more than once (R27)', async (t) => {
+  const root = await twoDeploysWs(t)
+  assert.equal((await install(root, 'web/deploy', 'api/deploy')).code, 0)
+  await writeFile(
+    join(root, '.rness/skills/scopes/web/deploy/SKILL.md'),
+    SKILL_MD('deploy', 'x: web v2\n')
+  )
+  await commitRness(root, 'web deploy v2')
+  const r = await sync(root)
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^updated +web\/deploy \([0-9a-f]{7} -> [0-9a-f]{7}\)$/m)
+  assert.doesNotMatch(r.out, /^updated +deploy /m)
+})
+
+test('commit .rness first is said for a skill accepted or awaiting an answer, never for a declined one', async (t) => {
+  const root = await teamWs(t)
+  await put(join(root, '.rness/skills/lint'), { 'SKILL.md': SKILL_MD('lint') })
+  assert.match((await sync(root)).out, /^lint: commit \.rness first$/m)
+  const d = await decline(root, 'lint')
+  assert.equal(d.code, 0, d.err)
+  assert.doesNotMatch((await sync(root)).out, /commit \.rness first/)
+})
+
+test('a .DS_Store the tree holds is part of the copy: no rewrite on every sync', async (t) => {
+  const root = await teamWs(t)
+  await writeFile(join(root, '.rness/skills/release/.DS_Store'), 'committed')
+  await git(['add', '-f', 'skills/release/.DS_Store'], join(root, '.rness'))
+  await commitRness(root, 'a .DS_Store committed')
+  assert.equal((await install(root, 'release')).code, 0)
+  assert.equal(
+    await readFile(
+      join(root, 'org/web/.claude/skills/release/.DS_Store'),
+      'utf8'
+    ),
+    'committed'
+  )
+  const again = await sync(root)
+  assert.equal(again.code, 0, again.err)
+  assert.doesNotMatch(again.out, /^(rewrote|installed|updated +release)/m)
 })

@@ -647,7 +647,9 @@ export async function skillInstallCommand(
     // installed` when nothing had to be written.
     let done: AppliedSkill[] = []
     if (names.length === 0) {
-      applied.filter((a) => a.state === 'invalid').forEach(skip)
+      applied
+        .filter((a) => a.state === 'invalid' && a.answer !== 'declined')
+        .forEach(skip)
       listed = applied.filter(isValid).filter((a) => isPending(a.state))
     } else {
       const unknown = names.filter((n) => designated(applied, n).length === 0)
@@ -684,6 +686,17 @@ export async function skillInstallCommand(
     }
     if (listed.length === 0) {
       if (onlyInvalid) return 1
+      if (names.length === 0) {
+        say(ui, 'line', 'skills', 'no team skill awaits your consent')
+        // The accepted skills made true, as sync does (ruling R38): a new
+        // version written and said, a missing copy written; nothing removed.
+        const accepted = applied.filter((a) => a.state === 'installed')
+        if (accepted.length === 0) return 0
+        const { ok } = await projectAll(ws, manifest, ui, consent, {
+          only: new Set(accepted.map((a) => a.skill.name)),
+        })
+        return ok ? 0 : 1
+      }
       if (done.length > 0) {
         // No question: their copies made true now, as sync would (a copy
         // removed, a clone added since), and said `installed` when written.
@@ -693,8 +706,6 @@ export async function skillInstallCommand(
         alreadyInstalled(written)
         return ok ? 0 : 1
       }
-      if (names.length === 0)
-        say(ui, 'line', 'skills', 'no team skill awaits your consent')
       return 0
     }
     const rows: string[][] = []
@@ -805,19 +816,20 @@ export async function skillInstallCommand(
 
 /**
  * Run the projection of the accepted skills over the declared clones and
- * the root, and say it: `installed <names>   (<places>)`, the same for what
- * was removed, then each clash. `opts.only` limits it (`ProjectOptions`).
- * A place that fails is said, escaped, and the others are still projected,
- * as `sync` does. `ok` false when a place failed; `written`: the names
- * installed or rewritten somewhere.
+ * the root. `opts` limits it (`ProjectOptions`). A place that fails is
+ * kept, its error escaped, and the others are still projected, as `sync`
+ * does.
  */
-async function projectAll(
+async function projectPlaces(
   ws: Workspace,
   manifest: Manifest,
-  ui: Ui,
   consent: Consent,
   opts: ProjectOptions
-): Promise<{ ok: boolean; written: Set<string> }> {
+): Promise<{
+  applied: AppliedSkill[]
+  places: [string, Projection][]
+  failed: string[]
+}> {
   const applied = await appliedSkills(ws, manifest, consent)
   const places: [string, Projection][] = []
   const failed: string[] = []
@@ -836,6 +848,40 @@ async function projectAll(
       projectClone(ws, manifest, applied, repo, opts)
     )
   await project(ROOT_LABEL, () => projectRoot(ws, manifest, applied, opts))
+  return { applied, places, failed }
+}
+
+/** The notes of `places`, then their problems and `failed`, said; true when there was none. */
+function sayPlaces(
+  ui: Ui,
+  places: readonly [string, Projection][],
+  failed: readonly string[]
+): boolean {
+  for (const [, p] of places) for (const n of p.notes) say(ui, 'hint', n)
+  const problems = [...places.flatMap(([, p]) => p.problems), ...failed]
+  for (const line of problems) ui.error(plainText(line))
+  return problems.length === 0
+}
+
+/**
+ * Run the projection (`projectPlaces`) and say it: `installed <names>
+ * (<places>)`, each new version `updated`, what was removed, then each
+ * clash. `ok` false when a place failed; `written`: the names installed,
+ * updated or rewritten somewhere.
+ */
+async function projectAll(
+  ws: Workspace,
+  manifest: Manifest,
+  ui: Ui,
+  consent: Consent,
+  opts: ProjectOptions
+): Promise<{ ok: boolean; written: Set<string> }> {
+  const { applied, places, failed } = await projectPlaces(
+    ws,
+    manifest,
+    consent,
+    opts
+  )
   const summary = (verb: string, of: (p: Projection) => string[]): void => {
     const done = places.filter(([, p]) => of(p).length > 0)
     if (done.length === 0) return
@@ -848,14 +894,14 @@ async function projectAll(
     )
   }
   summary('installed', (p) => [...p.installed, ...p.rewritten])
-  for (const [verb, rest] of updateLines(places.map(([, p]) => p)))
+  for (const [verb, rest] of updateLines(
+    places.map(([, p]) => p),
+    applied
+  ))
     say(ui, 'line', verb, rest)
   summary('removed', (p) => p.removed)
-  for (const [, p] of places) for (const n of p.notes) say(ui, 'hint', n)
-  const problems = [...places.flatMap(([, p]) => p.problems), ...failed]
-  for (const line of problems) ui.error(plainText(line))
   return {
-    ok: problems.length === 0,
+    ok: sayPlaces(ui, places, failed),
     written: new Set(
       places.flatMap(([, p]) => [
         ...p.installed,
@@ -864,6 +910,62 @@ async function projectAll(
       ])
     ),
   }
+}
+
+/**
+ * `rness skill decline <names...>`: record the developer's no for these
+ * team skills, accepted or not (ruling R36), then remove their installed
+ * copies from every clone and the root, and nothing else. A name two
+ * applied skills share is refused, naming their ids (ruling R27); `install
+ * <name>` brings one back.
+ */
+export async function skillDeclineCommand(
+  names: readonly string[],
+  opts: SkillOptions,
+  deps: Partial<CommandDeps> = {}
+): Promise<number> {
+  return run('Skill decline', opts, deps, async ({ ws, manifest, ui }) => {
+    const consent = await readConsent(
+      ws.rnessDir,
+      (file) => ui.warn(`${file} is unreadable: read as empty`),
+      (file, ids) => ui.warn(droppedLine(file, ids))
+    )
+    const applied = await appliedSkills(ws, manifest, consent)
+    const label = skillLabel(applied)
+    const unknown = names.filter((n) => designated(applied, n).length === 0)
+    if (unknown.length > 0)
+      throw new Refusal(
+        `unknown skill ${unknown.map(quoted).join(', ')}; known skills: ${plainText([...new Set(applied.map(label))].join(', ')) || 'none'}`
+      )
+    for (const n of names) {
+      const several = designated(applied, n)
+      if (several.length > 1)
+        throw new Refusal(
+          `skill ${quoted(n)} names more than one team skill: name one by its id, ${plainText(several.map((a) => a.id).join(' or '))}`
+        )
+    }
+    const chosen = new Set(names.flatMap((n) => designated(applied, n)))
+    const declined = applied.filter((a) => chosen.has(a))
+    const date = new Date(deps.now?.() ?? Date.now()).toISOString().slice(0, 10)
+    const skills = { ...consent.skills }
+    for (const a of declined)
+      skills[a.id] = { answer: 'declined', date } satisfies ConsentEntry
+    const answered: Consent = { version: 1, skills }
+    await writeConsent(ws.rnessDir, answered)
+    // Those names only, their copies removed where they are declined now.
+    const { places, failed } = await projectPlaces(ws, manifest, answered, {
+      only: new Set(declined.map((a) => a.skill.name)),
+      remove: true,
+    })
+    const from = places.filter(([, p]) => p.removed.length > 0)
+    say(
+      ui,
+      'line',
+      'declined',
+      `${declined.map(label).join(', ')}${from.length === 0 ? '' : `   removed (${from.map(([l]) => l).join(', ')})`}`
+    )
+    return sayPlaces(ui, places, failed) ? 0 : 1
+  })
 }
 
 /** `rness skill list`: every team skill that applies to this workspace, with its state for the developer. */

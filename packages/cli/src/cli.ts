@@ -348,6 +348,18 @@ function buildProgram(state: RunState): Command {
     })
 
   skill
+    .command('decline')
+    .description(
+      'Decline team skills, accepted or not: recorded, and their installed copies removed'
+    )
+    .argument('<names...>', 'the skills to decline, by name or <scope>/<name>')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (names: string[], opts: SkillOptions) => {
+      const { skillDeclineCommand } = await import('./commands/skill.ts')
+      state.code = await skillDeclineCommand(names, opts)
+    })
+
+  skill
     .command('list')
     .description('List the team skills of this workspace and their state')
     .addOption(new Option('--cwd <dir>').hideHelp())

@@ -580,7 +580,7 @@ export async function syncCommand(
       }
       // A new version of an accepted skill, once per skill whatever the
       // places it went to (spec 0041 §5).
-      lines.push(...updateLines(projected))
+      lines.push(...updateLines(projected, skills?.applied ?? []))
       // Never a failure: `sync --check` keeps its exit code (spec 0041 §9).
       if (skills !== null) {
         lines.push(

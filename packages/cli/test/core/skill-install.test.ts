@@ -387,10 +387,11 @@ test('a lost record: a directory matching the commit is adopted (recorded, exclu
   )
 })
 
-test('a lost record and a new version committed since: the old copy matches nothing committed, so it is left alone and said', async (t) => {
+test('a lost record and a new version committed since: the copy of an earlier commit is adopted at its tree, then updated', async (t) => {
   const root = await skillsWs(t)
   await answer(root, ['release'])
   await project(root)
+  const from = await committed(root, 'skills/release')
   const file = join(root, 'org/web/.git/rness/skills.json')
   await rm(file)
   await writeFile(
@@ -398,9 +399,38 @@ test('a lost record and a new version committed since: the old copy matches noth
     SKILL_MD('release', 'v: 2\n')
   )
   await commitRness(root, 'release v2')
+  const to = await committed(root, 'skills/release')
   const r = await project(root)
   assert.deepEqual(r['org/web']?.removed, [])
-  assert.deepEqual(r['org/web']?.updated, [])
+  assert.deepEqual(r['org/web']?.updated, [
+    { id: 'release', name: 'release', from, to, tools: null },
+  ])
+  assert.ok(
+    r['org/web']?.notes.includes(
+      `org/web: .claude/skills/release is team skill release as committed before (${from.slice(0, 7)}); recorded again`
+    ),
+    r['org/web']?.notes.join('\n')
+  )
+  assert.equal(
+    await readFile(
+      join(root, 'org/web/.claude/skills/release/SKILL.md'),
+      'utf8'
+    ),
+    SKILL_MD('release', 'v: 2\n')
+  )
+  assert.equal((await recordOf(file)).skills['release']?.tree, to)
+})
+
+test('a lost record: a copy matching no commit of the skill stays foreign, and is said so', async (t) => {
+  const root = await skillsWs(t)
+  await answer(root, ['release'])
+  await project(root)
+  await rm(join(root, 'org/web/.git/rness/skills.json'))
+  await writeFile(
+    join(root, 'org/web/.claude/skills/release/SKILL.md'),
+    'my own release\n'
+  )
+  const r = await project(root)
   assert.ok(
     r['org/web']?.notes.includes(
       'org/web: .claude/skills/release is not one rness wrote; team skill release not installed there'
@@ -412,7 +442,7 @@ test('a lost record and a new version committed since: the old copy matches noth
       join(root, 'org/web/.claude/skills/release/SKILL.md'),
       'utf8'
     ),
-    SKILL_MD('release')
+    'my own release\n'
   )
 })
 
@@ -542,7 +572,7 @@ test('a new version of an accepted skill, committed in .rness, replaces the copy
   for (const place of ['org/web', 'org/api', 'root'])
     assert.deepEqual(
       r[place]?.updated,
-      [{ name: 'release', from, to, tools: null }],
+      [{ id: 'release', name: 'release', from, to, tools: null }],
       place
     )
   assert.deepEqual(r['org/web']?.rewritten, [])
