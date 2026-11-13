@@ -1095,7 +1095,7 @@ test("a team-written skill named like one of rness's own is invalid and never in
   )
   const status = applied.find((a) => a.id === 'status')
   assert.equal(status?.state, 'invalid')
-  assert.match(status?.problem ?? '', /is one of rness's own skills/)
+  assert.match(status?.problem ?? '', /a name rness reserves for its plugin/)
   await answer(root)
   await project(root)
   assert.equal(

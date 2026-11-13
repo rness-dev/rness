@@ -1400,6 +1400,7 @@ test("reserved names: a skill the team wrote cannot take one of rness's own (sta
       'skills/adr/SKILL.md': SKILL_MD('adr'),
       'skills/spec/SKILL.md': SKILL_MD('spec'),
       'skills/release/SKILL.md': SKILL_MD('release'),
+      'skills/done/SKILL.md': SKILL_MD('done'),
     },
   })
   const rnessDir = join(root, '.rness')
@@ -1408,9 +1409,9 @@ test("reserved names: a skill the team wrote cannot take one of rness's own (sta
     const { problems } = await checkSkillCopies(rnessDir, manifest, { trees })
     assert.deepEqual(
       problems.filter((p) => !p.includes('differs')).sort(),
-      ['adr', 'spec', 'status'].map(
+      ['adr', 'done', 'spec', 'status'].map(
         (n) =>
-          `skill "${n}": the name "${n}" is one of rness's own skills; a team skill is installed as /rness:${n}, which would replace it`
+          `skill "${n}": "${n}" is a name rness reserves for its plugin; a team skill is installed there as /rness:${n}`
       ),
       `trees: ${trees}`
     )

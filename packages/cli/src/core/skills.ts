@@ -346,7 +346,7 @@ const refusal = (name: string, reason: string): Error =>
  */
 export const reservedNameProblem = (name: string): string | null =>
   RNESS_SKILL_NAMES.includes(name)
-    ? `the name "${name}" is one of rness's own skills; a team skill is installed as /rness:${name}, which would replace it`
+    ? `"${name}" is a name rness reserves for its plugin; a team skill is installed there as /rness:${name}`
     : null
 
 /** Why `name` cannot name a team skill; null when it can. */

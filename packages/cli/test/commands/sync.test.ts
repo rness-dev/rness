@@ -1306,6 +1306,39 @@ const there = (p: string): Promise<boolean> =>
     () => false
   )
 
+test('skills: a team-written skill named like a retired one of the plugin (done) is refused by validate, never installed, and leaves sync --check clean', async (t) => {
+  const root = await skillsWorkspace(t)
+  await mkdir(join(root, '.rness/skills/done'), { recursive: true })
+  await writeFile(join(root, '.rness/skills/done/SKILL.md'), SKILL_MD('done'))
+  await commitRness(root, 'a team skill named done')
+  assert.equal((await installSkills(root, ['release'])).code, 0)
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 0, check.out + check.err)
+  assert.doesNotMatch(check.out, /stale|done/)
+  assert.equal(
+    await there(join(root, 'org/web/.claude/skills/rness/skills/done')),
+    false
+  )
+  assert.equal(
+    await there(join(root, '.claude/skills/rness/skills/release')),
+    true
+  )
+  const c = capture()
+  let code: number
+  try {
+    code = await run(['validate', '--cwd', root])
+  } finally {
+    c.restore()
+  }
+  assert.equal(code, 1)
+  assert.match(
+    c.out() + c.err(),
+    /"done" is a name rness reserves for its plugin/
+  )
+})
+
 test('skills: sync -y installs no pending skill and says how many await; --check and validate keep their exit codes', async (t) => {
   const root = await skillsWorkspace(t)
   const r = await sync(['--yes', '--cwd', root])

@@ -325,18 +325,20 @@ ${COMMIT_RULE}
   },
 ]
 
+/** The skill rness wrote up to 0.17 and `/rness:plan check` replaced (spec 0028 §8). */
+const RETIRED_SKILLS = ['done'] as const
+
 /**
- * The names of the skills of rness's own plugin: a skill the team writes
- * cannot take one, or it would replace rness's own at `/rness:<name>`
- * (spec 0041 decision 10). Taken from the definitions above.
+ * The names rness reserves in its plugin: its own skills and the retired
+ * ones (sync removes a retired file, so a team skill of that name would be
+ * removed and rewritten on every sync). A skill the team writes cannot take
+ * one (spec 0041 decision 10). Taken from the definitions above.
  */
 export const RNESS_SKILL_NAMES: readonly string[] = [
   'status',
   ...LIFECYCLE.map((s) => s.name),
+  ...RETIRED_SKILLS,
 ]
-
-/** The skill rness wrote up to 0.17 and `/rness:plan check` replaced (spec 0028 §8). */
-const RETIRED_SKILLS = ['done'] as const
 
 /**
  * One lifecycle skill. Its two commands are fixed — the arguments never
