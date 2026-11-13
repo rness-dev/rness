@@ -77,6 +77,31 @@ async function syncBlockFile(
   return 'updated'
 }
 
+/**
+ * Which declared repositories have no usable clone. `misnamed`: a directory
+ * that differs from the declared name only by case (`org/dApp` for `dapp`):
+ * not missing (cloning `org/dapp` would fail where the file system ignores
+ * case), and it gets no block until `rness add` renames it. `missing`: the
+ * others declared with no directory at all.
+ */
+export function missingClones(
+  manifest: Manifest,
+  clones: ReadonlySet<string>,
+  unread: readonly string[]
+): { misnamed: Set<string>; missing: string[] } {
+  const repos = repositories(manifest).map((r) => r.name)
+  const declared = new Set(repos)
+  const misnamed = new Set(
+    unread
+      .map((d) => d.toLowerCase())
+      .filter((n) => declared.has(n) && !clones.has(n))
+  )
+  return {
+    misnamed,
+    missing: repos.filter((n) => !clones.has(n) && !misnamed.has(n)),
+  }
+}
+
 /** What one pass over the blocks said, and could not do. */
 export interface WrittenBlocks {
   lines: (Line | string)[]
@@ -104,11 +129,10 @@ export async function writeBlocks(input: {
   warn: (text: string) => void
 }): Promise<WrittenBlocks> {
   const { ws, manifest, org, check, misnamed, notCloned, warn } = input
-  const opts = { scope: input.scope }
   let differences = 0
   const lines: (Line | string)[] = []
   const problems: string[] = []
-  for (const t of targetsOf(manifest, ws.root, opts.scope)) {
+  for (const t of targetsOf(manifest, ws.root, input.scope)) {
     // `exists()` would find `org/dApp` for `org/dapp` on macOS: the
     // block waits for the rename, on every system alike.
     const owner = t.label.startsWith('org/') ? t.label.split('/')[1] : undefined
@@ -206,15 +230,7 @@ export async function refreshBlocks(
   // A standalone context checkout has no org/ and no block to refresh.
   if (!(await exists(join(ws.root, 'org')))) return { lines: [], problems: [] }
   const { clones, unread } = await orgDirs(ws.root, providerOf(manifest))
-  const declared = new Set(repositories(manifest).map((r) => r.name))
-  const misnamed = new Set(
-    unread
-      .map((d) => d.toLowerCase())
-      .filter((n) => declared.has(n) && !clones.has(n))
-  )
-  const notCloned = new Set(
-    [...declared].filter((n) => !clones.has(n) && !misnamed.has(n))
-  )
+  const { misnamed, missing } = missingClones(manifest, clones, unread)
   const written = await writeBlocks({
     ws,
     manifest,
@@ -222,7 +238,7 @@ export async function refreshBlocks(
     scope: undefined,
     check: false,
     misnamed,
-    notCloned,
+    notCloned: new Set(missing),
     warn,
   })
   return {

@@ -57,7 +57,7 @@ import {
 import type { Manifest } from '../core/types.ts'
 import { type Line, type Ui, makeUi, plainUi } from '../core/ui.ts'
 import { findWorkspace, orgDirs } from '../core/workspace.ts'
-import { writeBlocks } from '../core/write-blocks.ts'
+import { missingClones, writeBlocks } from '../core/write-blocks.ts'
 import { reportError } from '../report.ts'
 
 export interface SyncOptions {
@@ -352,14 +352,7 @@ export async function syncCommand(
     // for `dapp`) is not missing: cloning `org/dapp` would fail where the file
     // system ignores case and make a second copy where it does not. It gets
     // its `not read:` line and no block until `rness add` renames it.
-    const misnamed = new Set(
-      unread
-        .map((d) => d.toLowerCase())
-        .filter((n) => declared.has(n) && !clones.has(n))
-    )
-    const missing = repos
-      .map((r) => r.name)
-      .filter((n) => !clones.has(n) && !misnamed.has(n))
+    const { misnamed, missing } = missingClones(manifest, clones, unread)
     let toClone = new Set<string>(opts.all === true && !check ? missing : [])
     if (!check && opts.yes !== true) {
       const answer = await askWhatToSync({
