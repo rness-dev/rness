@@ -15,6 +15,7 @@ import { hookCommand } from './commands/hook.ts'
 import { type LoginOptions, loginCommand } from './commands/login.ts'
 import { type LogoutOptions, logoutCommand } from './commands/logout.ts'
 import { type McpOptions, mcpCommand } from './commands/mcp.ts'
+import type { SkillOptions } from './commands/skill.ts'
 import { type StatusOptions, statusCommand } from './commands/status.ts'
 import { type SyncOptions, syncCommand } from './commands/sync.ts'
 import { type UpgradeOptions, upgradeCommand } from './commands/upgrade.ts'
@@ -294,6 +295,54 @@ function buildProgram(state: RunState): Command {
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (repo: string, opts: AddOptions) => {
       state.code = await addCommand(repo, opts)
+    })
+
+  const skill = program
+    .command('skill')
+    .description(
+      'Team skills: declared in rness.json, copied into .rness/skills/'
+    )
+
+  skill
+    .command('add')
+    .description(
+      'Copy a skill from github:<owner>/<repo>, git:<url> or path:<dir> into .rness/skills/ and declare it'
+    )
+    .argument('<source>', 'github:<owner>/<repo>, git:<url> or path:<dir>')
+    .option('--path <path>', "the skill's directory inside a repository source")
+    .option('--ref <ref>', 'a tag, a branch or a full commit (default: HEAD)')
+    .option('--name <name>', 'install the skill under another name')
+    .option(
+      '--scope <scope>',
+      'a repository or part of rness.json (default: the whole organization)'
+    )
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (source: string, opts: SkillOptions) => {
+      const { skillAddCommand } = await import('./commands/skill.ts')
+      state.code = await skillAddCommand(source, opts)
+    })
+
+  skill
+    .command('update')
+    .description('Fetch declared skills again and replace their copies')
+    .argument('[names...]', 'the skills to update (default: all)')
+    .option('--ref <ref>', 'move one skill to this tag, branch or commit')
+    .option('--scope <scope>', 'the repository or part that declares it')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (names: string[], opts: SkillOptions) => {
+      const { skillUpdateCommand } = await import('./commands/skill.ts')
+      state.code = await skillUpdateCommand(names, opts)
+    })
+
+  skill
+    .command('remove')
+    .description('Undeclare a skill and delete its copy')
+    .argument('<name>', 'the skill to remove')
+    .option('--scope <scope>', 'the repository or part that declares it')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (name: string, opts: SkillOptions) => {
+      const { skillRemoveCommand } = await import('./commands/skill.ts')
+      state.code = await skillRemoveCommand(name, opts)
     })
 
   program
