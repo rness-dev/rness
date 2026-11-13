@@ -12,6 +12,8 @@ export interface ScopeSpec {
   path?: string
   extends?: string[]
   scopes?: Record<string, ScopeSpec>
+  /** Team skills of the scope (spec 0041 §2), by name. */
+  skills?: Record<string, unknown>
 }
 
 export interface WorkspaceSpec {
@@ -25,6 +27,8 @@ export interface WorkspaceSpec {
   /** The team's agents; left out, the key is absent ("never asked"). */
   agents?: string[]
   scopes?: Record<string, ScopeSpec>
+  /** The manifest's top-level `skills` (spec 0041 §2); left out, the key is absent. */
+  skills?: Record<string, unknown>
   /** `.rness/`-relative markdown files, e.g. `'standards/web/seo.md': '# SEO\n'`. */
   files?: Record<string, string>
   /** Root-relative directories to create (the clones a real workspace would have). */
@@ -48,6 +52,7 @@ export async function makeWorkspace(
   if (spec.jira !== undefined) manifest['jira'] = spec.jira
   if (spec.agents !== undefined) manifest['agents'] = spec.agents
   if (spec.boards !== undefined) manifest['boards'] = spec.boards
+  if (spec.skills !== undefined) manifest['skills'] = spec.skills
   await writeFile(
     join(root, '.rness', 'rness.json'),
     JSON.stringify(manifest, null, 2)

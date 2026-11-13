@@ -7,6 +7,7 @@ import { workspaceName } from './manifest.ts'
 import { rnessCommand } from './pm.ts'
 import { PROVIDERS, unsupportedProviderMessage } from './providers.ts'
 import { scopeChain } from './scope.ts'
+import { skillConflicts, teamSkills } from './skills.ts'
 import type { Manifest, Workspace } from './types.ts'
 
 export interface WorkspaceCheck {
@@ -31,6 +32,13 @@ export async function checkWorkspace(
   for (const s of Object.keys(manifest.scopes)) scopeChain(manifest, s)
   const problems = await checkContract(ws.rnessDir)
   problems.push(...(await checkBoards(ws.rnessDir, manifest)))
+  problems.push(
+    ...skillConflicts(
+      ws.rnessDir,
+      manifest,
+      await teamSkills(ws.rnessDir, manifest)
+    )
+  )
   const blocks = await checkBlocks({
     root: ws.root,
     rnessDir: ws.rnessDir,

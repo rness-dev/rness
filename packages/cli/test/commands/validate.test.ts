@@ -638,3 +638,35 @@ test('a redundant extends is reported as a warning, exit 0, in the plain style',
   ])
   assert.equal(c.out().trim(), 'context ok')
 })
+
+test('a skill named twice in one clone is a problem naming it and both places', async (t) => {
+  const hash = `sha256-${'A'.repeat(43)}=`
+  const entry = { source: 'github:o/r', hash }
+  const root = await makeWorkspace(t, {
+    skills: { x: entry, y: entry },
+    scopes: { web: { url: 'u', skills: { x: entry } } },
+    files: { 'skills/scopes/web/y/SKILL.md': 'x' },
+  })
+  const c = capture()
+  const code = await run(['validate', '--cwd', root])
+  c.restore()
+  assert.equal(code, 1)
+  assert.match(c.err(), /skill "x" is declared at the top and in scope "web"/)
+  assert.match(
+    c.err(),
+    /skill "y" is declared at the top and written by the team at skills\/scopes\/web\/y/
+  )
+})
+
+test('skills declared once each, or written by the team, validate clean', async (t) => {
+  const entry = { source: 'github:o/r', hash: `sha256-${'A'.repeat(43)}=` }
+  const root = await makeWorkspace(t, {
+    skills: { x: entry },
+    scopes: { web: { url: 'u', skills: { y: entry } } },
+    files: { 'skills/mine/SKILL.md': 'x' },
+  })
+  const c = capture()
+  const code = await run(['validate', '--cwd', root])
+  c.restore()
+  assert.equal(code, 0, c.err())
+})

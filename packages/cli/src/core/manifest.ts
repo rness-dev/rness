@@ -19,6 +19,7 @@ import type {
   RefusedBoard,
   Repository,
   ScopeEntry,
+  SkillEntry,
 } from './types.ts'
 
 /**
@@ -196,6 +197,7 @@ const KEYS = [
   'jira',
   'agents',
   'boards',
+  'skills',
   'scopes',
 ]
 
@@ -451,8 +453,71 @@ export function providerOf(manifest: Manifest): ProviderName {
   return 'github'
 }
 
+const SKILL_KEYS = ['source', 'path', 'ref', 'commit', 'hash']
+const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+/** The shape `rness skill` writes (spec 0041 §2): `sha256-` and a base64 SHA-256 digest. */
+const SKILL_HASH = /^sha256-[A-Za-z0-9+/]{43}=$/
+const SKILL_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
+
+/**
+ * `skills` of the top or of a scope (spec 0041 §2): each key a skill's name
+ * (lowercase letters, digits and hyphens, at most 64 characters, not
+ * `rness`, the plugin's own directory), each entry `source`, `path`, `ref`,
+ * `commit` and `hash`. `where` prefixes the error, `scope "web": ` or empty.
+ */
+function readSkills(value: unknown, where: string): Record<string, SkillEntry> {
+  const raw = value ?? {}
+  if (!isRecord(raw)) fail(`${where}"skills" must be an object`)
+  const skills: Record<string, SkillEntry> = {}
+  for (const [name, entry] of Object.entries(raw)) {
+    const at = `${where}skill ${JSON.stringify(name)}`
+    if (!SKILL_NAME.test(name) || name.length > 64)
+      fail(
+        `${at}: the name may only contain lowercase letters, digits and hyphens, at most 64 characters`
+      )
+    if (name === 'rness')
+      fail(`${at}: "rness" is the name of the plugin's own directory`)
+    if (!isRecord(entry)) fail(`${at} must be an object`)
+    for (const key of Object.keys(entry))
+      if (!SKILL_KEYS.includes(key))
+        fail(`${at}: unknown key ${JSON.stringify(key)}`)
+    const { source, path, ref, commit, hash } = entry
+    if (
+      typeof source !== 'string' ||
+      !/^(?:github:[^/\s]+\/[^/\s]+|git:\S+|path:\S.*)$/.test(source)
+    )
+      fail(
+        `${at}: "source" must be github:<owner>/<repo>, git:<url> or path:<directory>`
+      )
+    if (path !== undefined) {
+      if (typeof path !== 'string' || path === '')
+        fail(`${at}: "path" must be a non-empty string`)
+      if (path.startsWith('/')) fail(`${at}: "path" must be relative`)
+      if (path.split('/').includes('..'))
+        fail(`${at}: "path" must not contain ".."`)
+    }
+    if (ref !== undefined && (typeof ref !== 'string' || ref === ''))
+      fail(`${at}: "ref" must be a non-empty string`)
+    if (
+      commit !== undefined &&
+      (typeof commit !== 'string' || !SKILL_COMMIT.test(commit))
+    )
+      fail(`${at}: "commit" must be a full commit hash (40 or 64 hex digits)`)
+    if (typeof hash !== 'string' || !SKILL_HASH.test(hash))
+      fail(`${at}: "hash" must be sha256- and a base64 SHA-256 digest`)
+    skills[name] = {
+      source,
+      ...(path === undefined ? {} : { path }),
+      ...(ref === undefined ? {} : { ref }),
+      ...(commit === undefined ? {} : { commit }),
+      hash,
+    }
+  }
+  return skills
+}
+
 /** The keys of a scope of contract 2 (spec 0038 §1): any other is a slip. */
-const SCOPE_KEYS = ['url', 'path', 'extends', 'scopes']
+const SCOPE_KEYS = ['url', 'path', 'extends', 'scopes', 'skills']
 
 /**
  * `scopes`, a tree (spec 0038 §1), read flat in the order written: a
@@ -490,6 +555,7 @@ function readScopes(value: unknown): Record<string, ScopeEntry> {
       for (const key of Object.keys(entry))
         if (!SCOPE_KEYS.includes(key))
           fail(`scope "${name}": unknown key ${JSON.stringify(key)}`)
+      const skills = readSkills(entry.skills, `scope "${name}": `)
       const above = ancestors(parent)
       let path: string
       let url: string | null = null
@@ -522,6 +588,7 @@ function readScopes(value: unknown): Record<string, ScopeEntry> {
           ...names.filter((t) => !above.includes(t)),
         ],
         ...(redundant.length === 0 ? {} : { redundant }),
+        ...(Object.keys(skills).length === 0 ? {} : { skills }),
       }
       if (entry.scopes === undefined) continue
       if (!isRecord(entry.scopes))
@@ -629,6 +696,7 @@ export function parseManifest(raw: string): Manifest {
   const provider = readProvider(data.provider)
   const { boards, refused, formerKey } = readBoardsOrFormer(data, provider)
   const jira = readJira(data.jira, provider)
+  const skills = readSkills(data.skills, '')
   return {
     contract: 2,
     provider,
@@ -638,6 +706,7 @@ export function parseManifest(raw: string): Manifest {
     boards,
     ...(refused.length === 0 ? {} : { refused }),
     ...(formerKey === undefined ? {} : { formerKey }),
+    ...(Object.keys(skills).length === 0 ? {} : { skills }),
     scopes: readScopes(data.scopes),
   }
 }
@@ -1028,6 +1097,31 @@ function ancestorsOf(
   return ancestors
 }
 
+/** The entries of a `skills` object, each on its own lines, keys in the order of spec 0041 §2. */
+function skillLines(
+  skills: Record<string, SkillEntry>,
+  indent: string
+): string[] {
+  const entries = Object.entries(skills)
+  return entries.flatMap(([name, skill], i) => {
+    const keys = [
+      ['source', skill.source],
+      ['path', skill.path],
+      ['ref', skill.ref],
+      ['commit', skill.commit],
+      ['hash', skill.hash],
+    ].filter((kv): kv is [string, string] => kv[1] !== undefined)
+    return [
+      `${indent}${JSON.stringify(name)}: {`,
+      ...keys.map(
+        ([k, v], j) =>
+          `${indent}  ${JSON.stringify(k)}: ${JSON.stringify(v)}${j === keys.length - 1 ? '' : ','}`
+      ),
+      `${indent}}${i === entries.length - 1 ? '' : ','}`,
+    ]
+  })
+}
+
 /**
  * The scopes nested under `parent` (null: the repositories), as written
  * (spec 0038 §3): a scope on one line, `url` or `path` then `extends` when
@@ -1055,14 +1149,25 @@ function scopeLines(
       own.push(`"extends": [${named.map((e) => JSON.stringify(e)).join(', ')}]`)
     const comma = i === entries.length - 1 ? '' : ','
     const parts = scopeLines(scopes, ancestors, name, `${indent}    `)
-    if (parts.length === 0)
+    const skills = skillLines(scope.skills ?? {}, `${indent}    `)
+    if (parts.length === 0 && skills.length === 0)
       return `${indent}${JSON.stringify(name)}: { ${own.join(', ')} }${comma}`
+    const blocks = [
+      ...(skills.length === 0
+        ? []
+        : [[`${indent}  "skills": {`, ...skills, `${indent}  }`]]),
+      ...(parts.length === 0
+        ? []
+        : [[`${indent}  "scopes": {`, ...parts, `${indent}  }`]]),
+    ]
     return [
       `${indent}${JSON.stringify(name)}: {`,
       ...own.map((line) => `${indent}  ${line},`),
-      `${indent}  "scopes": {`,
-      ...parts,
-      `${indent}  }`,
+      ...blocks.flatMap((block, b) =>
+        b === blocks.length - 1
+          ? block
+          : [...block.slice(0, -1), `${block.at(-1)},`]
+      ),
       `${indent}}${comma}`,
     ].join('\n')
   })
@@ -1087,6 +1192,8 @@ export async function writeManifest(
       `  "agents": [${manifest.agents.map((a) => JSON.stringify(a)).join(', ')}],`
     )
   lines.push(...boardsLines(manifest))
+  const skills = skillLines(manifest.skills ?? {}, '    ')
+  if (skills.length > 0) lines.push('  "skills": {', ...skills, '  },')
   const scopes = scopeLines(
     manifest.scopes,
     ancestorsOf(manifest.scopes),

@@ -1468,3 +1468,163 @@ test('on Atlassian a board names nothing: number and ids are refused, naming the
     [`"boards.pulse.ids" are GitLab's: ${said}`]
   )
 })
+
+const HASH = `sha256-${'A'.repeat(43)}=`
+const COMMIT = '9f1c2e0d6b7a4c3e8f5d2a1b0c9e8d7f6a5b4c3d'
+
+test('skills: read at the top and in a scope, written in the order of spec 0041 §2 and read back', async (t) => {
+  const text = `{
+  "contract": 2,
+  "org": "acme",
+  "skills": {
+    "brainstorming": {
+      "source": "github:obra/superpowers",
+      "path": "skills/brainstorming",
+      "ref": "v7.0.0",
+      "commit": "${COMMIT}",
+      "hash": "${HASH}"
+    }
+  },
+  "scopes": {
+    "web": {
+      "url": "git@github.com:acme/web.git",
+      "skills": {
+        "deploy": {
+          "source": "path:../ops/skills/deploy",
+          "hash": "${HASH}"
+        }
+      },
+      "scopes": {
+        "ui": {
+          "path": "packages/ui",
+          "skills": {
+            "tokens": {
+              "source": "git:git@github.com:acme/skills.git",
+              "hash": "${HASH}"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+  const d = await fixture(text)
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const read = await loadManifest(d)
+  assert.deepEqual(read.skills?.['brainstorming'], {
+    source: 'github:obra/superpowers',
+    path: 'skills/brainstorming',
+    ref: 'v7.0.0',
+    commit: COMMIT,
+    hash: HASH,
+  })
+  assert.equal(read.scopes['web']?.skills?.['deploy']?.hash, HASH)
+  assert.equal(
+    read.scopes['ui']?.skills?.['tokens']?.source.startsWith('git:'),
+    true
+  )
+  assert.equal(read.scopes['ui']?.parent, 'web')
+  await writeManifest(d, read)
+  assert.equal(await readFile(join(d, 'rness.json'), 'utf8'), text)
+  assert.deepEqual(await loadManifest(d), read)
+})
+
+test('skills: none read is absent, and nothing is written for it', async (t) => {
+  const d = await fixture({
+    contract: 2,
+    skills: {},
+    scopes: { web: { url: 'u', skills: {} } },
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  const read = await loadManifest(d)
+  assert.equal(read.skills, undefined)
+  assert.equal(read.scopes['web']?.skills, undefined)
+  await writeManifest(d, read)
+  assert.doesNotMatch(await readFile(join(d, 'rness.json'), 'utf8'), /skills/)
+})
+
+test('skills: every refusal names the skill and the slip', async () => {
+  const ok = { source: 'github:o/r', hash: HASH }
+  const cases: [Record<string, unknown>, string][] = [
+    [{ x: 1 }, 'skill "x" must be an object'],
+    [{ x: { ...ok, extra: 1 } }, 'skill "x": unknown key "extra"'],
+    [
+      { x: { hash: HASH } },
+      'skill "x": "source" must be github:<owner>/<repo>, git:<url> or path:<directory>',
+    ],
+    ...['http://a/b', 'github:o', 'github:o/r/s', 'git:', 'path:', 'o/r'].map(
+      (source): [Record<string, unknown>, string] => [
+        { x: { ...ok, source } },
+        'skill "x": "source" must be github:<owner>/<repo>, git:<url> or path:<directory>',
+      ]
+    ),
+    [{ x: { ...ok, path: '/abs' } }, 'skill "x": "path" must be relative'],
+    [
+      { x: { ...ok, path: 'a/../b' } },
+      'skill "x": "path" must not contain ".."',
+    ],
+    [
+      { x: { ...ok, path: '' } },
+      'skill "x": "path" must be a non-empty string',
+    ],
+    [{ x: { ...ok, ref: '' } }, 'skill "x": "ref" must be a non-empty string'],
+    [
+      { x: { ...ok, commit: 'abc123' } },
+      'skill "x": "commit" must be a full commit hash',
+    ],
+    [{ x: { source: ok.source } }, 'skill "x": "hash" must be sha256-'],
+    [{ x: { ...ok, hash: 'sha256-abc' } }, 'skill "x": "hash" must be sha256-'],
+    [
+      { x: { ...ok, hash: `sha1-${'A'.repeat(43)}=` } },
+      'skill "x": "hash" must be sha256-',
+    ],
+    [{ X: ok }, 'skill "X": the name may only contain'],
+    [{ a_b: ok }, 'skill "a_b": the name may only contain'],
+    [{ '-a': ok }, 'skill "-a": the name may only contain'],
+    [
+      { ['a'.repeat(65)]: ok },
+      'the name may only contain lowercase letters, digits and hyphens, at most 64 characters',
+    ],
+    [{ rness: ok }, 'skill "rness": "rness" is the name of the plugin'],
+  ]
+  for (const [skills, message] of cases) {
+    for (const json of [
+      { contract: 2, skills, scopes: {} },
+      { contract: 2, scopes: { web: { url: 'u', skills } } },
+    ]) {
+      const d = await fixture(json)
+      try {
+        await assert.rejects(
+          () => loadManifest(d),
+          (e: Error) =>
+            e.message.includes(message) && e.message.startsWith('rness.json: ')
+        )
+      } finally {
+        await rm(dirname(d), { recursive: true, force: true })
+      }
+    }
+  }
+  const d = await fixture({ contract: 2, skills: [], scopes: {} })
+  try {
+    await assert.rejects(
+      () => loadManifest(d),
+      /rness\.json: "skills" must be an object/
+    )
+  } finally {
+    await rm(dirname(d), { recursive: true, force: true })
+  }
+})
+
+test('skills: a name of 64 characters and a 64-hex commit are read', async (t) => {
+  const name = 'a'.repeat(64)
+  const d = await fixture({
+    contract: 2,
+    skills: {
+      [name]: { source: 'path:/abs/dir', commit: 'f'.repeat(64), hash: HASH },
+    },
+    scopes: {},
+  })
+  t.after(() => rm(dirname(d), { recursive: true, force: true }))
+  assert.equal((await loadManifest(d)).skills?.[name]?.commit, 'f'.repeat(64))
+})

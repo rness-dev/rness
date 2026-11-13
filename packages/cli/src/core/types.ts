@@ -38,6 +38,25 @@ export interface ScopeEntry {
    * `redundantExtends()` (ADR 0012). Absent when there is none.
    */
   redundant?: string[]
+  /** The team skills this scope and its parts get (spec 0041 §2), by name; absent when none. */
+  skills?: Record<string, SkillEntry>
+}
+
+/**
+ * A team skill as `rness.json` declares it (spec 0041 §2): where it is
+ * copied from, and the hash of the copy. The name is the key it is held under.
+ */
+export interface SkillEntry {
+  /** `github:<owner>/<repo>`, `git:<url>` or `path:<directory>`. */
+  source: string
+  /** The skill's directory inside a repository source; absent: its root. */
+  path?: string
+  /** A tag, a branch or a commit, as given; absent: the default branch. */
+  ref?: string
+  /** The commit `ref` resolved to when the copy was made. */
+  commit?: string
+  /** `sha256-<base64>` of the copied directory. */
+  hash: string
 }
 
 /** A scope with a `url`, as `repositories()` gives it: cloned at `dir`, `org/<name>`. */
@@ -100,6 +119,8 @@ export interface Manifest {
   refused?: RefusedBoard[]
   /** Every scope of the tree, by its name: names are unique across it. */
   scopes: Record<string, ScopeEntry>
+  /** The team skills of the whole organization (spec 0041 §2), by name; absent when none. */
+  skills?: Record<string, SkillEntry>
 }
 
 export interface Workspace {
