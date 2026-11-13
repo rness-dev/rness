@@ -913,18 +913,18 @@ async function projectAll(
 }
 
 /**
- * `rness skill decline <names...>`: record the developer's no for these
+ * `rness skill uninstall <names...>`: record the developer's no for these
  * team skills, accepted or not (ruling R36), then remove their installed
  * copies from every clone and the root, and nothing else. A name two
  * applied skills share is refused, naming their ids (ruling R27); `install
  * <name>` brings one back.
  */
-export async function skillDeclineCommand(
+export async function skillUninstallCommand(
   names: readonly string[],
   opts: SkillOptions,
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
-  return run('Skill decline', opts, deps, async ({ ws, manifest, ui }) => {
+  return run('Skill uninstall', opts, deps, async ({ ws, manifest, ui }) => {
     const consent = await readConsent(
       ws.rnessDir,
       (file) => ui.warn(`${file} is unreadable: read as empty`),
@@ -955,13 +955,13 @@ export async function skillDeclineCommand(
     // Their recorded copies removed, by id, whatever their copy in .rness
     // is now; nothing written, no other skill touched (ruling R40).
     const { places, failed } = await projectPlaces(ws, manifest, answered, {
-      decline: new Set(declined.map((a) => a.id)),
+      uninstall: new Set(declined.map((a) => a.id)),
     })
     const from = places.filter(([, p]) => p.removed.length > 0)
     say(
       ui,
       'line',
-      'declined',
+      'uninstalled',
       `${declined.map(label).join(', ')}${from.length === 0 ? '' : `   removed (${from.map(([l]) => l).join(', ')})`}`
     )
     return sayPlaces(ui, places, failed) ? 0 : 1

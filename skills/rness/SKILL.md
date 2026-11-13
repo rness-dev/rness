@@ -64,7 +64,8 @@ Node 22.17 or later and git are required.
    the team shares in `rness.json` and copies it into `.rness/skills/` for
    review; `rness skill install` installs, with each developer's consent,
    the ones they accept in their clones (never in their home directory);
-   `rness skill update`, `remove` and `list` complete it.
+   `rness skill uninstall` removes one from their clones, and `update`,
+   `remove` and `list` complete it.
 7. `rness upgrade` moves the version pinned in `.rness/package.json`;
    every `rness` in the workspace delegates to it.
 

@@ -348,15 +348,18 @@ function buildProgram(state: RunState): Command {
     })
 
   skill
-    .command('decline')
+    .command('uninstall')
     .description(
-      'Decline team skills, accepted or not: recorded, and their installed copies removed'
+      'Uninstall team skills from your clones: never proposed again until you install them'
     )
-    .argument('<names...>', 'the skills to decline, by name or <scope>/<name>')
+    .argument(
+      '<names...>',
+      'the skills to uninstall, by name or <scope>/<name>'
+    )
     .addOption(new Option('--cwd <dir>').hideHelp())
     .action(async (names: string[], opts: SkillOptions) => {
-      const { skillDeclineCommand } = await import('./commands/skill.ts')
-      state.code = await skillDeclineCommand(names, opts)
+      const { skillUninstallCommand } = await import('./commands/skill.ts')
+      state.code = await skillUninstallCommand(names, opts)
     })
 
   skill

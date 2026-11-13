@@ -211,7 +211,7 @@ interface Place {
   /** Set: write these names only, remove nothing (`ProjectOptions`). */
   only: ReadonlySet<string> | null
   /** Set: remove the recorded copies of these ids only, write nothing (`ProjectOptions`). */
-  decline: ReadonlySet<string> | null
+  uninstall: ReadonlySet<string> | null
 }
 
 /** How far one projection may go. */
@@ -226,9 +226,9 @@ export interface ProjectOptions {
   /**
    * Remove the recorded copies of these skill ids, whatever the state of
    * their copy in `.rness`, and nothing else: no copy written, no other
-   * entry touched (`decline`, rulings R36, R40).
+   * entry touched (`uninstall`, rulings R36, R40).
    */
-  decline?: ReadonlySet<string>
+  uninstall?: ReadonlySet<string>
 }
 
 /** `p` under `base`, absolute; throws unless `p` is a skill path and stays inside `base` (decision 7). */
@@ -557,9 +557,9 @@ async function project(place: Place): Promise<Projection> {
   const kept = new Set<string>()
   for (const [name, list] of byName) {
     const one = list.length === 1 ? list[0] : undefined
-    if (place.decline !== null) {
-      // A decline removes the copies of its ids and writes nothing (R40).
-      if (one === undefined || !place.decline.has(one.id)) kept.add(name)
+    if (place.uninstall !== null) {
+      // An uninstall removes the copies of its ids and writes nothing (R40).
+      if (one === undefined || !place.uninstall.has(one.id)) kept.add(name)
     } else if (one === undefined) {
       // Said once it matters: one of them accepted, or a copy here already.
       if (
@@ -580,7 +580,7 @@ async function project(place: Place): Promise<Projection> {
         kept.add(name)
         want.delete(name)
       }
-  if (place.decline !== null)
+  if (place.uninstall !== null)
     for (const name of Object.keys(onDisk.skills))
       if (!byName.has(name)) kept.add(name)
   const names = [...new Set([...Object.keys(onDisk.skills), ...want.keys()])]
@@ -591,7 +591,7 @@ async function project(place: Place): Promise<Projection> {
   // a deleted file).
   const adoptable = [...byName].flatMap(([name, list]) => {
     const a = list.length === 1 ? list[0] : undefined
-    return place.decline === null &&
+    return place.uninstall === null &&
       a !== undefined &&
       a.state === 'installed' &&
       isValid(a) &&
@@ -887,7 +887,7 @@ export async function projectClone(
     dirs: dirsOf(manifest, 'clone'),
     candidates: applied.filter((a) => applies.has(a.skill)),
     only: opts.only ?? null,
-    decline: opts.decline ?? null,
+    uninstall: opts.uninstall ?? null,
   })
 }
 
@@ -921,7 +921,7 @@ export async function projectRoot(
     dirs: dirsOf(manifest, 'root'),
     candidates: applied.filter((a) => a.skill.scope === null),
     only: opts.only ?? null,
-    decline: opts.decline ?? null,
+    uninstall: opts.uninstall ?? null,
   })
 }
 

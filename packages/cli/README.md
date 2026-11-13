@@ -35,7 +35,7 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness skill update [<name>...] [--ref <ref>] [--scope <scope>]
     rness skill remove <name> [--scope <scope>]
     rness skill install [<name>...] [-y]
-    rness skill decline <name>...
+    rness skill uninstall <name>...
     rness skill list
     rness validate
     rness mcp
@@ -527,7 +527,7 @@ organization. The team writes it as a directory of `.rness/skills/`
     rness skill update [<name>...] [--ref <ref>]
     rness skill remove <name>
     rness skill install [<name>...] [-y]
-    rness skill decline <name>...
+    rness skill uninstall <name>...
     rness skill list
 
 - **Declaring.** `add` fetches the source, checks the skill, copies it into
@@ -562,9 +562,9 @@ organization. The team writes it as a directory of `.rness/skills/`
   different tools; a bare `rness skill install` with nothing pending
   delivers them too. A declined skill is not proposed again, whatever its
   version; `rness skill install <name>` installs it later.
-  `rness skill decline <name>...` declines skills, accepted or not:
-  recorded, and their installed copies removed from every clone and the
-  root (`declined  deploy   removed (org/web, workspace root)`); a name two
+  `rness skill uninstall <name>...` uninstalls skills, accepted or not:
+  recorded as declined, and their installed copies removed from every clone
+  and the root (`uninstalled  deploy   removed (org/web, workspace root)`); a name two
   skills share is refused, naming their ids.
   `rness skill install` lists what is pending (name, source and version
   or "written by the team", the `allowed-tools` it asks for) and asks
@@ -1446,7 +1446,7 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 
 ## Unreleased
 
-- **Team skills**: `rness skill add | update | remove | install | list`. An
+- **Team skills**: `rness skill add | update | remove | install | uninstall | list`. An
   organization declares skills in `rness.json` (`skills`, at the top or in a
   scope) from `github:`, `git:` or `path:` sources; each is copied and frozen
   in `.rness/skills/` for review in a pull request, its fingerprint the
@@ -1454,15 +1454,15 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   committed in `.rness`, only with their consent, asked once per skill.
   See "Team skills".
 - Team skills: once accepted, a skill's new versions are installed by
-  `sync` without a new question, said `updated   <name> (<old> -> <new>)`;
-  `rness skill decline <name>...` declines and removes. After pulling a
-  `.rness` that declares skills, a teammate still on 0.25.x runs
-  `rness sync` once.
-- `sync` reinstalls the accepted skills and installs their new versions
-  (said `updated`), removes the ones no longer accepted or declared and
-  prints a line for the pending ones; it never installs a new one.
-  `AGENTS.md` and `CLAUDE.md` list the team skills of each scope.
-- Claude Code: the session start asks the developer about pending skills, and
+  `sync` without a new question, said `updated   <name> (<old> -> <new>)`.
+  `sync` reinstalls the accepted skills, removes the ones no longer
+  accepted or declared and prints a line for the pending ones; it never
+  installs a new one. `rness skill uninstall <name>...` removes skills from
+  your clones and never proposes them again until you install them. After
+  pulling a `.rness` that declares skills, a teammate still on 0.25.x runs
+  `rness sync` once. `AGENTS.md` and `CLAUDE.md` list the team skills of
+  each scope.
+- Claude Code: the session start asks the developer about skills never answered, and
   the guard refuses an edit of an installed copy or of a declared copy in
   `.rness/skills/`.
 - Skills are never written in the home directory.
