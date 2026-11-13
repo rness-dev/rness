@@ -10,7 +10,7 @@ import {
   copySkill,
   diffSkillFiles,
   fetchSkill,
-  skillConflicts,
+  skillConflictsByName,
   skillFileDigests,
   skillSourceUrl,
   teamSkills,
@@ -249,26 +249,33 @@ export async function skillAddCommand(
           dir,
           entry: { source, hash: '' },
         }
-        const clash = skillConflicts(ws.rnessDir, manifest, [
+        const clash = skillConflictsByName(ws.rnessDir, manifest, [
           ...current,
           prospective,
-        ]).filter((line) => line.startsWith(`skill "${name}" is `))
-        if (clash.length > 0) throw new Refusal(clash.join('\n'))
+        ]).filter((c) => c.name === name)
+        if (clash.length > 0)
+          throw new Refusal(clash.map((c) => c.line).join('\n'))
 
         const copied = await copySkill(ws.rnessDir, fetched, {
           scope,
           ...(opts.name === undefined ? {} : { name: opts.name }),
         })
         const files = (await skillFileDigests(copied.dir)).size
-        await writeManifest(
-          ws.rnessDir,
-          withEntry(
-            manifest,
-            scope,
-            copied.name,
-            entryOf(source, opts, fetched.commit, copied.hash)
+        try {
+          await writeManifest(
+            ws.rnessDir,
+            withEntry(
+              manifest,
+              scope,
+              copied.name,
+              entryOf(source, opts, fetched.commit, copied.hash)
+            )
           )
-        )
+        } catch (e) {
+          // An undeclared copy would read as a skill the team wrote.
+          await rm(copied.dir, { recursive: true, force: true })
+          throw e
+        }
         ui.line(
           'added',
           `skill ${copied.name} (${versionOf(source, opts.ref, fetched.commit)}, ${plural(files, 'file')}, ${kilobytes(copied.bytes)})`

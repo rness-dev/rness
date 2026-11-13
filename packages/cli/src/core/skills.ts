@@ -147,7 +147,20 @@ export function skillConflicts(
   manifest: Manifest,
   skills: readonly TeamSkill[]
 ): string[] {
-  const lines = new Set<string>()
+  return [
+    ...new Set(
+      skillConflictsByName(rnessDir, manifest, skills).map((c) => c.line)
+    ),
+  ]
+}
+
+/** `skillConflicts`, each line with the name it is about, for callers that decide by name. */
+export function skillConflictsByName(
+  rnessDir: string,
+  manifest: Manifest,
+  skills: readonly TeamSkill[]
+): { name: string; line: string }[] {
+  const found = new Map<string, { name: string; line: string }>()
   const place = (s: TeamSkill): string =>
     s.scope === null ? 'at the top' : `in scope "${s.scope}"`
   const written = (s: TeamSkill): string =>
@@ -171,10 +184,11 @@ export function skillConflicts(
           : a.entry === null
             ? `declared ${place(b)}`
             : place(b)
-      lines.add(`skill "${s.name}" is ${first} and ${second}`)
+      const line = `skill "${s.name}" is ${first} and ${second}`
+      found.set(line, { name: s.name, line })
     }
   }
-  return [...lines]
+  return [...found.values()]
 }
 
 // ---- A skill's content (spec 0041 §3, §4, §9) ----

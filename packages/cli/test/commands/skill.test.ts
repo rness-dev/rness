@@ -21,6 +21,11 @@ import {
   skillUpdateCommand,
 } from '../../src/commands/skill.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
+import {
+  skillConflicts,
+  skillConflictsByName,
+  teamSkills,
+} from '../../src/core/skills.ts'
 import { capture } from '../helpers/capture.ts'
 import { git } from '../helpers/git.ts'
 import { fakeProvider } from '../helpers/provider.ts'
@@ -535,4 +540,46 @@ test('the skill commands are registered and take the hidden --cwd', async (t) =>
     run(['skill', 'remove', 'mine', '--cwd', root])
   )
   assert.equal(removed.code, 0, removed.err)
+})
+
+test('add: a failed write of rness.json removes the copy, reports the error, exit 1', async (t) => {
+  const { url } = await fixtureRepo(t)
+  const root = await ws(t, { files: { 'skills/README.md': 'x' } })
+  const before = await readFile(join(root, '.rness/rness.json'), 'utf8')
+  // A read-only .rness: the copy goes into the writable skills/, the
+  // manifest (written through a temporary file beside it) cannot be.
+  await chmod(join(root, '.rness'), 0o555)
+  let r: Awaited<ReturnType<typeof say>>
+  try {
+    r = await say(() =>
+      skillAddCommand(
+        `git:${url}`,
+        { cwd: root, path: 'skills/demo', ref: 'v1' },
+        deps()
+      )
+    )
+  } finally {
+    await chmod(join(root, '.rness'), 0o755)
+  }
+  assert.equal(r.code, 1)
+  assert.match(r.err, /error|EACCES|permission/i)
+  assert.equal(await exists(join(root, '.rness/skills/demo')), false)
+  assert.equal(await readFile(join(root, '.rness/rness.json'), 'utf8'), before)
+})
+
+test('skillConflictsByName: names each conflict, and skillConflicts keeps its lines', async (t) => {
+  const hash = `sha256-${'A'.repeat(43)}=`
+  const root = await ws(t, {
+    skills: { demo: { source: 'github:o/r', hash } },
+    files: { 'skills/scopes/api/demo/SKILL.md': SKILL_MD('demo') },
+  })
+  const rnessDir = join(root, '.rness')
+  const manifest = await manifestOf(root)
+  const all = await teamSkills(rnessDir, manifest)
+  const line =
+    'skill "demo" is declared at the top and written by the team at skills/scopes/api/demo'
+  assert.deepEqual(skillConflictsByName(rnessDir, manifest, all), [
+    { name: 'demo', line },
+  ])
+  assert.deepEqual(skillConflicts(rnessDir, manifest, all), [line])
 })
