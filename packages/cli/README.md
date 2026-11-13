@@ -31,6 +31,11 @@ Inside a workspace, every `rness` delegates to the copy pinned in
     rness status [<tab>] [--json]
     rness board push [-y]
     rness note [--plan <path>] [--kind approach|deviation|blocker|done] [<text>]
+    rness skill add <github:owner/repo|git:url|path:dir> [--path <dir>] [--ref <ref>] [--name <name>] [--scope <scope>]
+    rness skill update [<name>...] [--ref <ref>] [--scope <scope>]
+    rness skill remove <name> [--scope <scope>]
+    rness skill install [<name>...] [-y]
+    rness skill list
     rness validate
     rness mcp
 
@@ -506,6 +511,122 @@ for hook in pre-commit commit-msg pre-push; do
   if grep -qs '^# rness: policy hook' "$file"; then rm "$file"; fi
 done
 ```
+
+### Team skills
+
+A team skill is a skill (a directory with a `SKILL.md`) that every clone of
+the organization gets, with each developer's consent, and never beyond the
+organization. The team writes it as a directory of `.rness/skills/`
+(`.rness/skills/scopes/<scope>/<name>/` for one scope), or declares it in
+`rness.json` and has rness copy it.
+
+    rness skill add github:obra/superpowers --path skills/brainstorming --ref v7.0.0
+    rness skill add git:git@github.com:acme/skills.git --path deploy
+    rness skill add path:../ops/skills/deploy --scope web
+    rness skill update [<name>...] [--ref <ref>]
+    rness skill remove <name>
+    rness skill install [<name>...] [-y]
+    rness skill list
+
+- **Declaring.** `add` fetches the source, checks the skill, copies it into
+  `.rness/skills/<name>/` (or `.rness/skills/scopes/<scope>/<name>/` with
+  `--scope`) and writes its entry under `skills` in `rness.json`, at the top
+  or in a scope: `source`, `path`, `ref`, the `commit` the ref resolved to
+  and the `hash` of the copy. `--name` installs it under another name (the
+  `name` of its `SKILL.md` is rewritten to match). `add` changes `.rness`
+  only and commits nothing.
+- **Sources.** `github:<owner>/<repo>`, `git:<url>` (SSH or HTTPS, private
+  repositories included, with your git credentials) or `path:<dir>` (a
+  directory on your machine, relative to `.rness/` or absolute; only a
+  machine that has it can update that skill). `--ref` is a tag, a branch or
+  a full 40-character commit (a short SHA is refused); without it, `HEAD`.
+- **A frozen copy, reviewed.** The copy in `.rness/skills/` is what the team
+  reviews in a pull request, like any change of `.rness`. Nothing is fetched
+  at install time. `update` fetches again (at a new `--ref` when given),
+  replaces the copy and says how many files were added, changed and
+  removed; a new copy is a new review and a new question. `remove`
+  undeclares the skill and deletes its copy; the next `sync` of each
+  developer removes the installed copies. `validate` reports a declared
+  copy that differs from its `hash`.
+- **Consent, per content hash.** A skill is pending for you until you have
+  accepted or declined its current hash; a new version, a hand edit or a
+  rewritten team skill makes it pending again, a declined one is not
+  proposed again until it changes. `rness skill install` lists what is
+  pending (name, source and version or "written by the team", the
+  `allowed-tools` it asks for) and asks `Install`, `Decline` or `Details`
+  (default `Decline`; `Details` lists each skill's files). With names it
+  asks about those only; `-y` accepts without the question. Your answers
+  are kept in `rness/skills.json` inside the git directory of `.rness`:
+  never committed, one record per workspace. `rness skill list` shows each
+  skill that applies and its state: installed, pending, declined or changed
+  since accepted. `allowed-tools` pre-approves tools for the turn that
+  invokes a skill and restricts nothing (verified 2026-11-13).
+- **Where they are installed.** Each accepted skill is copied into every
+  clone it applies to (a top-level skill: every clone; a scope's skill: the
+  clones of that scope and of the scopes that extend it; a part's skill: its
+  repository's clone root), as `.claude/skills/<name>/` when `agents`
+  declares `claude` and as `.agents/skills/<name>/`; the top-level skills
+  also at the workspace root's `.claude/skills/`. A copy keeps its files'
+  bytes and executable bits. In a clone, the paths are added to
+  `.git/info/exclude` between `# rness: team skills` and
+  `# rness: end of team skills`, and recorded with their hash in
+  `.git/rness/skills.json`, so `git status` shows nothing and a `git pull`
+  brings no skill. The workspace root is not a git repository: its record
+  is `rness/root-skills.json` in the git directory of `.rness`. A clone
+  where `.claude/skills/<name>` or `.agents/skills/<name>` is tracked by
+  git, or holds a directory rness did not write, is skipped, and `sync`
+  and `install` say so.
+- **Where never.** Not in your home directory (`~/.claude/skills`,
+  `~/.agents/skills`), not outside the workspace, and not in `.rness`
+  beyond the reviewed copy.
+- **`sync`.** `sync` (interactive or `-y`) installs again, at their accepted hash, the skills you accepted
+  (a new clone, a removed copy), removes what is no longer accepted or
+  declared, and prints one line when skills are pending:
+  `skills   2 team skills await your consent: rness skill install`. It
+  never installs a skill you have not accepted, and a pending skill never
+  fails `sync --check` or `validate`. The generated `AGENTS.md` and
+  `CLAUDE.md` blocks gain a `## Team skills` section: name and description
+  of each skill that applies to the scope. `skill add`, `update` and
+  `remove` refresh those blocks.
+- **In Claude Code.** The session start shows you the same line and gives
+  the agent the pending skills (name, source, `allowed-tools`) with the
+  instruction to ask you first and, on your yes, to run
+  `rness skill install <names> --yes`; never without asking. Claude Code
+  may need `/reload-skills` to see a new skills directory. The command is
+  not refused by the guard: the safeguard is the question and Claude
+  Code's own permission prompt.
+- **The guard.** With `claude` in `agents`, an `Edit` or `Write` is refused
+  in two places: under an installed copy in a clone
+  (`<path> is a team skill rness installs from .rness/skills/<name>; edit it
+there`), and under the copy in `.rness/skills/<name>/` of a declared skill
+  (`<name> is a copy of <source>@<ref>; run rness skill update, or remove
+its source in rness.json to make it the team's own`). Writes through
+  Bash are not seen.
+- **The checks of a skill**, at `add` and `update` and by `validate` on the
+  copies: a `SKILL.md` at the root with a `name` equal to the directory's
+  (lowercase letters, digits and hyphens, at most 64 characters) and a
+  `description`; regular files only (a symbolic link, a device or a path
+  leaving the directory is refused, naming it); no control character in a
+  file name, the `description` or `allowed-tools`; at most 1 MB of file
+  content; a name `rness` is refused (it collides with the plugin's
+  directory). A name declared twice in one clone, or both declared and
+  written by the team, is refused by `validate`.
+- **What reads them (2026-11-13).** Claude Code reads `.claude/skills/`
+  only, from the start directory up to the repository root, and loads a
+  nested `.claude/skills/` when a file of that subdirectory is read. Codex
+  reads `.agents/skills/` from the working directory up to the repository
+  root (vendor documentation, not run here). Cursor reads `.agents/skills/`,
+  `.cursor/skills/` and `.claude/skills/`: it may list a skill twice, since
+  rness writes both `.claude/skills/` and `.agents/skills/` (not verified:
+  the vendor does not document the same name in two directories). Claude
+  Code on the web, cloud agents, CI and a clone made without rness have
+  none. A personal `~/.claude/skills/<name>` wins over a project skill of
+  the same name: a team skill you also keep in your home directory is
+  shadowed by your copy.
+
+rness never runs a skill, and fetches nothing but at `add` and `update`.
+There are no automatic updates, no plugin or marketplace sources, and no
+Codex or Cursor configuration: only the directories above.
 
 ### Boards
 
@@ -1278,6 +1399,22 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## Unreleased
+
+- **Team skills**: `rness skill add | update | remove | install | list`. An
+  organization declares skills in `rness.json` (`skills`, at the top or in a
+  scope) from `github:`, `git:` or `path:` sources; each is copied and frozen
+  in `.rness/skills/` for review in a pull request, and installed in each
+  developer's clones only with their consent, per content hash. See "Team
+  skills".
+- `sync` reinstalls the accepted skills, removes the ones no longer accepted
+  or declared and prints a line for the pending ones; it never installs a new
+  one. `AGENTS.md` and `CLAUDE.md` list the team skills of each scope.
+- Claude Code: the session start asks the developer about pending skills, and
+  the guard refuses an edit of an installed copy or of a declared copy in
+  `.rness/skills/`.
+- Skills are never written in the home directory.
 
 ## 0.25.1 - an upgrade never merges against a hand-made merge commit
 

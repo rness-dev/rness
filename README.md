@@ -92,7 +92,8 @@ The full reference, every flag and the changelog of each release:
 Rness writes files, not prompts. Any agent that reads `AGENTS.md` gets the
 organization's rules: Claude Code, Codex, Cursor and GitHub Copilot are the
 ones verified to. Claude Code gets more, through its `.claude/` files: the
-hooks, the skills and the MCP server above.
+hooks, the skills and the MCP server above. Skills the team shares are
+declared in `rness.json` and installed with each developer's consent.
 
 ## Packages
 
