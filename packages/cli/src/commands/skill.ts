@@ -35,6 +35,7 @@ import {
   copySkill,
   diffSkillFiles,
   fetchSkill,
+  linkedLevelProblem,
   plainText,
   quoted,
   skillConflictsByName,
@@ -565,6 +566,10 @@ export async function skillRemoveCommand(
       (s) =>
         `skill ${quoted(name)} is written by the team: its directory ${plainText(copyPath(ws, s))} is the team's, delete it in a pull request`
     )
+    // Deleting through a link would delete outside `.rness`: refused before
+    // anything is written, as `copySkill` refuses to write through one.
+    const linked = await linkedLevelProblem(ws.rnessDir, scope)
+    if (linked !== null) throw new Refusal(`skill ${quoted(name)}: ${linked}`)
     const copy = skills.find((s) => s.name === name && s.scope === scope)
     const key = keyPath(manifest, scope, name)
     const without = withoutEntry(manifest, scope, name)

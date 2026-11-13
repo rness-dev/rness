@@ -7,6 +7,7 @@ import {
   realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -554,6 +555,32 @@ test('remove: in a scope; a team-written skill is refused', async (t) => {
   assert.equal(team.code, 1)
   assert.match(team.err, /written by the team.*delete it in a pull request/)
   assert.ok(await exists(join(root, '.rness/skills/release/SKILL.md')))
+})
+
+test('remove refuses a skill under a linked level: nothing deleted through it, rness.json unchanged', async (t) => {
+  const root = await ws(t, {
+    scopes: {
+      web: {
+        url: 'git@github.com:acme/web.git',
+        skills: { deploy: { source: 'path:/d', hash: HASH } },
+      },
+    },
+  })
+  const outside = await tmp(t)
+  await put(outside, { 'deploy/SKILL.md': SKILL_MD('deploy') })
+  await mkdir(join(root, '.rness/skills/scopes'), { recursive: true })
+  await symlink(outside, join(root, '.rness/skills/scopes/web'))
+  const before = await readFile(join(root, '.rness/rness.json'), 'utf8')
+  const r = await say(() =>
+    skillRemoveCommand('deploy', { cwd: root, scope: 'web' }, deps())
+  )
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /skill "deploy": skills\/scopes\/web is a symbolic link; only regular files and directories are allowed/
+  )
+  assert.equal(await exists(join(outside, 'deploy/SKILL.md')), true)
+  assert.equal(await readFile(join(root, '.rness/rness.json'), 'utf8'), before)
 })
 
 test('the skill commands are registered and take the hidden --cwd', async (t) => {

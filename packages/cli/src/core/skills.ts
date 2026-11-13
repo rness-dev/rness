@@ -617,6 +617,23 @@ async function linkedLevel(
   return null
 }
 
+/**
+ * Why nothing may be written or deleted at the level of `scope`
+ * (`skills/`, or `skills/scopes/<scope>/`): a symbolic link on the way,
+ * named; null when there is none.
+ */
+export async function linkedLevelProblem(
+  rnessDir: string,
+  scope: string | null
+): Promise<string | null> {
+  const base =
+    scope === null
+      ? join(rnessDir, 'skills')
+      : join(rnessDir, 'skills', 'scopes', scope)
+  const link = await linkedLevel(rnessDir, base)
+  return link === null ? null : linkRefusal(rnessDir, link)
+}
+
 /** What `copySkill` made. */
 export interface CopiedSkill {
   name: string
