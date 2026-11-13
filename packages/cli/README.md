@@ -651,6 +651,10 @@ its source in rness.json to make it the team's own`). Writes through
   start and `rness status` take none and check each `SKILL.md` alone, read
   only when it is a regular file of at most 1 MB in a directory that is no
   link.
+- **Teammates on 0.25.x.** 0.25.x refuses a `rness.json` that has `skills`
+  (`rness.json: unknown key "skills"`) and its hooks never catch up a moved
+  pin: a teammate who pulls a `.rness` that declares skills runs
+  `rness sync` once, which installs the pinned CLI.
 - **What reads them (2026-11-13).** Claude Code reads `.claude/skills/`
   only, from the start directory up to the repository root, and loads a
   nested `.claude/skills/` when a file of that subdirectory is read. Codex
@@ -1449,6 +1453,11 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
   tree git gives the copy, and installed in each developer's clones, as
   committed in `.rness`, only with their consent, asked once per skill.
   See "Team skills".
+- Team skills: once accepted, a skill's new versions are installed by
+  `sync` without a new question, said `updated   <name> (<old> -> <new>)`;
+  `rness skill decline <name>...` declines and removes. After pulling a
+  `.rness` that declares skills, a teammate still on 0.25.x runs
+  `rness sync` once.
 - `sync` reinstalls the accepted skills and installs their new versions
   (said `updated`), removes the ones no longer accepted or declared and
   prints a line for the pending ones; it never installs a new one.
