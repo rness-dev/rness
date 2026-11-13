@@ -32,14 +32,13 @@ import {
   readConsent,
 } from '../../src/core/skill-consent.ts'
 import {
-  hashSkillDir,
   skillConflicts,
   skillConflictsByName,
   teamSkills,
 } from '../../src/core/skills.ts'
 import { findWorkspace } from '../../src/core/workspace.ts'
 import { capture } from '../helpers/capture.ts'
-import { git } from '../helpers/git.ts'
+import { commitRness, git } from '../helpers/git.ts'
 import { fakeProvider } from '../helpers/provider.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
@@ -148,7 +147,7 @@ test('add: a git source at a tag with --path, the three lines, the entry, nothin
   )
   assert.match(
     lines[2] ?? '',
-    /^declared +\.rness\/rness\.json {2}skills\.demo$/
+    /^declared +\.rness\/rness\.json {2}skills\.demo \(tree [0-9a-f]{7}\)$/
   )
   assert.equal(
     await readFile(join(root, '.rness/skills/demo/edit.md'), 'utf8'),
@@ -159,7 +158,8 @@ test('add: a git source at a tag with --path, the three lines, the entry, nothin
   assert.equal(entry?.path, 'skills/demo')
   assert.equal(entry?.ref, 'v1')
   assert.match(entry?.commit ?? '', /^[0-9a-f]{40}$/)
-  assert.match(entry?.hash ?? '', /^sha256-/)
+  assert.match(entry?.tree ?? '', /^[0-9a-f]{40}$/)
+  assert.ok(lines[2]?.endsWith(`(tree ${entry?.tree.slice(0, 7)})`))
   assert.equal(await exists(join(root, '.rness/.git')), false)
 })
 
@@ -192,7 +192,7 @@ test('add: a path: source, no version in the line, no commit or ref in the entry
   assert.equal(entry?.ref, undefined)
 })
 
-test('add: a file git ignores in .rness is dropped from the copy, with one line naming it', async (t) => {
+test('add: a file git ignores in .rness is no part of the tree, as committed; update takes the same tree', async (t) => {
   const was = process.env['GIT_CONFIG_GLOBAL']
   process.env['GIT_CONFIG_GLOBAL'] = '/dev/null'
   t.after(() => {
@@ -212,23 +212,17 @@ test('add: a file git ignores in .rness is dropped from the copy, with one line 
     skillAddCommand(`path:${join(src, 'mine')}`, { cwd: root }, deps())
   )
   assert.equal(r.code, 0, r.err)
-  assert.match(
-    r.out,
-    /^dropped +node_modules\/, notes\.log {3}\(git ignores them in \.rness\)$/m
-  )
+  assert.doesNotMatch(r.out, /dropped/)
   assert.match(r.out, /skill mine \(path:.*mine, 1 file, 1 KB\)/)
-  const copy = join(root, '.rness/skills/mine')
-  assert.equal(await exists(join(copy, 'node_modules')), false)
-  assert.equal(await exists(join(copy, 'notes.log')), false)
+  await commitRness(root, 'mine')
   assert.equal(
-    (await manifestOf(root)).skills?.['mine']?.hash,
-    await hashSkillDir(copy)
+    (await manifestOf(root)).skills?.['mine']?.tree,
+    (await git(['rev-parse', 'HEAD:skills/mine'], join(root, '.rness'))).trim()
   )
-  // update makes the same copy, and says the same.
+  // update makes the same copy, and says so.
   const u = await say(() => skillUpdateCommand(['mine'], { cwd: root }, deps()))
   assert.equal(u.code, 0, u.err)
   assert.match(u.out, /^unchanged +skill mine/m)
-  assert.match(u.out, /^dropped +node_modules\/, notes\.log /m)
 })
 
 test('add: --name renames the copy and the declaration', async (t) => {
@@ -264,7 +258,7 @@ test('add: --scope for a repository and for a part, with the key paths', async (
   assert.match(web.out, /wrote +\.rness\/skills\/scopes\/web\/demo\//)
   assert.match(
     web.out,
-    /declared +\.rness\/rness\.json {2}scopes\.web\.skills\.demo\n/
+    /declared +\.rness\/rness\.json {2}scopes\.web\.skills\.demo \(tree [0-9a-f]{7}\)\n/
   )
   const part = await say(() =>
     skillAddCommand(`git:${url}`, { cwd: root, scope: 'ui', ref: 'v1' }, deps())
@@ -272,7 +266,7 @@ test('add: --scope for a repository and for a part, with the key paths', async (
   assert.equal(part.code, 0, part.err)
   assert.match(
     part.out,
-    /declared +\.rness\/rness\.json {2}scopes\.web\.scopes\.ui\.skills\.rootskill\n/
+    /declared +\.rness\/rness\.json {2}scopes\.web\.scopes\.ui\.skills\.rootskill \(tree [0-9a-f]{7}\)\n/
   )
   const m = await manifestOf(root)
   assert.ok(m.scopes['web']?.skills?.['demo'])
@@ -348,13 +342,13 @@ test('add refuses: a path: source with --path or --ref', async (t) => {
 
 test('add refuses: a name already declared at that level, a directory the team wrote, a clash in one clone; writes nothing', async (t) => {
   const { url } = await fixtureRepo(t)
-  const hash = `sha256-${'A'.repeat(43)}=`
+  const tree = 'f'.repeat(40)
   const root = await ws(t, {
-    skills: { demo: { source: 'github:o/r', hash } },
+    skills: { demo: { source: 'github:o/r', tree } },
     scopes: {
       web: {
         url: 'git@github.com:acme/web.git',
-        skills: { rootskill: { source: 'github:o/r', hash } },
+        skills: { rootskill: { source: 'github:o/r', tree } },
         scopes: { ui: { path: 'packages/ui' } },
       },
       api: { url: 'git@github.com:acme/api.git' },
@@ -411,7 +405,7 @@ async function withDemo(t: TestContext, spec: Parameters<typeof ws>[1] = {}) {
   return { ...fx, root }
 }
 
-test('update --ref: counts, and ref, commit and hash rewritten', async (t) => {
+test('update --ref: counts, and ref, commit and tree rewritten', async (t) => {
   const { root, url } = await withDemo(t)
   const old = (await manifestOf(root)).skills?.['demo']
   const r = await say(() =>
@@ -427,7 +421,7 @@ test('update --ref: counts, and ref, commit and hash rewritten', async (t) => {
   const entry = (await manifestOf(root)).skills?.['demo']
   assert.equal(entry?.ref, 'v2')
   assert.notEqual(entry?.commit, old?.commit)
-  assert.notEqual(entry?.hash, old?.hash)
+  assert.notEqual(entry?.tree, old?.tree)
   assert.equal(await exists(join(root, '.rness/skills/demo/gone.md')), false)
   assert.equal(
     await readFile(join(root, '.rness/skills/demo/edit.md'), 'utf8'),
@@ -602,7 +596,7 @@ test('remove refuses a skill under a linked level: nothing deleted through it, r
     scopes: {
       web: {
         url: 'git@github.com:acme/web.git',
-        skills: { deploy: { source: 'path:/d', hash: HASH } },
+        skills: { deploy: { source: 'path:/d', tree: TREE } },
       },
     },
   })
@@ -664,9 +658,8 @@ test('add: a failed write of rness.json removes the copy, reports the error, exi
 })
 
 test('skillConflictsByName: names each conflict, and skillConflicts keeps its lines', async (t) => {
-  const hash = `sha256-${'A'.repeat(43)}=`
   const root = await ws(t, {
-    skills: { demo: { source: 'github:o/r', hash } },
+    skills: { demo: { source: 'github:o/r', tree: TREE } },
     files: { 'skills/scopes/api/demo/SKILL.md': SKILL_MD('demo') },
   })
   const rnessDir = join(root, '.rness')
@@ -680,8 +673,8 @@ test('skillConflictsByName: names each conflict, and skillConflicts keeps its li
   assert.deepEqual(skillConflicts(rnessDir, manifest, all), [line])
 })
 
-/** A well-formed declared hash: consent reads the copy, never this. */
-const HASH = 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+/** A well-formed declared tree: consent reads the commit, never this. */
+const TREE = 'f'.repeat(40)
 
 // ---- consent: rness skill install and list (spec 0041 §5) ----
 
@@ -717,7 +710,7 @@ function consentTerminal(answers: (string | symbol)[], tty = true) {
 
 const TODAY = '2026-11-13'
 
-/** A workspace whose `.rness` is a git repository (the record lives in its git directory), one clone `org/web`. */
+/** A workspace whose `.rness` is a git repository (the record lives in its git directory), committed (a skill installs from its HEAD), one clone `org/web`. */
 async function consentWs(
   t: TestContext,
   spec: Parameters<typeof makeWorkspace>[1] = {}
@@ -729,6 +722,7 @@ async function consentWs(
     ...spec,
   })
   await git(['init', '-q', '-b', 'main'], join(root, '.rness'))
+  await commitRness(root)
   return root
 }
 
@@ -737,14 +731,14 @@ const recordOf = async (root: string) =>
     await readFile(join(root, '.rness/.git/rness/skills.json'), 'utf8')
   ) as {
     version: number
-    skills: Record<string, { hash: string; answer: string; date: string }>
+    skills: Record<string, { answer: string; date: string; tree?: string }>
   }
 
 const DECLARED = {
   brainstorming: {
     source: 'github:obra/superpowers',
     ref: 'v7.0.0',
-    hash: HASH,
+    tree: TREE,
   },
 }
 
@@ -775,7 +769,7 @@ const install = (
     )
   )
 
-test('install: lists the pending skills, y records accepted with hash and date', async (t) => {
+test('install: lists the pending skills, y records accepted with its date and the tree accepted', async (t) => {
   const root = await consentWs(t, twoSkills)
   const term = consentTerminal(['install'])
   const r = await install(root, [], term)
@@ -800,7 +794,12 @@ test('install: lists the pending skills, y records accepted with hash and date',
   assert.deepEqual(Object.keys(rec.skills).sort(), ['brainstorming', 'release'])
   assert.equal(rec.skills['release']?.answer, 'accepted')
   assert.equal(rec.skills['release']?.date, TODAY)
-  assert.match(rec.skills['release']?.hash ?? '', /^sha256-/)
+  assert.equal(
+    rec.skills['release']?.tree,
+    (
+      await git(['rev-parse', 'HEAD:skills/release'], join(root, '.rness'))
+    ).trim()
+  )
   // never committed: nothing in the worktree
   assert.equal(await exists(join(root, '.rness/skills.json')), false)
 })
@@ -821,20 +820,21 @@ test('install: N declines, the record says declined, a bare install does not pro
   assert.equal(again.asked.length, 0)
 })
 
-test('install: a copy edited, or a team skill rewritten, is pending again; a declined one too', async (t) => {
+test('install: a new version committed is asked about no more, accepted or declined (decision 9)', async (t) => {
   const root = await consentWs(t, twoSkills)
-  await install(root, [], consentTerminal(['install']))
+  await install(root, ['release'], consentTerminal(['install']))
+  await install(root, ['brainstorming'], consentTerminal(['decline']))
   await writeFile(join(root, '.rness/skills/release/more.md'), 'new')
   await writeFile(join(root, '.rness/skills/brainstorming/notes.md'), 'edited')
-  const term = consentTerminal(['decline'])
+  await commitRness(root, 'new versions')
+  const term = consentTerminal([])
   const r = await install(root, [], term)
-  assert.match(r.out, /^skills +2 team skills for acme:$/m)
-  // declined at this hash, edited again: pending once more
-  await writeFile(join(root, '.rness/skills/release/more.md'), 'newer')
-  const again = consentTerminal(['install'])
-  const r2 = await install(root, [], again)
-  assert.match(r2.out, /^skills +1 team skill for acme:$/m)
-  assert.match(r2.out, /^accepted +release$/m)
+  assert.equal(r.code, 0, r.err)
+  assert.equal(term.asked.length, 0)
+  assert.match(r.out, /^skills +no team skill awaits your consent$/m)
+  const rec = await recordOf(root)
+  assert.equal(rec.skills['release']?.answer, 'accepted')
+  assert.equal(rec.skills['brainstorming']?.answer, 'declined')
 })
 
 test('install: a ref moved with the same content is not pending', async (t) => {
@@ -926,7 +926,7 @@ test('install: a skill of a repository whose clone is absent does not apply', as
       web: { url: 'git@github.com:acme/web.git' },
       api: {
         url: 'git@github.com:acme/api.git',
-        skills: { deploy: { source: 'path:/x', hash: HASH } },
+        skills: { deploy: { source: 'path:/x', tree: TREE } },
       },
     },
     files: { 'skills/scopes/api/deploy/SKILL.md': SKILL_MD('deploy') },
@@ -940,11 +940,11 @@ test('install: two sibling repositories each with their own deploy keep two reco
     scopes: {
       web: {
         url: 'git@github.com:acme/web.git',
-        skills: { deploy: { source: 'path:/w', hash: HASH } },
+        skills: { deploy: { source: 'path:/w', tree: TREE } },
       },
       api: {
         url: 'git@github.com:acme/api.git',
-        skills: { deploy: { source: 'path:/a', hash: HASH } },
+        skills: { deploy: { source: 'path:/a', tree: TREE } },
       },
     },
     dirs: ['org/web', 'org/api'],
@@ -958,8 +958,8 @@ test('install: two sibling repositories each with their own deploy keep two reco
   const rec = await recordOf(root)
   assert.deepEqual(Object.keys(rec.skills).sort(), ['api/deploy', 'web/deploy'])
   assert.notEqual(
-    rec.skills['api/deploy']?.hash,
-    rec.skills['web/deploy']?.hash
+    rec.skills['api/deploy']?.tree,
+    rec.skills['web/deploy']?.tree
   )
 })
 
@@ -968,11 +968,11 @@ const twoDeploys = {
   scopes: {
     web: {
       url: 'git@github.com:acme/web.git',
-      skills: { deploy: { source: 'path:/w', hash: HASH } },
+      skills: { deploy: { source: 'path:/w', tree: TREE } },
     },
     api: {
       url: 'git@github.com:acme/api.git',
-      skills: { deploy: { source: 'path:/a', hash: HASH } },
+      skills: { deploy: { source: 'path:/a', tree: TREE } },
     },
   },
   dirs: ['org/web', 'org/api'],
@@ -990,8 +990,6 @@ test('install: a name two skills share is refused under --yes, naming their ids;
     d.out,
     /^declined +web\/deploy, api\/deploy {3}\(rness skill install <scope>\/<name> installs one later\)$/m
   )
-  // web/deploy changes: it alone is pending again.
-  await writeFile(join(root, '.rness/skills/scopes/web/deploy/extra.md'), 'new')
   const before = await recordOf(root)
   const bare = await install(root, ['deploy'], consentTerminal([], false), {
     yes: true,
@@ -1067,7 +1065,7 @@ test('install: a malformed entry of the record is dropped, said once; the other 
   assert.equal(a.code, 0, a.err)
   const file = join(root, '.rness/.git/rness/skills.json')
   const record = JSON.parse(await readFile(file, 'utf8'))
-  record.skills['lint'] = { hash: 'x', answer: 'maybe', date: TODAY }
+  record.skills['lint'] = { answer: 'maybe', date: TODAY }
   record.skills['bad'] = 'nope'
   await writeFile(file, JSON.stringify(record))
   const b = await install(root, ['brainstorming'], consentTerminal([], false), {
@@ -1099,7 +1097,7 @@ test('list: one line per skill with where it applies and its state', async (t) =
     scopes: {
       web: {
         url: 'git@github.com:acme/web.git',
-        skills: { deploy: { source: 'path:/w', hash: HASH } },
+        skills: { deploy: { source: 'path:/w', tree: TREE } },
       },
     },
     skills: DECLARED,
@@ -1113,7 +1111,13 @@ test('list: one line per skill with where it applies and its state', async (t) =
   await install(root, ['brainstorming'], consentTerminal(['install']))
   await install(root, ['release'], consentTerminal(['decline']))
   await install(root, ['lint'], consentTerminal(['install']))
+  // A new version of lint, committed: still installed, no new answer.
   await writeFile(join(root, '.rness/skills/lint/extra.md'), 'changed')
+  await commitRness(root, 'lint v2')
+  // A skill not committed yet cannot be installed.
+  await put(join(root, '.rness/skills/fresh'), {
+    'SKILL.md': SKILL_MD('fresh'),
+  })
   const c = consentTerminal([])
   const r = await say(() =>
     skillListCommand({ cwd: root }, { terminal: c.terminal })
@@ -1124,9 +1128,10 @@ test('list: one line per skill with where it applies and its state', async (t) =
     /^brainstorming +all +github:obra\/superpowers@v7\.0\.0 +installed$/m
   )
   assert.match(r.out, /^release +all +written by the team +declined$/m)
+  assert.match(r.out, /^lint +all +written by the team +installed$/m)
   assert.match(
     r.out,
-    /^lint +all +written by the team +changed since accepted$/m
+    /^fresh +all +written by the team +invalid: commit \.rness first$/m
   )
   assert.match(r.out, /^deploy +web +path:\/w +pending$/m)
 })
@@ -1159,9 +1164,9 @@ test('install and list are in the skill group of the command line', async (t) =>
 /** Three declared skills: `good`, `gone` (copy deleted) and `broken` (SKILL.md without a description). */
 const threeSkills = {
   skills: {
-    good: { source: 'path:/g', hash: HASH },
-    gone: { source: 'path:/x', hash: HASH },
-    broken: { source: 'path:/b', hash: HASH },
+    good: { source: 'path:/g', tree: TREE },
+    gone: { source: 'path:/x', tree: TREE },
+    broken: { source: 'path:/b', tree: TREE },
   },
   files: {
     'skills/good/SKILL.md': SKILL_MD('good'),
@@ -1193,7 +1198,7 @@ test('invalid copies: list shows all three, install --yes accepts the valid one 
     await readConsent(wsp.rnessDir)
   )
   assert.equal(pendingCount(applied), 1)
-  assert.equal(applied.find((a) => a.skill.name === 'gone')?.hash, null)
+  assert.equal(applied.find((a) => a.skill.name === 'gone')?.head, null)
   const r = await install(root, [], consentTerminal([], false), { yes: true })
   assert.equal(r.code, 0, r.err)
   assert.match(
@@ -1221,8 +1226,8 @@ test('invalid copies: a named invalid skill alone exits 1, recording nothing', a
 test('install shows allowed-tools as JSON when it is not a string or a list, none when absent', async (t) => {
   const root = await consentWs(t, {
     skills: {
-      a: { source: 'path:/a', hash: HASH },
-      b: { source: 'path:/b', hash: HASH },
+      a: { source: 'path:/a', tree: TREE },
+      b: { source: 'path:/b', tree: TREE },
     },
     files: {
       'skills/a/SKILL.md': SKILL_MD('a', 'allowed-tools:\n  Bash: 1\n'),
@@ -1236,7 +1241,7 @@ test('install shows allowed-tools as JSON when it is not a string or a list, non
 
 test('install: values from a copy made before the check are sanitized on display', async (t) => {
   const root = await consentWs(t, {
-    skills: { a: { source: 'path:/a', hash: HASH } },
+    skills: { a: { source: 'path:/a', tree: TREE } },
     files: {
       'skills/a/SKILL.md': SKILL_MD('a'),
     },
@@ -1247,6 +1252,7 @@ test('install: values from a copy made before the check are sanitized on display
     '---\nname: a\ndescription: "x"\n---\nBody\n'
   )
   await writeFile(join(root, '.rness/skills/a/bad\u001b[2Kname.md'), 'x')
+  await commitRness(root, 'a, as copied before the check')
   const r = await install(root, [], consentTerminal(['details', 'decline']))
   assert.equal(r.code, 0, r.err)
   assert.equal(r.out.includes('\u001b'), false)
@@ -1254,7 +1260,7 @@ test('install: values from a copy made before the check are sanitized on display
 
 // ---- install: the answers made true in the clones (spec 0041 §6) ----
 
-test('install: a skill accepted is installed in the clones and at the root; its new version declined, it is removed', async (t) => {
+test('install: a skill accepted is installed in the clones and at the root; its new version, committed, is written by install <name> and said', async (t) => {
   const root = await consentWs(t, { ...twoSkills, agents: ['claude'] })
   await git(['init', '-q', '-b', 'main'], join(root, 'org/web'))
   const r = await install(root, [], consentTerminal(['install']))
@@ -1272,20 +1278,27 @@ test('install: a skill accepted is installed in the clones and at the root; its 
 
   await writeFile(
     join(root, '.rness/skills/release/SKILL.md'),
-    SKILL_MD('release', 'v: 2\n')
+    SKILL_MD('release', 'allowed-tools: Bash\n')
   )
-  const d = await install(root, [], consentTerminal(['decline']))
-  assert.equal(d.code, 0, d.err)
-  assert.match(d.out, /^removed +release {3}\(org\/web, workspace root\)$/m)
-  assert.equal(
-    await exists(join(root, 'org/web/.claude/skills/release')),
-    false
+  await commitRness(root, 'release v2')
+  const term = consentTerminal([])
+  const u = await install(root, ['release'], term)
+  assert.equal(u.code, 0, u.err)
+  assert.equal(term.asked.length, 0)
+  assert.match(
+    u.out,
+    /^updated +release \([0-9a-f]{7} -> [0-9a-f]{7}\), allowed-tools: none -> Bash$/m
   )
-  assert.equal(await exists(join(root, '.claude/skills/release')), false)
-  assert.equal(
-    await exists(join(root, 'org/web/.claude/skills/brainstorming')),
-    true
-  )
+  assert.doesNotMatch(u.out, /already installed/)
+  for (const p of [
+    'org/web/.claude/skills/release/SKILL.md',
+    '.claude/skills/release/SKILL.md',
+  ])
+    assert.equal(
+      await readFile(join(root, p), 'utf8'),
+      SKILL_MD('release', 'allowed-tools: Bash\n'),
+      p
+    )
 })
 
 test('install: after an unreadable record, only the skills just answered are written and nothing is removed', async (t) => {

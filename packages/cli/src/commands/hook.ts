@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
@@ -24,7 +24,6 @@ import {
   skillHome,
   writeRefusal,
 } from '../core/edit-guard.ts'
-import { parseFrontMatter } from '../core/frontmatter.ts'
 import { readOrNull } from '../core/fs.ts'
 import {
   type GitBypass,
@@ -63,6 +62,7 @@ import { safetyNet } from '../core/safety-net.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
 import {
   isPending,
+  isValid,
   originOf,
   skillLabel,
   versionOf,
@@ -237,12 +237,6 @@ async function journalStart(
   return []
 }
 
-/** The `allowed-tools` a skill's SKILL.md asks for, as plain text; `none` when it asks for none. */
-async function allowedTools(dir: string): Promise<string> {
-  const fields = parseFrontMatter(await readFile(join(dir, 'SKILL.md'), 'utf8'))
-  return plainText(allowedToolsText(fields?.['allowed-tools']) ?? 'none')
-}
-
 /**
  * The team skills awaiting this developer's answer (spec 0041 §5): the line
  * `sync` prints, for the developer, and for the model the list (name, where it
@@ -257,17 +251,17 @@ async function pendingSkills(
   warn: (text: string) => void
 ): Promise<{ line: string; context: string[] } | null> {
   const { applied } = await skillsOfRun(ws, manifest, warn)
-  const pending = applied.filter((a) => isPending(a.state))
+  const pending = applied.filter(isValid).filter((a) => isPending(a.state))
   if (pending.length === 0) return null
   const [verb, rest] = pendingLine(pending.length, env)
   // A name two applied skills share is said by its id, the form `install`
   // takes for that one alone (ruling R27).
   const label = skillLabel(applied)
-  const items: string[] = []
-  for (const a of pending)
-    items.push(
-      `- ${plainText(label(a))}: ${plainText(originOf(a.skill))}${a.state === 'changed' ? ' (changed since accepted)' : ''}, allowed-tools: ${await allowedTools(a.skill.dir)}`
-    )
+  // What it asks for is that of the copy installed: the one committed.
+  const items = pending.map(
+    (a) =>
+      `- ${plainText(label(a))}: ${plainText(originOf(a.skill))}, allowed-tools: ${plainText(allowedToolsText(a.head.fields['allowed-tools']) ?? 'none')}`
+  )
   const names = pending.map((a) => plainText(label(a))).join(' ')
   return {
     line: `${verb.padEnd(COLUMN)} ${rest}`,

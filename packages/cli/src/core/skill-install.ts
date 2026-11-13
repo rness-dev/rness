@@ -3,7 +3,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
-  readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -12,28 +12,44 @@ import {
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 
+import { parseFrontMatter } from './frontmatter.ts'
 import { readOrNull, writeFileAtomic } from './fs.ts'
-import { gitPath, trackedPaths } from './git.ts'
+import {
+  type ObjectStore,
+  blobIds,
+  gitPath,
+  objectStore,
+  readObjects,
+  trackedPaths,
+} from './git.ts'
 import { providerOf, repositories } from './manifest.ts'
 import { rnessCommand } from './pm.ts'
 import {
   type AppliedSkill,
+  COMMIT_FIRST,
   appliedSkills,
   droppedLine,
   isValid,
   readConsent,
 } from './skill-consent.ts'
-import { checkSkillDir, hashSkillDir, skillsForClone } from './skills.ts'
+import {
+  type SkillFile,
+  type SkillTree,
+  allowedToolsText,
+  plainText,
+  skillsForClone,
+} from './skills.ts'
 import { count } from './style.ts'
 import type { Manifest, Workspace } from './types.ts'
 import type { Line } from './ui.ts'
 import { orgDirs } from './workspace.ts'
 
 // The projection of the team skills a developer accepted (spec 0041 §6):
-// copies written into the clones of the workspace and at its root, excluded
-// from git, recorded, and removed when no longer accepted or declared. rness
-// only ever removes or rewrites a path its record names, never through a
-// symbolic link, never outside the clone or the root (decision 7).
+// copies written into the clones of the workspace and at its root from the
+// commit at `HEAD` of `.rness` (decision 8), excluded from git, recorded,
+// and removed when no longer accepted or declared. rness only ever removes
+// or rewrites a path its record names, never through a symbolic link, never
+// outside the clone or the root (decision 7).
 
 /** The line `.git/info/exclude` keeps rness's lines under (ruling R7), up to `EXCLUDE_END`. */
 export const EXCLUDE_HEADER =
@@ -42,9 +58,10 @@ export const EXCLUDE_HEADER =
 /** The line that closes rness's block of `.git/info/exclude`: what follows is the developer's. */
 export const EXCLUDE_END = '# rness: end of team skills'
 
-/** What a clone's record holds for one skill: the hash it was written at, the paths written. */
+/** What a clone's record holds for one skill: the tree it was written from, the paths written. */
 export interface InstalledEntry {
-  hash: string
+  /** The id of the skill's tree at `HEAD` of `.rness` when it was written. */
+  tree: string
   /** Relative to the clone (or the root): `.claude/skills/<name>`, `.agents/skills/<name>`. */
   paths: string[]
 }
@@ -62,7 +79,7 @@ export type InstalledKind = 'clone' | 'root'
 const NAME = '[a-z0-9]+(?:-[a-z0-9]+)*'
 const CLONE_PATH = new RegExp(`^\\.(?:claude|agents)/skills/${NAME}$`)
 const ROOT_PATH = new RegExp(`^\\.claude/skills/${NAME}$`)
-const HASH = /^sha256-[A-Za-z0-9+/]{43}=$/
+const TREE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
 const EXCLUDE_LINE = /^\/\.(?:claude|agents)\/skills\/[^/]+\/$/
 
 /** The record of the clone `clone`; null when it is no git repository. */
@@ -112,17 +129,17 @@ export async function readInstalled(
   const record = emptyRecord()
   for (const [name, entry] of Object.entries(skills)) {
     if (typeof entry !== 'object' || entry === null) return null
-    const { hash, paths } = entry as { hash?: unknown; paths?: unknown }
+    const { tree, paths } = entry as { tree?: unknown; paths?: unknown }
     if (
-      typeof hash !== 'string' ||
-      !HASH.test(hash) ||
+      typeof tree !== 'string' ||
+      !TREE.test(tree) ||
       !Array.isArray(paths) ||
       paths.length === 0 ||
       new Set(paths).size !== paths.length ||
       !paths.every((p) => typeof p === 'string' && isSkillPath(kind, name, p))
     )
       return null
-    record.skills[name] = { hash, paths: paths as string[] }
+    record.skills[name] = { tree, paths: paths as string[] }
   }
   return record
 }
@@ -136,11 +153,23 @@ export async function writeInstalled(
   await writeFileAtomic(file, `${JSON.stringify(record, null, 2)}\n`)
 }
 
+/** A new version of an accepted skill, written over the one installed (spec 0041 §5). */
+export interface SkillUpdate {
+  name: string
+  /** The trees, before and after. */
+  from: string
+  to: string
+  /** The `allowed-tools` of the two, as plain text, when they differ; null when they do not or the old one cannot be read. */
+  tools: [string, string] | null
+}
+
 /** What one place (a clone or the root) became. Names sorted. */
 export interface Projection {
   /** Written where they were not. */
   installed: string[]
-  /** Written again over a copy rness wrote: edited there, or accepted at a new hash. */
+  /** Written over the copy of an earlier version. */
+  updated: SkillUpdate[]
+  /** Written again over a copy rness wrote whose files no longer match git's. */
   rewritten: string[]
   /** At least one path removed. */
   removed: string[]
@@ -152,6 +181,7 @@ export interface Projection {
 
 const nothing = (): Projection => ({
   installed: [],
+  updated: [],
   rewritten: [],
   removed: [],
   notes: [],
@@ -161,6 +191,8 @@ const nothing = (): Projection => ({
 interface Place {
   kind: InstalledKind
   base: string
+  /** The objects of `.rness`: what is written comes from them. */
+  store: ObjectStore
   label: string
   /** The git directory's `rness/`: the record's directory, and where copies are staged. */
   gitDir: string
@@ -275,15 +307,34 @@ async function writeFiles(files: readonly SkillBytes[], to: string) {
 }
 
 /**
+ * The files of the skill `head` from git's objects in `.rness` (decision
+ * 8): each blob's bytes as committed, with no checkout filter, so a clone
+ * of `.rness` converting line ends never changes what is installed.
+ */
+async function committedFiles(
+  store: ObjectStore,
+  head: SkillTree
+): Promise<SkillBytes[]> {
+  const blobs = await readObjects(
+    store,
+    head.files.map((f) => f.id)
+  )
+  return head.files.map((f) => {
+    const bytes = blobs.get(f.id)
+    if (bytes === null || bytes === undefined)
+      throw new Error(`${f.path}: blob ${f.id} is not in .rness`)
+    return { path: f.path, executable: f.executable, bytes }
+  })
+}
+
+/**
  * Put the copy `files` of skill `name` at `abs`: staged in the git
- * directory, checked against `hash` (only accepted bytes are installed),
- * then moved in place of what rness wrote there before.
+ * directory, then moved in place of what rness wrote there before.
  */
 async function placeCopy(
   place: Place,
   name: string,
   files: readonly SkillBytes[],
-  hash: string,
   abs: string
 ): Promise<void> {
   await mkdir(place.gitDir, { recursive: true })
@@ -291,10 +342,6 @@ async function placeCopy(
   try {
     const staged = join(tmp, name)
     await writeFiles(files, staged)
-    if ((await hashSkillDir(staged)) !== hash)
-      throw new Error(
-        `team skill ${name} changed in .rness while it was installed; run ${rnessCommand()} sync again`
-      )
     await mkdir(dirname(abs), { recursive: true })
     await rm(abs, { recursive: true, force: true })
     try {
@@ -306,6 +353,89 @@ async function placeCopy(
     }
   } finally {
     await rm(tmp, { recursive: true, force: true })
+  }
+}
+
+/**
+ * The files under `dir`, by path relative to it, with their executable
+ * bit; null when it holds anything but directories and regular files, or
+ * cannot be read. A `.DS_Store` (Finder writes one when it opens a
+ * directory) is no part of a copy.
+ */
+async function filesUnder(dir: string): Promise<Map<string, boolean> | null> {
+  const files = new Map<string, boolean>()
+  const visit = async (abs: string, rel: string): Promise<boolean> => {
+    for (const d of await readdir(abs, { withFileTypes: true })) {
+      if (d.name === '.DS_Store') continue
+      const path = rel === '' ? d.name : `${rel}/${d.name}`
+      const child = join(abs, d.name)
+      if (d.isDirectory()) {
+        if (!(await visit(child, path))) return false
+      } else if (d.isFile())
+        files.set(path, ((await lstat(child)).mode & 0o100) !== 0)
+      else return false
+    }
+    return true
+  }
+  try {
+    return (await visit(dir, '')) ? files : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether each copy holds the files `files` exactly, file by file: the
+ * same paths, the same executable bits, and the blob id git gives each
+ * file's bytes as they are (`hash-object --no-filters` in `.rness`, one
+ * call for them all), equal to the committed one.
+ */
+async function copiesMatch(
+  store: ObjectStore,
+  copies: readonly { abs: string; files: readonly SkillFile[] }[]
+): Promise<boolean[]> {
+  const result = copies.map(() => false)
+  const hashed: { at: number; abs: string; id: string }[] = []
+  for (const [at, c] of copies.entries()) {
+    const seen = await filesUnder(c.abs)
+    if (
+      seen === null ||
+      seen.size !== c.files.length ||
+      c.files.some((f) => seen.get(f.path) !== f.executable)
+    )
+      continue
+    result[at] = true
+    for (const f of c.files)
+      hashed.push({ at, abs: join(c.abs, ...f.path.split('/')), id: f.id })
+  }
+  const ids = await blobIds(
+    store,
+    hashed.map((h) => h.abs)
+  )
+  hashed.forEach((h, i) => {
+    if (ids[i] !== h.id) result[h.at] = false
+  })
+  return result
+}
+
+/** The `allowed-tools` of a `SKILL.md`'s front matter, as plain text; `none` when it asks for none. */
+const toolsOf = (fields: Record<string, unknown> | null): string =>
+  plainText(allowedToolsText(fields?.['allowed-tools']) ?? 'none')
+
+/** The `allowed-tools` of the `SKILL.md` of the tree `tree` in `.rness`; null when git does not have it. */
+async function toolsAt(
+  store: ObjectStore,
+  tree: string
+): Promise<string | null> {
+  try {
+    const md = (await readObjects(store, [`${tree}:SKILL.md`])).get(
+      `${tree}:SKILL.md`
+    )
+    return md === null || md === undefined
+      ? null
+      : toolsOf(parseFrontMatter(md.toString('utf8')))
+  } catch {
+    return null
   }
 }
 
@@ -327,9 +457,9 @@ async function project(place: Place): Promise<Projection> {
   const byName = new Map<string, AppliedSkill[]>()
   for (const a of place.candidates)
     byName.set(a.skill.name, [...(byName.get(a.skill.name) ?? []), a])
-  // What each name should be here: written at the accepted hash, left as it
-  // is (pending a new answer, invalid, or a name twice), or nothing.
-  const want = new Map<string, AppliedSkill & { hash: string }>()
+  // What each name should be here: written from its committed tree, left as
+  // it is (invalid, or a name twice), or nothing.
+  const want = new Map<string, AppliedSkill & { head: SkillTree }>()
   const kept = new Set<string>()
   for (const [name, list] of byName) {
     const one = list.length === 1 ? list[0] : undefined
@@ -343,8 +473,7 @@ async function project(place: Place): Promise<Projection> {
           `team skill ${name} applies here more than once (${rnessCommand()} validate says where); left as it is`
         )
       kept.add(name)
-    } else if (one.state === 'changed' || one.state === 'invalid')
-      kept.add(name)
+    } else if (one.state === 'invalid') kept.add(name)
     else if (one.state === 'installed' && isValid(one) && place.dirs.length > 0)
       want.set(name, one)
   }
@@ -357,13 +486,16 @@ async function project(place: Place): Promise<Projection> {
   const names = [...new Set([...Object.keys(onDisk.skills), ...want.keys()])]
     .filter((n) => !kept.has(n))
     .sort()
-  // Ruling R29: a name applying once, accepted (at this hash or an earlier
-  // one), that the record does not name: its copies may be rness's, the
-  // record lost (a new clone of .rness, a deleted file).
+  // Ruling R29: a name applying once, accepted, that the record does not
+  // name: its copies may be rness's, the record lost (a new clone of .rness,
+  // a deleted file).
   const adoptable = [...byName].flatMap(([name, list]) => {
     const a = list.length === 1 ? list[0] : undefined
-    return a?.accepted !== undefined && !Object.hasOwn(onDisk.skills, name)
-      ? [{ name, hash: a.accepted }]
+    return a !== undefined &&
+      a.state === 'installed' &&
+      isValid(a) &&
+      !Object.hasOwn(onDisk.skills, name)
+      ? [{ name, head: a.head }]
       : []
   })
   if (names.length === 0 && (adoptable.length === 0 || place.dirs.length === 0))
@@ -398,25 +530,33 @@ async function project(place: Place): Promise<Projection> {
         )
       : new Set<string>()
 
-  // An untracked directory there whose bytes are the accepted ones is the
-  // copy rness wrote: recorded again, so it is excluded and managed. Any
-  // other directory stays foreign: left alone, and said.
+  // An untracked directory there whose files are the committed ones, blob
+  // for blob, is the copy rness wrote: recorded again, so it is excluded and
+  // managed. Any other directory stays foreign: left alone, and said.
   const record: InstalledRecord = { version: 1, skills: { ...onDisk.skills } }
-  for (const c of adoptable) {
-    const paths: string[] = []
+  const found: { name: string; head: SkillTree; p: string; abs: string }[] = []
+  for (const c of adoptable)
     for (const d of place.dirs) {
       const p = `${d}/${c.name}`
       if (levels.get(topOf(p)) !== null || tracked.has(p)) continue
       const abs = inside(place.base, p)
       const st = await lstatOrNull(abs)
-      if (st === null || st.isSymbolicLink() || !st.isDirectory()) continue
-      if ((await hashSkillDir(abs).catch(() => null)) === c.hash) paths.push(p)
+      if (st !== null && !st.isSymbolicLink() && st.isDirectory())
+        found.push({ ...c, p, abs })
     }
-    if (paths.length === 0) continue
-    record.skills[c.name] = { hash: c.hash, paths }
-    for (const p of paths)
-      note(`${p} is team skill ${c.name} as accepted; recorded again`)
-  }
+  const adopted = await copiesMatch(
+    place.store,
+    found.map((f) => ({ abs: f.abs, files: f.head.files }))
+  )
+  found.forEach((f, i) => {
+    if (adopted[i] !== true) return
+    const entry = record.skills[f.name]
+    record.skills[f.name] = {
+      tree: f.head.tree,
+      paths: [...(entry?.paths ?? []), f.p],
+    }
+    note(`${f.p} is team skill ${f.name} as committed; recorded again`)
+  })
   const state = new Map<string, PathState>()
   for (const p of all) {
     if (levels.get(topOf(p)) !== null) state.set(p, 'blocked')
@@ -442,7 +582,10 @@ async function project(place: Place): Promise<Projection> {
   const next: InstalledRecord = emptyRecord()
   const removals: { name: string; path: string }[] = []
   const retained: { name: string; path: string }[] = []
-  const writes: { name: string; path: string; fresh: boolean }[] = []
+  type Write = { name: string; path: string; kind: 'fresh' | 'update' | 'edit' }
+  const writes: Write[] = []
+  const verify: { name: string; path: string; files: readonly SkillFile[] }[] =
+    []
   const blockedSaid = new Set<string>()
   for (const name of Object.keys(record.skills).sort())
     if (kept.has(name))
@@ -478,16 +621,24 @@ async function project(place: Place): Promise<Projection> {
       if (!paths.includes(p) && state.get(p) === 'ours')
         (place.only === null ? removals : retained).push({ name, path: p })
     if (a === undefined || paths.length === 0) continue
-    next.skills[name] = { hash: a.hash, paths }
-    for (const p of paths) {
-      const fresh = state.get(p) === 'absent'
-      const stale =
-        fresh ||
-        entry?.hash !== a.hash ||
-        (await hashSkillDir(inside(place.base, p)).catch(() => null)) !== a.hash
-      if (stale) writes.push({ name, path: p, fresh })
-    }
+    next.skills[name] = { tree: a.head.tree, paths }
+    for (const p of paths)
+      if (state.get(p) === 'absent')
+        writes.push({ name, path: p, kind: 'fresh' })
+      else if (entry?.tree !== a.head.tree)
+        writes.push({ name, path: p, kind: 'update' })
+      else verify.push({ name, path: p, files: a.head.files })
   }
+  // A copy at the recorded tree is checked file by file against git's blob
+  // ids: an edit, an added file or a changed mode is written over.
+  const intact = await copiesMatch(
+    place.store,
+    verify.map((v) => ({ abs: inside(place.base, v.path), files: v.files }))
+  )
+  verify.forEach((v, i) => {
+    if (intact[i] !== true)
+      writes.push({ name: v.name, path: v.path, kind: 'edit' })
+  })
 
   const removed = new Set<string>()
   for (const r of removals)
@@ -504,7 +655,7 @@ async function project(place: Place): Promise<Projection> {
     const was = record.skills[r.name]
     if (was !== undefined)
       next.skills[r.name] = {
-        hash: kept?.hash ?? was.hash,
+        tree: kept?.tree ?? was.tree,
         paths: [...(kept?.paths ?? []), r.path],
       }
   }
@@ -534,33 +685,44 @@ async function project(place: Place): Promise<Projection> {
       )
   }
 
-  const installed = new Set<string>()
-  const rewritten = new Set<string>()
-  const byWrite = new Map<string, typeof writes>()
+  const done = {
+    fresh: new Set<string>(),
+    update: new Set<string>(),
+    edit: new Set<string>(),
+  }
+  const byWrite = new Map<string, Write[]>()
   for (const w of writes)
     byWrite.set(w.name, [...(byWrite.get(w.name) ?? []), w])
   for (const [name, list] of byWrite) {
     const a = want.get(name)
     if (a === undefined) continue
     try {
-      const { files } = await checkSkillDir(a.skill.dir, name)
-      const bytes = await Promise.all(
-        files.map(async (f) => ({
-          path: f.path,
-          executable: f.executable,
-          bytes: await readFile(f.abs),
-        }))
-      )
+      const files = await committedFiles(place.store, a.head)
       for (const w of list) {
-        await placeCopy(place, name, bytes, a.hash, inside(place.base, w.path))
-        ;(w.fresh ? installed : rewritten).add(name)
+        await placeCopy(place, name, files, inside(place.base, w.path))
+        done[w.kind].add(name)
       }
     } catch (e) {
       out.problems.push(`${place.label}: ${(e as Error).message}`)
     }
   }
-  out.installed = [...installed].sort()
-  out.rewritten = [...rewritten].filter((n) => !installed.has(n)).sort()
+  for (const name of [...done.update].sort()) {
+    const from = record.skills[name]?.tree
+    const a = want.get(name)
+    if (from === undefined || a === undefined) continue
+    const before = await toolsAt(place.store, from)
+    const after = toolsOf(a.head.fields)
+    out.updated.push({
+      name,
+      from,
+      to: a.head.tree,
+      tools: before === null || before === after ? null : [before, after],
+    })
+  }
+  out.installed = [...done.fresh].sort()
+  out.rewritten = [...done.edit]
+    .filter((n) => !done.fresh.has(n) && !done.update.has(n))
+    .sort()
   out.removed = [...removed].sort()
   return out
 }
@@ -573,9 +735,9 @@ const dirsOf = (manifest: Manifest, kind: InstalledKind): string[] => [
 /**
  * Install in the clone `org/<repo>` the skills that apply to it (its
  * repository's, its parts', the top-level ones) and that the developer
- * accepted at their current hash; remove what rness wrote there and is no
- * longer accepted or declared. A clone that is no git repository is left
- * alone, as the hooks leave it.
+ * accepted, as committed at `HEAD` of `.rness`; remove what rness wrote
+ * there and is no longer accepted or declared. A clone that is no git
+ * repository is left alone, as the hooks leave it.
  */
 export async function projectClone(
   ws: Workspace,
@@ -597,6 +759,7 @@ export async function projectClone(
   return project({
     kind: 'clone',
     base,
+    store: objectStore(ws.rnessDir),
     label: `org/${repo}`,
     gitDir,
     record: join(gitDir, 'skills.json'),
@@ -629,6 +792,7 @@ export async function projectRoot(
   return project({
     kind: 'root',
     base: ws.root,
+    store: objectStore(ws.rnessDir),
     label: ROOT_LABEL,
     gitDir,
     record: join(gitDir, 'root-skills.json'),
@@ -677,6 +841,35 @@ export async function declaredClones(
     .map((r) => r.name)
     .filter((n) => clones.has(n))
 }
+
+/**
+ * The `updated` lines of a run (spec 0041 §5): one per skill and change of
+ * tree, whatever the number of places it was written to, with the
+ * `allowed-tools` of the two versions when they differ.
+ */
+export function updateLines(projections: readonly Projection[]): Line[] {
+  const seen = new Set<string>()
+  const lines: Line[] = []
+  for (const u of projections.flatMap((p) => p.updated)) {
+    const key = `${u.name} ${u.from} ${u.to}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    lines.push([
+      'updated',
+      `${u.name} (${u.from.slice(0, 7)} -> ${u.to.slice(0, 7)})${u.tools === null ? '' : `, allowed-tools: ${u.tools[0]} -> ${u.tools[1]}`}`,
+    ])
+  }
+  return lines
+}
+
+/** The line said for each applied skill not committed in `.rness` yet: it installs from the commit. */
+export const uncommittedLines = (
+  applied: readonly AppliedSkill[],
+  label: (a: AppliedSkill) => string
+): string[] =>
+  applied
+    .filter((a) => a.uncommitted === true)
+    .map((a) => `${plainText(label(a))}: ${COMMIT_FIRST}`)
 
 /** `sync`'s lines for one place: what was written and removed, then the notes. */
 export function projectionLines(

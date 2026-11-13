@@ -1,16 +1,16 @@
 import { lstat, rm, stat } from 'node:fs/promises'
-import { readFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 
 import type { CommandDeps } from '../core/deps.ts'
-import { parseFrontMatter } from '../core/frontmatter.ts'
 import { loadManifest, workspaceName, writeManifest } from '../core/manifest.ts'
 import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { openGitProvider } from '../core/providers.ts'
 import {
   type AppliedSkill,
+  COMMIT_FIRST,
   type Consent,
+  type ConsentEntry,
   appliedSkills,
   designated,
   droppedLine,
@@ -29,19 +29,20 @@ import {
   declaredClones,
   projectClone,
   projectRoot,
+  updateLines,
 } from '../core/skill-install.ts'
 import {
+  type SkillTree,
   type TeamSkill,
   allowedToolsText,
-  checkSkillDir,
   copySkill,
   diffSkillFiles,
   fetchSkill,
+  fileDigests,
   linkedLevelProblem,
   plainText,
   quoted,
   skillConflictsByName,
-  skillFileDigests,
   skillSourceUrl,
   teamSkills,
 } from '../core/skills.ts'
@@ -190,27 +191,18 @@ function entryOf(
   source: string,
   opts: { path?: string | undefined; ref?: string | undefined },
   commit: string | null,
-  hash: string
+  tree: string
 ): SkillEntry {
   return {
     source,
     ...(opts.path === undefined ? {} : { path: opts.path }),
     ...(opts.ref === undefined ? {} : { ref: opts.ref }),
     ...(commit === null ? {} : { commit }),
-    hash,
+    tree,
   }
 }
 
 const isPathSource = (source: string): boolean => source.startsWith('path:')
-
-/** The one line naming what the copy left out because git ignores it in `.rness` (ruling R26). */
-function sayDropped(ui: Ui, dropped: readonly string[]): void {
-  if (dropped.length > 0)
-    ui.line(
-      'dropped',
-      `${plainText(dropped.join(', '))}   (git ignores ${dropped.length === 1 ? 'it' : 'them'} in .rness)`
-    )
-}
 
 const kilobytes = (bytes: number): string =>
   `${Math.max(1, Math.ceil(bytes / 1024))} KB`
@@ -321,7 +313,7 @@ export async function skillAddCommand(
           name,
           scope,
           dir,
-          entry: { source, hash: '' },
+          entry: { source, tree: '' },
         }
         const clash = skillConflictsByName(ws.rnessDir, manifest, [
           ...current,
@@ -334,12 +326,11 @@ export async function skillAddCommand(
           scope,
           ...(opts.name === undefined ? {} : { name: opts.name }),
         })
-        const files = (await skillFileDigests(copied.dir)).size
         const declaredNow = withEntry(
           manifest,
           scope,
           copied.name,
-          entryOf(source, opts, fetched.commit, copied.hash)
+          entryOf(source, opts, fetched.commit, copied.copy.tree)
         )
         try {
           await writeManifest(ws.rnessDir, declaredNow)
@@ -350,16 +341,15 @@ export async function skillAddCommand(
         }
         ui.line(
           'added',
-          `skill ${plainText(copied.name)} (${plainText(versionOf(source, opts.ref, fetched.commit))}, ${plural(files, 'file')}, ${kilobytes(copied.bytes)})`
+          `skill ${plainText(copied.name)} (${plainText(versionOf(source, opts.ref, fetched.commit))}, ${plural(copied.copy.files.length, 'file')}, ${kilobytes(copied.copy.bytes)})`
         )
-        sayDropped(ui, copied.dropped)
         ui.line(
           'wrote',
           `${plainText(copyPath(ws, copied))}   review it in the pull request`
         )
         ui.line(
           'declared',
-          `.rness/rness.json  ${keyPath(manifest, scope, copied.name)}`
+          `.rness/rness.json  ${keyPath(manifest, scope, copied.name)} (tree ${copied.copy.tree.slice(0, 7)})`
         )
         return refresh(ws, ui, declaredNow)
       } finally {
@@ -499,22 +489,13 @@ export async function skillUpdateCommand(
             credentials: url === null ? null : await credentialsFor(url),
           })
           try {
-            const dir = skills.find(
-              (s) => s.name === name && s.scope === scope
-            )?.dir
-            const before =
-              dir === undefined
-                ? new Map<string, string>()
-                : await skillFileDigests(dir).catch(
-                    () => new Map<string, string>()
-                  )
             const copied = await copySkill(ws.rnessDir, fetched, {
               scope,
               name,
             })
             const diff = diffSkillFiles(
-              before,
-              await skillFileDigests(copied.dir)
+              copied.before,
+              fileDigests(copied.copy.files)
             )
             manifest = withEntry(
               manifest,
@@ -524,7 +505,7 @@ export async function skillUpdateCommand(
                 entry.source,
                 { path: entry.path, ref },
                 fetched.commit,
-                copied.hash
+                copied.copy.tree
               )
             )
             await writeManifest(ws.rnessDir, manifest)
@@ -544,7 +525,6 @@ export async function skillUpdateCommand(
                 `skill ${plainText(name)} (${plainText(version)}: ${diff.added.length} added, ${diff.changed.length} changed, ${diff.removed.length} removed)`
               )
             }
-            sayDropped(ui, copied.dropped)
           } finally {
             await fetched.release()
           }
@@ -595,11 +575,9 @@ export async function skillRemoveCommand(
   })
 }
 
-/** The `allowed-tools` a skill's SKILL.md asks for, as one line; `none` when it asks for none. */
-async function allowedToolsOf(dir: string): Promise<string> {
-  const fields = parseFrontMatter(await readFile(join(dir, 'SKILL.md'), 'utf8'))
-  return allowedToolsText(fields?.['allowed-tools']) ?? 'none'
-}
+/** The `allowed-tools` the committed `SKILL.md` of a skill asks for, as one line; `none` when it asks for none. */
+const allowedToolsOf = (head: SkillTree): string =>
+  allowedToolsText(head.fields['allowed-tools']) ?? 'none'
 
 const pad = (cells: readonly string[], widths: readonly number[]): string =>
   cells
@@ -621,14 +599,14 @@ const STATE_WORDS = {
   installed: 'installed',
   declined: 'declined',
   pending: 'pending',
-  changed: 'changed since accepted',
   invalid: 'invalid',
 } as const
 
 /**
  * `rness skill install [names...] [--yes]`: show the team skills awaiting
- * the developer and record their answer, per content hash (spec 0041 §5),
- * then project the answers into the clones and the root (§6).
+ * the developer and record their answer, once per skill (spec 0041 §5,
+ * decision 9), then project the answers into the clones and the root (§6):
+ * each skill as committed at `HEAD` of `.rness`.
  */
 export async function skillInstallCommand(
   names: readonly string[],
@@ -652,18 +630,21 @@ export async function skillInstallCommand(
     const applied = await appliedSkills(ws, manifest, consent)
     // A name two applied skills share is said, and taken, by its id.
     const label = skillLabel(applied)
-    let listed: (AppliedSkill & { hash: string })[]
-    // Invalid copies are reported, never offered: validate says what to fix.
+    let listed: (AppliedSkill & { head: SkillTree })[]
+    // Invalid copies are reported, never offered: validate says what to
+    // fix, and a skill not committed yet is installed once it is.
     const skip = (a: AppliedSkill): void =>
       say(
         ui,
         'line',
         'skipped',
-        `${label(a)}: ${a.problem ?? 'invalid'}; run rness validate`
+        a.uncommitted === true
+          ? `${label(a)}: ${COMMIT_FIRST}`
+          : `${label(a)}: ${a.problem ?? 'invalid'}; run rness validate`
       )
     let onlyInvalid = false
-    // Named and accepted at their current hash already: projected again
-    // below, said `already installed` when nothing had to be written.
+    // Named and accepted already: projected again below, said `already
+    // installed` when nothing had to be written.
     let done: AppliedSkill[] = []
     if (names.length === 0) {
       applied.filter((a) => a.state === 'invalid').forEach(skip)
@@ -717,17 +698,15 @@ export async function skillInstallCommand(
       return 0
     }
     const rows: string[][] = []
-    for (const a of listed) {
-      const { bytes } = await checkSkillDir(a.skill.dir, a.skill.name)
+    for (const a of listed)
       rows.push([
         label(a),
         a.skill.entry === null
           ? `written by the team (${copyPath(ws, a.skill).replace(/\/$/, '')})`
           : originOf(a.skill),
-        kilobytes(bytes),
-        `allowed-tools: ${await allowedToolsOf(a.skill.dir)}`,
+        kilobytes(a.head.bytes),
+        `allowed-tools: ${allowedToolsOf(a.head)}`,
       ])
-    }
     const widths = widthsOf(rows)
     const where = workspaceName(manifest, ws.root)
     say(
@@ -764,13 +743,13 @@ export async function skillInstallCommand(
         }
         if (choice === 'details') {
           for (const a of listed) {
-            const fields = parseFrontMatter(
-              await readFile(join(a.skill.dir, 'SKILL.md'), 'utf8')
-            )
-            const { files } = await checkSkillDir(a.skill.dir, a.skill.name)
             say(ui, 'line', 'skill', label(a))
-            say(ui, 'hint', `  ${String(fields?.['description'] ?? '').trim()}`)
-            for (const f of files)
+            say(
+              ui,
+              'hint',
+              `  ${String(a.head.fields['description'] ?? '').trim()}`
+            )
+            for (const f of a.head.files)
               say(ui, 'hint', `  ${f.path}  ${kilobytes(f.size)}`)
           }
           continue
@@ -781,7 +760,14 @@ export async function skillInstallCommand(
     }
     const date = new Date(deps.now?.() ?? Date.now()).toISOString().slice(0, 10)
     const skills = { ...consent.skills }
-    for (const a of listed) skills[a.id] = { hash: a.hash, answer, date }
+    // One answer per skill: its new versions need none (decision 9). The
+    // tree accepted is kept for information.
+    for (const a of listed)
+      skills[a.id] = {
+        answer,
+        date,
+        ...(answer === 'accepted' ? { tree: a.head.tree } : {}),
+      } satisfies ConsentEntry
     await writeConsent(ws.rnessDir, { version: 1, skills })
     const labels = listed.map(label)
     const said = labels.join(', ')
@@ -862,6 +848,8 @@ async function projectAll(
     )
   }
   summary('installed', (p) => [...p.installed, ...p.rewritten])
+  for (const [verb, rest] of updateLines(places.map(([, p]) => p)))
+    say(ui, 'line', verb, rest)
   summary('removed', (p) => p.removed)
   for (const [, p] of places) for (const n of p.notes) say(ui, 'hint', n)
   const problems = [...places.flatMap(([, p]) => p.problems), ...failed]
@@ -869,7 +857,11 @@ async function projectAll(
   return {
     ok: problems.length === 0,
     written: new Set(
-      places.flatMap(([, p]) => [...p.installed, ...p.rewritten])
+      places.flatMap(([, p]) => [
+        ...p.installed,
+        ...p.rewritten,
+        ...p.updated.map((u) => u.name),
+      ])
     ),
   }
 }

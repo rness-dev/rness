@@ -31,7 +31,7 @@ import {
   sshWorkspaceLines,
 } from '../../src/core/transport.ts'
 import { capture } from '../helpers/capture.ts'
-import { commitTo, git, makeBareRepo } from '../helpers/git.ts'
+import { commitRness, commitTo, git, makeBareRepo } from '../helpers/git.ts'
 import { SSH_DENIED, SSH_OK, fakeTransport } from '../helpers/transport.ts'
 import {
   CONTRACT_1_LINE,
@@ -1259,7 +1259,7 @@ test('contract 1: sync says the line of upgrade alone, exit 1, and writes nothin
 const SKILL_MD = (name: string, extra = ''): string =>
   `---\nname: ${name}\ndescription: A skill\n${extra}---\nBody\n`
 
-/** acme with claude: `release` (top) and `deploy` (web); org/web cloned, every repository a git one. */
+/** acme with claude: `release` (top) and `deploy` (web); org/web cloned, every repository a git one, `.rness` committed. */
 async function skillsWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
   const root = await makeWorkspace(t, {
     org: 'acme',
@@ -1268,7 +1268,7 @@ async function skillsWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
       web: {
         url: 'https://github.com/acme/web.git',
         skills: {
-          deploy: { source: 'path:/d', hash: `sha256-${'A'.repeat(43)}=` },
+          deploy: { source: 'path:/d', tree: 'f'.repeat(40) },
         },
       },
       api: { url: 'https://github.com/acme/api.git' },
@@ -1282,6 +1282,7 @@ async function skillsWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
   })
   for (const dir of ['.rness', 'org/web'])
     await git(['init', '-q', '-b', 'main'], join(root, dir))
+  await commitRness(root)
   return root
 }
 
@@ -1377,9 +1378,10 @@ test('skills: install writes the accepted ones and names where; sync installs no
     ''
   )
 
-  // A new skill of the team: pending, never installed by sync.
+  // A new skill of the team, committed: pending, never installed by sync.
   await mkdir(join(root, '.rness/skills/lint'), { recursive: true })
   await writeFile(join(root, '.rness/skills/lint/SKILL.md'), SKILL_MD('lint'))
+  await commitRness(root, 'lint')
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
   assert.match(r.out, PENDING('2 team skills await'))
@@ -1488,7 +1490,7 @@ test('skills: a workspace whose .rness is no git repository installs nothing and
   assert.equal(await there(join(root, 'org/web/.agents/skills/release')), false)
 })
 
-test('skills: a lost record of a clone or of the root: the copies at their accepted hash are adopted again, git never sees them', async (t) => {
+test('skills: a lost record of a clone or of the root: the copies matching the commit are adopted again, git never sees them', async (t) => {
   const root = await skillsWorkspace(t)
   assert.equal((await installSkills(root, ['release'])).code, 0)
   const web = join(root, 'org/web')

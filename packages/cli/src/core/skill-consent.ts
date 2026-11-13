@@ -5,27 +5,29 @@ import { exists, writeFileAtomic } from './fs.ts'
 import { gitPath } from './git.ts'
 import { repositories } from './manifest.ts'
 import {
+  type SkillTree,
   type TeamSkill,
-  checkSkillDir,
-  hashSkillDir,
   plainText,
   quoted,
+  skillsAtHead,
   skillsForClone,
   teamSkills,
 } from './skills.ts'
 import type { Manifest, Workspace } from './types.ts'
 
-// The developer's consent to team skills (spec 0041 §5): one record in the
-// git directory of `.rness`, never committed, mapping each skill to the
-// content hash the developer accepted or declined.
+// The developer's consent to team skills (spec 0041 §5, decision 9): one
+// record in the git directory of `.rness`, never committed, holding one
+// answer per skill. An accepted skill's new versions install without a new
+// question; a declined one stays declined, whatever its version.
 
 export type ConsentAnswer = 'accepted' | 'declined'
 
 export interface ConsentEntry {
-  hash: string
   answer: ConsentAnswer
   /** `YYYY-MM-DD`. */
   date: string
+  /** The tree accepted, for information: a new version needs no new answer. */
+  tree?: string
 }
 
 export interface Consent {
@@ -35,30 +37,32 @@ export interface Consent {
 }
 
 /**
- * installed = accepted at the current hash; changed = accepted at another
- * one (pending); invalid = the copy is missing or fails the checks of
- * spec 0041 §4: it cannot be offered or installed, `validate` says why.
+ * installed = accepted; pending = no answer yet; invalid = the copy
+ * committed at `HEAD` of `.rness` fails the checks of spec 0041 §4, or the
+ * skill is not committed there yet: it cannot be offered or installed.
  */
-export type SkillState =
-  'installed' | 'declined' | 'pending' | 'changed' | 'invalid'
+export type SkillState = 'installed' | 'declined' | 'pending' | 'invalid'
 
 /** A team skill that applies to this workspace, with what the consent decides on. */
 export interface AppliedSkill {
   id: string
   skill: TeamSkill
-  /** The hash of the copy in `.rness` now; null when the copy is invalid. */
-  hash: string | null
+  /** The copy committed at `HEAD` of `.rness`, checked: what is installed; null when the state is `invalid`. */
+  head: SkillTree | null
   state: SkillState
-  /** Why the copy is invalid (the check's message); set exactly when `state` is `invalid`. */
+  /** Why it is invalid (the check's message, or `commit .rness first`); set exactly when `state` is `invalid`. */
   problem?: string
-  /** The hash the developer accepted, at this content or an earlier one; absent when they did not accept it. */
-  accepted?: string
+  /** True when the skill is not committed in `.rness` yet: invalid, for that reason alone. */
+  uncommitted?: true
 }
 
-/** An applied skill whose copy passed the checks: it has a hash and can be offered. */
+/** The line said for a skill not committed in `.rness` yet: it is installed from the commit. */
+export const COMMIT_FIRST = 'commit .rness first'
+
+/** An applied skill whose committed copy passed the checks: it can be offered and installed. */
 export const isValid = (
   a: AppliedSkill
-): a is AppliedSkill & { hash: string } => a.hash !== null
+): a is AppliedSkill & { head: SkillTree } => a.head !== null
 
 /** The record's key: `<name>` at the top, `<scope>/<name>` for a scope's skill (two repositories may each declare `deploy`). */
 export const skillId = (skill: TeamSkill): string =>
@@ -78,9 +82,9 @@ const isEntry = (v: unknown): v is ConsentEntry => {
   if (typeof v !== 'object' || v === null) return false
   const e = v as Record<string, unknown>
   return (
-    typeof e['hash'] === 'string' &&
     (e['answer'] === 'accepted' || e['answer'] === 'declined') &&
-    typeof e['date'] === 'string'
+    typeof e['date'] === 'string' &&
+    (e['tree'] === undefined || typeof e['tree'] === 'string')
   )
 }
 
@@ -148,29 +152,24 @@ export async function writeConsent(
   await writeFileAtomic(file, `${JSON.stringify(consent, null, 2)}\n`)
 }
 
-export function stateOf(
-  consent: Consent,
-  id: string,
-  hash: string
-): SkillState {
+/** The state the developer's answer gives a skill whose committed copy is valid. */
+export function stateOf(consent: Consent, id: string): SkillState {
   const entry = Object.hasOwn(consent.skills, id)
     ? consent.skills[id]
     : undefined
   if (entry === undefined) return 'pending'
-  if (entry.hash === hash)
-    return entry.answer === 'accepted' ? 'installed' : 'declined'
-  return entry.answer === 'accepted' ? 'changed' : 'pending'
+  return entry.answer === 'accepted' ? 'installed' : 'declined'
 }
 
 /** A skill awaits the developer's answer. */
-export const isPending = (state: SkillState): boolean =>
-  state === 'pending' || state === 'changed'
+export const isPending = (state: SkillState): boolean => state === 'pending'
 
 /**
  * The team skills that apply to this workspace: the top-level ones, and
  * those of each repository of `rness.json` whose clone `org/<repo>` exists
- * (parts included), each with the hash of its copy and its state for the
- * developer. The order is that of `teamSkills`.
+ * (parts included), each with its copy as committed at `HEAD` of `.rness`
+ * (decision 8: what is installed) and its state for the developer. The
+ * order is that of `teamSkills`.
  */
 export async function appliedSkills(
   ws: Workspace,
@@ -182,36 +181,41 @@ export async function appliedSkills(
   for (const repo of repositories(manifest))
     if (await exists(join(ws.root, repo.dir)))
       for (const s of skillsForClone(manifest, all, repo.name)) applying.add(s)
+  const skills = all.filter((s) => applying.has(s))
+  const heads = await skillsAtHead(ws.rnessDir, skills)
   const applied: AppliedSkill[] = []
-  for (const skill of all.filter((s) => applying.has(s))) {
+  for (const skill of skills) {
     const id = skillId(skill)
-    const entry = Object.hasOwn(consent.skills, id)
-      ? consent.skills[id]
-      : undefined
-    const accepted =
-      entry?.answer === 'accepted' ? { accepted: entry.hash } : {}
-    try {
-      if (!(await exists(skill.dir)))
-        throw new Error(`skill ${quoted(skill.name)}: its copy is missing`)
-      await checkSkillDir(skill.dir, skill.name)
-      const hash = await hashSkillDir(skill.dir)
+    const head = heads.get(skill.dir) ?? null
+    if (head === null)
+      applied.push(
+        // Not at HEAD: its copy waits for a commit, or there is none at all.
+        (await exists(skill.dir))
+          ? {
+              id,
+              skill,
+              head: null,
+              state: 'invalid',
+              problem: COMMIT_FIRST,
+              uncommitted: true,
+            }
+          : {
+              id,
+              skill,
+              head: null,
+              state: 'invalid',
+              problem: `skill ${quoted(skill.name)}: its copy is missing`,
+            }
+      )
+    else if (head instanceof Error)
       applied.push({
         id,
         skill,
-        hash,
-        state: stateOf(consent, id, hash),
-        ...accepted,
-      })
-    } catch (e) {
-      applied.push({
-        id,
-        skill,
-        hash: null,
+        head: null,
         state: 'invalid',
-        problem: plainText(e instanceof Error ? e.message : String(e)),
-        ...accepted,
+        problem: plainText(head.message),
       })
-    }
+    else applied.push({ id, skill, head, state: stateOf(consent, id) })
   }
   return applied
 }

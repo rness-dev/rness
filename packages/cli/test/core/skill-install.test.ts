@@ -32,19 +32,19 @@ import {
   projectRoot,
   readInstalled,
 } from '../../src/core/skill-install.ts'
-import { hashSkillDir } from '../../src/core/skills.ts'
 import { findWorkspace } from '../../src/core/workspace.ts'
-import { git } from '../helpers/git.ts'
+import { commitRness, git } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
-const HASH = `sha256-${'A'.repeat(43)}=`
+const TREE = 'f'.repeat(40)
 const SKILL_MD = (name: string, extra = ''): string =>
   `---\nname: ${name}\ndescription: A skill\n${extra}---\nBody\n`
 
 /**
  * acme: `brainstorming` (declared at the top, with an executable script),
  * `release` (written by the team at the top), `deploy` (declared for web);
- * clones org/web and org/api, every one a git repository, `.rness` too.
+ * clones org/web and org/api, every one a git repository, `.rness` too,
+ * committed: a skill installs from the commit at its HEAD.
  */
 async function skillsWs(
   t: TestContext,
@@ -54,12 +54,12 @@ async function skillsWs(
     org: 'acme',
     agents: ['claude'],
     skills: {
-      brainstorming: { source: 'github:obra/superpowers', hash: HASH },
+      brainstorming: { source: 'github:obra/superpowers', tree: TREE },
     },
     scopes: {
       web: {
         url: 'git@github.com:acme/web.git',
-        skills: { deploy: { source: 'path:/d', hash: HASH } },
+        skills: { deploy: { source: 'path:/d', tree: TREE } },
       },
       api: { url: 'git@github.com:acme/api.git' },
     },
@@ -75,10 +75,11 @@ async function skillsWs(
   await chmod(join(root, '.rness/skills/brainstorming/scripts/run.sh'), 0o755)
   for (const dir of ['.rness', 'org/web', 'org/api'])
     await git(['init', '-q', '-b', 'main'], join(root, dir))
+  await commitRness(root)
   return root
 }
 
-/** Record `answer` for the applied skills (all, or the ids given) at their current hash. */
+/** Record `answer` for the applied skills whose committed copy is valid (all, or the ids given). */
 async function answer(
   root: string,
   ids: string[] | null = null,
@@ -88,8 +89,8 @@ async function answer(
   const manifest = await loadManifest(ws.rnessDir)
   const consent: Consent = await readConsent(ws.rnessDir)
   for (const a of await appliedSkills(ws, manifest, consent))
-    if (a.hash !== null && (ids === null || ids.includes(a.id)))
-      consent.skills[a.id] = { hash: a.hash, answer: given, date: '2026-11-13' }
+    if (a.head !== null && (ids === null || ids.includes(a.id)))
+      consent.skills[a.id] = { answer: given, date: '2026-11-13' }
   await writeConsent(ws.rnessDir, consent)
 }
 
@@ -119,8 +120,32 @@ const isThere = (p: string): Promise<boolean> =>
 const recordOf = async (file: string) =>
   JSON.parse(await readFile(file, 'utf8')) as {
     version: number
-    skills: Record<string, { hash: string; paths: string[] }>
+    skills: Record<string, { tree: string; paths: string[] }>
   }
+
+/** Every file under `dir` but a `.DS_Store`, with its executable bit and bytes: what a copy is compared on. */
+async function filesOf(dir: string): Promise<Map<string, string>> {
+  const files = new Map<string, string>()
+  const visit = async (abs: string, rel: string): Promise<void> => {
+    for (const d of await readdir(abs, { withFileTypes: true })) {
+      if (d.name === '.DS_Store') continue
+      const path = rel === '' ? d.name : `${rel}/${d.name}`
+      const child = join(abs, d.name)
+      if (d.isDirectory()) await visit(child, path)
+      else
+        files.set(
+          path,
+          `${((await lstat(child)).mode & 0o100) !== 0 ? 'x' : '-'}:${await readFile(child, 'utf8')}`
+        )
+    }
+  }
+  await visit(dir, '')
+  return files
+}
+
+/** The id of the tree `HEAD` of `.rness` holds at `path`. */
+const committed = async (root: string, path: string): Promise<string> =>
+  (await git(['rev-parse', `HEAD:${path}`], join(root, '.rness'))).trim()
 
 const excludeOf = (root: string, repo: string): Promise<string> =>
   readFile(join(root, 'org', repo, '.git/info/exclude'), 'utf8')
@@ -153,7 +178,7 @@ test('installs the accepted skills in both directories of every clone they apply
           name === 'deploy'
             ? join(root, '.rness/skills/scopes/web', name)
             : join(root, '.rness/skills', name)
-        assert.equal(await hashSkillDir(at), await hashSkillDir(from), at)
+        assert.deepEqual(await filesOf(at), await filesOf(from), at)
       }
   // A skill of web is not api's.
   assert.equal(
@@ -203,6 +228,7 @@ test('the copies are excluded from git, the lines under the header, the other li
   const again = await project(root)
   assert.deepEqual(again['org/web'], {
     installed: [],
+    updated: [],
     rewritten: [],
     removed: [],
     notes: [],
@@ -215,17 +241,15 @@ test('the copies are excluded from git, the lines under the header, the other li
   )
 })
 
-test('each clone records what rness wrote, with the hash; the root in the git directory of .rness', async (t) => {
+test('each clone records what rness wrote, with the committed tree; the root in the git directory of .rness', async (t) => {
   const root = await skillsWs(t)
   await answer(root)
   await project(root)
-  const deploy = await hashSkillDir(
-    join(root, '.rness/skills/scopes/web/deploy')
-  )
+  const deploy = await committed(root, 'skills/scopes/web/deploy')
   const web = await recordOf(join(root, 'org/web/.git/rness/skills.json'))
   assert.equal(web.version, 1)
   assert.deepEqual(web.skills['deploy'], {
-    hash: deploy,
+    tree: deploy,
     paths: ['.claude/skills/deploy', '.agents/skills/deploy'],
   })
   assert.deepEqual(Object.keys(web.skills).sort(), [
@@ -235,7 +259,7 @@ test('each clone records what rness wrote, with the hash; the root in the git di
   ])
   const top = await recordOf(join(root, '.rness/.git/rness/root-skills.json'))
   assert.deepEqual(top.skills['release'], {
-    hash: await hashSkillDir(join(root, '.rness/skills/release')),
+    tree: await committed(root, 'skills/release'),
     paths: ['.claude/skills/release'],
   })
   assert.deepEqual(
@@ -317,7 +341,7 @@ test('a foreign directory of the same name is never touched and the skill is not
   assert.doesNotMatch(await excludeOf(root, 'web'), /deploy/)
 })
 
-test('a lost record: a directory at the accepted hash is adopted (recorded, excluded, not rewritten); one with other content is left alone', async (t) => {
+test('a lost record: a directory matching the commit is adopted (recorded, excluded, not rewritten); one with other content is left alone', async (t) => {
   const root = await skillsWs(t)
   await answer(root)
   await project(root)
@@ -363,26 +387,33 @@ test('a lost record: a directory at the accepted hash is adopted (recorded, excl
   )
 })
 
-test('a lost record: a skill accepted at an older hash keeps its copy, adopted at that hash', async (t) => {
+test('a lost record and a new version committed since: the old copy matches nothing committed, so it is left alone and said', async (t) => {
   const root = await skillsWs(t)
   await answer(root, ['release'])
   await project(root)
   const file = join(root, 'org/web/.git/rness/skills.json')
-  const before = await recordOf(file)
   await rm(file)
-  // A new version in .rness, not answered yet: "changed", left as it is.
   await writeFile(
     join(root, '.rness/skills/release/SKILL.md'),
     SKILL_MD('release', 'v: 2\n')
   )
+  await commitRness(root, 'release v2')
   const r = await project(root)
   assert.deepEqual(r['org/web']?.removed, [])
-  assert.deepEqual(r['org/web']?.rewritten, [])
-  assert.deepEqual(
-    (await recordOf(file)).skills['release'],
-    before.skills['release']
+  assert.deepEqual(r['org/web']?.updated, [])
+  assert.ok(
+    r['org/web']?.notes.includes(
+      'org/web: .claude/skills/release is not one rness wrote; team skill release not installed there'
+    ),
+    r['org/web']?.notes.join('\n')
   )
-  assert.equal(await status(root, 'web'), '')
+  assert.equal(
+    await readFile(
+      join(root, 'org/web/.claude/skills/release/SKILL.md'),
+      'utf8'
+    ),
+    SKILL_MD('release')
+  )
 })
 
 test('a tracked path of the same name is never written, even once rness had installed it', async (t) => {
@@ -436,6 +467,7 @@ test('removal: a skill no longer declared, no longer applying, or declined loses
     join(root, '.rness/skills/scopes/api/deploy/SKILL.md'),
     SKILL_MD('deploy')
   )
+  await commitRness(root, 'release gone, deploy moved to api')
   await answer(root, ['brainstorming'], 'declined')
   const r = await project(root)
   assert.deepEqual(r['org/web']?.removed, [
@@ -462,7 +494,7 @@ test('removal: a skill no longer declared, no longer applying, or declined loses
   assert.deepEqual(top.skills, {})
 })
 
-test('a copy edited in a clone is rewritten from .rness', async (t) => {
+test('a copy edited in a clone is rewritten from the commit', async (t) => {
   const root = await skillsWs(t)
   await answer(root)
   await project(root)
@@ -472,9 +504,9 @@ test('a copy edited in a clone is rewritten from .rness', async (t) => {
   const r = await project(root)
   assert.deepEqual(r['org/web']?.rewritten, ['deploy'])
   assert.deepEqual(r['org/web']?.installed, [])
-  assert.equal(
-    await hashSkillDir(at),
-    await hashSkillDir(join(root, '.rness/skills/scopes/web/deploy'))
+  assert.deepEqual(
+    await filesOf(at),
+    await filesOf(join(root, '.rness/skills/scopes/web/deploy'))
   )
 })
 
@@ -491,24 +523,41 @@ test('a .DS_Store that Finder adds to an installed copy is no edit: nothing is r
   assert.equal(await readFile(join(copy, '.DS_Store'), 'utf8'), 'finder')
 })
 
-test('a skill updated in .rness and not yet answered: the installed copy stays; declined, it goes', async (t) => {
+test('a new version of an accepted skill, committed in .rness, replaces the copy with no new answer and is said; declined, it goes', async (t) => {
   const root = await skillsWs(t)
   await answer(root)
   await project(root)
+  const from = await committed(root, 'skills/release')
   await writeFile(
     join(root, '.rness/skills/release/SKILL.md'),
     SKILL_MD('release', 'v: 2\n')
   )
+  // Not committed yet: nothing moves.
+  const draft = await project(root)
+  assert.deepEqual(draft['org/web']?.updated, [])
+  assert.deepEqual(draft['org/web']?.rewritten, [])
+  await commitRness(root, 'release v2')
+  const to = await committed(root, 'skills/release')
   const r = await project(root)
+  for (const place of ['org/web', 'org/api', 'root'])
+    assert.deepEqual(
+      r[place]?.updated,
+      [{ name: 'release', from, to, tools: null }],
+      place
+    )
   assert.deepEqual(r['org/web']?.rewritten, [])
-  assert.deepEqual(r['org/web']?.removed, [])
-  assert.equal(
-    await readFile(
-      join(root, 'org/web/.claude/skills/release/SKILL.md'),
-      'utf8'
-    ),
-    SKILL_MD('release')
-  )
+  assert.deepEqual(r['org/web']?.installed, [])
+  for (const at of [
+    'org/web/.claude/skills/release',
+    'org/api/.agents/skills/release',
+    '.claude/skills/release',
+  ])
+    assert.equal(
+      await readFile(join(root, at, 'SKILL.md'), 'utf8'),
+      SKILL_MD('release', 'v: 2\n')
+    )
+  const web = await recordOf(join(root, 'org/web/.git/rness/skills.json'))
+  assert.equal(web.skills['release']?.tree, to)
   await answer(root, ['release'], 'declined')
   const d = await project(root)
   assert.deepEqual(d['org/web']?.removed, ['release'])
@@ -517,26 +566,6 @@ test('a skill updated in .rness and not yet answered: the installed copy stays; 
     false
   )
   assert.equal(await isThere(join(root, '.claude/skills/release')), false)
-})
-
-test('a skill accepted at its new hash replaces the copy of the old one', async (t) => {
-  const root = await skillsWs(t)
-  await answer(root)
-  await project(root)
-  await writeFile(
-    join(root, '.rness/skills/release/SKILL.md'),
-    SKILL_MD('release', 'v: 2\n')
-  )
-  await answer(root, ['release'])
-  const r = await project(root)
-  assert.deepEqual(r['org/web']?.rewritten, ['release'])
-  assert.equal(
-    await readFile(
-      join(root, 'org/api/.agents/skills/release/SKILL.md'),
-      'utf8'
-    ),
-    SKILL_MD('release', 'v: 2\n')
-  )
 })
 
 test('nothing accepted: nothing written, no record, no exclude line', async (t) => {
@@ -596,7 +625,7 @@ test('a record naming a path rness never writes is not acted on: the clone is le
     file,
     JSON.stringify({
       version: 1,
-      skills: { x: { hash: HASH, paths: ['../keep.txt'] } },
+      skills: { x: { tree: TREE, paths: ['../keep.txt'] } },
     })
   )
   assert.equal(await readInstalled(file), null)
@@ -694,8 +723,8 @@ test('nothing is written outside the workspace, never under HOME, and inside it 
 test('a name that applies twice in a clone is left as it is, said only once one of them was accepted', async (t) => {
   const root = await skillsWs(t, {
     skills: {
-      brainstorming: { source: 'github:obra/superpowers', hash: HASH },
-      deploy: { source: 'path:/top', hash: HASH },
+      brainstorming: { source: 'github:obra/superpowers', tree: TREE },
+      deploy: { source: 'path:/top', tree: TREE },
     },
     files: {
       'skills/brainstorming/SKILL.md': SKILL_MD('brainstorming'),

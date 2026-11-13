@@ -34,14 +34,17 @@ import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { openGitProvider } from '../core/providers.ts'
 import { pruneRefusals } from '../core/refusals.ts'
-import { pendingCount } from '../core/skill-consent.ts'
+import { pendingCount, skillLabel } from '../core/skill-consent.ts'
 import {
+  type Projection,
   ROOT_LABEL,
   pendingLine,
   projectClone,
   projectRoot,
   projectionLines,
   skillsOfRun,
+  uncommittedLines,
+  updateLines,
 } from '../core/skill-install.ts'
 import { count } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
@@ -522,12 +525,14 @@ export async function syncCommand(
         )
       }
       /** Write the accepted skills into one place (spec 0041 §6); what it says, said. */
+      const projected: Projection[] = []
       const project = async (
         label: string,
         work: () => ReturnType<typeof projectClone>
       ): Promise<void> => {
         try {
           const p = await work()
+          projected.push(p)
           lines.push(...projectionLines(label, p))
           problems.push(...p.problems)
         } catch (e) {
@@ -573,9 +578,17 @@ export async function syncCommand(
         const { applied } = skills
         await project(ROOT_LABEL, () => projectRoot(ws, manifest, applied))
       }
+      // A new version of an accepted skill, once per skill whatever the
+      // places it went to (spec 0041 §5).
+      lines.push(...updateLines(projected))
       // Never a failure: `sync --check` keeps its exit code (spec 0041 §9).
-      const pending = skills === null ? 0 : pendingCount(skills.applied)
-      if (pending > 0) lines.push(pendingLine(pending))
+      if (skills !== null) {
+        lines.push(
+          ...uncommittedLines(skills.applied, skillLabel(skills.applied))
+        )
+        const pending = pendingCount(skills.applied)
+        if (pending > 0) lines.push(pendingLine(pending))
+      }
       // `.rness` gets no hook from sync, but the guard and its own
       // `.githooks/` record there too.
       if (!check) await pruneRefusals(ws.rnessDir)
