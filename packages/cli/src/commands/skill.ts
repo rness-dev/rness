@@ -201,6 +201,15 @@ function entryOf(
 
 const isPathSource = (source: string): boolean => source.startsWith('path:')
 
+/** The one line naming what the copy left out because git ignores it in `.rness` (ruling R26). */
+function sayDropped(ui: Ui, dropped: readonly string[]): void {
+  if (dropped.length > 0)
+    ui.line(
+      'dropped',
+      `${plainText(dropped.join(', '))}   (git ignores ${dropped.length === 1 ? 'it' : 'them'} in .rness)`
+    )
+}
+
 const kilobytes = (bytes: number): string =>
   `${Math.max(1, Math.ceil(bytes / 1024))} KB`
 
@@ -341,6 +350,7 @@ export async function skillAddCommand(
           'added',
           `skill ${plainText(copied.name)} (${plainText(versionOf(source, opts.ref, fetched.commit))}, ${plural(files, 'file')}, ${kilobytes(copied.bytes)})`
         )
+        sayDropped(ui, copied.dropped)
         ui.line(
           'wrote',
           `${plainText(copyPath(ws, copied))}   review it in the pull request`
@@ -532,6 +542,7 @@ export async function skillUpdateCommand(
                 `skill ${plainText(name)} (${plainText(version)}: ${diff.added.length} added, ${diff.changed.length} changed, ${diff.removed.length} removed)`
               )
             }
+            sayDropped(ui, copied.dropped)
           } finally {
             await fetched.release()
           }

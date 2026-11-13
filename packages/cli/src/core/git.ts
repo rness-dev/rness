@@ -251,6 +251,48 @@ export async function trackedPaths(
 }
 
 /**
+ * Which of `paths` (relative to `dir`, the root of a repository) git
+ * ignores there (`git check-ignore`): its `.gitignore` files,
+ * `info/exclude` and the user's excludes file. A path need not exist; a
+ * directory is asked with a trailing `/`; a tracked path is never ignored.
+ * Throws when `dir` is no repository.
+ */
+export async function ignoredPaths(
+  dir: string,
+  paths: readonly string[]
+): Promise<Set<string>> {
+  if (paths.length === 0) return new Set()
+  const stdout = await new Promise<string>((done, fail) => {
+    const child = execFile(
+      'git',
+      ['check-ignore', '--stdin', '-z'],
+      {
+        cwd: dir,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_CEILING_DIRECTORIES: dirname(resolve(dir)),
+        },
+        maxBuffer: 16 * 1024 * 1024,
+      },
+      (error, out, err) => {
+        // Exit 1: none of them is ignored.
+        if (error === null || error.code === 1) done(out)
+        else
+          fail(
+            new Error(
+              `git check-ignore failed: ${err.split('\n').find((l) => l.trim() !== '') ?? error.message}`,
+              { cause: error }
+            )
+          )
+      }
+    )
+    child.stdin?.end(paths.map((p) => `${p}\0`).join(''))
+  })
+  return new Set(stdout.split('\0').filter((p) => p !== ''))
+}
+
+/**
  * `name` in the git directory of `dir`, absolute — its worktree's own for a
  * linked worktree (`git rev-parse --git-path`). Never pushed. Null when
  * `dir` is no repository.

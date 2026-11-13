@@ -478,6 +478,19 @@ test('a copy edited in a clone is rewritten from .rness', async (t) => {
   )
 })
 
+test('a .DS_Store that Finder adds to an installed copy is no edit: nothing is rewritten', async (t) => {
+  const root = await skillsWs(t)
+  await answer(root)
+  await project(root)
+  const copy = join(root, 'org/web/.claude/skills/brainstorming')
+  await writeFile(join(copy, '.DS_Store'), 'finder')
+  await writeFile(join(copy, 'scripts/.DS_Store'), 'finder')
+  const r = await project(root)
+  assert.deepEqual(r['org/web']?.rewritten, [])
+  assert.deepEqual(r['org/web']?.installed, [])
+  assert.equal(await readFile(join(copy, '.DS_Store'), 'utf8'), 'finder')
+})
+
 test('a skill updated in .rness and not yet answered: the installed copy stays; declined, it goes', async (t) => {
   const root = await skillsWs(t)
   await answer(root)

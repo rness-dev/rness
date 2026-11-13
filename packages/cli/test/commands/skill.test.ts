@@ -32,6 +32,7 @@ import {
   readConsent,
 } from '../../src/core/skill-consent.ts'
 import {
+  hashSkillDir,
   skillConflicts,
   skillConflictsByName,
   teamSkills,
@@ -189,6 +190,45 @@ test('add: a path: source, no version in the line, no commit or ref in the entry
   const entry = (await manifestOf(root)).skills?.['mine']
   assert.equal(entry?.commit, undefined)
   assert.equal(entry?.ref, undefined)
+})
+
+test('add: a file git ignores in .rness is dropped from the copy, with one line naming it', async (t) => {
+  const was = process.env['GIT_CONFIG_GLOBAL']
+  process.env['GIT_CONFIG_GLOBAL'] = '/dev/null'
+  t.after(() => {
+    if (was === undefined) delete process.env['GIT_CONFIG_GLOBAL']
+    else process.env['GIT_CONFIG_GLOBAL'] = was
+  })
+  const src = await tmp(t)
+  await put(src, {
+    'mine/SKILL.md': SKILL_MD('mine'),
+    'mine/node_modules/dep/index.js': 'x',
+    'mine/notes.log': 'debug',
+  })
+  const root = await ws(t)
+  await writeFile(join(root, '.rness/.gitignore'), 'node_modules/\n*.log\n')
+  await git(['init', '-q', '-b', 'main'], join(root, '.rness'))
+  const r = await say(() =>
+    skillAddCommand(`path:${join(src, 'mine')}`, { cwd: root }, deps())
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^dropped +node_modules\/, notes\.log {3}\(git ignores them in \.rness\)$/m
+  )
+  assert.match(r.out, /skill mine \(path:.*mine, 1 file, 1 KB\)/)
+  const copy = join(root, '.rness/skills/mine')
+  assert.equal(await exists(join(copy, 'node_modules')), false)
+  assert.equal(await exists(join(copy, 'notes.log')), false)
+  assert.equal(
+    (await manifestOf(root)).skills?.['mine']?.hash,
+    await hashSkillDir(copy)
+  )
+  // update makes the same copy, and says the same.
+  const u = await say(() => skillUpdateCommand(['mine'], { cwd: root }, deps()))
+  assert.equal(u.code, 0, u.err)
+  assert.match(u.out, /^unchanged +skill mine/m)
+  assert.match(u.out, /^dropped +node_modules\/, notes\.log /m)
 })
 
 test('add: --name renames the copy and the declaration', async (t) => {

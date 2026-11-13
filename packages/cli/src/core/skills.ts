@@ -25,7 +25,7 @@ import {
 } from 'node:path'
 
 import { parseFrontMatter } from './frontmatter.ts'
-import { fetchRef } from './git.ts'
+import { fetchRef, gitPath, ignoredPaths } from './git.ts'
 import type { GitCredentials } from './provider.ts'
 import { scopeChain } from './scope.ts'
 import { CONTROL, INVISIBLE, plainText, quoted } from './text.ts'
@@ -305,16 +305,24 @@ function nameProblem(name: string): string | null {
 }
 
 /**
- * The regular files under `dir`, sorted by path in byte order; a `.git` at
- * the root (the fetch's own repository) is not part of the skill. Anything
- * that is neither a regular file nor a directory is refused, naming it.
+ * The regular files under `dir`, sorted by path in byte order. Not part of
+ * the skill: a `.git` at the root (the fetch's own repository) and a
+ * `.DS_Store` anywhere (Finder writes one when it opens a directory; ruling
+ * R26). A `.git` below the root, a repository inside the skill, is refused,
+ * and so is anything that is neither a regular file nor a directory, naming
+ * it.
  */
 async function walk(dir: string, name: string): Promise<SkillFile[]> {
   const files: SkillFile[] = []
   const visit = async (abs: string, rel: string): Promise<void> => {
     for (const d of await readdir(abs, { withFileTypes: true })) {
-      if (rel === '' && d.name === '.git') continue
+      if (d.name === '.DS_Store' || (rel === '' && d.name === '.git')) continue
       const path = rel === '' ? d.name : `${rel}/${d.name}`
+      if (d.name === '.git')
+        throw refusal(
+          name,
+          `${quoted(path)} is a .git below the skill's root; a skill holds no repository`
+        )
       const child = join(abs, d.name)
       if (d.isDirectory()) await visit(child, path)
       else if (d.isFile()) {
@@ -641,15 +649,70 @@ export interface CopiedSkill {
   dir: string
   hash: string
   bytes: number
+  /** Left out because git ignores them in `.rness`, relative to the skill: a directory once (`node_modules/`), else each file. */
+  dropped: string[]
+}
+
+/**
+ * Of `files` (relative to the skill), those git would not commit at
+ * `target` in `.rness` (ruling R26), and how to name them: the top-most
+ * directory all of whose files go, written with a trailing `/`, else the
+ * file. Nothing when `.rness` is no git repository.
+ */
+async function ignoredInRness(
+  rnessDir: string,
+  target: string,
+  files: readonly string[]
+): Promise<{ files: Set<string>; said: string[] }> {
+  if ((await gitPath(rnessDir, 'info')) === null)
+    return { files: new Set(), said: [] }
+  const at = relative(rnessDir, target).split(sep).join('/')
+  const dirs = [
+    ...new Set(
+      files.flatMap((f) =>
+        f
+          .split('/')
+          .slice(0, -1)
+          .map((_, i, parts) => `${parts.slice(0, i + 1).join('/')}/`)
+      )
+    ),
+  ]
+  const asked = [...files, ...dirs]
+  const hit = await ignoredPaths(
+    rnessDir,
+    asked.map((p) => `${at}/${p}`)
+  )
+  const ignored = new Set(asked.filter((p) => hit.has(`${at}/${p}`)))
+  const gone = new Set(files.filter((f) => ignored.has(f)))
+  // A directory is named for its files only when git drops all of them.
+  const whole = (d: string): boolean =>
+    ignored.has(d) && files.every((f) => !f.startsWith(d) || gone.has(f))
+  const said: string[] = []
+  for (const f of files) {
+    if (!gone.has(f)) continue
+    const parts = f.split('/')
+    let name = f
+    for (let i = 1; i < parts.length; i++) {
+      const d = `${parts.slice(0, i).join('/')}/`
+      if (whole(d)) {
+        name = d
+        break
+      }
+    }
+    if (!said.includes(name)) said.push(name)
+  }
+  return { files: gone, said }
 }
 
 /**
  * Check the fetched skill (§4) and copy it into
  * `<rnessDir>/skills/[scopes/<scope>/]<name>/`, `name` being `opts.name`
  * (`--name`: the `name` of the copy's `SKILL.md` is rewritten) or the
- * source's. The copy is written beside its place and swapped in, so a
- * failure leaves the previous copy; files are 0755 when executable, else
- * 0644. The hash is taken on the finished copy.
+ * source's. A file git ignores at that place in `.rness` is left out
+ * (`dropped`): the copy is what the team commits, so its hash is the one a
+ * teammate's clone computes. The copy is written beside its place and
+ * swapped in, so a failure leaves the previous copy; files are 0755 when
+ * executable, else 0644. The hash is taken on the finished copy.
  */
 export async function copySkill(
   rnessDir: string,
@@ -672,10 +735,16 @@ export async function copySkill(
   const link = await linkedLevel(rnessDir, base)
   if (link !== null) throw refusal(name, linkRefusal(rnessDir, link))
   const target = join(base, name)
+  const ignored = await ignoredInRness(
+    rnessDir,
+    target,
+    source.files.map((f) => f.path)
+  )
   await mkdir(base, { recursive: true })
   const staged = await mkdtemp(join(base, `.${name}-`))
   try {
     for (const f of source.files) {
+      if (ignored.files.has(f.path)) continue
       const to = join(staged, ...f.path.split('/'))
       await mkdir(dirname(to), { recursive: true })
       let bytes: Buffer = await readFile(f.abs)
@@ -694,7 +763,7 @@ export async function copySkill(
     if (had) await rename(target, old)
     await rename(staged, target)
     if (had) await rm(old, { recursive: true, force: true })
-    return { name, dir: target, hash, bytes }
+    return { name, dir: target, hash, bytes, dropped: ignored.said }
   } catch (e) {
     await rm(staged, { recursive: true, force: true })
     throw e

@@ -477,6 +477,89 @@ test('copySkill: into skills/<name>, executable bit kept, modes 755/644, no .git
   assert.deepEqual(await readdir(join(rnessDir, 'skills/scopes/web')), ['demo'])
 })
 
+// Ruling R26: what git would not commit in .rness is no part of a skill.
+
+/** Run `work` with no global git configuration: a developer's excludes file must not decide what is ignored. */
+async function noGlobalGit(t: TestContext): Promise<void> {
+  const was = process.env['GIT_CONFIG_GLOBAL']
+  process.env['GIT_CONFIG_GLOBAL'] = '/dev/null'
+  t.after(() => {
+    if (was === undefined) delete process.env['GIT_CONFIG_GLOBAL']
+    else process.env['GIT_CONFIG_GLOBAL'] = was
+  })
+}
+
+test("copySkill: what git ignores in .rness and .DS_Store are left out; the declared hash is the committed copy's on another clone", async (t) => {
+  await noGlobalGit(t)
+  const base = await tmp(t)
+  const rnessDir = join(base, '.rness')
+  await mkdir(rnessDir)
+  await writeFile(
+    join(rnessDir, '.gitignore'),
+    await readFile(
+      new URL('../../scaffold/_gitignore', import.meta.url),
+      'utf8'
+    )
+  )
+  await git(['init', '-q', '-b', 'main'], rnessDir)
+  await put(join(base, 'ops/deploy'), {
+    'SKILL.md': SKILL_MD('deploy'),
+    '.DS_Store': 'finder junk',
+    'refs/.DS_Store': 'finder junk',
+    'refs/guide.md': 'guide',
+    'node_modules/left-pad/index.js': 'x',
+    'node_modules/left-pad/package.json': '{}',
+  })
+  const fetched = await fetchSkill(rnessDir, 'path:../ops/deploy', {
+    credentials: null,
+  })
+  const copied = await copySkill(rnessDir, fetched, { scope: null })
+  assert.deepEqual(copied.dropped, ['node_modules/'])
+  assert.deepEqual(
+    [...(await skillFileDigests(copied.dir)).keys()],
+    ['SKILL.md', 'refs/guide.md']
+  )
+  await git(['add', '-A'], rnessDir)
+  await git(['commit', '-q', '-m', 'skill'], rnessDir)
+  const mate = join(base, 'mate')
+  await git(['clone', '-q', rnessDir, mate], base)
+  assert.equal(await hashSkillDir(join(mate, 'skills/deploy')), copied.hash)
+  // Finder opening a copy later changes nothing.
+  await writeFile(join(copied.dir, '.DS_Store'), 'later')
+  await writeFile(join(copied.dir, 'refs/.DS_Store'), 'later')
+  assert.equal(await hashSkillDir(copied.dir), copied.hash)
+})
+
+test('copySkill: .rness that is no git repository drops nothing but .DS_Store', async (t) => {
+  const rnessDir = join(await tmp(t), '.rness')
+  await mkdir(rnessDir)
+  const src = await skillDir(t, 'demo', {
+    'node_modules/a.js': 'x',
+    '.DS_Store': 'junk',
+  })
+  const fetched = await fetchSkill(rnessDir, `path:${src}`, {
+    credentials: null,
+  })
+  const copied = await copySkill(rnessDir, fetched, { scope: null })
+  assert.deepEqual(copied.dropped, [])
+  assert.deepEqual(
+    [...(await skillFileDigests(copied.dir)).keys()],
+    ['SKILL.md', 'node_modules/a.js']
+  )
+})
+
+test('checkSkillDir: a .git below the skill root is refused, naming it; one at the root is not the skill', async (t) => {
+  const dir = await skillDir(t, 'demo', { 'vendor/.git/HEAD': 'ref: x\n' })
+  await assert.rejects(
+    checkSkillDir(dir, 'demo'),
+    /skill "demo": "vendor\/\.git" is a \.git below the skill's root/
+  )
+  const file = await skillDir(t, 'demo', { 'sub/.git': 'gitdir: ../x\n' })
+  await assert.rejects(checkSkillDir(file, 'demo'), /"sub\/\.git" is a \.git/)
+  const root = await skillDir(t, 'demo', { '.git/HEAD': 'ref: x\n' })
+  await checkSkillDir(root, 'demo')
+})
+
 test("copySkill: a repository root takes the name of its SKILL.md, not the repository's", async (t) => {
   const work = await tmp(t)
   const repo = join(work, 'some-repo-name')
