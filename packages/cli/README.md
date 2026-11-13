@@ -628,14 +628,19 @@ its source in rness.json to make it the team's own`). Writes through
   root with a `name` equal to the directory's (lowercase letters, digits
   and hyphens, at most 64 characters) and a `description`; regular files
   only (a symbolic link or a nested repository is refused, naming it, and
-  a refused copy is removed, an update putting the previous one back); no
+  a refused copy is removed, an update putting the previous one back); a
+  `.git` anywhere below the source's root, in any form a file system takes
+  for one (`.GIT`, `git~1`, `.git `), refuses it before anything is copied;
+  no path with an empty, `.` or `..` part, a `.git`, a backslash or a
+  colon, checked again before each file is written into a clone; no
   control character in a file name, the `description` or `allowed-tools`;
   at most 1 MB of file content; a name `rness` is refused (it collides with
   the plugin's directory). A name declared twice in one clone, or both
   declared and written by the team, is refused by `validate`. The tree is
   taken in an index of its own, never the one of a commit in progress
   (`validate` runs in the `.rness` pre-commit); the session start and
-  `rness status` take none and check each `SKILL.md` alone.
+  `rness status` take none and check each `SKILL.md` alone, read only when
+  it is a regular file of at most 1 MB in a directory that is no link.
 - **What reads them (2026-11-13).** Claude Code reads `.claude/skills/`
   only, from the start directory up to the repository root, and loads a
   nested `.claude/skills/` when a file of that subdirectory is read. Codex

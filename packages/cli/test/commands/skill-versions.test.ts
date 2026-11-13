@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import {
   chmod,
   lstat,
@@ -348,4 +349,101 @@ test('install and sync write nothing under HOME', async (t) => {
   await commitRness(root, 'v2')
   assert.equal((await sync(root)).code, 0)
   assert.deepEqual(await readdir(home), [])
+})
+
+/** `git <args>` in `cwd` with `input` on its standard input: the plumbing a crafted commit is made with. */
+const plumbing = (args: string[], cwd: string, input = ''): string =>
+  execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=rness-test',
+      '-c',
+      'user.email=test@rness.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      ...args,
+    ],
+    { cwd, input }
+  )
+    .toString()
+    .trim()
+
+/**
+ * A commit at HEAD of `.rness` whose `skills/release` holds `extra`, a
+ * tree entry git's own tools would never write (`git mktree` takes it):
+ * what a malicious commit in `.rness` could carry.
+ */
+function craftRelease(root: string, name: string, inside: string): void {
+  const r = join(root, '.rness')
+  const blob = (text: string) =>
+    plumbing(['hash-object', '-w', '--stdin'], r, text)
+  const mktree = (lines: string[]) =>
+    plumbing(['mktree'], r, lines.map((l) => `${l}\n`).join(''))
+  const md = blob(SKILL_MD('release', 'allowed-tools: Read\n'))
+  const inner = mktree([`100644 blob ${blob('evil\n')}\t${inside}`])
+  const release = mktree([
+    `100644 blob ${md}\tSKILL.md`,
+    `040000 tree ${inner}\t${name}`,
+  ])
+  const skills = mktree([`040000 tree ${release}\trelease`])
+  const top = plumbing(['ls-tree', 'HEAD'], r)
+    .split('\n')
+    .map((l) => (l.endsWith('\tskills') ? `040000 tree ${skills}\tskills` : l))
+  const commit = plumbing(
+    ['commit-tree', mktree(top), '-p', 'HEAD', '-m', 'crafted'],
+    r
+  )
+  plumbing(['update-ref', 'HEAD', commit], r)
+}
+
+test('a crafted commit whose skill tree holds "..": refused, nothing written outside the copy (ruling R34)', async (t) => {
+  const root = await teamWs(t)
+  assert.equal((await install(root, 'release')).code, 0)
+  craftRelease(root, '..', 'evil.md')
+  const s = await sync(root)
+  assert.equal(s.code, 0, s.err)
+  for (const at of [
+    'org/web/.claude/skills/evil.md',
+    'org/web/.agents/skills/evil.md',
+    '.claude/skills/evil.md',
+  ])
+    assert.equal(await there(join(root, at)), false, at)
+  // The copy installed before is left as it is.
+  assert.equal(
+    await installed(root),
+    SKILL_MD('release', 'allowed-tools: Read\n')
+  )
+  const i = await install(root, 'release')
+  assert.equal(i.code, 1)
+  assert.match(
+    i.out,
+    /^skipped +release: skill "release": file name "\.\." holds an empty, "\." or "\.\." part; run rness validate$/m
+  )
+  for (const at of ['org/web/.claude/skills/evil.md', '.claude/skills/evil.md'])
+    assert.equal(await there(join(root, at)), false, at)
+})
+
+test('a crafted commit whose skill tree holds ".git" (or ".GIT", "git~1"): refused, no repository planted in a clone (ruling R34)', async (t) => {
+  const root = await teamWs(t)
+  assert.equal((await install(root, 'release')).code, 0)
+  for (const name of ['.git', '.GIT', 'git~1']) {
+    craftRelease(root, name, 'config')
+    const i = await install(root, 'release')
+    assert.equal(i.code, 1, name)
+    assert.match(
+      i.out,
+      new RegExp(
+        `^skipped +release: skill "release": file name "${name.replace('.', '\\.')}" names a \\.git`,
+        'm'
+      ),
+      name
+    )
+    for (const at of [
+      `org/web/.claude/skills/release/${name}`,
+      `org/web/.agents/skills/release/${name}`,
+      `.claude/skills/release/${name}`,
+    ])
+      assert.equal(await there(join(root, at)), false, at)
+  }
 })

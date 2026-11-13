@@ -26,6 +26,8 @@ import {
   diffSkillFiles,
   fetchSkill,
   fileDigests,
+  isGitName,
+  pathProblem,
   plainText,
   quoted,
   readSkillMd,
@@ -628,7 +630,7 @@ test('copySkill: a .rness that is no git repository: the rules of its working tr
   )
 })
 
-test('copySkill: a nested repository is refused, one with no commit too; a .git that is no repository is no part of the tree', async (t) => {
+test('copySkill: a .git below the root, in any form, refuses the skill before anything is written to .rness (ruling R35)', async (t) => {
   noGlobalGit(t)
   const rnessDir = join(await tmp(t), '.rness')
   await mkdir(rnessDir)
@@ -638,33 +640,107 @@ test('copySkill: a nested repository is refused, one with no commit too; a .git 
       await fetchSkill(rnessDir, `path:${src}`, { credentials: null }),
       { scope: null }
     )
+  // A repository with a commit, one without, a .git directory or file that
+  // is no repository, and the names a file system takes for `.git`.
   const nested = await skillDir(t, 'demo', { 'vendor/README.md': 'v' })
   await git(['init', '-q', '-b', 'main'], join(nested, 'vendor'))
   await git(['add', '-A'], join(nested, 'vendor'))
   await git(['commit', '-q', '-m', 'v'], join(nested, 'vendor'))
-  await assert.rejects(
-    copy(nested),
-    /skill "demo": "vendor" is a nested repository; a skill holds no repository/
-  )
-  await assert.rejects(stat(join(rnessDir, 'skills/demo')))
   const empty = await skillDir(t, 'demo', { 'vendor/README.md': 'v' })
   await git(['init', '-q', '-b', 'main'], join(empty, 'vendor'))
-  await assert.rejects(copy(empty), /skill "demo": git cannot take its copy/)
-  await assert.rejects(stat(join(rnessDir, 'skills/demo')))
-  const loose = await skillDir(t, 'demo', {
-    'vendor/.git/HEAD': 'ref: x\n',
-    'sub/.git': 'gitdir: ../x\n',
-    'sub/a.md': 'a',
-  })
-  assert.deepEqual(
-    (await copy(loose)).copy.files.map((f) => f.path),
-    ['SKILL.md', 'sub/a.md']
-  )
+  for (const [src, named] of [
+    [nested, 'vendor/.git'],
+    [empty, 'vendor/.git'],
+    [
+      await skillDir(t, 'demo', { 'vendor/.git/config': '[core]\n' }),
+      'vendor/.git',
+    ],
+    [await skillDir(t, 'demo', { 'sub/.git': 'gitdir: ../x\n' }), 'sub/.git'],
+    [await skillDir(t, 'demo', { 'a/.GIT/config': 'x' }), 'a/.GIT'],
+    [await skillDir(t, 'demo', { 'a/GIT~1/config': 'x' }), 'a/GIT~1'],
+    [await skillDir(t, 'demo', { 'a/.git /config': 'x' }), 'a/.git '],
+  ] as const) {
+    await assert.rejects(copy(src), (e: Error) => {
+      assert.equal(
+        e.message,
+        `skill "demo": "${named}" is a .git below the skill's root; a skill holds no repository`
+      )
+      return true
+    })
+    // Nothing written: not even the level's directory.
+    await assert.rejects(stat(join(rnessDir, 'skills')))
+  }
   // The source's own repository, at its root, is not copied at all.
   const own = await skillDir(t, 'own')
   await git(['init', '-q', '-b', 'main'], own)
   const c = await copy(own)
   await assert.rejects(stat(join(c.dir, '.git')))
+})
+
+test('the checks of §4 on the tree: a nested repository in a copy is refused as a gitlink (the second layer)', async (t) => {
+  const problems = await problemsOf(
+    t,
+    'demo',
+    { 'SKILL.md': SKILL_MD('demo'), 'vendor/README.md': 'v' },
+    async (dir) => {
+      await git(['init', '-q', '-b', 'main'], join(dir, 'vendor'))
+      await git(['add', '-A'], join(dir, 'vendor'))
+      await git(['commit', '-q', '-m', 'v'], join(dir, 'vendor'))
+    }
+  )
+  assert.deepEqual(problems, [
+    'skill "demo": "vendor" is a nested repository; a skill holds no repository',
+  ])
+})
+
+test('isGitName and pathProblem: what a crafted tree may name and no copy may hold (ruling R34)', () => {
+  for (const name of [
+    '.git',
+    '.GIT',
+    '.Git',
+    '.git.',
+    '.git ',
+    '.git. .',
+    'git~1',
+    'GIT~12',
+    '.g\u200cit',
+    '.git\ufeff',
+  ])
+    assert.equal(isGitName(name), true, JSON.stringify(name))
+  for (const name of [
+    'git',
+    '.gitignore',
+    '.github',
+    'a.git',
+    'git~',
+    '.git-x',
+  ])
+    assert.equal(isGitName(name), false, name)
+  for (const path of [
+    'SKILL.md',
+    'refs/guide.md',
+    '.gitignore',
+    'a..b',
+    '..x',
+    'x..',
+  ])
+    assert.equal(pathProblem(path), null, path)
+  for (const [path, problem] of [
+    ['..', /empty, "\." or "\.\." part/],
+    ['../evil.md', /empty, "\." or "\.\." part/],
+    ['a/../b', /empty, "\." or "\.\." part/],
+    ['./a', /empty, "\." or "\.\." part/],
+    ['a//b', /empty, "\." or "\.\." part/],
+    ['a/', /empty, "\." or "\.\." part/],
+    ['.git/config', /names a \.git/],
+    ['a/.GIT/hooks/x', /names a \.git/],
+    ['a/git~1/x', /names a \.git/],
+    ['a\\b', /backslash/],
+    ['c:/x', /colon/],
+    ['a\u001bb', /control character/],
+    ['a\u202eb', /zero-width or bidirectional/],
+  ] as const)
+    assert.match(pathProblem(path) ?? '', problem, path)
 })
 
 test("copySkill: a repository root takes the name of its SKILL.md, not the repository's", async (t) => {
@@ -1169,6 +1245,40 @@ test('checkSkillCopies: a copy named with ESC is reported without a raw ESC', as
   assert.equal(problems.length, 2)
   for (const line of [...problems, ...reported])
     assert.doesNotMatch(line, RAW_CONTROL)
+})
+
+test('blockSkills: a SKILL.md that is a link, a skill directory that is a link, or a SKILL.md above 1 MB is never read nor listed (ruling R35)', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: {
+      'skills/plain/SKILL.md': SKILL_MD('plain'),
+      'skills/linked-md/x.md': 'x',
+      'skills/huge/SKILL.md': `${SKILL_MD('huge')}${'x'.repeat(1048576)}`,
+    },
+  })
+  const rnessDir = join(root, '.rness')
+  const outside = await tmp(t)
+  await put(outside, {
+    'SKILL.md': SKILL_MD('linked-md'),
+    'dir/SKILL.md': SKILL_MD('linked-dir'),
+  })
+  await symlink(
+    join(outside, 'SKILL.md'),
+    join(rnessDir, 'skills/linked-md/SKILL.md')
+  )
+  await symlink(join(outside, 'dir'), join(rnessDir, 'skills/linked-dir'))
+  const manifest = await loadManifest(rnessDir)
+  assert.deepEqual(await blockSkills(rnessDir, manifest, null), [
+    { name: 'plain', description: 'Does a thing.' },
+  ])
+  // The per-turn safety net says why, without reading through the links.
+  assert.deepEqual(
+    (await checkSkillCopies(rnessDir, manifest, { trees: false })).problems,
+    [
+      `skill "huge": SKILL.md is ${Buffer.byteLength(SKILL_MD('huge')) + 1048576} bytes, above the limit of 1048576 bytes (1 MB)`,
+      'skill "linked-dir": skills/linked-dir is a symbolic link; only regular files and directories are allowed',
+      'skill "linked-md": "SKILL.md" is a symbolic link; only regular files and directories are allowed',
+    ]
+  )
 })
 
 test('blockSkills: name and one-line plain description of each valid skill that applies to the scope', async (t) => {

@@ -823,3 +823,43 @@ test("a block whose end line was removed by hand: only the lines the record name
   assert.doesNotMatch(after, /release/)
   assert.equal(after.split(EXCLUDE_END).length, 2, 'one end line')
 })
+
+test('a crafted tree reaching the writer is refused there too: nothing written outside the copy, no .git planted (ruling R34)', async (t) => {
+  const root = await skillsWs(t)
+  const ws = await findWorkspace(root)
+  const manifest = await loadManifest(ws.rnessDir)
+  const applied = await appliedSkills(ws, manifest, { version: 1, skills: {} })
+  const release = applied.find((a) => a.id === 'release')
+  const head = release?.head
+  assert.ok(release !== undefined && head !== null && head !== undefined)
+  for (const path of [
+    '../evil.md',
+    '../../escape.md',
+    '.git/config',
+    'a/GIT~1/x',
+  ]) {
+    // As if the checks of the tree had been bypassed: the writer checks again.
+    const crafted = {
+      ...release,
+      state: 'installed' as const,
+      head: {
+        ...head,
+        files: [
+          ...head.files,
+          { ...(head.files[0] as (typeof head.files)[0]), path },
+        ],
+      },
+    }
+    const p = await projectClone(ws, manifest, [crafted], 'api')
+    assert.match(p.problems.join('\n'), /^org\/api: refusing "/m, path)
+    assert.deepEqual(p.installed, [], path)
+  }
+  for (const at of [
+    'org/api/.agents/skills/evil.md',
+    'org/api/.agents/escape.md',
+    'org/api/.claude/skills/evil.md',
+    'org/api/.claude/escape.md',
+    'org/api/.agents/skills/release',
+  ])
+    assert.equal(await isThere(join(root, at)), false, at)
+})

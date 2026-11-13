@@ -10,7 +10,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, relative } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { parseFrontMatter } from './frontmatter.ts'
 import { readOrNull, writeFileAtomic } from './fs.ts'
@@ -36,7 +36,9 @@ import {
   type SkillFile,
   type SkillTree,
   allowedToolsText,
+  pathProblem,
   plainText,
+  quoted,
   skillsForClone,
 } from './skills.ts'
 import { count } from './style.ts'
@@ -296,10 +298,32 @@ interface SkillBytes {
   bytes: Buffer
 }
 
+/**
+ * The file `path` of a skill's tree under the copy `to`, absolute; throws
+ * unless it is a path a copy may hold (`pathProblem`: no `..`, no `.git`)
+ * that stays inside `to` (ruling R34). The trees were checked already: a
+ * crafted one must not reach the disk all the same.
+ */
+function fileIn(to: string, path: string): string {
+  const problem = pathProblem(path)
+  if (problem !== null)
+    throw new Error(`refusing ${quoted(path)}: it ${problem}`)
+  const at = resolve(to, ...path.split('/'))
+  const rel = relative(to, at)
+  if (
+    rel === '' ||
+    rel === '..' ||
+    rel.startsWith(`..${sep}`) ||
+    isAbsolute(rel)
+  )
+    throw new Error(`refusing ${quoted(path)}: outside ${to}`)
+  return at
+}
+
 async function writeFiles(files: readonly SkillBytes[], to: string) {
   await mkdir(to, { recursive: true })
   for (const f of files) {
-    const at = join(to, ...f.path.split('/'))
+    const at = fileIn(to, f.path)
     await mkdir(dirname(at), { recursive: true })
     await writeFile(at, f.bytes)
     await chmod(at, f.executable ? 0o755 : 0o644)
@@ -315,6 +339,11 @@ async function committedFiles(
   store: ObjectStore,
   head: SkillTree
 ): Promise<SkillBytes[]> {
+  for (const f of head.files) {
+    const problem = pathProblem(f.path)
+    if (problem !== null)
+      throw new Error(`refusing ${quoted(f.path)}: it ${problem}`)
+  }
   const blobs = await readObjects(
     store,
     head.files.map((f) => f.id)
@@ -406,7 +435,7 @@ async function copiesMatch(
       continue
     result[at] = true
     for (const f of c.files)
-      hashed.push({ at, abs: join(c.abs, ...f.path.split('/')), id: f.id })
+      hashed.push({ at, abs: fileIn(c.abs, f.path), id: f.id })
   }
   const ids = await blobIds(
     store,

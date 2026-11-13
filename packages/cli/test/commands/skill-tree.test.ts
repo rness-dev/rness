@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  readdir,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -167,7 +168,7 @@ test('add refuses a copy whose tree holds a symbolic link, a nested repository, 
     ],
     [
       'nested',
-      /skill "nested": "vendor" is a nested repository; a skill holds no repository/,
+      /skill "nested": "vendor\/\.git" is a \.git below the skill's root; a skill holds no repository/,
     ],
     [
       'heavy',
@@ -179,6 +180,13 @@ test('add refuses a copy whose tree holds a symbolic link, a nested repository, 
     assert.match(r.err, why)
     assert.equal(await there(join(root, '.rness/skills', name)), false, name)
   }
+  // No staged copy left behind either.
+  assert.deepEqual(
+    (await readdir(join(root, '.rness/skills')).catch(() => [])).filter((n) =>
+      n.startsWith('.')
+    ),
+    []
+  )
   assert.equal(
     await readFile(join(root, '.rness/rness.json'), 'utf8'),
     manifest

@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import {
   chmod,
   lstat,
@@ -151,8 +152,16 @@ export async function listedSkills(
     return []
   }
   const listed: ListedSkill[] = []
+  const linked = new Map<string, boolean>()
   for (const skill of all) {
     try {
+      // Never read through a link (ruling R35): a linked level or skill
+      // directory leaves the skill out, as `validate` refuses it.
+      const base = dirname(skill.dir)
+      if (!linked.has(base))
+        linked.set(base, (await linkedLevel(rnessDir, base)) !== null)
+      if (linked.get(base) === true) continue
+      if (!(await lstat(skill.dir)).isDirectory()) continue
       const description = (await readSkillMd(skill.dir, skill.name))[
         'description'
       ]
@@ -385,7 +394,9 @@ function checkSkillMd(name: string, text: string): Record<string, unknown> {
  * The `SKILL.md` of the directory `dir` read from disk and checked as the
  * skill `name` (its name, its front matter), with no tree built: what the
  * blocks and the per-turn safety net can afford (ruling R30), and what a
- * source is checked on before anything is copied. Returns its front matter.
+ * source is checked on before anything is copied. Read only when it is a
+ * regular file, never a link, of at most 1 MB (ruling R35). Returns its
+ * front matter.
  */
 export async function readSkillMd(
   dir: string,
@@ -402,7 +413,49 @@ export async function readSkillMd(
       name,
       `"SKILL.md" is ${st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file'}; only regular files and directories are allowed`
     )
+  if (st.size > MAX_SKILL_BYTES)
+    throw refusal(
+      name,
+      `SKILL.md is ${st.size} bytes, above the limit of ${MAX_SKILL_BYTES} bytes (1 MB)`
+    )
   return checkSkillMd(name, await readFile(file, 'utf8'))
+}
+
+/** Code points HFS+ ignores in a name: there, `.g\u200cit` is `.git`. */
+const HFS_IGNORED = /[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/g
+
+/**
+ * True when a file system may take `name` for `.git`: in any case, with
+ * the trailing dots and spaces NTFS drops, as NTFS's short name `git~1`,
+ * or with the code points HFS+ ignores (rulings R34, R35).
+ */
+export function isGitName(name: string): boolean {
+  const bare = name
+    .replace(HFS_IGNORED, '')
+    .replace(/[. ]+$/, '')
+    .toLowerCase()
+  return bare === '.git' || /^git~\d+$/.test(bare)
+}
+
+/**
+ * Why `path`, a file of a skill's tree (relative, `/` between its parts),
+ * cannot be written as one; null when it can (ruling R34). A crafted tree
+ * may hold names git's own tools refuse: an empty part, `.` or `..`, a
+ * `.git` in any form, a backslash or a colon, a control, bidirectional or
+ * zero-width character.
+ */
+export function pathProblem(path: string): string | null {
+  if (CONTROL.test(path)) return 'holds a control character'
+  if (INVISIBLE.test(path))
+    return 'holds a zero-width or bidirectional character'
+  if (path.includes('\\')) return 'holds a backslash'
+  if (path.includes(':')) return 'holds a colon'
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.' || part === '..')
+      return 'holds an empty, "." or ".." part'
+    if (isGitName(part)) return 'names a .git; a skill holds no repository'
+  }
+  return null
 }
 
 /** `dir` relative to `rnessDir`, with `/`: its path in a tree of `.rness`. */
@@ -437,10 +490,12 @@ const modeProblem = (mode: string): string =>
 
 /**
  * The checks of spec 0041 §4 on the entries of a skill's tree, but for its
- * `SKILL.md`'s content: the name rule, regular files only (a symbolic link
- * or a gitlink refused, naming it), no control, bidirectional or zero-width
- * character in a file name, at most 1 MB, a `SKILL.md` at the root. Returns
- * the files and the id of the `SKILL.md` to read; throws the refusal.
+ * `SKILL.md`'s content: the name rule, every path one that can be written
+ * (`pathProblem`: no `..`, no `.git`, no control, bidirectional or
+ * zero-width character, ruling R34), regular files only (a symbolic link or
+ * a gitlink refused, naming it), at most 1 MB, a `SKILL.md` at the root.
+ * Returns the files and the id of the `SKILL.md` to read; throws the
+ * refusal.
  */
 function checkEntries(
   name: string,
@@ -451,22 +506,16 @@ function checkEntries(
   if (bad !== null) throw refusal(name, bad)
   if (found.self.type !== 'tree')
     throw refusal(name, `${plainText(path)} ${modeProblem(found.self.mode)}`)
+  // Every entry, its directories included: a crafted tree names them too.
+  for (const e of found.inside) {
+    const problem = pathProblem(e.path)
+    if (problem !== null)
+      throw refusal(name, `file name ${quoted(e.path)} ${problem}`)
+  }
   const leaves = found.inside.filter((e) => e.type !== 'tree')
   for (const e of leaves)
     if (!REGULAR.has(e.mode))
       throw refusal(name, `${quoted(e.path)} ${modeProblem(e.mode)}`)
-  for (const e of leaves) {
-    if (CONTROL.test(e.path))
-      throw refusal(
-        name,
-        `file name ${quoted(e.path)} holds a control character`
-      )
-    if (INVISIBLE.test(e.path))
-      throw refusal(
-        name,
-        `file name ${quoted(e.path)} holds a zero-width or bidirectional character`
-      )
-  }
   const files = leaves.map((e) => ({
     path: e.path,
     executable: e.mode === '100755',
@@ -827,11 +876,52 @@ const there = (p: string): Promise<boolean> =>
   )
 
 /**
+ * Why the entry `d` of a source, at `path`, is never copied into `.rness`;
+ * null when it may be. A `.git` below the skill's root, in any form a file
+ * system takes for one, is a repository whose configuration git would run
+ * for anyone working there (ruling R35); a device or a socket is no file.
+ */
+function sourceProblem(d: Dirent, path: string): string | null {
+  if (isGitName(d.name))
+    return `${quoted(path)} is a .git below the skill's root; a skill holds no repository`
+  if (!d.isDirectory() && !d.isFile() && !d.isSymbolicLink())
+    return `${quoted(path)} is neither a regular file nor a directory; only regular files and directories are allowed`
+  return null
+}
+
+/** Each entry of the source `from` with its path, the source's own `.git` (at its root) left out; links never followed. */
+async function walkSource(
+  from: string,
+  each: (d: Dirent, path: string, abs: string) => Promise<void>
+): Promise<void> {
+  const visit = async (dir: string, rel: string): Promise<void> => {
+    for (const d of await readdir(dir, { withFileTypes: true })) {
+      if (rel === '' && d.name === '.git') continue
+      const path = rel === '' ? d.name : `${rel}/${d.name}`
+      const abs = join(dir, d.name)
+      await each(d, path, abs)
+      if (d.isDirectory()) await visit(abs, path)
+    }
+  }
+  await visit(from, '')
+}
+
+/** The source `from` of skill `name` refused, naming the entry, when one is never copied (`sourceProblem`). */
+async function checkSource(name: string, from: string): Promise<void> {
+  await walkSource(from, async (d, path) => {
+    const problem = sourceProblem(d, path)
+    if (problem !== null) throw refusal(name, problem)
+  })
+}
+
+/**
  * Copy the directory `from` to `to` as it is: directories, files (0755 when
  * executable, else 0644) and symbolic links, a link copied as a link and
  * never followed. The source's own repository (a `.git` at its root) is no
  * part of it; anything else is copied, and git decides what the copy holds.
- * `md` rewrites the bytes of the root `SKILL.md`.
+ * `md` rewrites the bytes of the root `SKILL.md`. `copySkill` checks the
+ * source whole first (`checkSource`); each entry is checked again as it is
+ * copied, the source being free to change in between.
  */
 async function copyDir(
   name: string,
@@ -839,27 +929,19 @@ async function copyDir(
   to: string,
   md: (bytes: Buffer) => Buffer
 ): Promise<void> {
-  const visit = async (src: string, dst: string, rel: string) => {
-    await mkdir(dst, { recursive: true })
-    for (const d of await readdir(src, { withFileTypes: true })) {
-      if (rel === '' && d.name === '.git') continue
-      const path = rel === '' ? d.name : `${rel}/${d.name}`
-      const s = join(src, d.name)
-      const t = join(dst, d.name)
-      if (d.isDirectory()) await visit(s, t, path)
-      else if (d.isSymbolicLink()) await symlink(await readlink(s), t)
-      else if (d.isFile()) {
-        const bytes = await readFile(s)
-        await writeFile(t, path === 'SKILL.md' ? md(bytes) : bytes)
-        await chmod(t, ((await lstat(s)).mode & 0o100) !== 0 ? 0o755 : 0o644)
-      } else
-        throw refusal(
-          name,
-          `${quoted(path)} is neither a regular file nor a directory; only regular files and directories are allowed`
-        )
+  await mkdir(to, { recursive: true })
+  await walkSource(from, async (d, path, abs) => {
+    const problem = sourceProblem(d, path)
+    if (problem !== null) throw refusal(name, problem)
+    const t = join(to, ...path.split('/'))
+    if (d.isDirectory()) await mkdir(t, { recursive: true })
+    else if (d.isSymbolicLink()) await symlink(await readlink(abs), t)
+    else {
+      const bytes = await readFile(abs)
+      await writeFile(t, path === 'SKILL.md' ? md(bytes) : bytes)
+      await chmod(t, ((await lstat(abs)).mode & 0o100) !== 0 ? 0o755 : 0o644)
     }
-  }
-  await visit(from, to, '')
+  })
 }
 
 /** The files of the copy at `dir` as `index` takes them, unchecked (`fileDigests`'s form); empty when git takes none. */
@@ -901,7 +983,9 @@ export async function copySkill(
   opts: { scope: string | null; name?: string }
 ): Promise<CopiedSkill> {
   const name = opts.name ?? from.name
+  // The source refused before anything is written to `.rness` (R35).
   await readSkillMd(from.dir, from.name)
+  await checkSource(name, from.dir)
   const bad = nameProblem(name)
   if (bad !== null) throw refusal(name, bad)
   if (opts.scope === null && name === 'scopes')
