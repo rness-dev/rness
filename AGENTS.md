@@ -1,7 +1,7 @@
 # rness workspace member — scope: rness
 
 <!-- BEGIN rness -->
-<!-- rness · scope: rness · contract: 1 · hash: 31b653f5dd7a · generated: run `rness sync`, never edit inside this block -->
+<!-- rness · scope: rness · contract: 1 · hash: 1d27cad82614 · generated: run `rness sync`, never edit inside this block -->
 This directory is scope `rness` of rness workspace `rness-dev`. Full context lives in
 `../../.rness/`: start at its `AGENTS.md`, then task-relevant `adr/`, `specs/`, `plans/`;
 live: `rness context --scope rness`. If `.rness/` is not reachable, this is a
@@ -279,5 +279,6 @@ To enable it, change `Disabled` to `Enabled` in a pull request.
 
 ## Team skills
 - no-ai-slop: Edit drafts into sharper, more human writing while preserving the writer's personal voice, or detect AI-slop patterns without rewriting. Use when the user wants a draft clearer, more direct, more opinionated, or less AI-sounding, or asks whether writing reads as AI.
+- release (Claude Code: /rness:release): Release the rness CLI once the maintainer gives the word. Bumps the version files, runs every check, tags locally, and hands the maintainer the push order. Use when asked to prepare or cut a release of the rness CLI.
 Installed with each developer's consent: `rness skill install`.
 <!-- END rness -->
