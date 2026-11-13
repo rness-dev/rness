@@ -648,6 +648,10 @@ export async function skillInstallCommand(
         `${a.skill.name}: ${a.problem ?? 'invalid'}; run rness validate`
       )
     let onlyInvalid = false
+    // Named and accepted at their current hash already: projected again
+    // below, said `already installed` when nothing had to be written.
+    let done: AppliedSkill[] = []
+    let doneLabel = (a: AppliedSkill): string => a.skill.name
     if (names.length === 0) {
       applied.filter((a) => a.state === 'invalid').forEach(skip)
       listed = applied.filter(isValid).filter((a) => isPending(a.state))
@@ -660,22 +664,33 @@ export async function skillInstallCommand(
           `unknown skill ${unknown.map(quoted).join(', ')}; known skills: ${plainText([...new Set(applied.map((a) => a.skill.name))].join(', ')) || 'none'}`
         )
       const named = applied.filter((a) => names.includes(a.skill.name))
-      const done = named.filter((a) => a.state === 'installed')
-      if (done.length > 0) {
-        const label = labeller(named)
-        say(
-          ui,
-          'line',
-          'skills',
-          `${done.map(label).join(', ')}: already installed`
-        )
-      }
+      done = named.filter((a) => a.state === 'installed')
+      doneLabel = labeller(named)
       named.filter((a) => a.state === 'invalid').forEach(skip)
       onlyInvalid = named.every((a) => a.state === 'invalid')
       listed = named.filter(isValid).filter((a) => a.state !== 'installed')
     }
+    const alreadyInstalled = (written: ReadonlySet<string>): void => {
+      const left = done.filter((a) => !written.has(a.skill.name))
+      if (left.length > 0)
+        say(
+          ui,
+          'line',
+          'skills',
+          `${left.map(doneLabel).join(', ')}: already installed`
+        )
+    }
     if (listed.length === 0) {
       if (onlyInvalid) return 1
+      if (done.length > 0) {
+        // No question: their copies made true now, as sync would (a copy
+        // removed, a clone added since), and said `installed` when written.
+        const { ok, written } = await projectAll(ws, manifest, ui, consent, {
+          only: new Set(done.map((a) => a.skill.name)),
+        })
+        alreadyInstalled(written)
+        return ok ? 0 : 1
+      }
       if (names.length === 0)
         say(ui, 'line', 'skills', 'no team skill awaits your consent')
       return 0
@@ -762,9 +777,15 @@ export async function skillInstallCommand(
     const only = unreadable
       ? { only: new Set(listed.map((a) => a.skill.name)) }
       : {}
-    return (await projectAll(ws, manifest, ui, { version: 1, skills }, only))
-      ? 0
-      : 1
+    const { ok, written } = await projectAll(
+      ws,
+      manifest,
+      ui,
+      { version: 1, skills },
+      only
+    )
+    alreadyInstalled(written)
+    return ok ? 0 : 1
   })
 }
 
@@ -772,7 +793,9 @@ export async function skillInstallCommand(
  * Run the projection of the accepted skills over the declared clones and
  * the root, and say it: `installed <names>   (<places>)`, the same for what
  * was removed, then each clash. `opts.only` limits it (`ProjectOptions`).
- * False when a place failed.
+ * A place that fails is said, escaped, and the others are still projected,
+ * as `sync` does. `ok` false when a place failed; `written`: the names
+ * installed or rewritten somewhere.
  */
 async function projectAll(
   ws: Workspace,
@@ -780,15 +803,25 @@ async function projectAll(
   ui: Ui,
   consent: Consent,
   opts: ProjectOptions
-): Promise<boolean> {
+): Promise<{ ok: boolean; written: Set<string> }> {
   const applied = await appliedSkills(ws, manifest, consent)
   const places: [string, Projection][] = []
+  const failed: string[] = []
+  const project = async (
+    label: string,
+    work: () => Promise<Projection>
+  ): Promise<void> => {
+    try {
+      places.push([label, await work()])
+    } catch (e) {
+      failed.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
   for (const repo of await declaredClones(ws, manifest))
-    places.push([
-      `org/${repo}`,
-      await projectClone(ws, manifest, applied, repo, opts),
-    ])
-  places.push([ROOT_LABEL, await projectRoot(ws, manifest, applied, opts)])
+    await project(`org/${repo}`, () =>
+      projectClone(ws, manifest, applied, repo, opts)
+    )
+  await project(ROOT_LABEL, () => projectRoot(ws, manifest, applied, opts))
   const summary = (verb: string, of: (p: Projection) => string[]): void => {
     const done = places.filter(([, p]) => of(p).length > 0)
     if (done.length === 0) return
@@ -803,9 +836,14 @@ async function projectAll(
   summary('installed', (p) => [...p.installed, ...p.rewritten])
   summary('removed', (p) => p.removed)
   for (const [, p] of places) for (const n of p.notes) say(ui, 'hint', n)
-  const problems = places.flatMap(([, p]) => p.problems)
+  const problems = [...places.flatMap(([, p]) => p.problems), ...failed]
   for (const line of problems) ui.error(plainText(line))
-  return problems.length === 0
+  return {
+    ok: problems.length === 0,
+    written: new Set(
+      places.flatMap(([, p]) => [...p.installed, ...p.rewritten])
+    ),
+  }
 }
 
 /** `rness skill list`: every team skill that applies to this workspace, with its state for the developer. */

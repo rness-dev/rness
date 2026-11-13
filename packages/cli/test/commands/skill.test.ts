@@ -1188,6 +1188,71 @@ test('install: after an unreadable record, only the skills just answered are wri
   )
 })
 
+test('install: a clone that fails is reported, the other clones and the root are still written, exit 1', async (t) => {
+  const root = await consentWs(t, {
+    ...twoSkills,
+    agents: ['claude'],
+    scopes: {
+      web: { url: 'git@github.com:acme/web.git' },
+      api: { url: 'git@github.com:acme/api.git' },
+    },
+    dirs: ['org/web', 'org/api'],
+  })
+  for (const d of ['org/web', 'org/api'])
+    await git(['init', '-q', '-b', 'main'], join(root, d))
+  // org/web, the first clone of rness.json, fails: its exclude cannot be read.
+  await rm(join(root, 'org/web/.git/info'), { recursive: true, force: true })
+  await writeFile(join(root, 'org/web/.git/info'), 'not a directory')
+  const r = await install(root, ['release'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(r.code, 1)
+  assert.match(r.err, /^org\/web: /m)
+  assert.doesNotMatch(r.out + r.err, RAW_CONTROL)
+  assert.match(r.out, /^installed +release {3}\(org\/api, workspace root\)$/m)
+  assert.equal(
+    await exists(join(root, 'org/api/.agents/skills/release/SKILL.md')),
+    true
+  )
+  assert.equal(
+    await exists(join(root, '.claude/skills/release/SKILL.md')),
+    true
+  )
+  assert.equal((await recordOf(root)).skills['release']?.answer, 'accepted')
+})
+
+test('install <name>: an accepted skill whose copies are missing is installed again and said installed', async (t) => {
+  const root = await consentWs(t, { ...twoSkills, agents: ['claude'] })
+  await git(['init', '-q', '-b', 'main'], join(root, 'org/web'))
+  const a = await install(root, ['release'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(a.code, 0, a.err)
+  for (const p of [
+    'org/web/.claude/skills/release',
+    'org/web/.agents/skills/release',
+    '.claude/skills/release',
+  ])
+    await rm(join(root, p), { recursive: true })
+  const term = consentTerminal([])
+  const b = await install(root, ['release'], term)
+  assert.equal(b.code, 0, b.err)
+  assert.equal(term.asked.length, 0)
+  assert.match(b.out, /^installed +release {3}\(org\/web, workspace root\)$/m)
+  assert.doesNotMatch(b.out, /already installed/)
+  for (const p of [
+    'org/web/.claude/skills/release/SKILL.md',
+    'org/web/.agents/skills/release/SKILL.md',
+    '.claude/skills/release/SKILL.md',
+  ])
+    assert.equal(await exists(join(root, p)), true, p)
+  // In place: nothing to write, and said so.
+  const c = await install(root, ['release'], consentTerminal([]))
+  assert.equal(c.code, 0, c.err)
+  assert.match(c.out, /^skills +release: already installed$/m)
+  assert.doesNotMatch(c.out, /^installed/m)
+})
+
 test('add: a git source holding a control character prints no raw control character', async (t) => {
   const root = await ws(t)
   const r = await say(() =>
