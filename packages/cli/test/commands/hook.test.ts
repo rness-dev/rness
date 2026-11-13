@@ -2096,6 +2096,51 @@ test('pre-tool-use: an installed team skill is refused in a clone and at the roo
   }
 })
 
+test("pre-tool-use: a team-written skill installed inside the plugin gets the team-skill line; the plugin's own files keep the owned refusal", async (t) => {
+  const root = await skillWs(t)
+  await recorded_(root, 'org/web', 'skills.json', {
+    release: ['.claude/skills/rness/skills/release', '.agents/skills/release'],
+  })
+  await recorded_(root, '.rness', 'root-skills.json', {
+    release: ['.claude/skills/rness/skills/release'],
+  })
+  const web = join(root, 'org', 'web')
+  for (const [cwd, file, label] of [
+    [
+      web,
+      join(web, '.claude/skills/rness/skills/release/SKILL.md'),
+      'org/web/.claude/skills/rness/skills/release/SKILL.md',
+    ],
+    [
+      root,
+      join(root, '.claude/skills/rness/skills/release/notes/a.md'),
+      '.claude/skills/rness/skills/release/notes/a.md',
+    ],
+  ] as const)
+    for (const input of [
+      writeOf(file, cwd, 'mine'),
+      editOf(file, cwd, 'Body', 'Mine'),
+    ]) {
+      const r = await hook('pre-tool-use', input)
+      assert.equal(r.code, 2, label)
+      assert.equal(
+        r.err,
+        `rness: ${label} is a team skill rness installs from .rness/skills/release; edit it there\n`
+      )
+    }
+  // The plugin's own files, and a team skill the record does not list, stay
+  // refused as rness's whole files.
+  for (const file of [
+    join(root, '.claude/skills/rness/skills/status/SKILL.md'),
+    join(root, '.claude/skills/rness/.claude-plugin/plugin.json'),
+    join(root, '.claude/skills/rness/skills/unlisted/SKILL.md'),
+  ]) {
+    const r = await hook('pre-tool-use', writeOf(file, root, 'x'))
+    assert.equal(r.code, 2, file)
+    assert.match(r.err, /is written whole by rness sync/, file)
+  }
+})
+
 test('pre-tool-use: a skill directory the record does not list, or no readable record, is not refused', async (t) => {
   const root = await skillWs(t)
   const web = join(root, 'org', 'web')

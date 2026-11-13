@@ -9,6 +9,7 @@ import {
   type TeamSkill,
   plainText,
   quoted,
+  reservedNameProblem,
   skillsAtHead,
   skillsForClone,
   teamSkills,
@@ -193,7 +194,18 @@ export async function appliedSkills(
       ? consent.skills[id]?.answer
       : undefined
     const answer = given === undefined ? {} : { answer: given }
-    if (head === null)
+    const reserved =
+      skill.entry === null ? reservedNameProblem(skill.name) : null
+    if (reserved !== null)
+      applied.push({
+        id,
+        skill,
+        head: null,
+        state: 'invalid',
+        problem: `skill ${quoted(skill.name)}: ${reserved}`,
+        ...answer,
+      })
+    else if (head === null)
       applied.push(
         // Not at HEAD: its copy waits for a commit, or there is none at all.
         (await exists(skill.dir))

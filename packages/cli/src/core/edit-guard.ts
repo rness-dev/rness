@@ -144,9 +144,9 @@ export function ownedRefusal(label: string): string {
   return `rness: ${label} is written whole by rness sync, and the next sync overwrites it. Leave it to rness.`
 }
 
-/** A skill directory rness may have installed: `[org/<repo>/].claude|.agents/skills/<name>`. */
+/** A skill directory rness may have installed: `[org/<repo>/].claude|.agents/skills/<name>`, or a team skill inside the plugin, `.claude/skills/rness/skills/<name>`. */
 const INSTALLED_AT =
-  /^(?:org\/([^/]+)\/)?(\.(?:claude|agents)\/skills\/[^/]+)(?:\/|$)/
+  /^(?:org\/([^/]+)\/)?(\.claude\/skills\/rness\/skills\/[^/]+|\.(?:claude|agents)\/skills\/[^/]+)(?:\/|$)/
 
 /**
  * Where a workspace-relative path sits in a place team skills are installed

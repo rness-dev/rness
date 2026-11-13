@@ -1086,10 +1086,15 @@ test('install: a malformed entry of the record is dropped, said once; the other 
   const s = await say(() => syncCommand({ cwd: root, yes: true }))
   assert.equal(s.code, 0, s.err)
   assert.equal(
-    await exists(join(root, 'org/web/.claude/skills/release/SKILL.md')),
+    await exists(
+      join(root, 'org/web/.claude/skills/rness/skills/release/SKILL.md')
+    ),
     true
   )
-  assert.equal(await exists(join(root, '.claude/skills/release')), true)
+  assert.equal(
+    await exists(join(root, '.claude/skills/rness/skills/release')),
+    true
+  )
 })
 
 test('list: one line per skill with where it applies and its state', async (t) => {
@@ -1270,7 +1275,7 @@ test('install: a skill accepted is installed in the clones and at the root; its 
     /^installed brainstorming, release {3}\(org\/web, workspace root\)$/m
   )
   for (const p of [
-    'org/web/.claude/skills/release/SKILL.md',
+    'org/web/.claude/skills/rness/skills/release/SKILL.md',
     'org/web/.agents/skills/brainstorming/notes.md',
     '.claude/skills/brainstorming/SKILL.md',
   ])
@@ -1291,8 +1296,8 @@ test('install: a skill accepted is installed in the clones and at the root; its 
   )
   assert.doesNotMatch(u.out, /already installed/)
   for (const p of [
-    'org/web/.claude/skills/release/SKILL.md',
-    '.claude/skills/release/SKILL.md',
+    'org/web/.claude/skills/rness/skills/release/SKILL.md',
+    '.claude/skills/rness/skills/release/SKILL.md',
   ])
     assert.equal(
       await readFile(join(root, p), 'utf8'),
@@ -1322,9 +1327,9 @@ test('install: after an unreadable record, only the skills just answered are wri
   )
   assert.doesNotMatch(b.out, /^removed/m)
   for (const p of [
-    'org/web/.claude/skills/release/SKILL.md',
+    'org/web/.claude/skills/rness/skills/release/SKILL.md',
     'org/web/.agents/skills/release/SKILL.md',
-    '.claude/skills/release/SKILL.md',
+    '.claude/skills/rness/skills/release/SKILL.md',
     'org/web/.agents/skills/brainstorming/SKILL.md',
   ])
     assert.equal(await exists(join(root, p)), true, p)
@@ -1366,7 +1371,7 @@ test('install: a clone that fails is reported, the other clones and the root are
     true
   )
   assert.equal(
-    await exists(join(root, '.claude/skills/release/SKILL.md')),
+    await exists(join(root, '.claude/skills/rness/skills/release/SKILL.md')),
     true
   )
   assert.equal((await recordOf(root)).skills['release']?.answer, 'accepted')
@@ -1380,9 +1385,9 @@ test('install <name>: an accepted skill whose copies are missing is installed ag
   })
   assert.equal(a.code, 0, a.err)
   for (const p of [
-    'org/web/.claude/skills/release',
+    'org/web/.claude/skills/rness/skills/release',
     'org/web/.agents/skills/release',
-    '.claude/skills/release',
+    '.claude/skills/rness/skills/release',
   ])
     await rm(join(root, p), { recursive: true })
   const term = consentTerminal([])
@@ -1392,9 +1397,9 @@ test('install <name>: an accepted skill whose copies are missing is installed ag
   assert.match(b.out, /^installed +release {3}\(org\/web, workspace root\)$/m)
   assert.doesNotMatch(b.out, /already installed/)
   for (const p of [
-    'org/web/.claude/skills/release/SKILL.md',
+    'org/web/.claude/skills/rness/skills/release/SKILL.md',
     'org/web/.agents/skills/release/SKILL.md',
-    '.claude/skills/release/SKILL.md',
+    '.claude/skills/rness/skills/release/SKILL.md',
   ])
     assert.equal(await exists(join(root, p)), true, p)
   // In place: nothing to write, and said so.

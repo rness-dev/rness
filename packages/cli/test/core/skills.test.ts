@@ -1272,7 +1272,7 @@ test('blockSkills: a SKILL.md that is a link, a skill directory that is a link, 
   await symlink(join(outside, 'dir'), join(rnessDir, 'skills/linked-dir'))
   const manifest = await loadManifest(rnessDir)
   assert.deepEqual(await blockSkills(rnessDir, manifest, null), [
-    { name: 'plain', description: 'Does a thing.' },
+    { name: 'plain', description: 'Does a thing.', written: true },
   ])
   // The per-turn safety net says why, without reading through the links.
   assert.deepEqual(
@@ -1306,7 +1306,7 @@ test('blockSkills: name and one-line plain description of each valid skill that 
   const manifest = await loadManifest(rnessDir)
   assert.deepEqual(await blockSkills(rnessDir, manifest, 'web'), [
     { name: 'a', description: 'Does a.' },
-    { name: 'b', description: 'Line one two' },
+    { name: 'b', description: 'Line one two', written: true },
     { name: 'c', description: 'Does c.' },
   ])
   assert.deepEqual(
@@ -1389,4 +1389,35 @@ test("fetchSkill: a repository root whose SKILL.md is a link is never read throu
   } finally {
     await f.release()
   }
+})
+
+test("reserved names: a skill the team wrote cannot take one of rness's own (status, adr, spec, plan); a declared one can", async (t) => {
+  const root = await makeWorkspace(t, {
+    skills: { plan: decl() },
+    files: {
+      'skills/plan/SKILL.md': SKILL_MD('plan'),
+      'skills/status/SKILL.md': SKILL_MD('status'),
+      'skills/adr/SKILL.md': SKILL_MD('adr'),
+      'skills/spec/SKILL.md': SKILL_MD('spec'),
+      'skills/release/SKILL.md': SKILL_MD('release'),
+    },
+  })
+  const rnessDir = join(root, '.rness')
+  const manifest = await loadManifest(rnessDir)
+  for (const trees of [true, false]) {
+    const { problems } = await checkSkillCopies(rnessDir, manifest, { trees })
+    assert.deepEqual(
+      problems.filter((p) => !p.includes('differs')).sort(),
+      ['adr', 'spec', 'status'].map(
+        (n) =>
+          `skill "${n}": the name "${n}" is one of rness's own skills; a team skill is installed as /rness:${n}, which would replace it`
+      ),
+      `trees: ${trees}`
+    )
+  }
+  // Not listed in the blocks either.
+  assert.deepEqual(
+    (await blockSkills(rnessDir, manifest, null)).map((s) => s.name),
+    ['plan', 'release']
+  )
 })

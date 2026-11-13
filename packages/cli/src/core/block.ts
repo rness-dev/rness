@@ -23,6 +23,8 @@ export interface BlockInput {
 export interface BlockSkill {
   name: string
   description: string
+  /** Written by the team (not declared): Claude Code installs it as `/rness:<name>`. */
+  written?: boolean
 }
 
 export interface RenderedBlock {
@@ -125,7 +127,10 @@ function teamSkills(skills: readonly BlockSkill[]): string {
     '',
     '',
     '## Team skills',
-    ...skills.map((s) => `- ${s.name}: ${inertAt(s.description)}`),
+    ...skills.map(
+      (s) =>
+        `- ${s.name}${s.written === true ? ` (Claude Code: /rness:${s.name})` : ''}: ${inertAt(s.description)}`
+    ),
     "Installed with each developer's consent: `rness skill install`.",
   ].join('\n')
 }

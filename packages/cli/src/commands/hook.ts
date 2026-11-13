@@ -656,9 +656,13 @@ async function editGuard(input: Input, io: HookIo): Promise<number> {
   const file = resolve(cwd, path)
   const label = await within(ws.root, file)
   if (label === null) return 0
-  if (ownedWhole(label)) return refuse(io, [ownedRefusal(label)])
+  // Before `ownedWhole`: a team skill installed inside the plugin is under
+  // `.claude/skills/rness/`, which rness otherwise writes whole. The record
+  // never lists one of the plugin's own files (`readInstalled`), so those
+  // still fall through to the refusal below.
   const installed = await installedSkillReason(ws, label)
   if (installed !== null) return refuse(io, [installed])
+  if (ownedWhole(label)) return refuse(io, [ownedRefusal(label)])
   const rel = await within(ws.rnessDir, file)
   const copy = rel === null ? null : await declaredCopyReason(ws, rel)
   if (copy !== null) return refuse(io, [copy])

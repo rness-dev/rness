@@ -479,3 +479,20 @@ test('team skills: an @ that would load a file is escaped, a description without
   })
   assert.match(plain.text, /\n- deploy: Deploys the app\.\n/)
 })
+
+test('team skills: a skill the team wrote names its Claude Code command, a declared one does not, the @ is still escaped', () => {
+  const base = { scope: 'web', org: 'acme', depth: 2, context: twoStandards }
+  const body = bodyOf(
+    renderBlock({
+      ...base,
+      skills: [
+        { name: 'release', description: 'Ships @things.', written: true },
+        { name: 'deploy', description: 'Does deploy.' },
+      ],
+    }).text.split('\n')
+  )
+  assert.match(
+    body,
+    /\n- release \(Claude Code: \/rness:release\): Ships \\@things\.\n- deploy: Does deploy\.\n/
+  )
+})

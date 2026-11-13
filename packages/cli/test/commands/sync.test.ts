@@ -1314,7 +1314,10 @@ test('skills: sync -y installs no pending skill and says how many await; --check
   for (const dir of ['.claude/skills', '.agents/skills'])
     for (const name of ['release', 'deploy'])
       assert.equal(await there(join(root, 'org/web', dir, name)), false)
-  assert.equal(await there(join(root, '.claude/skills/release')), false)
+  assert.equal(
+    await there(join(root, '.claude/skills/rness/skills/release')),
+    false
+  )
 
   const check = await sync(['--check', '--cwd', root])
   assert.equal(check.code, 0, check.out + check.err)
@@ -1337,7 +1340,11 @@ test('skills: the blocks list the team skills that apply, installed or not; sync
   const section = (...names: string[]) =>
     [
       '## Team skills',
-      ...names.map((n) => `- ${n}: A skill`),
+      // release is written by the team: Claude Code installs it as /rness:release.
+      ...names.map(
+        (n) =>
+          `- ${n}${n === 'release' ? ' (Claude Code: /rness:release)' : ''}: A skill`
+      ),
       "Installed with each developer's consent: `rness skill install`.",
     ].join('\n')
   const web = await readFile(join(root, 'org/web/AGENTS.md'), 'utf8')
@@ -1369,10 +1376,19 @@ test('skills: install writes the accepted ones and names where; sync installs no
     ),
     SKILL_MD('release')
   )
-  assert.equal(await there(join(root, '.claude/skills/release/SKILL.md')), true)
+  assert.equal(
+    await there(join(root, '.claude/skills/rness/skills/release/SKILL.md')),
+    true
+  )
   assert.equal(
     await git(
-      ['status', '--porcelain', '--', '.agents', '.claude/skills/release'],
+      [
+        'status',
+        '--porcelain',
+        '--',
+        '.agents',
+        '.claude/skills/rness/skills/release',
+      ],
       join(root, 'org/web')
     ),
     ''
@@ -1396,7 +1412,7 @@ test('skills: install writes the accepted ones and names where; sync installs no
   assert.match(fresh.out, /^installed org\/api team skill \(release\)$/m)
   assert.equal(
     await readFile(
-      join(root, 'org/api/.claude/skills/release/SKILL.md'),
+      join(root, 'org/api/.claude/skills/rness/skills/release/SKILL.md'),
       'utf8'
     ),
     SKILL_MD('release')
@@ -1422,7 +1438,7 @@ test('skills: sync --check writes nothing; sync reinstalls a removed copy and re
   assert.doesNotMatch(check.out, PENDING('\\d+ team skills? awaits?'))
 
   await writeFile(
-    join(root, 'org/web/.claude/skills/release/SKILL.md'),
+    join(root, 'org/web/.claude/skills/rness/skills/release/SKILL.md'),
     'edited\n'
   )
   const r = await sync(['--yes', '--cwd', root])
@@ -1431,7 +1447,7 @@ test('skills: sync --check writes nothing; sync reinstalls a removed copy and re
   assert.match(r.out, /^rewrote {2}org\/web team skill \(release\)$/m)
   assert.equal(
     await readFile(
-      join(root, 'org/web/.claude/skills/release/SKILL.md'),
+      join(root, 'org/web/.claude/skills/rness/skills/release/SKILL.md'),
       'utf8'
     ),
     SKILL_MD('release')
@@ -1470,14 +1486,17 @@ test('skills: --scope projects into that clone only, not at the root', async (t)
   for (const p of [
     'org/web/.agents/skills/release',
     'org/api/.agents/skills/release',
-    '.claude/skills/release',
+    '.claude/skills/rness/skills/release',
   ])
     await rm(join(root, p), { recursive: true })
   const r = await sync(['--yes', '--scope', 'api', '--cwd', root])
   assert.equal(r.code, 0, r.err)
   assert.equal(await there(join(root, 'org/api/.agents/skills/release')), true)
   assert.equal(await there(join(root, 'org/web/.agents/skills/release')), false)
-  assert.equal(await there(join(root, '.claude/skills/release')), false)
+  assert.equal(
+    await there(join(root, '.claude/skills/rness/skills/release')),
+    false
+  )
 })
 
 test('skills: a workspace whose .rness is no git repository installs nothing and says nothing of consent', async (t) => {
@@ -1510,13 +1529,13 @@ test('skills: a lost record of a clone or of the root: the copies matching the c
   )
   assert.match(
     await readFile(join(web, '.git/info/exclude'), 'utf8'),
-    /^\/\.claude\/skills\/release\/$/m
+    /^\/\.claude\/skills\/rness\/skills\/release\/$/m
   )
   const record = JSON.parse(
     await readFile(join(web, '.git/rness/skills.json'), 'utf8')
   )
   assert.deepEqual(record.skills.release.paths, [
-    '.claude/skills/release',
+    '.claude/skills/rness/skills/release',
     '.agents/skills/release',
   ])
 
@@ -1529,12 +1548,20 @@ test('skills: a lost record of a clone or of the root: the copies matching the c
   const rootRecord = JSON.parse(
     await readFile(join(root, '.rness/.git/rness/root-skills.json'), 'utf8')
   )
-  assert.deepEqual(rootRecord.skills.release.paths, ['.claude/skills/release'])
+  assert.deepEqual(rootRecord.skills.release.paths, [
+    '.claude/skills/rness/skills/release',
+  ])
   // Managed again: undeclared, it goes.
   await rm(join(root, '.rness/skills/release'), { recursive: true })
   assert.equal((await sync(['--yes', '--cwd', root])).code, 0)
-  assert.equal(await there(join(root, '.claude/skills/release')), false)
-  assert.equal(await there(join(web, '.claude/skills/release')), false)
+  assert.equal(
+    await there(join(root, '.claude/skills/rness/skills/release')),
+    false
+  )
+  assert.equal(
+    await there(join(web, '.claude/skills/rness/skills/release')),
+    false
+  )
 })
 
 test('skills: sync and install write nothing under HOME', async (t) => {
@@ -1563,6 +1590,9 @@ test('skills: an unreadable consent record leaves every installed copy as it is,
     /skills\.json is unreadable: team skills left as they are/
   )
   assert.equal(await there(join(root, 'org/web/.agents/skills/release')), true)
-  assert.equal(await there(join(root, '.claude/skills/release')), true)
+  assert.equal(
+    await there(join(root, '.claude/skills/rness/skills/release')),
+    true
+  )
   assert.doesNotMatch(r.out, /^removed/m)
 })

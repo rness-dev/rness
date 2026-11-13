@@ -129,3 +129,18 @@ test('skillCopyAt: the skill of a path of .rness; `scopes` is no skill name', ()
   assert.equal(skillHome('a', null), '.rness/skills/a')
   assert.equal(skillHome('a', 'web'), '.rness/skills/scopes/web/a')
 })
+
+test('installedSkillAt: a team skill inside the plugin is its own directory, not the plugin', () => {
+  assert.deepEqual(
+    installedSkillAt('org/web/.claude/skills/rness/skills/release/SKILL.md'),
+    { repo: 'web', dir: '.claude/skills/rness/skills/release' }
+  )
+  assert.deepEqual(installedSkillAt('.claude/skills/rness/skills/release'), {
+    repo: null,
+    dir: '.claude/skills/rness/skills/release',
+  })
+  assert.deepEqual(installedSkillAt('.claude/skills/deploy/SKILL.md'), {
+    repo: null,
+    dir: '.claude/skills/deploy',
+  })
+})

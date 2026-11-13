@@ -133,8 +133,10 @@ async function answer(root: string, answer: 'install' | 'decline') {
   }
 }
 
-const installed = (root: string, at = 'org/web/.claude/skills/release') =>
-  readFile(join(root, at, 'SKILL.md'), 'utf8')
+const installed = (
+  root: string,
+  at = 'org/web/.claude/skills/rness/skills/release'
+) => readFile(join(root, at, 'SKILL.md'), 'utf8')
 
 const there = (p: string): Promise<boolean> =>
   lstat(p).then(
@@ -169,9 +171,9 @@ test('an accepted skill updated in .rness (a new commit) is installed by sync -y
   )
   assert.doesNotMatch(r.out, PENDING)
   for (const at of [
-    'org/web/.claude/skills/release',
+    'org/web/.claude/skills/rness/skills/release',
     'org/web/.agents/skills/release',
-    '.claude/skills/release',
+    '.claude/skills/rness/skills/release',
   ])
     assert.equal(
       await installed(root, at),
@@ -261,7 +263,7 @@ test('a skill not committed in .rness is not installed, one line says to commit;
 test('an installed copy edited, extended or made executable is rewritten from the commit', async (t) => {
   const root = await teamWs(t)
   assert.equal((await install(root, 'release')).code, 0)
-  const copy = join(root, 'org/web/.claude/skills/release')
+  const copy = join(root, 'org/web/.claude/skills/rness/skills/release')
   for (const edit of [
     () => writeFile(join(copy, 'SKILL.md'), 'edited\n'),
     () => writeFile(join(copy, 'extra.md'), 'added\n'),
@@ -332,7 +334,7 @@ test('a lost record: a copy whose files match the commit blob for blob is adopte
         '--porcelain',
         '--untracked-files=all',
         '--',
-        '.claude/skills/release',
+        '.claude/skills/rness/skills/release',
         '.agents',
       ],
       web
@@ -443,9 +445,9 @@ test('a crafted commit whose skill tree holds ".git" (or ".GIT", "git~1"): refus
       name
     )
     for (const at of [
-      `org/web/.claude/skills/release/${name}`,
+      `org/web/.claude/skills/rness/skills/release/${name}`,
       `org/web/.agents/skills/release/${name}`,
-      `.claude/skills/release/${name}`,
+      `.claude/skills/rness/skills/release/${name}`,
     ])
       assert.equal(await there(join(root, at)), false, at)
   }
@@ -496,9 +498,9 @@ test('skill uninstall: an installed skill is recorded declined, removed from eve
     /^uninstalled +release {3}removed \(org\/web, workspace root\)$/m
   )
   for (const at of [
-    'org/web/.claude/skills/release',
+    'org/web/.claude/skills/rness/skills/release',
     'org/web/.agents/skills/release',
-    '.claude/skills/release',
+    '.claude/skills/rness/skills/release',
   ])
     assert.equal(await there(join(root, at)), false, at)
   const record = JSON.parse(
@@ -590,7 +592,7 @@ test('a .DS_Store the tree holds is part of the copy: no rewrite on every sync',
   assert.equal((await install(root, 'release')).code, 0)
   assert.equal(
     await readFile(
-      join(root, 'org/web/.claude/skills/release/.DS_Store'),
+      join(root, 'org/web/.claude/skills/rness/skills/release/.DS_Store'),
       'utf8'
     ),
     'committed'
@@ -646,9 +648,9 @@ test('skill uninstall removes the installed copies of a skill whose committed co
     /^uninstalled +release {3}removed \(org\/web, workspace root\)$/m
   )
   for (const at of [
-    'org/web/.claude/skills/release',
+    'org/web/.claude/skills/rness/skills/release',
     'org/web/.agents/skills/release',
-    '.claude/skills/release',
+    '.claude/skills/rness/skills/release',
   ])
     assert.equal(await there(join(root, at)), false, at)
 })

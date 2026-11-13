@@ -12,6 +12,7 @@ import {
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import { RNESS_SKILL_NAMES } from './claude-skills.ts'
 import { parseFrontMatter } from './frontmatter.ts'
 import { readOrNull, writeFileAtomic } from './fs.ts'
 import {
@@ -66,7 +67,11 @@ export const EXCLUDE_END = '# rness: end of team skills'
 export interface InstalledEntry {
   /** The id of the skill's tree at `HEAD` of `.rness` when it was written. */
   tree: string
-  /** Relative to the clone (or the root): `.claude/skills/<name>`, `.agents/skills/<name>`. */
+  /**
+   * Relative to the clone (or the root): `.claude/skills/<name>` for a
+   * declared skill, `.claude/skills/rness/skills/<name>` for one the team
+   * wrote (inside rness's plugin: `/rness:<name>`), `.agents/skills/<name>`.
+   */
   paths: string[]
 }
 
@@ -83,8 +88,43 @@ export type InstalledKind = 'clone' | 'root'
 const NAME = '[a-z0-9]+(?:-[a-z0-9]+)*'
 const CLONE_PATH = new RegExp(`^\\.(?:claude|agents)/skills/${NAME}$`)
 const ROOT_PATH = new RegExp(`^\\.claude/skills/${NAME}$`)
+const PLUGIN_PATH = new RegExp(`^\\.claude/skills/rness/skills/(${NAME})$`)
 const TREE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
-const EXCLUDE_LINE = /^\/\.(?:claude|agents)\/skills\/[^/]+\/$/
+const EXCLUDE_LINE =
+  /^\/\.(?:claude|agents)\/skills\/(?:rness\/skills\/)?[^/]+\/$/
+
+/** The directory of rness's plugin that holds the skills the team wrote, for Claude Code. */
+const PLUGIN_SKILLS = '.claude/skills/rness/skills'
+
+/**
+ * The name of the skill whose copy `p` is inside rness's plugin; null when
+ * `p` is not such a path, or names one of rness's own skills (a record
+ * naming one is never acted on: it would remove rness's own file).
+ */
+const pluginSkill = (p: string): string | null => {
+  const name = PLUGIN_PATH.exec(p)?.[1]
+  return name === undefined ||
+    name === 'rness' ||
+    RNESS_SKILL_NAMES.includes(name)
+    ? null
+    : name
+}
+
+/** True when `p` is a flat skill path of `kind`: `.claude/skills/<name>` (never the plugin's own directory), `.agents/skills/<name>`. */
+const isFlatPath = (kind: InstalledKind, p: string): boolean =>
+  (kind === 'root' ? ROOT_PATH : CLONE_PATH).test(p) &&
+  p !== '.claude/skills/rness'
+
+/**
+ * Where the copy of skill `a` goes under `dir` (`.claude/skills`,
+ * `.agents/skills`): a skill the team wrote goes inside rness's plugin for
+ * Claude Code, so it is `/rness:<name>`; Codex and Cursor have no
+ * namespace; a declared skill keeps its own name (spec 0041 decision 10).
+ */
+const copyPath = (dir: string, a: AppliedSkill): string =>
+  dir === '.claude/skills' && a.skill.entry === null
+    ? `${PLUGIN_SKILLS}/${a.skill.name}`
+    : `${dir}/${a.skill.name}`
 
 /** The record of the clone `clone`; null when it is no git repository. */
 export const installedFile = (clone: string): Promise<string | null> =>
@@ -98,14 +138,15 @@ const emptyRecord = (): InstalledRecord => ({ version: 1, skills: {} })
 
 /** True when `p` is a path rness writes `name` to in a place of `kind`. */
 const isSkillPath = (kind: InstalledKind, name: string, p: string): boolean =>
-  (kind === 'root' ? ROOT_PATH : CLONE_PATH).test(p) &&
-  p.endsWith(`/skills/${name}`)
+  (isFlatPath(kind, p) && p.endsWith(`/skills/${name}`)) ||
+  pluginSkill(p) === name
 
 /**
  * The record at `file` (`installedFile`, `rootInstalledFile`). Missing: an
  * empty record. Null when it cannot be trusted: unreadable, not JSON, or
  * naming a path rness never writes (anything but `.claude/skills/<name>`,
- * and `.agents/skills/<name>` in a clone, `<name>` its key). Nothing is
+ * `.claude/skills/rness/skills/<name>` and `.agents/skills/<name>` in a
+ * clone, `<name>` its key, never one of rness's own skills under the plugin). Nothing is
  * removed or rewritten on a null record: the guard and the projection only
  * act on paths a valid record names.
  */
@@ -233,7 +274,7 @@ export interface ProjectOptions {
 
 /** `p` under `base`, absolute; throws unless `p` is a skill path and stays inside `base` (decision 7). */
 function inside(base: string, p: string): string {
-  if (!CLONE_PATH.test(p))
+  if (!CLONE_PATH.test(p) && pluginSkill(p) === null)
     throw new Error(`refusing ${p}: not a path rness writes a team skill to`)
   const abs = join(base, ...p.split('/'))
   const rel = relative(base, abs)
@@ -248,9 +289,12 @@ const lstatOrNull = (p: string) =>
     throw e
   })
 
-/** Why nothing may be written under `top` (`.claude`, `.agents`) of `base`; null when it may. */
-async function levelProblem(base: string, top: string): Promise<string | null> {
-  for (const rel of [top, `${top}/skills`]) {
+/** Why nothing may be written under `rels` (each below the one before) of `base`; null when it may. */
+async function levelProblem(
+  base: string,
+  rels: readonly string[]
+): Promise<string | null> {
+  for (const rel of rels) {
     const st = await lstatOrNull(join(base, rel))
     if (st === null) return null
     if (st.isSymbolicLink())
@@ -596,7 +640,7 @@ async function project(place: Place): Promise<Projection> {
       a.state === 'installed' &&
       isValid(a) &&
       !Object.hasOwn(onDisk.skills, name)
-      ? [{ name, head: a.head, dir: a.skill.dir }]
+      ? [{ name, head: a.head, dir: a.skill.dir, applied: a }]
       : []
   })
   if (names.length === 0 && (adoptable.length === 0 || place.dirs.length === 0))
@@ -611,16 +655,30 @@ async function project(place: Place): Promise<Projection> {
 
   const levels = new Map<string, string | null>()
   for (const top of ['.claude', '.agents'])
-    levels.set(top, await levelProblem(place.base, top))
-  const wantedPaths = (name: string): string[] =>
-    want.has(name) ? place.dirs.map((d) => `${d}/${name}`) : []
+    levels.set(top, await levelProblem(place.base, [top, `${top}/skills`]))
+  // The plugin's skills directory: `.claude` and `.claude/skills` first, then
+  // the plugin and its `skills`, none of them a link or a file.
+  levels.set(
+    PLUGIN_SKILLS,
+    await levelProblem(place.base, [
+      '.claude',
+      '.claude/skills',
+      '.claude/skills/rness',
+      PLUGIN_SKILLS,
+    ])
+  )
+  const wantedPaths = (name: string): string[] => {
+    const a = want.get(name)
+    return a === undefined ? [] : place.dirs.map((d) => copyPath(d, a))
+  }
   const all = names.flatMap((n) => [
     ...new Set([...wantedPaths(n), ...(onDisk.skills[n]?.paths ?? [])]),
   ])
   const adoptPaths = adoptable.flatMap((c) =>
-    place.dirs.map((d) => `${d}/${c.name}`)
+    place.dirs.map((d) => copyPath(d, c.applied))
   )
-  const topOf = (p: string): string => p.split('/')[0] ?? ''
+  const topOf = (p: string): string =>
+    p.startsWith(`${PLUGIN_SKILLS}/`) ? PLUGIN_SKILLS : (p.split('/')[0] ?? '')
   const tracked =
     place.kind === 'clone'
       ? await trackedPaths(
@@ -646,7 +704,7 @@ async function project(place: Place): Promise<Projection> {
   }[] = []
   for (const c of adoptable)
     for (const d of place.dirs) {
-      const p = `${d}/${c.name}`
+      const p = copyPath(d, c.applied)
       if (levels.get(topOf(p)) !== null || tracked.has(p)) continue
       const abs = inside(place.base, p)
       const st = await lstatOrNull(abs)
@@ -720,9 +778,11 @@ async function project(place: Place): Promise<Projection> {
     for (const p of clashes) {
       const s = state.get(p)
       if (s === 'blocked') {
-        const top = topOf(p)
-        if (!blockedSaid.has(top)) note(levels.get(top) ?? '')
-        blockedSaid.add(top)
+        // Said once per reason: a link at `.claude/skills` blocks the
+        // plugin's directory below it for the same one.
+        const why = levels.get(topOf(p)) ?? ''
+        if (!blockedSaid.has(why)) note(why)
+        blockedSaid.add(why)
       } else if (s === 'tracked')
         note(
           `${p} is the repository's own; team skill ${name} not installed there`

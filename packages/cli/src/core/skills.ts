@@ -27,6 +27,7 @@ import {
   sep,
 } from 'node:path'
 
+import { RNESS_SKILL_NAMES } from './claude-skills.ts'
 import { parseFrontMatter } from './frontmatter.ts'
 import {
   type ObjectStore,
@@ -163,6 +164,8 @@ export async function listedSkills(
         linked.set(base, (await linkedLevel(rnessDir, base)) !== null)
       if (linked.get(base) === true) continue
       if (!(await lstat(skill.dir)).isDirectory()) continue
+      if (skill.entry === null && reservedNameProblem(skill.name) !== null)
+        continue
       const description = (await readSkillMd(skill.dir, skill.name))[
         'description'
       ]
@@ -184,7 +187,7 @@ export function blockSkillsOf(
   manifest: Manifest,
   listed: readonly ListedSkill[],
   scope: string | null
-): { name: string; description: string }[] {
+): { name: string; description: string; written?: boolean }[] {
   let applies: Set<TeamSkill>
   try {
     applies = new Set(
@@ -198,11 +201,15 @@ export function blockSkillsOf(
     return []
   }
   const seen = new Set<string>()
-  const out: { name: string; description: string }[] = []
+  const out: { name: string; description: string; written?: boolean }[] = []
   for (const l of listed) {
     if (!applies.has(l.skill) || seen.has(l.skill.name)) continue
     seen.add(l.skill.name)
-    out.push({ name: l.name, description: l.description })
+    out.push({
+      name: l.name,
+      description: l.description,
+      ...(l.skill.entry === null ? { written: true } : {}),
+    })
   }
   return out
 }
@@ -212,7 +219,7 @@ export async function blockSkills(
   rnessDir: string,
   manifest: Manifest,
   scope: string | null
-): Promise<{ name: string; description: string }[]> {
+): Promise<{ name: string; description: string; written?: boolean }[]> {
   return blockSkillsOf(manifest, await listedSkills(rnessDir, manifest), scope)
 }
 
@@ -331,6 +338,16 @@ export interface SkillTree {
 
 const refusal = (name: string, reason: string): Error =>
   new Error(`skill ${quoted(name)}: ${reason}`)
+
+/**
+ * Why a skill the team wrote (no declaration) cannot take `name`: Claude
+ * Code installs it inside rness's plugin, where `name` is one of rness's own
+ * skills. Null when it can; a declared skill keeps its name (decision 10).
+ */
+export const reservedNameProblem = (name: string): string | null =>
+  RNESS_SKILL_NAMES.includes(name)
+    ? `the name "${name}" is one of rness's own skills; a team skill is installed as /rness:${name}, which would replace it`
+    : null
 
 /** Why `name` cannot name a team skill; null when it can. */
 function nameProblem(name: string): string | null {
@@ -1107,6 +1124,11 @@ export async function checkSkillCopies(
   const found: (string | TeamSkill)[] = []
   for (const s of await teamSkills(rnessDir, manifest)) {
     if (linked.has(dirname(s.dir))) continue
+    const reserved = s.entry === null ? reservedNameProblem(s.name) : null
+    if (reserved !== null) {
+      found.push(refusal(s.name, reserved).message)
+      continue
+    }
     const place = plainText(relative(rnessDir, s.dir))
     const st = await lstat(s.dir).catch((e: NodeJS.ErrnoException) => {
       if (e.code === 'ENOENT') return null

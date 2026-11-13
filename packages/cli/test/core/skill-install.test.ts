@@ -173,7 +173,11 @@ test('installs the accepted skills in both directories of every clone they apply
   ] as const)
     for (const name of names)
       for (const dir of ['.claude/skills', '.agents/skills']) {
-        const at = join(root, 'org', repo, dir, name)
+        // A skill the team wrote goes inside rness's plugin for Claude Code.
+        const at =
+          name === 'release' && dir === '.claude/skills'
+            ? join(root, 'org', repo, dir, 'rness/skills', name)
+            : join(root, 'org', repo, dir, name)
         const from =
           name === 'deploy'
             ? join(root, '.rness/skills/scopes/web', name)
@@ -197,7 +201,10 @@ test('installs the accepted skills in both directories of every clone they apply
   )
   // The root: top-level skills only, under .claude/skills only.
   assert.equal(
-    await readFile(join(root, '.claude/skills/release/SKILL.md'), 'utf8'),
+    await readFile(
+      join(root, '.claude/skills/rness/skills/release/SKILL.md'),
+      'utf8'
+    ),
     SKILL_MD('release')
   )
   assert.equal(await isThere(join(root, '.claude/skills/deploy')), false)
@@ -221,7 +228,7 @@ test('the copies are excluded from git, the lines under the header, the other li
       '/.agents/skills/release/',
       '/.claude/skills/brainstorming/',
       '/.claude/skills/deploy/',
-      '/.claude/skills/release/',
+      '/.claude/skills/rness/skills/release/',
     ].join('\n')}\n${EXCLUDE_END}\n`
   )
   // Idempotent: a second run writes and says nothing.
@@ -260,7 +267,7 @@ test('each clone records what rness wrote, with the committed tree; the root in 
   const top = await recordOf(join(root, '.rness/.git/rness/root-skills.json'))
   assert.deepEqual(top.skills['release'], {
     tree: await committed(root, 'skills/release'),
-    paths: ['.claude/skills/release'],
+    paths: ['.claude/skills/rness/skills/release'],
   })
   assert.deepEqual(
     await readInstalled(join(root, 'org/web/.git/rness/skills.json')),
@@ -310,7 +317,10 @@ test('claude dropped from agents: the .claude copies and the root ones are remov
   )
   assert.equal(await isThere(join(root, 'org/web/.agents/skills/deploy')), true)
   assert.deepEqual(r['root']?.removed, ['brainstorming', 'release'])
-  assert.equal(await isThere(join(root, '.claude/skills/release')), false)
+  assert.equal(
+    await isThere(join(root, '.claude/skills/rness/skills/release')),
+    false
+  )
   assert.doesNotMatch(await excludeOf(root, 'web'), /\.claude/)
   assert.equal(await status(root, 'web'), '')
 })
@@ -375,12 +385,13 @@ test('a lost record: a directory matching the commit is adopted (recorded, exclu
   assert.deepEqual(after.skills['deploy'], before.skills['deploy'])
   assert.equal(after.skills['brainstorming'], undefined)
   const exclude = await excludeOf(root, 'web')
-  for (const p of ['release', 'deploy'])
-    for (const d of ['.claude', '.agents'])
-      assert.match(
-        exclude,
-        new RegExp(`^/${d.replace('.', '\\.')}/skills/${p}/$`, 'm')
-      )
+  for (const line of [
+    '/.claude/skills/deploy/',
+    '/.agents/skills/deploy/',
+    '/.claude/skills/rness/skills/release/',
+    '/.agents/skills/release/',
+  ])
+    assert.ok(exclude.split('\n').includes(line), line)
   assert.equal(
     await status(root, 'web'),
     '?? .claude/skills/brainstorming/SKILL.md\n?? .claude/skills/brainstorming/scripts/run.sh\n'
@@ -407,13 +418,13 @@ test('a lost record and a new version committed since: the copy of an earlier co
   ])
   assert.ok(
     r['org/web']?.notes.includes(
-      `org/web: .claude/skills/release is team skill release as committed before (${from.slice(0, 7)}); recorded again`
+      `org/web: .claude/skills/rness/skills/release is team skill release as committed before (${from.slice(0, 7)}); recorded again`
     ),
     r['org/web']?.notes.join('\n')
   )
   assert.equal(
     await readFile(
-      join(root, 'org/web/.claude/skills/release/SKILL.md'),
+      join(root, 'org/web/.claude/skills/rness/skills/release/SKILL.md'),
       'utf8'
     ),
     SKILL_MD('release', 'v: 2\n')
@@ -427,19 +438,19 @@ test('a lost record: a copy matching no commit of the skill stays foreign, and i
   await project(root)
   await rm(join(root, 'org/web/.git/rness/skills.json'))
   await writeFile(
-    join(root, 'org/web/.claude/skills/release/SKILL.md'),
+    join(root, 'org/web/.claude/skills/rness/skills/release/SKILL.md'),
     'my own release\n'
   )
   const r = await project(root)
   assert.ok(
     r['org/web']?.notes.includes(
-      'org/web: .claude/skills/release is not one rness wrote; team skill release not installed there'
+      'org/web: .claude/skills/rness/skills/release is not one rness wrote; team skill release not installed there'
     ),
     r['org/web']?.notes.join('\n')
   )
   assert.equal(
     await readFile(
-      join(root, 'org/web/.claude/skills/release/SKILL.md'),
+      join(root, 'org/web/.claude/skills/rness/skills/release/SKILL.md'),
       'utf8'
     ),
     'my own release\n'
@@ -506,9 +517,16 @@ test('removal: a skill no longer declared, no longer applying, or declined loses
     'release',
   ])
   assert.deepEqual(r['root']?.removed, ['brainstorming', 'release'])
-  for (const dir of ['.claude/skills', '.agents/skills'])
-    assert.deepEqual(await readdir(join(root, 'org/web', dir)), [])
-  assert.deepEqual(await readdir(join(root, '.claude/skills')), [])
+  assert.deepEqual(await readdir(join(root, 'org/web/.agents/skills')), [])
+  // Only the plugin's (now empty) skills directory is left under .claude.
+  assert.deepEqual(await readdir(join(root, 'org/web/.claude/skills')), [
+    'rness',
+  ])
+  assert.deepEqual(
+    await readdir(join(root, 'org/web/.claude/skills/rness/skills')),
+    []
+  )
+  assert.deepEqual(await readdir(join(root, '.claude/skills/rness/skills')), [])
   // api/deploy awaits an answer: nothing installed there.
   assert.equal(
     await isThere(join(root, 'org/api/.agents/skills/deploy')),
@@ -578,9 +596,9 @@ test('a new version of an accepted skill, committed in .rness, replaces the copy
   assert.deepEqual(r['org/web']?.rewritten, [])
   assert.deepEqual(r['org/web']?.installed, [])
   for (const at of [
-    'org/web/.claude/skills/release',
+    'org/web/.claude/skills/rness/skills/release',
     'org/api/.agents/skills/release',
-    '.claude/skills/release',
+    '.claude/skills/rness/skills/release',
   ])
     assert.equal(
       await readFile(join(root, at, 'SKILL.md'), 'utf8'),
@@ -592,10 +610,13 @@ test('a new version of an accepted skill, committed in .rness, replaces the copy
   const d = await project(root)
   assert.deepEqual(d['org/web']?.removed, ['release'])
   assert.equal(
-    await isThere(join(root, 'org/web/.claude/skills/release')),
+    await isThere(join(root, 'org/web/.claude/skills/rness/skills/release')),
     false
   )
-  assert.equal(await isThere(join(root, '.claude/skills/release')), false)
+  assert.equal(
+    await isThere(join(root, '.claude/skills/rness/skills/release')),
+    false
+  )
 })
 
 test('nothing accepted: nothing written, no record, no exclude line', async (t) => {
@@ -892,4 +913,193 @@ test('a crafted tree reaching the writer is refused there too: nothing written o
     'org/api/.agents/skills/release',
   ])
     assert.equal(await isThere(join(root, at)), false, at)
+})
+
+const PLUGIN_COPY = '.claude/skills/rness/skills/release'
+
+test('a skill the team wrote is installed inside the rness plugin for Claude Code and at .agents/skills; a declared one keeps its name', async (t) => {
+  const root = await skillsWs(t)
+  await answer(root)
+  await project(root)
+  const web = join(root, 'org/web')
+  const from = join(root, '.rness/skills/release')
+  assert.deepEqual(await filesOf(join(web, PLUGIN_COPY)), await filesOf(from))
+  assert.deepEqual(
+    await filesOf(join(web, '.agents/skills/release')),
+    await filesOf(from)
+  )
+  assert.equal(await isThere(join(web, '.claude/skills/release')), false)
+  assert.equal(await isThere(join(web, '.claude/skills/brainstorming')), true)
+  assert.equal(await isThere(join(root, '.claude/skills/release')), false)
+  assert.deepEqual(await filesOf(join(root, PLUGIN_COPY)), await filesOf(from))
+  const rec = await recordOf(join(web, '.git/rness/skills.json'))
+  assert.deepEqual(rec.skills['release']?.paths, [
+    PLUGIN_COPY,
+    '.agents/skills/release',
+  ])
+  assert.deepEqual(rec.skills['brainstorming']?.paths, [
+    '.claude/skills/brainstorming',
+    '.agents/skills/brainstorming',
+  ])
+  const top = await recordOf(join(root, '.rness/.git/rness/root-skills.json'))
+  assert.deepEqual(top.skills['release']?.paths, [PLUGIN_COPY])
+  assert.ok((await excludeOf(root, 'web')).includes(`/${PLUGIN_COPY}/\n`))
+  // Untracked and excluded: git sees nothing of it.
+  assert.equal(await status(root, 'web'), '')
+})
+
+test('a 0.26.0 copy at .claude/skills/<name> is moved into the plugin by the next sync: old path removed, record and exclude updated', async (t) => {
+  const root = await skillsWs(t)
+  await answer(root)
+  await project(root)
+  const web = join(root, 'org/web')
+  // Put the copies where 0.26.0 wrote them: flat, recorded, excluded.
+  const flat = '.claude/skills/release'
+  for (const [base, file] of [
+    [web, join(web, '.git/rness/skills.json')],
+    [root, join(root, '.rness/.git/rness/root-skills.json')],
+  ] as const) {
+    await rm(join(base, PLUGIN_COPY), { recursive: true })
+    await mkdir(join(base, flat), { recursive: true })
+    await writeFile(join(base, flat, 'SKILL.md'), SKILL_MD('release'))
+    const rec = await recordOf(file)
+    const entry = rec.skills['release']
+    assert.ok(entry)
+    entry.paths = entry.paths.map((p) => (p === PLUGIN_COPY ? flat : p))
+    await writeFile(file, JSON.stringify(rec))
+  }
+  const exclude = join(web, '.git/info/exclude')
+  await writeFile(
+    exclude,
+    (await readFile(exclude, 'utf8')).replace(`/${PLUGIN_COPY}/`, `/${flat}/`)
+  )
+  const r = await project(root)
+  for (const base of [web, root]) {
+    assert.equal(await isThere(join(base, flat)), false)
+    assert.equal(
+      await readFile(join(base, PLUGIN_COPY, 'SKILL.md'), 'utf8'),
+      SKILL_MD('release')
+    )
+  }
+  assert.deepEqual(
+    (await recordOf(join(web, '.git/rness/skills.json'))).skills['release']
+      ?.paths,
+    [PLUGIN_COPY, '.agents/skills/release']
+  )
+  assert.deepEqual(
+    (await recordOf(join(root, '.rness/.git/rness/root-skills.json'))).skills[
+      'release'
+    ]?.paths,
+    [PLUGIN_COPY]
+  )
+  const lines = (await excludeOf(root, 'web')).split('\n')
+  assert.ok(lines.includes(`/${PLUGIN_COPY}/`))
+  assert.ok(!lines.includes(`/${flat}/`))
+  assert.deepEqual(r['org/web']?.problems, [])
+  // A second run has nothing left to do.
+  const again = await project(root)
+  assert.deepEqual(again['org/web']?.installed, [])
+  assert.deepEqual(again['org/web']?.removed, [])
+})
+
+test('readInstalled accepts a path inside the plugin for a skill of that name, and nothing else under it', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'rness-record-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = join(dir, 'skills.json')
+  const read = async (name: string, path: string, kind: 'clone' | 'root') => {
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        skills: { [name]: { tree: TREE, paths: [path] } },
+      })
+    )
+    return readInstalled(file, kind)
+  }
+  for (const kind of ['clone', 'root'] as const)
+    assert.notEqual(await read('release', PLUGIN_COPY, kind), null, kind)
+  for (const [name, path] of [
+    // rness's own skills and files, the plugin directory itself.
+    ['status', '.claude/skills/rness/skills/status'],
+    ['adr', '.claude/skills/rness/skills/adr'],
+    ['rness', '.claude/skills/rness'],
+    ['rness', '.claude/skills/rness/skills/rness'],
+    ['skills', '.claude/skills/rness/skills'],
+    // another name than the key's, deeper, other directories.
+    ['other', PLUGIN_COPY],
+    ['release', `${PLUGIN_COPY}/x`],
+    ['release', '.agents/skills/rness/skills/release'],
+    ['release', '.claude/skills/rness/.claude-plugin/plugin.json'],
+    ['release', '.claude/skills/rness/skills/../release'],
+  ] as const)
+    assert.equal(await read(name, path, 'clone'), null, path)
+})
+
+test("a link at .claude/skills/rness or at its skills directory is never written through; a tracked copy of the plugin path is the repository's own", async (t) => {
+  const root = await skillsWs(t)
+  await answer(root)
+  const web = join(root, 'org/web')
+  const elsewhere = await realpath(
+    await mkdtemp(join(tmpdir(), 'rness-elsewhere-'))
+  )
+  t.after(() => rm(elsewhere, { recursive: true, force: true }))
+  await mkdir(join(web, '.claude/skills/rness'), { recursive: true })
+  await symlink(elsewhere, join(web, '.claude/skills/rness/skills'))
+  const r = await project(root)
+  assert.deepEqual(await readdir(elsewhere), [])
+  assert.ok(
+    r['org/web']?.notes.includes(
+      'org/web: .claude/skills/rness/skills is a symbolic link; rness writes no team skill through it'
+    ),
+    r['org/web']?.notes.join('\n')
+  )
+  // The declared skill, flat, is not behind that link.
+  assert.equal(await isThere(join(web, '.claude/skills/brainstorming')), true)
+  await rm(join(web, '.claude/skills/rness/skills'))
+  // The api clone commits its own copy of the plugin path.
+  const api = join(root, 'org/api')
+  await mkdir(join(api, PLUGIN_COPY), { recursive: true })
+  await writeFile(
+    join(api, PLUGIN_COPY, 'SKILL.md'),
+    'the repository release\n'
+  )
+  await git(['add', '-f', `${PLUGIN_COPY}/SKILL.md`], api)
+  await git(['commit', '-q', '-m', 'own release'], api)
+  const again = await project(root)
+  assert.ok(
+    again['org/api']?.notes.includes(
+      `org/api: ${PLUGIN_COPY} is the repository's own; team skill release not installed there`
+    ),
+    again['org/api']?.notes.join('\n')
+  )
+  assert.equal(
+    await readFile(join(api, PLUGIN_COPY, 'SKILL.md'), 'utf8'),
+    'the repository release\n'
+  )
+})
+
+test("a team-written skill named like one of rness's own is invalid and never installed", async (t) => {
+  const root = await skillsWs(t)
+  await mkdir(join(root, '.rness/skills/status'), { recursive: true })
+  await writeFile(
+    join(root, '.rness/skills/status/SKILL.md'),
+    SKILL_MD('status')
+  )
+  await commitRness(root, 'a team skill named status')
+  const ws = await findWorkspace(root)
+  const manifest = await loadManifest(ws.rnessDir)
+  const applied = await appliedSkills(
+    ws,
+    manifest,
+    await readConsent(ws.rnessDir)
+  )
+  const status = applied.find((a) => a.id === 'status')
+  assert.equal(status?.state, 'invalid')
+  assert.match(status?.problem ?? '', /is one of rness's own skills/)
+  await answer(root)
+  await project(root)
+  assert.equal(
+    await isThere(join(root, 'org/web/.claude/skills/rness/skills/status')),
+    false
+  )
 })
