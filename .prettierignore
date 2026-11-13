@@ -15,6 +15,11 @@ CLAUDE.md
 .mcp.json
 .claude/skills/rness/
 
+# Team skills `rness skill install` writes: excluded from git through
+# .git/info/exclude, which prettier does not read
+.claude/skills/
+.agents/skills/
+
 # Claude Code's own, per developer (ignored by git globally, not by prettier)
 .claude/settings.local.json
 
