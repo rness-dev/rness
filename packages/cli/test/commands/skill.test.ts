@@ -1085,3 +1085,41 @@ test('install: a skill accepted is installed in the clones and at the root; its 
     true
   )
 })
+
+test('install: after an unreadable record, only the skills just answered are written and nothing is removed', async (t) => {
+  const root = await consentWs(t, { ...twoSkills, agents: ['claude'] })
+  await git(['init', '-q', '-b', 'main'], join(root, 'org/web'))
+  const a = await install(root, ['release'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(a.code, 0, a.err)
+  const recordFile = join(root, 'org/web/.git/rness/skills.json')
+  const before = await readFile(recordFile, 'utf8')
+  await writeFile(join(root, '.rness/.git/rness/skills.json'), '{not json')
+  const b = await install(root, ['brainstorming'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(b.code, 0, b.err)
+  assert.match(b.err, /unreadable/)
+  assert.match(
+    b.out,
+    /^installed brainstorming {3}\(org\/web, workspace root\)$/m
+  )
+  assert.doesNotMatch(b.out, /^removed/m)
+  for (const p of [
+    'org/web/.claude/skills/release/SKILL.md',
+    'org/web/.agents/skills/release/SKILL.md',
+    '.claude/skills/release/SKILL.md',
+    'org/web/.agents/skills/brainstorming/SKILL.md',
+  ])
+    assert.equal(await exists(join(root, p)), true, p)
+  const after = JSON.parse(await readFile(recordFile, 'utf8')) as {
+    skills: Record<string, unknown>
+  }
+  assert.deepEqual(
+    after.skills['release'],
+    (JSON.parse(before) as { skills: Record<string, unknown> }).skills[
+      'release'
+    ]
+  )
+})

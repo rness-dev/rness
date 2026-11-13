@@ -35,9 +35,12 @@ import { orgDirs } from './workspace.ts'
 // only ever removes or rewrites a path its record names, never through a
 // symbolic link, never outside the clone or the root (decision 7).
 
-/** The line `.git/info/exclude` keeps rness's lines under (ruling R7). */
+/** The line `.git/info/exclude` keeps rness's lines under (ruling R7), up to `EXCLUDE_END`. */
 export const EXCLUDE_HEADER =
   '# rness: team skills (rness sync keeps these lines)'
+
+/** The line that closes rness's block of `.git/info/exclude`: what follows is the developer's. */
+export const EXCLUDE_END = '# rness: end of team skills'
 
 /** What a clone's record holds for one skill: the hash it was written at, the paths written. */
 export interface InstalledEntry {
@@ -167,6 +170,18 @@ interface Place {
   /** `.claude/skills`, `.agents/skills`, as `agents` and the place want. */
   dirs: string[]
   candidates: readonly AppliedSkill[]
+  /** Set: act on these names only and remove nothing (`ProjectOptions`). */
+  only: ReadonlySet<string> | null
+}
+
+/** How far one projection may go. */
+export interface ProjectOptions {
+  /**
+   * Write these skill names only, and remove nothing, every other copy and
+   * record entry left as it is: `install` after reading an unreadable
+   * consent record, when the earlier answers are unknown (ruling R22).
+   */
+  only?: ReadonlySet<string>
 }
 
 /** `p` under `base`, absolute; throws unless `p` is a skill path and stays inside `base` (decision 7). */
@@ -199,10 +214,20 @@ async function levelProblem(base: string, top: string): Promise<string | null> {
   return null
 }
 
-/** Replace rness's lines of `.git/info/exclude` (the header and the lines right after it) with `paths`; every other line kept. */
+/**
+ * Replace rness's block of `.git/info/exclude` with the lines of `paths`:
+ * the header, one `/<path>/` line each, the end line; no block when there
+ * is no path. Every other line of the file is kept in place: a line the
+ * developer adds after the end line is theirs. Inside the block, a line
+ * that names no skill path (a comment) is kept, after the new block.
+ * Without its end line (an edit by hand), the block is the header and the
+ * lines right after it that name a path of `previous`, the record before
+ * this run.
+ */
 async function updateExclude(
   file: string,
-  paths: readonly string[]
+  paths: readonly string[],
+  previous: readonly string[]
 ): Promise<void> {
   const text = (await readOrNull(file)) ?? ''
   const lines = text === '' ? [] : text.replace(/\n$/, '').split('\n')
@@ -210,14 +235,22 @@ async function updateExclude(
   const section =
     paths.length === 0
       ? []
-      : [EXCLUDE_HEADER, ...[...paths].sort().map((p) => `/${p}/`)]
+      : [EXCLUDE_HEADER, ...[...paths].sort().map((p) => `/${p}/`), EXCLUDE_END]
   if (at === -1 && section.length === 0) return
   let next: string[]
   if (at === -1) next = [...lines, ...section]
   else {
+    const close = lines.indexOf(EXCLUDE_END, at + 1)
     let end = at + 1
-    while (end < lines.length && EXCLUDE_LINE.test(lines[end] ?? '')) end += 1
-    next = [...lines.slice(0, at), ...section, ...lines.slice(end)]
+    let others: string[] = []
+    if (close !== -1) {
+      others = lines.slice(at + 1, close).filter((l) => !EXCLUDE_LINE.test(l))
+      end = close + 1
+    } else {
+      const ours = new Set(previous.map((p) => `/${p}/`))
+      while (end < lines.length && ours.has(lines[end] ?? '')) end += 1
+    }
+    next = [...lines.slice(0, at), ...section, ...others, ...lines.slice(end)]
   }
   const out = next.length === 0 ? '' : `${next.join('\n')}\n`
   if (out === text) return
@@ -315,6 +348,12 @@ async function project(place: Place): Promise<Projection> {
     else if (one.state === 'installed' && isValid(one) && place.dirs.length > 0)
       want.set(name, one)
   }
+  if (place.only !== null)
+    for (const name of [...Object.keys(record.skills), ...byName.keys()])
+      if (!place.only.has(name)) {
+        kept.add(name)
+        want.delete(name)
+      }
   const names = [...new Set([...Object.keys(record.skills), ...want.keys()])]
     .filter((n) => !kept.has(n))
     .sort()
@@ -367,6 +406,7 @@ async function project(place: Place): Promise<Projection> {
 
   const next: InstalledRecord = emptyRecord()
   const removals: { name: string; path: string }[] = []
+  const retained: { name: string; path: string }[] = []
   const writes: { name: string; path: string; fresh: boolean }[] = []
   const blockedSaid = new Set<string>()
   for (const name of Object.keys(record.skills).sort())
@@ -398,9 +438,10 @@ async function project(place: Place): Promise<Projection> {
     if (clashes.length > 0) paths = []
     // Only what the record names and is still a directory rness wrote goes;
     // a path now tracked, linked or replaced is forgotten, never touched.
+    // When nothing may be removed, it stays rness's, in the record.
     for (const p of entry?.paths ?? [])
       if (!paths.includes(p) && state.get(p) === 'ours')
-        removals.push({ name, path: p })
+        (place.only === null ? removals : retained).push({ name, path: p })
     if (a === undefined || paths.length === 0) continue
     next.skills[name] = { hash: a.hash, paths }
     for (const p of paths) {
@@ -421,14 +462,17 @@ async function project(place: Place): Promise<Projection> {
     } catch (e) {
       out.problems.push(`${place.label}: ${(e as Error).message}`)
       // Still rness's: kept in the record, removed again by the next run.
-      const kept = next.skills[r.name]
-      const was = record.skills[r.name]
-      if (was !== undefined)
-        next.skills[r.name] = {
-          hash: kept?.hash ?? was.hash,
-          paths: [...(kept?.paths ?? []), r.path],
-        }
+      retained.push(r)
     }
+  for (const r of retained) {
+    const kept = next.skills[r.name]
+    const was = record.skills[r.name]
+    if (was !== undefined)
+      next.skills[r.name] = {
+        hash: kept?.hash ?? was.hash,
+        paths: [...(kept?.paths ?? []), r.path],
+      }
+  }
 
   // The record and the exclude lines name a copy before it is written: an
   // interrupted run leaves a path rness owns and rewrites, never a stray
@@ -450,7 +494,8 @@ async function project(place: Place): Promise<Projection> {
     if (file !== null)
       await updateExclude(
         file,
-        Object.values(sorted.skills).flatMap((e) => e.paths)
+        Object.values(sorted.skills).flatMap((e) => e.paths),
+        Object.values(record.skills).flatMap((e) => e.paths)
       )
   }
 
@@ -501,7 +546,8 @@ export async function projectClone(
   ws: Workspace,
   manifest: Manifest,
   applied: readonly AppliedSkill[],
-  repo: string
+  repo: string,
+  opts: ProjectOptions = {}
 ): Promise<Projection> {
   const base = join(ws.root, 'org', repo)
   const gitDir = await gitPath(base, 'rness')
@@ -522,6 +568,7 @@ export async function projectClone(
     exclude: () => gitPath(base, 'info/exclude'),
     dirs: dirsOf(manifest, 'clone'),
     candidates: applied.filter((a) => applies.has(a.skill)),
+    only: opts.only ?? null,
   })
 }
 
@@ -536,7 +583,8 @@ export const ROOT_LABEL = 'workspace root'
 export async function projectRoot(
   ws: Workspace,
   manifest: Manifest,
-  applied: readonly AppliedSkill[]
+  applied: readonly AppliedSkill[],
+  opts: ProjectOptions = {}
 ): Promise<Projection> {
   // A context checkout on its own (`rness.json` at its top) has no root of
   // its own: its parent directory is no workspace.
@@ -552,6 +600,7 @@ export async function projectRoot(
     exclude: null,
     dirs: dirsOf(manifest, 'root'),
     candidates: applied.filter((a) => a.skill.scope === null),
+    only: opts.only ?? null,
   })
 }
 

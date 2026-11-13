@@ -20,6 +20,7 @@ import {
   writeConsent,
 } from '../core/skill-consent.ts'
 import {
+  type ProjectOptions,
   type Projection,
   ROOT_LABEL,
   declaredClones,
@@ -563,11 +564,15 @@ export async function skillInstallCommand(
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
   return run('Skill install', opts, deps, async ({ ws, manifest, ui }) => {
-    const consent = await readConsent(ws.rnessDir, (file) =>
+    // An unreadable record hides the earlier answers: the projection that
+    // follows then writes the skills answered now and removes nothing.
+    let unreadable = false
+    const consent = await readConsent(ws.rnessDir, (file) => {
+      unreadable = true
       ui.warn(
         `${file} is unreadable: read as empty, the questions are asked again`
       )
-    )
+    })
     const applied = await appliedSkills(ws, manifest, consent)
     let listed: (AppliedSkill & { hash: string })[]
     // Invalid copies are reported, never offered: validate says what to fix.
@@ -688,29 +693,36 @@ export async function skillInstallCommand(
       )
     // The answers made true on disk (spec 0041 §6): an accepted skill written,
     // a declined one removed, in every clone and at the root.
-    return (await projectAll(ws, manifest, ui, { version: 1, skills })) ? 0 : 1
+    const only = unreadable
+      ? { only: new Set(listed.map((a) => a.skill.name)) }
+      : {}
+    return (await projectAll(ws, manifest, ui, { version: 1, skills }, only))
+      ? 0
+      : 1
   })
 }
 
 /**
  * Run the projection of the accepted skills over the declared clones and
  * the root, and say it: `installed <names>   (<places>)`, the same for what
- * was removed, then each clash. False when a place failed.
+ * was removed, then each clash. `opts.only` limits it (`ProjectOptions`).
+ * False when a place failed.
  */
 async function projectAll(
   ws: Workspace,
   manifest: Manifest,
   ui: Ui,
-  consent: Consent
+  consent: Consent,
+  opts: ProjectOptions
 ): Promise<boolean> {
   const applied = await appliedSkills(ws, manifest, consent)
   const places: [string, Projection][] = []
   for (const repo of await declaredClones(ws, manifest))
     places.push([
       `org/${repo}`,
-      await projectClone(ws, manifest, applied, repo),
+      await projectClone(ws, manifest, applied, repo, opts),
     ])
-  places.push([ROOT_LABEL, await projectRoot(ws, manifest, applied)])
+  places.push([ROOT_LABEL, await projectRoot(ws, manifest, applied, opts)])
   const summary = (verb: string, of: (p: Projection) => string[]): void => {
     const done = places.filter(([, p]) => of(p).length > 0)
     if (done.length === 0) return

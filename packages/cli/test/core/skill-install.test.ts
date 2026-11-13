@@ -25,6 +25,7 @@ import {
   writeConsent,
 } from '../../src/core/skill-consent.ts'
 import {
+  EXCLUDE_END,
   EXCLUDE_HEADER,
   type Projection,
   projectClone,
@@ -196,7 +197,7 @@ test('the copies are excluded from git, the lines under the header, the other li
       '/.claude/skills/brainstorming/',
       '/.claude/skills/deploy/',
       '/.claude/skills/release/',
-    ].join('\n')}\n`
+    ].join('\n')}\n${EXCLUDE_END}\n`
   )
   // Idempotent: a second run writes and says nothing.
   const again = await project(root)
@@ -665,4 +666,50 @@ test('a removal that fails is a problem, and the path stays in the record for th
   assert.equal(await isThere(join(parent, 'brainstorming')), false)
   const after = await recordOf(join(root, 'org/web/.git/rness/skills.json'))
   assert.equal(after.skills['brainstorming'], undefined)
+})
+
+test("a line the developer appends after rness's exclude block stays theirs, through every run and when the block goes", async (t) => {
+  const root = await skillsWs(t)
+  await answer(root)
+  await project(root)
+  const web = join(root, 'org/web')
+  const file = join(web, '.git/info/exclude')
+  const mine = join(web, '.claude/skills/mine')
+  await mkdir(mine, { recursive: true })
+  await writeFile(join(mine, 'SKILL.md'), SKILL_MD('mine'))
+  await writeFile(
+    file,
+    `${await readFile(file, 'utf8')}/.claude/skills/mine/\n`
+  )
+  assert.equal(await status(root, 'web'), '')
+  // The block changes twice: the developer's line is kept each time.
+  await answer(root, ['release'], 'declined')
+  await project(root)
+  assert.match(await excludeOf(root, 'web'), /^\/\.claude\/skills\/mine\/$/m)
+  assert.doesNotMatch(await excludeOf(root, 'web'), /release/)
+  assert.equal(await status(root, 'web'), '')
+  await answer(root, null, 'declined')
+  await project(root)
+  const text = await excludeOf(root, 'web')
+  assert.match(text, /^\/\.claude\/skills\/mine\/$/m)
+  assert.equal(text.includes(EXCLUDE_HEADER), false)
+  assert.equal(text.includes(EXCLUDE_END), false)
+  assert.doesNotMatch(text, /deploy|brainstorming/)
+  assert.equal(await status(root, 'web'), '')
+  assert.equal(await isThere(join(mine, 'SKILL.md')), true)
+})
+
+test("a block whose end line was removed by hand: only the lines the record named are rness's", async (t) => {
+  const root = await skillsWs(t)
+  await answer(root)
+  await project(root)
+  const file = join(root, 'org/web/.git/info/exclude')
+  const text = (await readFile(file, 'utf8')).replace(`${EXCLUDE_END}\n`, '')
+  await writeFile(file, `${text}/.claude/skills/mine/\n`)
+  await answer(root, ['release'], 'declined')
+  await project(root)
+  const after = await excludeOf(root, 'web')
+  assert.match(after, /^\/\.claude\/skills\/mine\/$/m)
+  assert.doesNotMatch(after, /release/)
+  assert.equal(after.split(EXCLUDE_END).length, 2, 'one end line')
 })
