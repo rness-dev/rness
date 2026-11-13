@@ -384,3 +384,73 @@ test('only the enabled policies are listed, in the order the context gives; a pu
   assert.doesNotMatch(block.text, /Dormant|dormant/)
   assert.notEqual(block.hash, render(twoStandards).hash)
 })
+
+// --- the Team skills section (spec 0041 §7) -----------------------------------
+
+const skillsOf = (...names: string[]) =>
+  names.map((name) => ({ name, description: `Does ${name}.` }))
+
+test('team skills: no skill, the same bytes and hash as before', () => {
+  const base = { scope: 'web', org: 'acme', depth: 2, context: twoStandards }
+  const before = renderBlock(base)
+  for (const skills of [undefined, []] as const) {
+    const again = renderBlock({ ...base, ...(skills ? { skills } : {}) })
+    assert.equal(again.text, before.text)
+    assert.equal(again.hash, before.hash)
+  }
+  assert.doesNotMatch(before.text, /Team skills/)
+})
+
+test('team skills: the section follows Policies, one line per skill, then the install line', () => {
+  const policy = `---\nstatus: Enabled\nrules:\n  - check: push\n    deny: non-fast-forward\n    fix: Push a new commit.\n---\n\n# No force push\n`
+  const context: Context = {
+    ...twoStandards,
+    collections: [
+      ...twoStandards.collections.filter((c) => c.name !== 'policy'),
+      {
+        name: 'policy',
+        files: [
+          {
+            rel: 'p.md',
+            scope: null,
+            body: policy,
+            title: null,
+            content: policy,
+          },
+        ],
+      },
+    ],
+  }
+  const withSkills = renderBlock({
+    scope: 'web',
+    org: 'acme',
+    depth: 2,
+    context,
+    skills: skillsOf('deploy', 'release'),
+  })
+  const body = bodyOf(withSkills.text.split('\n'))
+  assert.ok(body.indexOf('## Policies') < body.indexOf('## Team skills'))
+  assert.ok(
+    body.endsWith(
+      [
+        '## Team skills',
+        '- deploy: Does deploy.',
+        '- release: Does release.',
+        "Installed with each developer's consent: `rness skill install`.",
+      ].join('\n')
+    ),
+    body
+  )
+  assert.equal(withSkills.hash, blockHash(body))
+})
+
+test('team skills: the root block carries the section too', () => {
+  const root = renderBlock({
+    scope: null,
+    org: 'acme',
+    depth: 0,
+    context: twoStandards,
+    skills: skillsOf('deploy'),
+  })
+  assert.match(root.text, /\n## Team skills\n- deploy: Does deploy\.\n/)
+})

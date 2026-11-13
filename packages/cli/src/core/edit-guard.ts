@@ -144,6 +144,50 @@ export function ownedRefusal(label: string): string {
   return `rness: ${label} is written whole by rness sync, and the next sync overwrites it. Leave it to rness.`
 }
 
+/** A skill directory rness may have installed: `[org/<repo>/].claude|.agents/skills/<name>`. */
+const INSTALLED_AT =
+  /^(?:org\/([^/]+)\/)?(\.(?:claude|agents)\/skills\/[^/]+)(?:\/|$)/
+
+/**
+ * Where a workspace-relative path sits in a place team skills are installed
+ * (spec 0041 §7): the clone's repository name (null at the root) and the
+ * skill directory relative to it. Whether rness installed it there is the
+ * record's to say.
+ */
+export function installedSkillAt(
+  label: string
+): { repo: string | null; dir: string } | null {
+  const m = INSTALLED_AT.exec(label)
+  return m === null ? null : { repo: m[1] ?? null, dir: m[2] ?? '' }
+}
+
+/** Where a team skill lives in `.rness`: `.rness/skills/<name>`, or the scope's directory. */
+export const skillHome = (name: string, scope: string | null): string =>
+  scope === null
+    ? `.rness/skills/${name}`
+    : `.rness/skills/scopes/${scope}/${name}`
+
+export const installedSkillRefusal = (label: string, home: string): string =>
+  `rness: ${label} is a team skill rness installs from ${home}; edit it there`
+
+/**
+ * The skill a path of `.rness` (relative to it) belongs to: `skills/<name>/`
+ * or `skills/scopes/<scope>/<name>/`; null for anything else.
+ */
+export function skillCopyAt(
+  rel: string
+): { scope: string | null; name: string } | null {
+  const scoped = /^skills\/scopes\/([^/]+)\/([^/]+)(?:\/|$)/.exec(rel)
+  if (scoped !== null) return { scope: scoped[1] ?? '', name: scoped[2] ?? '' }
+  const top = /^skills\/([^/]+)(?:\/|$)/.exec(rel)
+  return top === null || top[1] === 'scopes'
+    ? null
+    : { scope: null, name: top[1] ?? '' }
+}
+
+export const declaredCopyRefusal = (name: string, version: string): string =>
+  `rness: ${name} is a copy of ${version}; run rness skill update, or remove its source in rness.json to make it the team's own`
+
 const MARKER = /^<!-- rness: (\S+) -->$/
 
 interface Block {

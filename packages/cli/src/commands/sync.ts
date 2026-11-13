@@ -57,6 +57,7 @@ import {
   projectionLines,
   skillsOfRun,
 } from '../core/skill-install.ts'
+import { blockSkills } from '../core/skills.ts'
 import { count } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
@@ -591,6 +592,7 @@ export async function syncCommand(
             org,
             depth: t.depth,
             context,
+            skills: await blockSkills(ws.rnessDir, manifest, t.scope),
           })
           if (block.bytes > BLOCK_SIZE_WARNING) {
             ui.warn(

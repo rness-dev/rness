@@ -8,6 +8,7 @@ import { workspaceName } from './manifest.ts'
 import type { AddedLinesFile } from './policy-check.ts'
 import { type Policy, policiesFor } from './policy.ts'
 import { resolveScope } from './scope.ts'
+import { blockSkills } from './skills.ts'
 import type { Manifest, Workspace } from './types.ts'
 
 /**
@@ -140,6 +141,7 @@ export async function freshBlockHash(
     org: workspaceName(ws.manifest, ws.root),
     depth: dir === '.' ? 0 : dir.split('/').length,
     context,
+    skills: await blockSkills(ws.rnessDir, ws.manifest, scope),
   }).hash
 }
 

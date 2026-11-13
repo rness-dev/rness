@@ -20,6 +20,7 @@ import { fetchRef } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import {
   allowedToolsText,
+  blockSkills,
   checkSkillCopies,
   checkSkillDir,
   copySkill,
@@ -867,4 +868,34 @@ test('checkSkillCopies: a copy named with ESC is reported without a raw ESC', as
   assert.equal(problems.length, 2)
   for (const line of [...problems, ...reported])
     assert.doesNotMatch(line, RAW_CONTROL)
+})
+
+test('blockSkills: name and one-line plain description of each valid skill that applies to the scope', async (t) => {
+  const md = (name: string, description: string) =>
+    `---\nname: ${name}\ndescription: "${description}"\n---\nBody\n`
+  const root = await makeWorkspace(t, {
+    skills: { a: decl() },
+    scopes: {
+      web: { url: 'u1', skills: { c: decl() } },
+      api: { url: 'u2', skills: { z: decl() } },
+    },
+    files: {
+      'skills/a/SKILL.md': md('a', 'Does a.'),
+      'skills/b/SKILL.md': md('b', 'Line one\\ttwo'),
+      'skills/bad/SKILL.md': '---\nname: bad\n---\n',
+      'skills/scopes/web/c/SKILL.md': md('c', 'Does c.'),
+      'skills/scopes/api/z/SKILL.md': md('z', 'Does z.'),
+    },
+  })
+  const rnessDir = join(root, '.rness')
+  const manifest = await loadManifest(rnessDir)
+  assert.deepEqual(await blockSkills(rnessDir, manifest, 'web'), [
+    { name: 'a', description: 'Does a.' },
+    { name: 'b', description: 'Line one two' },
+    { name: 'c', description: 'Does c.' },
+  ])
+  assert.deepEqual(
+    (await blockSkills(rnessDir, manifest, null)).map((s) => s.name),
+    ['a', 'b']
+  )
 })

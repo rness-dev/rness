@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { addedLines, replayEdit } from '../../src/core/edit-guard.ts'
+import {
+  addedLines,
+  installedSkillAt,
+  replayEdit,
+  skillCopyAt,
+  skillHome,
+} from '../../src/core/edit-guard.ts'
 
 // The Edit tool finds an old_string as Claude Code does: straight quotes
 // match curly ones, and a LF matches a CRLF (seen 2026-10-04: the model
@@ -83,4 +89,43 @@ test('addedLines after an Edit: whole lines, wherever old_string started and end
     { line: 1, text: 'keep this' },
     { line: 2, text: 'that' },
   ])
+})
+
+test('installedSkillAt: a skill directory of a clone or of the root, nothing deeper than a name', () => {
+  assert.deepEqual(installedSkillAt('org/web/.claude/skills/a/SKILL.md'), {
+    repo: 'web',
+    dir: '.claude/skills/a',
+  })
+  assert.deepEqual(installedSkillAt('org/web/.agents/skills/a'), {
+    repo: 'web',
+    dir: '.agents/skills/a',
+  })
+  assert.deepEqual(installedSkillAt('.claude/skills/a/x/y.md'), {
+    repo: null,
+    dir: '.claude/skills/a',
+  })
+  for (const no of [
+    '.claude/skills',
+    'org/web/src/.claude/skills/a/SKILL.md',
+    'org/web/claude/skills/a/SKILL.md',
+    '.claude/settings.json',
+  ])
+    assert.equal(installedSkillAt(no), null, no)
+})
+
+test('skillCopyAt: the skill of a path of .rness; `scopes` is no skill name', () => {
+  assert.deepEqual(skillCopyAt('skills/a/SKILL.md'), { scope: null, name: 'a' })
+  assert.deepEqual(skillCopyAt('skills/scopes/web/a/x.md'), {
+    scope: 'web',
+    name: 'a',
+  })
+  for (const no of [
+    'skills/scopes/web',
+    'skills/scopes',
+    'skills',
+    'specs/a.md',
+  ])
+    assert.equal(skillCopyAt(no), null, no)
+  assert.equal(skillHome('a', null), '.rness/skills/a')
+  assert.equal(skillHome('a', 'web'), '.rness/skills/scopes/web/a')
 })

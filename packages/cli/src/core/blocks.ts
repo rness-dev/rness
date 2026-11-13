@@ -5,6 +5,7 @@ import { assembleContext } from './context.ts'
 import { exists, readOrNull } from './fs.ts'
 import { findBlock } from './merge.ts'
 import { rnessCommand } from './pm.ts'
+import { blockSkills } from './skills.ts'
 import type { Manifest } from './types.ts'
 
 export interface CheckBlocksInput {
@@ -127,6 +128,7 @@ export async function checkBlocks({
       org,
       depth: t.depth,
       context,
+      skills: await blockSkills(rnessDir, manifest, t.scope),
     })
     // Two ways to be stale: the header no longer matches a fresh render, or the
     // body no longer matches its own header — a hand edit inside the block.

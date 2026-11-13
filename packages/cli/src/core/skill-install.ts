@@ -657,7 +657,10 @@ export function projectionLines(
 }
 
 /** The line said when skills await the developer's answer (spec 0041 §5). */
-export const pendingLine = (n: number): Line => [
+export const pendingLine = (
+  n: number,
+  env: NodeJS.ProcessEnv = process.env
+): Line => [
   'skills',
-  `${count(n, ['team skill awaits', 'team skills await'])} your consent: ${rnessCommand()} skill install`,
+  `${count(n, ['team skill awaits', 'team skills await'])} your consent: ${rnessCommand(env)} skill install`,
 ]

@@ -62,7 +62,7 @@ export function toneOf(verb: string): Tone {
 }
 
 /** The width verbs are padded to; a longer verb (`unchanged`) takes its own. */
-const COLUMN = 8
+export const COLUMN = 8
 
 /**
  * One status line: the verb painted by its tone and padded to the column,

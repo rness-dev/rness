@@ -15,6 +15,14 @@ export interface BlockInput {
   /** Path segments between the scope directory and the workspace root (`org/web` → 2; root → 0). */
   depth: number
   context: Context
+  /** The team skills that apply to the scope (spec 0041 §7); none by default. */
+  skills?: readonly BlockSkill[]
+}
+
+/** A team skill as the block lists it: both values already plain text. */
+export interface BlockSkill {
+  name: string
+  description: string
 }
 
 export interface RenderedBlock {
@@ -96,12 +104,29 @@ function policies(context: Context): string {
     : `\n\n## Policies\n${enabled.map(policySection).join('\n\n')}`
 }
 
+/**
+ * The `## Team skills` section, or '' when none applies. The command is the
+ * bare `rness`, like the intro's: the block is committed in every clone, so it
+ * cannot depend on how one developer launched the CLI.
+ */
+function teamSkills(skills: readonly BlockSkill[]): string {
+  if (skills.length === 0) return ''
+  return [
+    '',
+    '',
+    '## Team skills',
+    ...skills.map((s) => `- ${s.name}: ${s.description}`),
+    "Installed with each developer's consent: `rness skill install`.",
+  ].join('\n')
+}
+
 /** Render the block for one scope (or the root) from an already resolved context. */
 export function renderBlock({
   scope,
   org,
   depth,
   context,
+  skills = [],
 }: BlockInput): RenderedBlock {
   const standards =
     context.collections.find((c) => c.name === 'standards')?.files ?? []
@@ -111,7 +136,7 @@ export function renderBlock({
       : standards.map(
           (f) => `<!-- rness: standards/${f.rel} -->\n${toLf(f.content).trim()}`
         )
-  const body = `${intro(scope, org, depth)}\n\n## Rules\n${rules.join('\n\n')}${policies(context)}`
+  const body = `${intro(scope, org, depth)}\n\n## Rules\n${rules.join('\n\n')}${policies(context)}${teamSkills(skills)}`
   const hash = blockHash(body)
   const text = [BEGIN, header(scope, hash), body, END].join('\n')
   return { text, hash, bytes: Buffer.byteLength(text, 'utf8') }

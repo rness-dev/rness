@@ -114,6 +114,47 @@ export function skillsForScope(
 }
 
 /**
+ * The skills the block of `scope` lists (spec 0041 §7), by name and
+ * description, both as plain text: every skill that applies, declared or
+ * written by the team, whose copy passes the checks. A copy that does not
+ * is left out (`validate` says why), and so is the whole list when the
+ * skills cannot be listed: a block is never what fails.
+ */
+export async function blockSkills(
+  rnessDir: string,
+  manifest: Manifest,
+  scope: string | null
+): Promise<{ name: string; description: string }[]> {
+  let all: TeamSkill[]
+  try {
+    all = skillsForScope(manifest, await teamSkills(rnessDir, manifest), scope)
+  } catch {
+    return []
+  }
+  const listed: { name: string; description: string }[] = []
+  const seen = new Set<string>()
+  for (const skill of all) {
+    if (seen.has(skill.name)) continue
+    try {
+      await checkSkillDir(skill.dir, skill.name)
+      const fields = parseFrontMatter(
+        await readFile(join(skill.dir, 'SKILL.md'), 'utf8')
+      )
+      const description = fields?.['description']
+      if (typeof description !== 'string') continue
+      seen.add(skill.name)
+      listed.push({
+        name: plainText(skill.name),
+        description: plainText(description).replace(/ {2,}/g, ' ').trim(),
+      })
+    } catch {
+      continue
+    }
+  }
+  return listed
+}
+
+/**
  * The skills installed in the clone of repository `repo`: those of
  * `skillsForScope` for `repo` and for every part nested under it, a part's
  * skill landing at its repository's clone root (spec 0041 §6).

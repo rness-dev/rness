@@ -1329,6 +1329,25 @@ test('skills: sync -y installs no pending skill and says how many await; --check
   assert.equal(code, 0, c.out() + c.err())
 })
 
+test('skills: the blocks list the team skills that apply, installed or not; sync --check finds them current', async (t) => {
+  const root = await skillsWorkspace(t)
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  const section = (...names: string[]) =>
+    [
+      '## Team skills',
+      ...names.map((n) => `- ${n}: A skill`),
+      "Installed with each developer's consent: `rness skill install`.",
+    ].join('\n')
+  const web = await readFile(join(root, 'org/web/AGENTS.md'), 'utf8')
+  assert.ok(web.includes(`\n${section('release', 'deploy')}\n<!-- END`), web)
+  const top = await readFile(join(root, 'AGENTS.md'), 'utf8')
+  assert.ok(top.includes(`\n${section('release')}\n<!-- END`), top)
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 0, check.out + check.err)
+  assert.doesNotMatch(check.out, /stale/)
+})
+
 test('skills: no pending skill and none installed, sync says nothing of skills', async (t) => {
   const root = await hooksWorkspace(t)
   const r = await sync(['--yes', '--cwd', root])

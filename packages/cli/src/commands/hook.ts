@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
@@ -13,12 +13,18 @@ import {
   type AddedLine,
   type Replayed,
   addedLines,
+  declaredCopyRefusal,
   editRefusal,
+  installedSkillAt,
+  installedSkillRefusal,
   ownedRefusal,
   ownedWhole,
   replayEdit,
+  skillCopyAt,
+  skillHome,
   writeRefusal,
 } from '../core/edit-guard.ts'
+import { parseFrontMatter } from '../core/frontmatter.ts'
 import { readOrNull } from '../core/fs.ts'
 import {
   type GitBypass,
@@ -32,6 +38,7 @@ import {
   refuseContract1,
   repositories,
 } from '../core/manifest.ts'
+import { rnessCommand } from '../core/pm.ts'
 import {
   type PolicyFailure,
   checkAddedLines,
@@ -54,7 +61,22 @@ import {
 import { cloneHolding } from '../core/repos.ts'
 import { safetyNet } from '../core/safety-net.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
+import { isPending, originOf, versionOf } from '../core/skill-consent.ts'
+import {
+  installedFile,
+  pendingLine,
+  readInstalled,
+  rootInstalledFile,
+  skillsOfRun,
+} from '../core/skill-install.ts'
+import {
+  allowedToolsText,
+  plainText,
+  skillsForClone,
+  teamSkills,
+} from '../core/skills.ts'
 import { documentsIn, plansInProgress } from '../core/status.ts'
+import { COLUMN, count } from '../core/style.ts'
 import type { Manifest, Workspace } from '../core/types.ts'
 import { findWorkspace } from '../core/workspace.ts'
 import { noteLines, scopeBanner } from './snapshot.ts'
@@ -210,6 +232,45 @@ async function journalStart(
   return []
 }
 
+/** The `allowed-tools` a skill's SKILL.md asks for, as plain text; `none` when it asks for none. */
+async function allowedTools(dir: string): Promise<string> {
+  const fields = parseFrontMatter(await readFile(join(dir, 'SKILL.md'), 'utf8'))
+  return plainText(allowedToolsText(fields?.['allowed-tools']) ?? 'none')
+}
+
+/**
+ * The team skills awaiting this developer's answer (spec 0041 §5): the line
+ * `sync` prints, for the developer, and for the model the list (name, where it
+ * comes from, `allowed-tools`) with the instruction to ask first. Null when
+ * none awaits. Every value comes from a fetched skill or the manifest: plain
+ * text, never raw.
+ */
+async function pendingSkills(
+  ws: Workspace,
+  manifest: Manifest,
+  env: NodeJS.ProcessEnv,
+  warn: (text: string) => void
+): Promise<{ line: string; context: string[] } | null> {
+  const { applied } = await skillsOfRun(ws, manifest, warn)
+  const pending = applied.filter((a) => isPending(a.state))
+  if (pending.length === 0) return null
+  const [verb, rest] = pendingLine(pending.length, env)
+  const items: string[] = []
+  for (const a of pending)
+    items.push(
+      `- ${plainText(a.skill.name)}: ${plainText(originOf(a.skill))}${a.state === 'changed' ? ' (changed since accepted)' : ''}, allowed-tools: ${await allowedTools(a.skill.dir)}`
+    )
+  const names = pending.map((a) => plainText(a.skill.name)).join(' ')
+  return {
+    line: `${verb.padEnd(COLUMN)} ${rest}`,
+    context: [
+      `${count(pending.length, ['team skill awaits', 'team skills await'])} the developer's consent:`,
+      ...items,
+      `Ask the developer whether to install these team skills. On their yes, run ${rnessCommand(env)} skill install ${names} --yes; never without asking. If an installed skill does not appear, ask them to run /reload-skills.`,
+    ],
+  }
+}
+
 /**
  * A banner for the developer and the scope's summary for the model (spec
  * 0015 §3). One JSON object, always, and exit 0: a failure is a line of it.
@@ -221,6 +282,7 @@ async function sessionStart(
   const cwd = cwdOf(input, io.env)
   let banner: string | null = null
   let context: string[] = []
+  let skillLine: string | null = null
   let notes: string[]
   try {
     const ws = await findWorkspace(cwd)
@@ -235,6 +297,17 @@ async function sessionStart(
       ...(await journalStart(ws, manifest, scope, cwd, input)),
     ]
     notes = await safetyNet(ws, manifest)
+    try {
+      const skills = await pendingSkills(ws, manifest, io.env, (text) =>
+        notes.push(plainText(text))
+      )
+      if (skills !== null) {
+        skillLine = skills.line
+        context.push(...skills.context)
+      }
+    } catch (e) {
+      notes.push(`team skills: ${plainText(message(e))}`)
+    }
     // Only when some board has documents of the scope to mark: no process
     // started for nothing.
     await runDetached(
@@ -279,6 +352,8 @@ async function sessionStart(
     ...(banner !== null && !compact ? [banner] : []),
     ...warnings,
     ...(tooOld !== null ? [tooOld] : []),
+    // The model is told on a compact too: what it was told is gone.
+    ...(skillLine !== null && !compact ? [skillLine] : []),
   ]
   return {
     ...(shown.length > 0 ? { systemMessage: shown.join('\n') } : {}),
@@ -484,6 +559,82 @@ async function addedLineFailures(
 }
 
 /**
+ * The refusal of an edit under a skill directory the clone's record (the
+ * root's, at the root) says rness installed (spec 0041 §7). Null for any
+ * other path, and when the record or the manifest cannot be read: nothing is
+ * known to be installed, and this runs before every edit.
+ */
+async function installedSkillReason(
+  ws: Workspace,
+  label: string
+): Promise<string | null> {
+  const at = installedSkillAt(label)
+  if (at === null) return null
+  try {
+    const file =
+      at.repo === null
+        ? await rootInstalledFile(ws.rnessDir)
+        : await installedFile(join(ws.root, 'org', at.repo))
+    if (file === null) return null
+    const record = await readInstalled(
+      file,
+      at.repo === null ? 'root' : 'clone'
+    )
+    const name = Object.entries(record?.skills ?? {}).find(([, e]) =>
+      e.paths.includes(at.dir)
+    )?.[0]
+    if (name === undefined) return null
+    // Which `.rness` directory holds it: the manifest, when it can be read.
+    let scope: string | null = null
+    try {
+      const manifest = await loadManifest(ws.rnessDir)
+      const all = await teamSkills(ws.rnessDir, manifest)
+      const found = (
+        at.repo === null
+          ? all.filter((s) => s.scope === null)
+          : skillsForClone(manifest, all, at.repo)
+      ).find((s) => s.name === name)
+      scope = found?.scope ?? null
+    } catch {
+      // The unscoped form: the skill is still `.rness`'s to edit.
+    }
+    return installedSkillRefusal(label, skillHome(name, scope))
+  } catch {
+    return null
+  }
+}
+
+/** The refusal of an edit under a declared skill's copy in `.rness` (`rel` relative to it), else null. */
+async function declaredCopyReason(
+  ws: Workspace,
+  rel: string
+): Promise<string | null> {
+  const at = skillCopyAt(rel)
+  if (at === null) return null
+  try {
+    const manifest = await loadManifest(ws.rnessDir)
+    const declared =
+      at.scope === null
+        ? manifest.skills
+        : Object.hasOwn(manifest.scopes, at.scope)
+          ? manifest.scopes[at.scope]?.skills
+          : undefined
+    const entry =
+      declared !== undefined && Object.hasOwn(declared, at.name)
+        ? declared[at.name]
+        : undefined
+    return entry === undefined
+      ? null
+      : declaredCopyRefusal(
+          at.name,
+          versionOf(entry.source, entry.ref, entry.commit)
+        )
+  } catch {
+    return null
+  }
+}
+
+/**
  * Before an `Edit` or a `Write` (spec 0029 §4, spec 0040 §4.3): refused,
  * exit 2 with the reason on stderr (Claude Code does not run the tool and
  * the model reads why) when it would change what `sync` generates (the
@@ -504,7 +655,11 @@ async function editGuard(input: Input, io: HookIo): Promise<number> {
   const label = await within(ws.root, file)
   if (label === null) return 0
   if (ownedWhole(label)) return refuse(io, [ownedRefusal(label)])
+  const installed = await installedSkillReason(ws, label)
+  if (installed !== null) return refuse(io, [installed])
   const rel = await within(ws.rnessDir, file)
+  const copy = rel === null ? null : await declaredCopyReason(ws, rel)
+  if (copy !== null) return refuse(io, [copy])
   // While rness.json is on contract 1 the fix is `upgrade`, not an edit
   // under Claude (spec 0038 §6): `rness.json` itself included. A hand edit
   // outside Claude stays possible, which this guard does not see.
