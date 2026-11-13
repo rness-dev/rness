@@ -44,7 +44,7 @@ export interface ScopeEntry {
 
 /**
  * A team skill as `rness.json` declares it (spec 0041 §2): where it is
- * copied from, and the hash of the copy. The name is the key it is held under.
+ * copied from, and the tree of the copy. The name is the key it is held under.
  */
 export interface SkillEntry {
   /** `github:<owner>/<repo>`, `git:<url>` or `path:<directory>`. */
@@ -55,8 +55,8 @@ export interface SkillEntry {
   ref?: string
   /** The commit `ref` resolved to when the copy was made. */
   commit?: string
-  /** `sha256-<base64>` of the copied directory. */
-  hash: string
+  /** The id git gives the tree of the copy in `.rness` (decision 8): 40 hexadecimal characters, 64 in a sha256 repository. */
+  tree: string
 }
 
 /** A scope with a `url`, as `repositories()` gives it: cloned at `dir`, `org/<name>`. */

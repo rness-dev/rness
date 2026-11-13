@@ -66,3 +66,17 @@ export async function commitTo(
     await rm(work, { recursive: true, force: true })
   }
 }
+
+/**
+ * Commit all `.rness` holds (`git add -A`), as the team's merged pull
+ * request would: a team skill installs from the commit at `HEAD` of `.rness`
+ * (spec 0041 decision 8), never from its working copy.
+ */
+export async function commitRness(
+  root: string,
+  message = 'rness'
+): Promise<void> {
+  const dir = join(root, '.rness')
+  await git(['add', '-A'], dir)
+  await git(['commit', '-q', '--allow-empty', '-m', message], dir)
+}

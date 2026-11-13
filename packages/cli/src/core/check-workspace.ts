@@ -24,10 +24,14 @@ export interface WorkspaceCheck {
  * front-matter contract, stale or malformed blocks, agents this copy cannot
  * compile, and values a declared target guarantees but a file lacks (spec
  * 0011 §3). Read-only. Shared with the session-start hook (spec 0015 §3).
+ * `skillTrees` false (the safety net of every turn, ruling R30): no team
+ * skill's tree is built, so the checks of a copy are those of its
+ * `SKILL.md` alone and no copy is compared to its `tree`.
  */
 export async function checkWorkspace(
   ws: Workspace,
-  manifest: Manifest
+  manifest: Manifest,
+  opts: { skillTrees: boolean } = { skillTrees: true }
 ): Promise<WorkspaceCheck> {
   // loadManifest only checks that extends targets exist; walk every scope so
   // an extends cycle is reported here rather than breaking `context` later.
@@ -41,7 +45,9 @@ export async function checkWorkspace(
       await teamSkills(ws.rnessDir, manifest)
     )
   )
-  const copies = await checkSkillCopies(ws.rnessDir, manifest)
+  const copies = await checkSkillCopies(ws.rnessDir, manifest, {
+    trees: opts.skillTrees,
+  })
   problems.push(...copies.problems)
   const blocks = await checkBlocks({
     root: ws.root,

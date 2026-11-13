@@ -22,25 +22,26 @@ import {
   allowedToolsText,
   blockSkills,
   checkSkillCopies,
-  checkSkillDir,
   copySkill,
   diffSkillFiles,
   fetchSkill,
-  hashSkillDir,
+  fileDigests,
   plainText,
   quoted,
+  readSkillMd,
   skillConflicts,
-  skillFileDigests,
   skillSourceUrl,
+  skillsAtHead,
   skillsForClone,
   skillsForScope,
   teamSkills,
 } from '../../src/core/skills.ts'
+import type { Manifest } from '../../src/core/types.ts'
 import { git } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
-const HASH = `sha256-${'A'.repeat(43)}=`
-const decl = (source = 'github:o/r') => ({ source, hash: HASH })
+const TREE = 'f'.repeat(40)
+const decl = (source = 'github:o/r') => ({ source, tree: TREE })
 
 /** top: a (declared), b (written); web: c; web/ui part: d; ui extends api: e. */
 async function build(t: Parameters<typeof makeWorkspace>[0]) {
@@ -221,91 +222,128 @@ async function skillDir(
   return dir
 }
 
-test('hashSkillDir: sha256 base64, deterministic, content, path and mode all count', async (t) => {
-  const a = await skillDir(t, 'demo', { 'run.sh': '#!/bin/sh\n' })
-  const h = await hashSkillDir(a)
-  assert.match(h, /^sha256-[A-Za-z0-9+/]{43}=$/)
-  assert.equal(await hashSkillDir(a), h)
-  await chmod(join(a, 'run.sh'), 0o755)
-  const exec = await hashSkillDir(a)
-  assert.notEqual(exec, h)
-  await writeFile(join(a, 'run.sh'), '#!/bin/sh\necho\n')
-  assert.notEqual(await hashSkillDir(a), exec)
-  const b = await skillDir(t, 'demo', { 'other.sh': '#!/bin/sh\n' })
-  const c = await skillDir(t, 'demo', { 'run.sh': '#!/bin/sh\n' })
-  assert.notEqual(await hashSkillDir(b), await hashSkillDir(c))
-})
-
-test('hashSkillDir: the exact encoding, byte-ordered paths, a root .git ignored', async (t) => {
-  const { createHash } = await import('node:crypto')
-  const dir = await skillDir(t, 'demo', {
-    'b.txt': 'bb',
-    'B/x': 'x',
-    '.git/HEAD': 'ref',
+/** No global git configuration: a developer's excludes file must not decide what a tree holds. */
+function noGlobalGit(t: TestContext): void {
+  const was = process.env['GIT_CONFIG_GLOBAL']
+  process.env['GIT_CONFIG_GLOBAL'] = '/dev/null'
+  t.after(() => {
+    if (was === undefined) delete process.env['GIT_CONFIG_GLOBAL']
+    else process.env['GIT_CONFIG_GLOBAL'] = was
   })
-  const md = SKILL_MD('demo')
-  const want = createHash('sha256')
-  for (const [p, body] of [
-    ['B/x', 'x'],
-    ['SKILL.md', md],
-    ['b.txt', 'bb'],
-  ] as const)
-    want.update(`${p}\0-\0${Buffer.byteLength(body)}\0` + body)
-  assert.equal(await hashSkillDir(dir), `sha256-${want.digest('base64')}`)
+}
+
+const NO_SCOPES = { version: 2, scopes: {} } as unknown as Manifest
+
+/**
+ * What `validate` says of a skill written by the team as `files` under
+ * `.rness/skills/<name>/` (a `.rness` with no repository: its tree is the
+ * one git would give it): the checks of spec 0041 §4, on that tree.
+ */
+async function problemsOf(
+  t: TestContext,
+  name: string,
+  files: Record<string, string>,
+  prepare: (dir: string) => Promise<void> = async () => {}
+): Promise<string[]> {
+  noGlobalGit(t)
+  const rnessDir = await tmp(t)
+  const dir = join(rnessDir, 'skills', name)
+  await put(dir, files)
+  await prepare(dir)
+  return (await checkSkillCopies(rnessDir, NO_SCOPES, { trees: true })).problems
+}
+
+test('the checks of §4 on the tree: a good skill passes', async (t) => {
+  assert.deepEqual(
+    await problemsOf(t, 'demo', { 'SKILL.md': SKILL_MD('demo') }),
+    []
+  )
 })
 
-test('checkSkillDir: a good skill passes and reports its size', async (t) => {
-  const dir = await skillDir(t)
-  const c = await checkSkillDir(dir, 'demo')
-  assert.equal(c.bytes, Buffer.byteLength(SKILL_MD('demo')))
-})
-
-test('checkSkillDir: each refusal of §4 names the skill and the reason', async (t) => {
-  const refused = async (dir: string, name: string, re: RegExp) =>
-    assert.rejects(checkSkillDir(dir, name), (e: Error) => {
-      assert.match(e.message, re)
-      assert.match(e.message, new RegExp(`skill "${name}"`))
-      return true
-    })
-  const none = join(await tmp(t), 'demo')
-  await mkdir(none)
-  await refused(none, 'demo', /no SKILL\.md/)
+test('the checks of §4 on the tree: each refusal names the skill and the reason', async (t) => {
+  const refused = async (
+    name: string,
+    files: Record<string, string>,
+    re: RegExp,
+    prepare?: (dir: string) => Promise<void>
+  ) => {
+    const problems = await problemsOf(t, name, files, prepare)
+    assert.equal(problems.length, 1, problems.join('\n'))
+    assert.match(problems[0] ?? '', re)
+    assert.match(problems[0] ?? '', new RegExp(`skill "${name}"`))
+  }
+  await refused('demo', { 'a.txt': 'x' }, /no SKILL\.md/)
   await refused(
-    await skillDir(t, 'other'),
     'demo',
+    { 'SKILL.md': SKILL_MD('other') },
     /name "other" is not the directory's name "demo"/
   )
-  const nodesc = join(await tmp(t), 'demo')
-  await put(nodesc, { 'SKILL.md': '---\nname: demo\n---\n' })
-  await refused(nodesc, 'demo', /no description/)
-  const nofm = join(await tmp(t), 'demo')
-  await put(nofm, { 'SKILL.md': '# hi\n' })
-  await refused(nofm, 'demo', /front matter/)
-  const upper = join(await tmp(t), 'Demo')
-  await put(upper, { 'SKILL.md': SKILL_MD('Demo') })
-  await refused(upper, 'Demo', /lowercase letters, digits and hyphens/)
-  const long = 'a'.repeat(65)
-  await refused(await skillDir(t, long), long, /at most 64 characters/)
   await refused(
-    await skillDir(t, 'rness'),
+    'demo',
+    { 'SKILL.md': '---\nname: demo\n---\n' },
+    /no description/
+  )
+  await refused('demo', { 'SKILL.md': '# hi\n' }, /front matter/)
+  await refused(
+    'Demo',
+    { 'SKILL.md': SKILL_MD('Demo') },
+    /lowercase letters, digits and hyphens/
+  )
+  const long = 'a'.repeat(65)
+  await refused(long, { 'SKILL.md': SKILL_MD(long) }, /at most 64 characters/)
+  await refused(
     'rness',
+    { 'SKILL.md': SKILL_MD('rness') },
     /collides with the rness plugin/
   )
-  const link = await skillDir(t)
-  await symlink('SKILL.md', join(link, 'alias.md'))
-  await refused(link, 'demo', /"alias\.md" is a symbolic link/)
-  const big = await skillDir(t, 'demo', { 'big.bin': 'x'.repeat(1048576) })
-  await refused(big, 'demo', /is \d+ bytes, above the limit of 1048576 bytes/)
+  await refused(
+    'demo',
+    { 'SKILL.md': SKILL_MD('demo') },
+    /"alias\.md" is a symbolic link/,
+    (dir) => symlink('SKILL.md', join(dir, 'alias.md'))
+  )
+  await refused(
+    'demo',
+    { 'SKILL.md': SKILL_MD('demo'), 'big.bin': 'x'.repeat(1048576) },
+    /is \d+ bytes, above the limit of 1048576 bytes/
+  )
 })
 
-test('checkSkillDir: exactly 1 MB passes', async (t) => {
-  const dir = join(await tmp(t), 'demo')
+test('the checks of §4 on the tree: exactly 1 MB passes', async (t) => {
   const md = SKILL_MD('demo')
-  await put(dir, {
-    'SKILL.md': md,
-    'pad.bin': 'x'.repeat(1048576 - Buffer.byteLength(md)),
-  })
-  assert.equal((await checkSkillDir(dir, 'demo')).bytes, 1048576)
+  assert.deepEqual(
+    await problemsOf(t, 'demo', {
+      'SKILL.md': md,
+      'pad.bin': 'x'.repeat(1048576 - Buffer.byteLength(md)),
+    }),
+    []
+  )
+})
+
+test('the checks of §4 on the tree: what git leaves out is no part of the skill, a SKILL.md it ignores included', async (t) => {
+  // The skill's own .gitignore: the large file and the link it names count for nothing.
+  assert.deepEqual(
+    await problemsOf(
+      t,
+      'demo',
+      {
+        'SKILL.md': SKILL_MD('demo'),
+        '.gitignore': 'cache/\nlink\n',
+        'cache/big.bin': 'x'.repeat(2 * 1048576),
+      },
+      (dir) => symlink('/etc', join(dir, 'link'))
+    ),
+    []
+  )
+  assert.match(
+    (
+      await problemsOf(t, 'demo', {
+        'SKILL.md': SKILL_MD('demo'),
+        '.gitignore': 'SKILL.md\n',
+      })
+    ).join('\n'),
+    /skill "demo": no SKILL\.md at the root of its directory/
+  )
 })
 
 test('skillSourceUrl: github maps to https, git as given, path none', () => {
@@ -461,8 +499,21 @@ test('copySkill: into skills/<name>, executable bit kept, modes 755/644, no .git
   assert.equal(c.name, 'demo')
   assert.equal((await stat(join(c.dir, 'run.sh'))).mode & 0o777, 0o755)
   assert.equal((await stat(join(c.dir, 'SKILL.md'))).mode & 0o777, 0o644)
-  assert.equal(c.hash, await hashSkillDir(c.dir))
-  assert.equal(c.bytes, (await checkSkillDir(c.dir, 'demo')).bytes)
+  assert.match(c.copy.tree, /^[0-9a-f]{40}$/)
+  assert.deepEqual(
+    c.copy.files.map((f) => [f.path, f.executable]),
+    [
+      ['SKILL.md', false],
+      ['extra.md', false],
+      ['run.sh', true],
+      ['third.md', false],
+    ]
+  )
+  assert.equal(
+    c.copy.bytes,
+    c.copy.files.reduce((n, f) => n + f.size, 0)
+  )
+  assert.deepEqual(c.before, new Map())
   // A second copy replaces the first, leaving no leftover and no stale file.
   await writeFile(join(c.dir, 'stale.md'), 'old')
   const f2 = await fetchSkill(rnessDir, `git:${url}`, {
@@ -477,20 +528,10 @@ test('copySkill: into skills/<name>, executable bit kept, modes 755/644, no .git
   assert.deepEqual(await readdir(join(rnessDir, 'skills/scopes/web')), ['demo'])
 })
 
-// Ruling R26: what git would not commit in .rness is no part of a skill.
+// Decision 8: git decides what a copy holds, and its tree is the fingerprint.
 
-/** Run `work` with no global git configuration: a developer's excludes file must not decide what is ignored. */
-async function noGlobalGit(t: TestContext): Promise<void> {
-  const was = process.env['GIT_CONFIG_GLOBAL']
-  process.env['GIT_CONFIG_GLOBAL'] = '/dev/null'
-  t.after(() => {
-    if (was === undefined) delete process.env['GIT_CONFIG_GLOBAL']
-    else process.env['GIT_CONFIG_GLOBAL'] = was
-  })
-}
-
-test("copySkill: what git ignores in .rness and .DS_Store are left out; the declared hash is the committed copy's on another clone", async (t) => {
-  await noGlobalGit(t)
+test('copySkill: what git ignores in .rness is no part of the tree; the declared tree is the one a clone of .rness commits', async (t) => {
+  noGlobalGit(t)
   const base = await tmp(t)
   const rnessDir = join(base, '.rness')
   await mkdir(rnessDir)
@@ -514,50 +555,116 @@ test("copySkill: what git ignores in .rness and .DS_Store are left out; the decl
     credentials: null,
   })
   const copied = await copySkill(rnessDir, fetched, { scope: null })
-  assert.deepEqual(copied.dropped, ['node_modules/'])
   assert.deepEqual(
-    [...(await skillFileDigests(copied.dir)).keys()],
+    copied.copy.files.map((f) => f.path),
     ['SKILL.md', 'refs/guide.md']
   )
   await git(['add', '-A'], rnessDir)
   await git(['commit', '-q', '-m', 'skill'], rnessDir)
   const mate = join(base, 'mate')
   await git(['clone', '-q', rnessDir, mate], base)
-  assert.equal(await hashSkillDir(join(mate, 'skills/deploy')), copied.hash)
-  // Finder opening a copy later changes nothing.
+  assert.equal(
+    (await git(['rev-parse', 'HEAD:skills/deploy'], mate)).trim(),
+    copied.copy.tree
+  )
+  // Finder opening a copy later changes nothing git takes.
   await writeFile(join(copied.dir, '.DS_Store'), 'later')
-  await writeFile(join(copied.dir, 'refs/.DS_Store'), 'later')
-  assert.equal(await hashSkillDir(copied.dir), copied.hash)
+  const again = await checkSkillCopies(
+    rnessDir,
+    {
+      version: 2,
+      scopes: {},
+      skills: {
+        deploy: { source: 'path:../ops/deploy', tree: copied.copy.tree },
+      },
+    } as unknown as Manifest,
+    { trees: true }
+  )
+  assert.deepEqual(again, { problems: [], reported: [] })
 })
 
-test('copySkill: .rness that is no git repository drops nothing but .DS_Store', async (t) => {
+test('copySkill: the tree changes with a byte or an executable bit, and is the same for the same files', async (t) => {
+  noGlobalGit(t)
+  const rnessDir = join(await tmp(t), '.rness')
+  await mkdir(rnessDir)
+  const src = await skillDir(t, 'demo', { 'run.sh': '#!/bin/sh\n' })
+  const copy = async () =>
+    (
+      await copySkill(
+        rnessDir,
+        await fetchSkill(rnessDir, `path:${src}`, { credentials: null }),
+        { scope: null }
+      )
+    ).copy.tree
+  const first = await copy()
+  assert.equal(await copy(), first)
+  await chmod(join(src, 'run.sh'), 0o755)
+  const exec = await copy()
+  assert.notEqual(exec, first)
+  await writeFile(join(src, 'run.sh'), '#!/bin/sh\necho\n')
+  assert.notEqual(await copy(), exec)
+})
+
+test('copySkill: a .rness that is no git repository: the rules of its working tree decide, and nothing else', async (t) => {
+  noGlobalGit(t)
   const rnessDir = join(await tmp(t), '.rness')
   await mkdir(rnessDir)
   const src = await skillDir(t, 'demo', {
     'node_modules/a.js': 'x',
-    '.DS_Store': 'junk',
+    '.gitignore': 'node_modules/\n',
   })
   const fetched = await fetchSkill(rnessDir, `path:${src}`, {
     credentials: null,
   })
   const copied = await copySkill(rnessDir, fetched, { scope: null })
-  assert.deepEqual(copied.dropped, [])
   assert.deepEqual(
-    [...(await skillFileDigests(copied.dir)).keys()],
-    ['SKILL.md', 'node_modules/a.js']
+    copied.copy.files.map((f) => f.path),
+    ['.gitignore', 'SKILL.md']
+  )
+  // The copy on disk holds the source whole; git leaves the rest out.
+  assert.equal(
+    (await stat(join(copied.dir, 'node_modules/a.js'))).isFile(),
+    true
   )
 })
 
-test('checkSkillDir: a .git below the skill root is refused, naming it; one at the root is not the skill', async (t) => {
-  const dir = await skillDir(t, 'demo', { 'vendor/.git/HEAD': 'ref: x\n' })
+test('copySkill: a nested repository is refused, one with no commit too; a .git that is no repository is no part of the tree', async (t) => {
+  noGlobalGit(t)
+  const rnessDir = join(await tmp(t), '.rness')
+  await mkdir(rnessDir)
+  const copy = async (src: string) =>
+    copySkill(
+      rnessDir,
+      await fetchSkill(rnessDir, `path:${src}`, { credentials: null }),
+      { scope: null }
+    )
+  const nested = await skillDir(t, 'demo', { 'vendor/README.md': 'v' })
+  await git(['init', '-q', '-b', 'main'], join(nested, 'vendor'))
+  await git(['add', '-A'], join(nested, 'vendor'))
+  await git(['commit', '-q', '-m', 'v'], join(nested, 'vendor'))
   await assert.rejects(
-    checkSkillDir(dir, 'demo'),
-    /skill "demo": "vendor\/\.git" is a \.git below the skill's root/
+    copy(nested),
+    /skill "demo": "vendor" is a nested repository; a skill holds no repository/
   )
-  const file = await skillDir(t, 'demo', { 'sub/.git': 'gitdir: ../x\n' })
-  await assert.rejects(checkSkillDir(file, 'demo'), /"sub\/\.git" is a \.git/)
-  const root = await skillDir(t, 'demo', { '.git/HEAD': 'ref: x\n' })
-  await checkSkillDir(root, 'demo')
+  await assert.rejects(stat(join(rnessDir, 'skills/demo')))
+  const empty = await skillDir(t, 'demo', { 'vendor/README.md': 'v' })
+  await git(['init', '-q', '-b', 'main'], join(empty, 'vendor'))
+  await assert.rejects(copy(empty), /skill "demo": git cannot take its copy/)
+  await assert.rejects(stat(join(rnessDir, 'skills/demo')))
+  const loose = await skillDir(t, 'demo', {
+    'vendor/.git/HEAD': 'ref: x\n',
+    'sub/.git': 'gitdir: ../x\n',
+    'sub/a.md': 'a',
+  })
+  assert.deepEqual(
+    (await copy(loose)).copy.files.map((f) => f.path),
+    ['SKILL.md', 'sub/a.md']
+  )
+  // The source's own repository, at its root, is not copied at all.
+  const own = await skillDir(t, 'own')
+  await git(['init', '-q', '-b', 'main'], own)
+  const c = await copy(own)
+  await assert.rejects(stat(join(c.dir, '.git')))
 })
 
 test("copySkill: a repository root takes the name of its SKILL.md, not the repository's", async (t) => {
@@ -614,7 +721,7 @@ test('copySkill: a refused source writes nothing', async (t) => {
   await assert.rejects(stat(join(rnessDir, 'skills')))
 })
 
-test('copySkill --name: only the name line changes, the hash is taken after, the old name is no copy', async (t) => {
+test('copySkill --name: only the name line changes, the tree is taken after, the old name is no copy', async (t) => {
   const base = await tmp(t)
   const rnessDir = join(base, '.rness')
   await mkdir(rnessDir)
@@ -630,8 +737,8 @@ test('copySkill --name: only the name line changes, the hash is taken after, the
     await readFile(join(c.dir, 'SKILL.md'), 'utf8'),
     md.replace('name: demo\r\ndescription', 'name: renamed\r\ndescription')
   )
-  assert.equal(c.hash, await hashSkillDir(c.dir))
-  assert.notEqual(c.hash, await hashSkillDir(src))
+  const plain = await copySkill(rnessDir, f, { scope: null })
+  assert.notEqual(c.copy.tree, plain.copy.tree)
   assert.equal(await readFile(join(src, 'SKILL.md'), 'utf8'), md)
   await assert.rejects(
     copySkill(rnessDir, f, { scope: null, name: 'Bad Name' }),
@@ -639,18 +746,28 @@ test('copySkill --name: only the name line changes, the hash is taken after, the
   )
 })
 
-test('skillFileDigests and diffSkillFiles: added, changed (mode too), removed', async (t) => {
+test('copySkill over a copy, and diffSkillFiles: added, changed (mode too), removed', async (t) => {
+  const rnessDir = join(await tmp(t), '.rness')
+  await mkdir(rnessDir)
   const a = await skillDir(t, 'demo', {
     'k.txt': 'k',
     'gone.txt': 'g',
     'run.sh': 'r',
   })
-  const before = await skillFileDigests(a)
+  const copy = async () =>
+    copySkill(
+      rnessDir,
+      await fetchSkill(rnessDir, `path:${a}`, { credentials: null }),
+      { scope: null }
+    )
+  const first = await copy()
   await rm(join(a, 'gone.txt'))
   await writeFile(join(a, 'k.txt'), 'changed')
   await chmod(join(a, 'run.sh'), 0o755)
   await writeFile(join(a, 'new.txt'), 'n')
-  const d = diffSkillFiles(before, await skillFileDigests(a))
+  const second = await copy()
+  assert.deepEqual(second.before, fileDigests(first.copy.files))
+  const d = diffSkillFiles(second.before, fileDigests(second.copy.files))
   assert.deepEqual(d, {
     added: ['new.txt'],
     changed: ['k.txt', 'run.sh'],
@@ -669,17 +786,20 @@ test('teamSkills: a symbolic link under skills/ is a skill entry the checks refu
     all.map((s) => s.name),
     ['lnk']
   )
-  const { problems } = await checkSkillCopies(rnessDir, manifest)
-  assert.deepEqual(problems, [
-    'skill "lnk": skills/lnk is a symbolic link; only regular files and directories are allowed',
-  ])
+  for (const trees of [true, false])
+    assert.deepEqual(
+      (await checkSkillCopies(rnessDir, manifest, { trees })).problems,
+      [
+        'skill "lnk": skills/lnk is a symbolic link; only regular files and directories are allowed',
+      ]
+    )
   // A skills "directory" that is a file is no ENOENT: it is not hidden.
   const root2 = await makeWorkspace(t, { files: { skills: 'x' } })
   const dir2 = join(root2, '.rness')
   await assert.rejects(teamSkills(dir2, await loadManifest(dir2)), /ENOTDIR/)
 })
 
-test('checkSkillCopies: a declared copy that is missing, a refusal, a hash mismatch reported', async (t) => {
+test('checkSkillCopies: a declared copy that is missing, a refusal, a tree mismatch reported', async (t) => {
   const good = SKILL_MD('good')
   const root = await makeWorkspace(t, {
     skills: { good: decl(), gone: decl() },
@@ -692,7 +812,7 @@ test('checkSkillCopies: a declared copy that is missing, a refusal, a hash misma
   })
   const rnessDir = join(root, '.rness')
   const manifest = await loadManifest(rnessDir)
-  const r = await checkSkillCopies(rnessDir, manifest)
+  const r = await checkSkillCopies(rnessDir, manifest, { trees: true })
   assert.deepEqual(r.problems, [
     'skill "gone" is declared but its copy skills/gone is missing: run rness skill update gone',
     'skill "mine": SKILL.md name "other" is not the directory\'s name "mine"',
@@ -703,16 +823,60 @@ test('checkSkillCopies: a declared copy that is missing, a refusal, a hash misma
   ])
 })
 
-test('checkSkillCopies: a copy at its hash is silent', async (t) => {
-  const dir = await skillDir(t, 'good')
-  const hash = await hashSkillDir(dir)
+test('checkSkillCopies: a copy at its tree is silent', async (t) => {
   const root = await makeWorkspace(t, {
-    skills: { good: { source: 'github:o/r', hash } },
+    skills: { good: decl() },
     files: { 'skills/good/SKILL.md': SKILL_MD('good') },
   })
   const rnessDir = join(root, '.rness')
-  const r = await checkSkillCopies(rnessDir, await loadManifest(rnessDir))
-  assert.deepEqual(r, { problems: [], reported: [] })
+  await git(['init', '-q', '-b', 'main'], rnessDir)
+  await git(['add', '-A'], rnessDir)
+  await git(['commit', '-q', '-m', 'good'], rnessDir)
+  const tree = (await git(['rev-parse', 'HEAD:skills/good'], rnessDir)).trim()
+  const manifest = await loadManifest(rnessDir)
+  const declared = {
+    ...manifest,
+    skills: { good: { source: 'github:o/r', tree } },
+  }
+  assert.deepEqual(
+    await checkSkillCopies(rnessDir, declared, { trees: true }),
+    { problems: [], reported: [] }
+  )
+  // At HEAD, the same tree, checked.
+  const head = (
+    await skillsAtHead(rnessDir, [
+      { name: 'good', dir: join(rnessDir, 'skills/good') },
+    ])
+  ).get(join(rnessDir, 'skills/good'))
+  assert.equal(head instanceof Error || head === null ? null : head?.tree, tree)
+})
+
+test('checkSkillCopies without trees (the safety net of every turn): SKILL.md alone, no tree built', async (t) => {
+  const root = await makeWorkspace(t, {
+    skills: { good: decl() },
+    files: {
+      'skills/good/SKILL.md': SKILL_MD('good'),
+      'skills/big/SKILL.md': SKILL_MD('big'),
+      'skills/big/big.bin': 'x'.repeat(2 * 1048576),
+      'skills/bad/SKILL.md': '---\nname: bad\n---\n',
+    },
+  })
+  const rnessDir = join(root, '.rness')
+  const manifest = await loadManifest(rnessDir)
+  // No tree: the size of a copy and a declared tree are validate's to say.
+  assert.deepEqual(
+    await checkSkillCopies(rnessDir, manifest, { trees: false }),
+    {
+      problems: ['skill "bad": SKILL.md has no description'],
+      reported: [],
+    }
+  )
+  const full = await checkSkillCopies(rnessDir, manifest, { trees: true })
+  assert.deepEqual(full.problems, [
+    'skill "bad": SKILL.md has no description',
+    'skill "big": its content is 2097203 bytes, above the limit of 1048576 bytes (1 MB)',
+  ])
+  assert.equal(full.reported.length, 1)
 })
 
 test('copySkill: a top-level skill named scopes is refused and the scoped tree is kept', async (t) => {
@@ -770,12 +934,15 @@ test('checkSkillCopies: a symbolic link at skills/scopes or a scope directory is
   await put(outside, { 'evil/SKILL.md': 'x' })
   await symlink(outside, join(rnessDir, 'skills', 'scopes'))
   const manifest = await loadManifest(rnessDir)
-  assert.deepEqual(await checkSkillCopies(rnessDir, manifest), {
-    problems: [
-      'skills: skills/scopes is a symbolic link; only regular files and directories are allowed',
-    ],
-    reported: [],
-  })
+  assert.deepEqual(
+    await checkSkillCopies(rnessDir, manifest, { trees: true }),
+    {
+      problems: [
+        'skills: skills/scopes is a symbolic link; only regular files and directories are allowed',
+      ],
+      reported: [],
+    }
+  )
   assert.deepEqual(
     (await teamSkills(rnessDir, manifest)).map((s) => s.name),
     ['mine']
@@ -830,7 +997,7 @@ test('fetchRef: credentials never follow a redirect to another host', async (t) 
   assert.notDeepEqual(hits, [])
 })
 
-test('checkSkillDir: a control character in a description, allowed-tools or file name is refused; a multi-line description is not', async (t) => {
+test('the checks of §4: a control character in a description, allowed-tools or file name is refused; a multi-line description is not', async (t) => {
   const withMd = async (md: string) => {
     const dir = await skillDir(t, 'demo')
     await writeFile(join(dir, 'SKILL.md'), md)
@@ -838,7 +1005,7 @@ test('checkSkillDir: a control character in a description, allowed-tools or file
   }
   const md = (extra: string) => `---\nname: demo\n${extra}---\nBody\n`
   await assert.rejects(
-    checkSkillDir(
+    readSkillMd(
       await withMd(
         md('description: "ok\\e[2Kfake"\n').replace('\\e', '\\u001b')
       ),
@@ -847,23 +1014,27 @@ test('checkSkillDir: a control character in a description, allowed-tools or file
     /demo.*description holds a control character/
   )
   await assert.rejects(
-    checkSkillDir(
+    readSkillMd(
       await withMd(md('description: x\nallowed-tools: "a\\u0007b"\n')),
       'demo'
     ),
     /allowed-tools holds a control character/
   )
   await assert.rejects(
-    checkSkillDir(await withMd(md('description: "a\\u0085b"\n')), 'demo'),
+    readSkillMd(await withMd(md('description: "a\\u0085b"\n')), 'demo'),
     /description holds a control character/
   )
-  await checkSkillDir(
+  await readSkillMd(
     await withMd(md('description: |\n  line one\n  line\ttwo\n')),
     'demo'
   )
-  const named = await skillDir(t, 'demo', { 'bad\u001b[2Kname.md': 'x' })
-  await assert.rejects(
-    checkSkillDir(named, 'demo'),
+  assert.match(
+    (
+      await problemsOf(t, 'demo', {
+        'SKILL.md': SKILL_MD('demo'),
+        'bad\u001b[2Kname.md': 'x',
+      })
+    ).join('\n'),
     /file name .* holds a control character/
   )
 })
@@ -917,21 +1088,21 @@ test('plainText and quoted neutralise bidirectional controls and zero-width char
   assert.equal(plainText('a\u200a\u2010\u2065b'), 'a\u200a\u2010\u2065b')
 })
 
-test('checkSkillDir: a bidirectional or zero-width character in a file name or the name is refused, escaped', async (t) => {
+test('the checks of §4: a bidirectional or zero-width character in a file name or the name is refused, escaped', async (t) => {
   for (const c of ['\u202e', '\u200b', '\ufeff', '\u2066']) {
-    const dir = await skillDir(t, 'demo', { [`evil${c}dm.md`]: 'x' })
-    await assert.rejects(checkSkillDir(dir, 'demo'), (e: Error) => {
-      assert.doesNotMatch(e.message, RAW_INVISIBLE)
-      assert.match(e.message, /file name "evil\\u[0-9a-f]{4}dm\.md" holds/)
-      return true
+    const [problem = ''] = await problemsOf(t, 'demo', {
+      'SKILL.md': SKILL_MD('demo'),
+      [`evil${c}dm.md`]: 'x',
     })
+    assert.doesNotMatch(problem, RAW_INVISIBLE)
+    assert.match(problem, /file name "evil\\u[0-9a-f]{4}dm\.md" holds/)
   }
   const dir = await skillDir(t, 'demo')
   await writeFile(
     join(dir, 'SKILL.md'),
     '---\nname: "de\u202emo"\ndescription: d\n---\nB\n'
   )
-  await assert.rejects(checkSkillDir(dir, 'demo'), (e: Error) => {
+  await assert.rejects(readSkillMd(dir, 'demo'), (e: Error) => {
     assert.doesNotMatch(e.message, RAW_INVISIBLE)
     assert.match(e.message, /SKILL\.md name "de\\u202emo" is not/)
     return true
@@ -960,7 +1131,7 @@ test('a SKILL.md name holding ESC, not the directory name, is refused without a 
     join(dir, 'SKILL.md'),
     '---\nname: "x\\u001b[2Ky\\u0085"\ndescription: d\n---\nB\n'
   )
-  await assert.rejects(checkSkillDir(dir, 'demo'), (e: Error) => {
+  await assert.rejects(readSkillMd(dir, 'demo'), (e: Error) => {
     assert.doesNotMatch(e.message, RAW_CONTROL)
     assert.match(e.message, /SKILL\.md name "x\\u001b\[2Ky\\u0085" is not/)
     return true
@@ -992,10 +1163,9 @@ test('checkSkillCopies: a copy named with ESC is reported without a raw ESC', as
     'skills/ok/bad\u001b[2K.md': 'x',
     'skills/ok/SKILL.md': SKILL_MD('ok'),
   })
-  const { problems, reported } = await checkSkillCopies(rnessDir, {
-    version: 2,
-    scopes: {},
-  } as unknown as Parameters<typeof checkSkillCopies>[1])
+  const { problems, reported } = await checkSkillCopies(rnessDir, NO_SCOPES, {
+    trees: true,
+  })
   assert.equal(problems.length, 2)
   for (const line of [...problems, ...reported])
     assert.doesNotMatch(line, RAW_CONTROL)

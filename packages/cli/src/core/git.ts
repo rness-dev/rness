@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process'
-import { dirname, resolve } from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import type { GitCredentials } from './provider.ts'
@@ -33,11 +35,43 @@ export function withCredentials(
   }
 }
 
+/** Variables set for one git command over the caller's environment; `undefined` removes one. */
+export type GitEnv = Readonly<Record<string, string | undefined>>
+
+/** The environment of one git command: the caller's, then `extra`, a variable set to `undefined` left out. */
+function childEnv(cwd: string | undefined, extra: GitEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries({
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    // Pin the command to `cwd` itself: without a ceiling, git walks up and
+    // a plain directory under `org/` would report, or be pulled into,
+    // whatever repository happens to sit above the workspace root. git
+    // ignores a relative ceiling entry, hence the resolve().
+    ...(cwd === undefined
+      ? {}
+      : { GIT_CEILING_DIRECTORIES: dirname(resolve(cwd)) }),
+    ...extra,
+  }))
+    if (value !== undefined) env[key] = value
+  return env
+}
+
+/** git's first line of complaint, as the error of `git <command>`. */
+function gitError(command: string, e: unknown): Error {
+  const err = e as { stderr?: string | Buffer; message?: string }
+  const stderr = err.stderr?.toString() ?? ''
+  const text = stderr !== '' ? stderr : (err.message ?? 'unknown error')
+  const first = text.split('\n').find((l) => l.trim() !== '') ?? 'unknown error'
+  return new Error(`git ${command} failed: ${first.trim()}`, { cause: e })
+}
+
 async function git(
   args: readonly string[],
   cwd?: string,
   credentials?: GitCredentials | null,
-  config: readonly string[] = []
+  config: readonly string[] = [],
+  env: GitEnv = {}
 ): Promise<string> {
   const auth = withCredentials(credentials)
   try {
@@ -46,34 +80,40 @@ async function git(
       [...auth.args, ...config, ...args],
       {
         ...(cwd === undefined ? {} : { cwd }),
-        env: {
-          ...process.env,
-          ...auth.env,
-          GIT_TERMINAL_PROMPT: '0',
-          // Pin the command to `cwd` itself: without a ceiling, git walks up and
-          // a plain directory under `org/` would report, or be pulled into,
-          // whatever repository happens to sit above the workspace root. git
-          // ignores a relative ceiling entry, hence the resolve().
-          ...(cwd === undefined
-            ? {}
-            : { GIT_CEILING_DIRECTORIES: dirname(resolve(cwd)) }),
-        },
+        env: childEnv(cwd, { ...auth.env, ...env }),
         maxBuffer: 16 * 1024 * 1024,
       }
     )
     return stdout
   } catch (e) {
-    const err = e as { stderr?: string; message?: string }
-    const text =
-      err.stderr !== undefined && err.stderr !== ''
-        ? err.stderr
-        : (err.message ?? 'unknown error')
-    const first =
-      text.split('\n').find((l) => l.trim() !== '') ?? 'unknown error'
-    throw new Error(`git ${args[0] ?? ''} failed: ${first.trim()}`, {
-      cause: e,
-    })
+    throw gitError(args[0] ?? '', e)
   }
+}
+
+/** `git <args>` in `cwd` with `env`, `input` on its standard input; its standard output as bytes. */
+function gitBytes(
+  args: readonly string[],
+  cwd: string,
+  env: GitEnv,
+  input: string
+): Promise<Buffer> {
+  return new Promise((done, fail) => {
+    const child = execFile(
+      'git',
+      args,
+      {
+        cwd,
+        env: childEnv(cwd, env),
+        encoding: 'buffer',
+        maxBuffer: 64 * 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        if (error === null) done(stdout)
+        else fail(gitError(args[0] ?? '', Object.assign(error, { stderr })))
+      }
+    )
+    child.stdin?.end(input)
+  })
 }
 
 /** Reject a value git could parse as an option (e.g. a `rness.json` URL starting with `-`). */
@@ -250,46 +290,201 @@ export async function trackedPaths(
   )
 }
 
+// ---- Trees of `.rness` (spec 0041 decision 8) ----
+
 /**
- * Which of `paths` (relative to `dir`, the root of a repository) git
- * ignores there (`git check-ignore`): its `.gitignore` files,
- * `info/exclude` and the user's excludes file. A path need not exist; a
- * directory is asked with a trailing `/`; a tracked path is never ignored.
- * Throws when `dir` is no repository.
+ * Where git commands on the objects of `.rness` run: its directory, and an
+ * environment that never inherits the caller's `GIT_DIR`, `GIT_WORK_TREE`
+ * or `GIT_INDEX_FILE`. `validate` runs inside the `.rness` pre-commit, where
+ * git sets them for the commit's own index (ruling R31).
  */
-export async function ignoredPaths(
-  dir: string,
-  paths: readonly string[]
-): Promise<Set<string>> {
-  if (paths.length === 0) return new Set()
-  const stdout = await new Promise<string>((done, fail) => {
-    const child = execFile(
-      'git',
-      ['check-ignore', '--stdin', '-z'],
-      {
-        cwd: dir,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_CEILING_DIRECTORIES: dirname(resolve(dir)),
-        },
-        maxBuffer: 16 * 1024 * 1024,
-      },
-      (error, out, err) => {
-        // Exit 1: none of them is ignored.
-        if (error === null || error.code === 1) done(out)
-        else
-          fail(
-            new Error(
-              `git check-ignore failed: ${err.split('\n').find((l) => l.trim() !== '') ?? error.message}`,
-              { cause: error }
-            )
-          )
+export interface ObjectStore {
+  dir: string
+  env: GitEnv
+}
+
+const ISOLATED: GitEnv = {
+  GIT_DIR: undefined,
+  GIT_WORK_TREE: undefined,
+  GIT_INDEX_FILE: undefined,
+}
+
+/** The objects of the repository at `dir`, read with no caller's index or directory. */
+export const objectStore = (dir: string): ObjectStore => ({
+  dir,
+  env: ISOLATED,
+})
+
+/** One entry of `git ls-tree -r -t -l`: a path relative to the tree listed. */
+export interface TreeEntry {
+  /** `040000`, `100644`, `100755`, `120000` (a symbolic link), `160000` (a gitlink). */
+  mode: string
+  type: string
+  id: string
+  /** Bytes of a blob; null for a tree or a gitlink. */
+  size: number | null
+  path: string
+}
+
+/**
+ * Every entry of `treeish` under `paths` (all when none), trees included,
+ * recursively (`ls-tree -r -t -l -z`): names as git holds them, never
+ * quoted. Throws when `treeish` names nothing (an unborn `HEAD`).
+ */
+export async function listTree(
+  store: ObjectStore,
+  treeish: string,
+  paths: readonly string[] = []
+): Promise<TreeEntry[]> {
+  const out = await git(
+    [
+      'ls-tree',
+      '-r',
+      '-t',
+      '-l',
+      '-z',
+      '--full-tree',
+      positional(treeish, 'tree'),
+      ...(paths.length > 0 ? ['--', ...paths] : []),
+    ],
+    store.dir,
+    null,
+    [],
+    store.env
+  )
+  return out
+    .split('\0')
+    .filter((line) => line !== '')
+    .map((line) => {
+      const tab = line.indexOf('\t')
+      const [mode = '', type = '', id = '', size = '-'] = line
+        .slice(0, tab)
+        .split(/ +/)
+      return {
+        mode,
+        type,
+        id,
+        size: size === '-' ? null : Number(size),
+        path: line.slice(tab + 1),
       }
+    })
+}
+
+/**
+ * The content of each object `names` names (an id, or `<tree>:<path>`), by
+ * name, read in one `git cat-file --batch`; null for one git does not have.
+ */
+export async function readObjects(
+  store: ObjectStore,
+  names: readonly string[]
+): Promise<Map<string, Buffer | null>> {
+  const found = new Map<string, Buffer | null>()
+  const wanted = [...new Set(names)]
+  if (wanted.length === 0) return found
+  if (wanted.some((n) => /[\n\r]/.test(n) || n.startsWith('-')))
+    throw new Error('refusing an object name holding a line break')
+  const out = await gitBytes(
+    ['cat-file', '--batch'],
+    store.dir,
+    store.env,
+    wanted.map((n) => `${n}\n`).join('')
+  )
+  let at = 0
+  for (const name of wanted) {
+    const end = out.indexOf(0x0a, at)
+    const header = out.subarray(at, end).toString()
+    at = end + 1
+    const size = /^[0-9a-f]+ \S+ (\d+)$/.exec(header)?.[1]
+    if (size === undefined) {
+      found.set(name, null)
+      continue
+    }
+    found.set(name, out.subarray(at, at + Number(size)))
+    at += Number(size) + 1
+  }
+  return found
+}
+
+/**
+ * The blob id git gives each file of `files` (absolute), as it is on disk:
+ * `hash-object --no-filters`, so no line-ending conversion or filter of the
+ * repository at `store.dir` changes the bytes. One id per file, in order.
+ */
+export async function blobIds(
+  store: ObjectStore,
+  files: readonly string[]
+): Promise<string[]> {
+  if (files.length === 0) return []
+  if (files.some((f) => /[\n\r]/.test(f)))
+    throw new Error('refusing a file name holding a line break')
+  const out = await gitBytes(
+    ['hash-object', '--no-filters', '--stdin-paths'],
+    store.dir,
+    store.env,
+    files.map((f) => `${f}\n`).join('')
+  )
+  return out.toString().split('\n').slice(0, files.length)
+}
+
+/** A temporary index over the working tree at `dir`, its objects in that repository's database. */
+export interface ScratchIndex extends ObjectStore {
+  /** `git add` of `paths` (relative to `dir`, literal), as a commit would take them. */
+  add: (paths: readonly string[]) => Promise<void>
+  /** The index emptied (`read-tree --empty`). */
+  clear: () => Promise<void>
+  /** `git write-tree`: the id of the tree the index holds. */
+  writeTree: () => Promise<string>
+}
+
+/**
+ * Run `work` with an index of its own over the working tree at `dir`: an
+ * absolute `GIT_INDEX_FILE` in a fresh temporary directory, never the
+ * index of a commit in progress (ruling R31). `git add` writes the blobs
+ * and trees it makes into the repository's object database: loose objects,
+ * collected by git's own gc when nothing reaches them. When `dir` is no
+ * repository yet, a temporary one holds them, so the ids are the ones git
+ * will give the same files there.
+ */
+export async function withScratchIndex<T>(
+  dir: string,
+  work: (index: ScratchIndex) => Promise<T>
+): Promise<T> {
+  const tmp = await mkdtemp(join(tmpdir(), 'rness-index-'))
+  try {
+    let env: GitEnv = { ...ISOLATED, GIT_INDEX_FILE: join(tmp, 'index') }
+    const repository = await git(
+      ['rev-parse', '--git-dir'],
+      dir,
+      null,
+      [],
+      ISOLATED
+    ).then(
+      () => true,
+      () => false
     )
-    child.stdin?.end(paths.map((p) => `${p}\0`).join(''))
-  })
-  return new Set(stdout.split('\0').filter((p) => p !== ''))
+    if (!repository) {
+      const gitDir = join(tmp, 'objects.git')
+      await git(['init', '-q', '--bare', gitDir], tmp, null, [], ISOLATED)
+      env = { ...env, GIT_DIR: gitDir, GIT_WORK_TREE: dir }
+    }
+    const run = (args: string[]) => git(args, dir, null, [], env)
+    const index: ScratchIndex = {
+      dir,
+      env,
+      add: async (paths) => {
+        if (paths.length > 0)
+          await run(['add', '--', ...paths.map((p) => `:(literal)${p}`)])
+      },
+      clear: async () => {
+        await run(['read-tree', '--empty'])
+      },
+      writeTree: async () => (await run(['write-tree'])).trim(),
+    }
+    await index.clear()
+    return await work(index)
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
 }
 
 /**

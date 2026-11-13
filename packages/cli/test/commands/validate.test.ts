@@ -640,8 +640,7 @@ test('a redundant extends is reported as a warning, exit 0, in the plain style',
 })
 
 test('a skill named twice in one clone is a problem naming it and both places', async (t) => {
-  const hash = `sha256-${'A'.repeat(43)}=`
-  const entry = { source: 'github:o/r', hash }
+  const entry = { source: 'github:o/r', tree: 'f'.repeat(40) }
   const root = await makeWorkspace(t, {
     skills: { x: entry, y: entry },
     scopes: { web: { url: 'u', skills: { x: entry } } },
@@ -659,7 +658,7 @@ test('a skill named twice in one clone is a problem naming it and both places', 
 })
 
 test('skills declared once each, or written by the team, validate clean', async (t) => {
-  const entry = { source: 'github:o/r', hash: `sha256-${'A'.repeat(43)}=` }
+  const entry = { source: 'github:o/r', tree: 'f'.repeat(40) }
   const root = await makeWorkspace(t, {
     skills: { x: entry },
     scopes: { web: { url: 'u', skills: { y: entry } } },
@@ -676,7 +675,7 @@ test('skills declared once each, or written by the team, validate clean', async 
 })
 
 test('validate: a team skill breaking §4 or a declared copy gone is a problem, naming it', async (t) => {
-  const entry = { source: 'github:o/r', hash: `sha256-${'A'.repeat(43)}=` }
+  const entry = { source: 'github:o/r', tree: 'f'.repeat(40) }
   const root = await makeWorkspace(t, {
     skills: { gone: entry },
     files: { 'skills/mine/SKILL.md': '# no front matter\n' },
@@ -692,8 +691,8 @@ test('validate: a team skill breaking §4 or a declared copy gone is a problem, 
   assert.match(c.err(), /skill "mine": SKILL\.md has no front matter/)
 })
 
-test('validate: a copy that differs from its hash is reported, never refused', async (t) => {
-  const entry = { source: 'github:o/r', hash: `sha256-${'A'.repeat(43)}=` }
+test('validate: a copy whose tree differs from its declared tree is reported, never refused', async (t) => {
+  const entry = { source: 'github:o/r', tree: 'f'.repeat(40) }
   const root = await makeWorkspace(t, {
     skills: { x: entry },
     files: { 'skills/x/SKILL.md': '---\nname: x\ndescription: d\n---\n' },

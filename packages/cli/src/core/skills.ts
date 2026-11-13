@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import {
   chmod,
   lstat,
@@ -6,10 +5,12 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  readlink,
   realpath,
   rename,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -25,7 +26,16 @@ import {
 } from 'node:path'
 
 import { parseFrontMatter } from './frontmatter.ts'
-import { fetchRef, gitPath, ignoredPaths } from './git.ts'
+import {
+  type ObjectStore,
+  type ScratchIndex,
+  type TreeEntry,
+  fetchRef,
+  listTree,
+  objectStore,
+  readObjects,
+  withScratchIndex,
+} from './git.ts'
 import type { GitCredentials } from './provider.ts'
 import { scopeChain } from './scope.ts'
 import { CONTROL, INVISIBLE, plainText, quoted } from './text.ts'
@@ -122,10 +132,13 @@ export interface ListedSkill {
 
 /**
  * Every team skill the blocks may list (spec 0041 §7), checked once for a
- * whole run: declared or written by the team, whose copy passes the checks,
- * with its name and one-line description as plain text. A copy that does not
- * pass is left out (`validate` says why), and so is everything when the
- * skills cannot be listed: a block is never what fails.
+ * whole run: declared or written by the team, whose `SKILL.md` passes the
+ * checks of its name and front matter, with its name and one-line
+ * description as plain text. No tree is built: the blocks are written on
+ * paths that run every turn (ruling R30); `validate` checks the rest of a
+ * copy and says why one fails. A skill that does not pass is left out, and
+ * so is everything when the skills cannot be listed: a block is never what
+ * fails.
  */
 export async function listedSkills(
   rnessDir: string,
@@ -140,11 +153,9 @@ export async function listedSkills(
   const listed: ListedSkill[] = []
   for (const skill of all) {
     try {
-      await checkSkillDir(skill.dir, skill.name)
-      const fields = parseFrontMatter(
-        await readFile(join(skill.dir, 'SKILL.md'), 'utf8')
-      )
-      const description = fields?.['description']
+      const description = (await readSkillMd(skill.dir, skill.name))[
+        'description'
+      ]
       if (typeof description !== 'string') continue
       listed.push({
         skill,
@@ -283,12 +294,29 @@ export const MAX_SKILL_BYTES = 1024 * 1024
 
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
-interface SkillFile {
+/** A file of a skill as a tree of `.rness` holds it. */
+export interface SkillFile {
   /** Relative to the skill directory, POSIX separators. */
   path: string
-  abs: string
   executable: boolean
+  /** The id git gives its bytes (a blob). */
+  id: string
   size: number
+}
+
+/**
+ * A skill's copy as a tree of `.rness` holds it (spec 0041 decision 8): the
+ * files git takes, after its ignore rules (the skill's own `.gitignore`
+ * included), checked (§4).
+ */
+export interface SkillTree {
+  /** The id of the tree: the skill's fingerprint. */
+  tree: string
+  files: SkillFile[]
+  /** File content, in all. */
+  bytes: number
+  /** The front matter of its `SKILL.md`. */
+  fields: Record<string, unknown>
 }
 
 const refusal = (name: string, reason: string): Error =>
@@ -302,48 +330,6 @@ function nameProblem(name: string): string | null {
   if (!SKILL_NAME.test(name))
     return 'the name must be lowercase letters, digits and hyphens'
   return null
-}
-
-/**
- * The regular files under `dir`, sorted by path in byte order. Not part of
- * the skill: a `.git` at the root (the fetch's own repository) and a
- * `.DS_Store` anywhere (Finder writes one when it opens a directory; ruling
- * R26). A `.git` below the root, a repository inside the skill, is refused,
- * and so is anything that is neither a regular file nor a directory, naming
- * it.
- */
-async function walk(dir: string, name: string): Promise<SkillFile[]> {
-  const files: SkillFile[] = []
-  const visit = async (abs: string, rel: string): Promise<void> => {
-    for (const d of await readdir(abs, { withFileTypes: true })) {
-      if (d.name === '.DS_Store' || (rel === '' && d.name === '.git')) continue
-      const path = rel === '' ? d.name : `${rel}/${d.name}`
-      if (d.name === '.git')
-        throw refusal(
-          name,
-          `${quoted(path)} is a .git below the skill's root; a skill holds no repository`
-        )
-      const child = join(abs, d.name)
-      if (d.isDirectory()) await visit(child, path)
-      else if (d.isFile()) {
-        const st = await lstat(child)
-        files.push({
-          path,
-          abs: child,
-          executable: (st.mode & 0o100) !== 0,
-          size: st.size,
-        })
-      } else
-        throw refusal(
-          name,
-          `${quoted(path)} is ${d.isSymbolicLink() ? 'a symbolic link' : 'neither a regular file nor a directory'}; only regular files and directories are allowed`
-        )
-    }
-  }
-  await visit(dir, '')
-  return files.sort((a, b) =>
-    Buffer.compare(Buffer.from(a.path), Buffer.from(b.path))
-  )
 }
 
 /** Free text (a description) may span lines and hold tabs; a `\r` only before a `\n`. */
@@ -365,41 +351,14 @@ export function allowedToolsText(value: unknown): string | null {
 }
 
 /**
- * Check the directory `dir` as the skill `name` (spec 0041 §4): the name
- * rule, regular files only, at most 1 MB, a `SKILL.md` whose `name` is the
- * directory's and which has a `description`. Throws an error naming the
- * skill and the reason; returns the content size and files otherwise.
+ * The front matter of `text`, the `SKILL.md` of skill `name`, checked
+ * (spec 0041 §4): a `name` equal to `name`, a `description`, and no control
+ * character in the description or `allowed-tools`. Throws the refusal.
  */
-export async function checkSkillDir(
-  dir: string,
-  name: string
-): Promise<{ bytes: number; files: SkillFile[] }> {
-  const bad = nameProblem(name)
-  if (bad !== null) throw refusal(name, bad)
-  const files = await walk(dir, name)
-  for (const f of files) {
-    if (CONTROL.test(f.path))
-      throw refusal(
-        name,
-        `file name ${quoted(f.path)} holds a control character`
-      )
-    if (INVISIBLE.test(f.path))
-      throw refusal(
-        name,
-        `file name ${quoted(f.path)} holds a zero-width or bidirectional character`
-      )
-  }
-  const bytes = files.reduce((n, f) => n + f.size, 0)
-  if (bytes > MAX_SKILL_BYTES)
-    throw refusal(
-      name,
-      `its content is ${bytes} bytes, above the limit of ${MAX_SKILL_BYTES} bytes (1 MB)`
-    )
-  if (!files.some((f) => f.path === 'SKILL.md'))
-    throw refusal(name, 'no SKILL.md at the root of its directory')
+function checkSkillMd(name: string, text: string): Record<string, unknown> {
   let fields
   try {
-    fields = parseFrontMatter(await readFile(join(dir, 'SKILL.md'), 'utf8'))
+    fields = parseFrontMatter(text)
   } catch (e) {
     throw refusal(name, `SKILL.md: ${plainText((e as Error).message)}`)
   }
@@ -419,29 +378,246 @@ export async function checkSkillDir(
   const tools = allowedToolsText(fields['allowed-tools'])
   if (tools !== null && hasControlInText(tools))
     throw refusal(name, 'SKILL.md allowed-tools holds a control character')
-  return { bytes, files }
+  return fields
 }
 
 /**
- * Per file, a digest of its path-independent identity: bytes and executable
- * bit. For comparing two copies (`diffSkillFiles`), keyed by relative path.
+ * The `SKILL.md` of the directory `dir` read from disk and checked as the
+ * skill `name` (its name, its front matter), with no tree built: what the
+ * blocks and the per-turn safety net can afford (ruling R30), and what a
+ * source is checked on before anything is copied. Returns its front matter.
  */
-export async function skillFileDigests(
-  dir: string
-): Promise<Map<string, string>> {
-  const digests = new Map<string, string>()
-  for (const f of await walk(dir, basename(dir)))
-    digests.set(
-      f.path,
-      createHash('sha256')
-        .update(f.executable ? 'x\0' : '-\0')
-        .update(await readFile(f.abs))
-        .digest('hex')
+export async function readSkillMd(
+  dir: string,
+  name: string
+): Promise<Record<string, unknown>> {
+  const bad = nameProblem(name)
+  if (bad !== null) throw refusal(name, bad)
+  const file = join(dir, 'SKILL.md')
+  const st = await lstat(file).catch(() => null)
+  if (st === null)
+    throw refusal(name, 'no SKILL.md at the root of its directory')
+  if (!st.isFile())
+    throw refusal(
+      name,
+      `"SKILL.md" is ${st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file'}; only regular files and directories are allowed`
     )
-  return digests
+  return checkSkillMd(name, await readFile(file, 'utf8'))
 }
 
-/** The paths added, changed (bytes or executable bit) and removed from `before` to `after`. */
+/** `dir` relative to `rnessDir`, with `/`: its path in a tree of `.rness`. */
+const pathIn = (rnessDir: string, dir: string): string =>
+  relative(rnessDir, dir).split(sep).join('/')
+
+/** The entry of `listing` at `path`, and the entries below it, relative to it; null when it has none. */
+function entriesOf(
+  listing: readonly TreeEntry[],
+  path: string
+): { self: TreeEntry; inside: TreeEntry[] } | null {
+  const self = listing.find((e) => e.path === path)
+  if (self === undefined) return null
+  const prefix = `${path}/`
+  return {
+    self,
+    inside: listing
+      .filter((e) => e.path.startsWith(prefix))
+      .map((e) => ({ ...e, path: e.path.slice(prefix.length) })),
+  }
+}
+
+const REGULAR = new Set(['100644', '100755'])
+
+/** What a mode other than a regular file's is, said in a refusal. */
+const modeProblem = (mode: string): string =>
+  mode === '120000'
+    ? 'is a symbolic link; only regular files and directories are allowed'
+    : mode === '160000'
+      ? 'is a nested repository; a skill holds no repository'
+      : `has git mode ${mode}; only regular files and directories are allowed`
+
+/**
+ * The checks of spec 0041 §4 on the entries of a skill's tree, but for its
+ * `SKILL.md`'s content: the name rule, regular files only (a symbolic link
+ * or a gitlink refused, naming it), no control, bidirectional or zero-width
+ * character in a file name, at most 1 MB, a `SKILL.md` at the root. Returns
+ * the files and the id of the `SKILL.md` to read; throws the refusal.
+ */
+function checkEntries(
+  name: string,
+  path: string,
+  found: { self: TreeEntry; inside: TreeEntry[] }
+): { files: SkillFile[]; bytes: number; md: string } {
+  const bad = nameProblem(name)
+  if (bad !== null) throw refusal(name, bad)
+  if (found.self.type !== 'tree')
+    throw refusal(name, `${plainText(path)} ${modeProblem(found.self.mode)}`)
+  const leaves = found.inside.filter((e) => e.type !== 'tree')
+  for (const e of leaves)
+    if (!REGULAR.has(e.mode))
+      throw refusal(name, `${quoted(e.path)} ${modeProblem(e.mode)}`)
+  for (const e of leaves) {
+    if (CONTROL.test(e.path))
+      throw refusal(
+        name,
+        `file name ${quoted(e.path)} holds a control character`
+      )
+    if (INVISIBLE.test(e.path))
+      throw refusal(
+        name,
+        `file name ${quoted(e.path)} holds a zero-width or bidirectional character`
+      )
+  }
+  const files = leaves.map((e) => ({
+    path: e.path,
+    executable: e.mode === '100755',
+    id: e.id,
+    size: e.size ?? 0,
+  }))
+  const bytes = files.reduce((n, f) => n + f.size, 0)
+  if (bytes > MAX_SKILL_BYTES)
+    throw refusal(
+      name,
+      `its content is ${bytes} bytes, above the limit of ${MAX_SKILL_BYTES} bytes (1 MB)`
+    )
+  const md = files.find((f) => f.path === 'SKILL.md')
+  if (md === undefined)
+    throw refusal(name, 'no SKILL.md at the root of its directory')
+  return { files, bytes, md: md.id }
+}
+
+/** A skill to look up in a tree of `.rness`: its name, and its directory there. */
+export interface SkillAt {
+  name: string
+  dir: string
+}
+
+/**
+ * Each of `skills` as the tree `treeish` of `.rness` holds it (`HEAD`, or
+ * a tree a scratch index wrote), keyed by its directory: its `SkillTree`
+ * when it passes the checks of §4, the refusal when it does not, null when
+ * that tree has nothing at its path. One `ls-tree` and one `cat-file` for
+ * them all.
+ */
+export async function skillTreesAt(
+  store: ObjectStore,
+  rnessDir: string,
+  treeish: string,
+  skills: readonly SkillAt[]
+): Promise<Map<string, SkillTree | Error | null>> {
+  if (skills.length === 0) return new Map()
+  return skillTreesIn(
+    store,
+    rnessDir,
+    await listTree(store, treeish, ['skills']),
+    skills
+  )
+}
+
+/** `skillTreesAt` on a listing of the tree already made. */
+async function skillTreesIn(
+  store: ObjectStore,
+  rnessDir: string,
+  listing: readonly TreeEntry[],
+  skills: readonly SkillAt[]
+): Promise<Map<string, SkillTree | Error | null>> {
+  const found = new Map<string, SkillTree | Error | null>()
+  const checked: (ReturnType<typeof checkEntries> & {
+    s: SkillAt
+    tree: string
+  })[] = []
+  for (const s of skills) {
+    const path = pathIn(rnessDir, s.dir)
+    const at = entriesOf(listing, path)
+    if (at === null) found.set(s.dir, null)
+    else
+      try {
+        checked.push({ s, tree: at.self.id, ...checkEntries(s.name, path, at) })
+      } catch (e) {
+        found.set(s.dir, e as Error)
+      }
+  }
+  const mds = await readObjects(
+    store,
+    checked.map((c) => c.md)
+  )
+  for (const c of checked)
+    try {
+      const md = mds.get(c.md)
+      if (md === null || md === undefined)
+        throw refusal(c.s.name, 'its SKILL.md cannot be read from git')
+      found.set(c.s.dir, {
+        tree: c.tree,
+        files: c.files,
+        bytes: c.bytes,
+        fields: checkSkillMd(c.s.name, md.toString('utf8')),
+      })
+    } catch (e) {
+      found.set(c.s.dir, e as Error)
+    }
+  return found
+}
+
+/**
+ * Each of `skills` as committed at `HEAD` of `.rness` (spec 0041 §6): what
+ * is installed. Null for one `HEAD` does not hold (not committed yet, or no
+ * commit at all). Object reads only: no index, no tree built.
+ */
+export async function skillsAtHead(
+  rnessDir: string,
+  skills: readonly SkillAt[]
+): Promise<Map<string, SkillTree | Error | null>> {
+  if (skills.length === 0) return new Map()
+  const store = objectStore(rnessDir)
+  let listing: TreeEntry[]
+  try {
+    listing = await listTree(store, 'HEAD', ['skills'])
+  } catch {
+    return new Map(skills.map((s) => [s.dir, null]))
+  }
+  return skillTreesIn(store, rnessDir, listing, skills)
+}
+
+/**
+ * Each of `skills` as git would commit its copy in `.rness` now, keyed by
+ * its directory: the files of the working tree a scratch index takes
+ * (`withScratchIndex`, one for them all), checked (§4). A copy git cannot
+ * add (a nested repository with no commit) is refused alone.
+ */
+async function workingTrees(
+  rnessDir: string,
+  skills: readonly SkillAt[]
+): Promise<Map<string, SkillTree | Error | null>> {
+  if (skills.length === 0) return new Map()
+  return withScratchIndex(rnessDir, async (index) => {
+    const failed = new Map<string, Error>()
+    try {
+      await index.add(skills.map((s) => pathIn(rnessDir, s.dir)))
+    } catch {
+      // One copy git refuses fails the whole `add`: each alone says which.
+      await index.clear()
+      for (const s of skills)
+        await index
+          .add([pathIn(rnessDir, s.dir)])
+          .catch((e: unknown) => failed.set(s.dir, cannotAdd(s.name, e)))
+    }
+    const trees = await skillTreesAt(
+      index,
+      rnessDir,
+      await index.writeTree(),
+      skills.filter((s) => !failed.has(s.dir))
+    )
+    for (const [dir, e] of failed) trees.set(dir, e)
+    return trees
+  })
+}
+
+const cannotAdd = (name: string, e: unknown): Error =>
+  refusal(
+    name,
+    `git cannot take its copy: ${plainText(e instanceof Error ? e.message : String(e))}`
+  )
+
+/** The paths added, changed (bytes or executable bit) and removed from `before` to `after`, each a map of path to mode and blob id. */
 export function diffSkillFiles(
   before: ReadonlyMap<string, string>,
   after: ReadonlyMap<string, string>
@@ -455,20 +631,11 @@ export function diffSkillFiles(
   }
 }
 
-/**
- * The hash of a skill directory (spec 0041 §9): SHA-256 over each file in
- * byte order of its path, as `path NUL x|- NUL length NUL bytes`, written
- * `sha256-<base64>`. The executable bit is the owner's.
- */
-export async function hashSkillDir(dir: string): Promise<string> {
-  const h = createHash('sha256')
-  for (const f of await walk(dir, basename(dir))) {
-    const bytes = await readFile(f.abs)
-    h.update(`${f.path}\0${f.executable ? 'x' : '-'}\0${bytes.length}\0`)
-    h.update(bytes)
-  }
-  return `sha256-${h.digest('base64')}`
-}
+/** Path to mode and blob id, the form `diffSkillFiles` compares. */
+export const fileDigests = (files: readonly SkillFile[]): Map<string, string> =>
+  new Map(
+    files.map((f) => [f.path, `${f.executable ? '100755' : '100644'}:${f.id}`])
+  )
 
 /** The git URL of a `github:` or `git:` source; null for a `path:` source. */
 export function skillSourceUrl(source: string): string | null {
@@ -647,72 +814,86 @@ export interface CopiedSkill {
   name: string
   /** Absolute: the copy under `.rness/skills/`. */
   dir: string
-  hash: string
-  bytes: number
-  /** Left out because git ignores them in `.rness`, relative to the skill: a directory once (`node_modules/`), else each file. */
-  dropped: string[]
+  /** The copy as git takes it in `.rness`, checked: its tree is the declared `tree`. */
+  copy: SkillTree
+  /** The copy it replaced, by path (`fileDigests`); empty when there was none. */
+  before: Map<string, string>
 }
 
-/**
- * Of `files` (relative to the skill), those git would not commit at
- * `target` in `.rness` (ruling R26), and how to name them: the top-most
- * directory all of whose files go, written with a trailing `/`, else the
- * file. Nothing when `.rness` is no git repository.
- */
-async function ignoredInRness(
-  rnessDir: string,
-  target: string,
-  files: readonly string[]
-): Promise<{ files: Set<string>; said: string[] }> {
-  if ((await gitPath(rnessDir, 'info')) === null)
-    return { files: new Set(), said: [] }
-  const at = relative(rnessDir, target).split(sep).join('/')
-  const dirs = [
-    ...new Set(
-      files.flatMap((f) =>
-        f
-          .split('/')
-          .slice(0, -1)
-          .map((_, i, parts) => `${parts.slice(0, i + 1).join('/')}/`)
-      )
-    ),
-  ]
-  const asked = [...files, ...dirs]
-  const hit = await ignoredPaths(
-    rnessDir,
-    asked.map((p) => `${at}/${p}`)
+const there = (p: string): Promise<boolean> =>
+  lstat(p).then(
+    () => true,
+    () => false
   )
-  const ignored = new Set(asked.filter((p) => hit.has(`${at}/${p}`)))
-  const gone = new Set(files.filter((f) => ignored.has(f)))
-  // A directory is named for its files only when git drops all of them.
-  const whole = (d: string): boolean =>
-    ignored.has(d) && files.every((f) => !f.startsWith(d) || gone.has(f))
-  const said: string[] = []
-  for (const f of files) {
-    if (!gone.has(f)) continue
-    const parts = f.split('/')
-    let name = f
-    for (let i = 1; i < parts.length; i++) {
-      const d = `${parts.slice(0, i).join('/')}/`
-      if (whole(d)) {
-        name = d
-        break
-      }
+
+/**
+ * Copy the directory `from` to `to` as it is: directories, files (0755 when
+ * executable, else 0644) and symbolic links, a link copied as a link and
+ * never followed. The source's own repository (a `.git` at its root) is no
+ * part of it; anything else is copied, and git decides what the copy holds.
+ * `md` rewrites the bytes of the root `SKILL.md`.
+ */
+async function copyDir(
+  name: string,
+  from: string,
+  to: string,
+  md: (bytes: Buffer) => Buffer
+): Promise<void> {
+  const visit = async (src: string, dst: string, rel: string) => {
+    await mkdir(dst, { recursive: true })
+    for (const d of await readdir(src, { withFileTypes: true })) {
+      if (rel === '' && d.name === '.git') continue
+      const path = rel === '' ? d.name : `${rel}/${d.name}`
+      const s = join(src, d.name)
+      const t = join(dst, d.name)
+      if (d.isDirectory()) await visit(s, t, path)
+      else if (d.isSymbolicLink()) await symlink(await readlink(s), t)
+      else if (d.isFile()) {
+        const bytes = await readFile(s)
+        await writeFile(t, path === 'SKILL.md' ? md(bytes) : bytes)
+        await chmod(t, ((await lstat(s)).mode & 0o100) !== 0 ? 0o755 : 0o644)
+      } else
+        throw refusal(
+          name,
+          `${quoted(path)} is neither a regular file nor a directory; only regular files and directories are allowed`
+        )
     }
-    if (!said.includes(name)) said.push(name)
   }
-  return { files: gone, said }
+  await visit(from, to, '')
+}
+
+/** The files of the copy at `dir` as `index` takes them, unchecked (`fileDigests`'s form); empty when git takes none. */
+async function filesOf(
+  index: ScratchIndex,
+  rnessDir: string,
+  dir: string
+): Promise<Map<string, string>> {
+  try {
+    await index.clear()
+    await index.add([pathIn(rnessDir, dir)])
+    const at = entriesOf(
+      await listTree(index, await index.writeTree(), ['skills']),
+      pathIn(rnessDir, dir)
+    )
+    return new Map(
+      (at?.inside ?? [])
+        .filter((e) => e.type !== 'tree')
+        .map((e) => [e.path, `${e.mode}:${e.id}`])
+    )
+  } catch {
+    return new Map()
+  }
 }
 
 /**
- * Check the fetched skill (§4) and copy it into
- * `<rnessDir>/skills/[scopes/<scope>/]<name>/`, `name` being `opts.name`
- * (`--name`: the `name` of the copy's `SKILL.md` is rewritten) or the
- * source's. A file git ignores at that place in `.rness` is left out
- * (`dropped`): the copy is what the team commits, so its hash is the one a
- * teammate's clone computes. The copy is written beside its place and
- * swapped in, so a failure leaves the previous copy; files are 0755 when
- * executable, else 0644. The hash is taken on the finished copy.
+ * Copy the fetched skill into `<rnessDir>/skills/[scopes/<scope>/]<name>/`,
+ * `name` being `opts.name` (`--name`: the `name` of the copy's `SKILL.md` is
+ * rewritten) or the source's, then check it (§4) on the tree git gives it
+ * there (decision 8): what git leaves out, by its ignore rules or the
+ * skill's own `.gitignore`, is no part of it. The source's `SKILL.md` is
+ * checked first, so a refusal there writes nothing. The copy is written
+ * beside its place and swapped in; refused, it is removed and the previous
+ * copy put back.
  */
 export async function copySkill(
   rnessDir: string,
@@ -720,7 +901,7 @@ export async function copySkill(
   opts: { scope: string | null; name?: string }
 ): Promise<CopiedSkill> {
   const name = opts.name ?? from.name
-  const source = await checkSkillDir(from.dir, from.name)
+  await readSkillMd(from.dir, from.name)
   const bad = nameProblem(name)
   if (bad !== null) throw refusal(name, bad)
   if (opts.scope === null && name === 'scopes')
@@ -735,50 +916,61 @@ export async function copySkill(
   const link = await linkedLevel(rnessDir, base)
   if (link !== null) throw refusal(name, linkRefusal(rnessDir, link))
   const target = join(base, name)
-  const ignored = await ignoredInRness(
-    rnessDir,
-    target,
-    source.files.map((f) => f.path)
-  )
-  await mkdir(base, { recursive: true })
-  const staged = await mkdtemp(join(base, `.${name}-`))
-  try {
-    for (const f of source.files) {
-      if (ignored.files.has(f.path)) continue
-      const to = join(staged, ...f.path.split('/'))
-      await mkdir(dirname(to), { recursive: true })
-      let bytes: Buffer = await readFile(f.abs)
-      if (f.path === 'SKILL.md' && name !== from.name)
-        bytes = renamed(bytes, from.name, name)
-      await writeFile(to, bytes)
-      await chmod(to, f.executable ? 0o755 : 0o644)
-    }
-    const { bytes } = await checkSkillDir(staged, name)
-    const hash = await hashSkillDir(staged)
+  return withScratchIndex(rnessDir, async (index) => {
+    const had = await there(target)
+    const before = had ? await filesOf(index, rnessDir, target) : new Map()
+    await mkdir(base, { recursive: true })
+    const staged = await mkdtemp(join(base, `.${name}-`))
     const old = `${staged}.old`
-    const had = await lstat(target).then(
-      () => true,
-      () => false
-    )
-    if (had) await rename(target, old)
-    await rename(staged, target)
-    if (had) await rm(old, { recursive: true, force: true })
-    return { name, dir: target, hash, bytes, dropped: ignored.said }
-  } catch (e) {
-    await rm(staged, { recursive: true, force: true })
-    throw e
-  }
+    let moved = false
+    let swapped = false
+    try {
+      await copyDir(name, from.dir, staged, (bytes) =>
+        name === from.name ? bytes : renamed(bytes, from.name, name)
+      )
+      if (had) {
+        await rename(target, old)
+        moved = true
+      }
+      await rename(staged, target)
+      swapped = true
+      // The tree is taken at the copy's own place: git's ignore rules are
+      // those of that path in `.rness`.
+      await index.clear()
+      await index
+        .add([pathIn(rnessDir, target)])
+        .catch((e: unknown) => Promise.reject(cannotAdd(name, e)))
+      const copy = (
+        await skillTreesAt(index, rnessDir, await index.writeTree(), [
+          { name, dir: target },
+        ])
+      ).get(target)
+      if (copy instanceof Error) throw copy
+      if (copy === null || copy === undefined)
+        throw refusal(name, 'no SKILL.md at the root of its directory')
+      if (moved) await rm(old, { recursive: true, force: true })
+      return { name, dir: target, copy, before }
+    } catch (e) {
+      if (swapped) await rm(target, { recursive: true, force: true })
+      else await rm(staged, { recursive: true, force: true })
+      if (moved) await rename(old, target)
+      throw e
+    }
+  })
 }
 
 /**
  * What `validate` says of the copies (spec 0041 §4): `problems` are
  * refusals (a skill that breaks §4, a declared copy that is missing);
  * `reported` are lines that are said and never refused (a declared copy
- * that differs from its `hash`).
+ * whose tree differs from its `tree`). With `trees` false (the per-turn
+ * safety net, ruling R30) no tree is built: each skill's `SKILL.md` alone
+ * is checked (`readSkillMd`), and no copy is compared to its `tree`.
  */
 export async function checkSkillCopies(
   rnessDir: string,
-  manifest: Manifest
+  manifest: Manifest,
+  opts: { trees: boolean }
 ): Promise<{ problems: string[]; reported: string[] }> {
   const problems: string[] = []
   const reported: string[] = []
@@ -797,6 +989,8 @@ export async function checkSkillCopies(
       if (!problems.includes(line)) problems.push(line)
     }
   }
+  // Per skill, in the order of `teamSkills`: its problem, or the copy to check.
+  const found: (string | TeamSkill)[] = []
   for (const s of await teamSkills(rnessDir, manifest)) {
     if (linked.has(dirname(s.dir))) continue
     const place = plainText(relative(rnessDir, s.dir))
@@ -804,27 +998,40 @@ export async function checkSkillCopies(
       if (e.code === 'ENOENT') return null
       throw e
     })
-    if (st === null) {
-      problems.push(
+    if (st === null)
+      found.push(
         `skill ${quoted(s.name)} is declared but its copy ${place} is missing: run rness skill update ${plainText(s.name)}`
       )
+    else if (!st.isDirectory())
+      found.push(
+        `skill ${quoted(s.name)}: ${place} is ${st.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}; only regular files and directories are allowed`
+      )
+    else found.push(s)
+  }
+  const copies = found.filter((f): f is TeamSkill => typeof f !== 'string')
+  const trees = opts.trees
+    ? await workingTrees(rnessDir, copies)
+    : new Map<string, SkillTree | Error | null>()
+  for (const f of found) {
+    if (typeof f === 'string') {
+      problems.push(f)
       continue
     }
-    if (!st.isDirectory()) {
-      problems.push(
-        `skill ${quoted(s.name)}: ${place} is ${st.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}; only regular files and directories are allowed`
+    if (!opts.trees) {
+      await readSkillMd(f.dir, f.name).catch((e: Error) =>
+        problems.push(e.message)
       )
       continue
     }
-    try {
-      await checkSkillDir(s.dir, s.name)
-    } catch (e) {
-      problems.push((e as Error).message)
-      continue
-    }
-    if (s.entry !== null && (await hashSkillDir(s.dir)) !== s.entry.hash)
+    const t = trees.get(f.dir) ?? null
+    if (t === null)
+      problems.push(
+        refusal(f.name, 'no SKILL.md at the root of its directory').message
+      )
+    else if (t instanceof Error) problems.push(t.message)
+    else if (f.entry !== null && t.tree !== f.entry.tree)
       reported.push(
-        `skill ${quoted(s.name)} differs from its source: run rness skill update, or remove its source to make it the team's own`
+        `skill ${quoted(f.name)} differs from its source: run rness skill update, or remove its source to make it the team's own`
       )
   }
   return { problems, reported }

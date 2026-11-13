@@ -1469,7 +1469,7 @@ test('on Atlassian a board names nothing: number and ids are refused, naming the
   )
 })
 
-const HASH = `sha256-${'A'.repeat(43)}=`
+const TREE = '017c56061194a965f77e1b265569ad105348c8b2'
 const COMMIT = '9f1c2e0d6b7a4c3e8f5d2a1b0c9e8d7f6a5b4c3d'
 
 test('skills: read at the top and in a scope, written in the order of spec 0041 §2 and read back', async (t) => {
@@ -1482,7 +1482,7 @@ test('skills: read at the top and in a scope, written in the order of spec 0041 
       "path": "skills/brainstorming",
       "ref": "v7.0.0",
       "commit": "${COMMIT}",
-      "hash": "${HASH}"
+      "tree": "${TREE}"
     }
   },
   "scopes": {
@@ -1491,7 +1491,7 @@ test('skills: read at the top and in a scope, written in the order of spec 0041 
       "skills": {
         "deploy": {
           "source": "path:../ops/skills/deploy",
-          "hash": "${HASH}"
+          "tree": "${TREE}"
         }
       },
       "scopes": {
@@ -1500,7 +1500,7 @@ test('skills: read at the top and in a scope, written in the order of spec 0041 
           "skills": {
             "tokens": {
               "source": "git:git@github.com:acme/skills.git",
-              "hash": "${HASH}"
+              "tree": "${TREE}"
             }
           }
         }
@@ -1517,9 +1517,9 @@ test('skills: read at the top and in a scope, written in the order of spec 0041 
     path: 'skills/brainstorming',
     ref: 'v7.0.0',
     commit: COMMIT,
-    hash: HASH,
+    tree: TREE,
   })
-  assert.equal(read.scopes['web']?.skills?.['deploy']?.hash, HASH)
+  assert.equal(read.scopes['web']?.skills?.['deploy']?.tree, TREE)
   assert.equal(
     read.scopes['ui']?.skills?.['tokens']?.source.startsWith('git:'),
     true
@@ -1545,12 +1545,14 @@ test('skills: none read is absent, and nothing is written for it', async (t) => 
 })
 
 test('skills: every refusal names the skill and the slip', async () => {
-  const ok = { source: 'github:o/r', hash: HASH }
+  const ok = { source: 'github:o/r', tree: TREE }
   const cases: [Record<string, unknown>, string][] = [
     [{ x: 1 }, 'skill "x" must be an object'],
     [{ x: { ...ok, extra: 1 } }, 'skill "x": unknown key "extra"'],
+    // The hash rness computed before the tree (never released): unknown.
+    [{ x: { ...ok, hash: TREE } }, 'skill "x": unknown key "hash"'],
     [
-      { x: { hash: HASH } },
+      { x: { tree: TREE } },
       'skill "x": "source" must be github:<owner>/<repo>, git:<url> or path:<directory>',
     ],
     ...['http://a/b', 'github:o', 'github:o/r/s', 'git:', 'path:', 'o/r'].map(
@@ -1573,12 +1575,16 @@ test('skills: every refusal names the skill and the slip', async () => {
       { x: { ...ok, commit: 'abc123' } },
       'skill "x": "commit" must be a full commit hash',
     ],
-    [{ x: { source: ok.source } }, 'skill "x": "hash" must be sha256-'],
-    [{ x: { ...ok, hash: 'sha256-abc' } }, 'skill "x": "hash" must be sha256-'],
-    [
-      { x: { ...ok, hash: `sha1-${'A'.repeat(43)}=` } },
-      'skill "x": "hash" must be sha256-',
-    ],
+    ...[
+      undefined,
+      TREE.slice(0, 39),
+      `${TREE}0`,
+      TREE.toUpperCase(),
+      'f'.repeat(65),
+    ].map((tree): [Record<string, unknown>, string] => [
+      { x: { source: ok.source, ...(tree === undefined ? {} : { tree }) } },
+      'skill "x": "tree" must be the id git gives the copy\'s tree (40 or 64 hex digits)',
+    ]),
     [{ X: ok }, 'skill "X": the name may only contain'],
     [{ a_b: ok }, 'skill "a_b": the name may only contain'],
     [{ '-a': ok }, 'skill "-a": the name may only contain'],
@@ -1616,21 +1622,27 @@ test('skills: every refusal names the skill and the slip', async () => {
   }
 })
 
-test('skills: a name of 64 characters and a 64-hex commit are read', async (t) => {
+test('skills: a name of 64 characters, a 64-hex commit and a 64-hex tree (a sha256 .rness) are read', async (t) => {
   const name = 'a'.repeat(64)
   const d = await fixture({
     contract: 2,
     skills: {
-      [name]: { source: 'path:/abs/dir', commit: 'f'.repeat(64), hash: HASH },
+      [name]: {
+        source: 'path:/abs/dir',
+        commit: 'f'.repeat(64),
+        tree: 'e'.repeat(64),
+      },
     },
     scopes: {},
   })
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
-  assert.equal((await loadManifest(d)).skills?.[name]?.commit, 'f'.repeat(64))
+  const read = (await loadManifest(d)).skills?.[name]
+  assert.equal(read?.commit, 'f'.repeat(64))
+  assert.equal(read?.tree, 'e'.repeat(64))
 })
 
 test('loadManifest: a top-level skill named scopes is refused, one in a scope is fine', async () => {
-  const ok = { source: 'github:o/r', hash: `sha256-${'A'.repeat(43)}=` }
+  const ok = { source: 'github:o/r', tree: TREE }
   const bad = await fixture({ contract: 2, skills: { scopes: ok }, scopes: {} })
   const good = await fixture({
     contract: 2,
@@ -1649,7 +1661,7 @@ test('loadManifest: a top-level skill named scopes is refused, one in a scope is
 })
 
 test('skills: control characters in a key, source, path or ref are refused, shown escaped', async () => {
-  const ok = { source: 'github:o/r', hash: HASH }
+  const ok = { source: 'github:o/r', tree: TREE }
   const cases: [Record<string, unknown>, RegExp][] = [
     [{ 'a\u009bb': ok }, /skill "a\\u009bb": the name may only contain/],
     [

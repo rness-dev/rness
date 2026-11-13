@@ -650,9 +650,9 @@ test('re-adding a repository and a part keeps their declared skills', async (t) 
     host: 'file:///unused/',
     scopes: [],
   })
-  const hash = `sha256-${'A'.repeat(43)}=`
+  const tree = '017c56061194a965f77e1b265569ad105348c8b2'
   const skill = (name: string) => ({
-    [name]: { source: 'github:o/r', hash },
+    [name]: { source: 'github:o/r', tree },
   })
   await writeFile(
     join(rnessDir, 'rness.json'),

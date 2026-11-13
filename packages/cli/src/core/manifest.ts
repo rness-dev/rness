@@ -454,17 +454,17 @@ export function providerOf(manifest: Manifest): ProviderName {
   return 'github'
 }
 
-const SKILL_KEYS = ['source', 'path', 'ref', 'commit', 'hash']
+const SKILL_KEYS = ['source', 'path', 'ref', 'commit', 'tree']
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-/** The shape `rness skill` writes (spec 0041 §2): `sha256-` and a base64 SHA-256 digest. */
-const SKILL_HASH = /^sha256-[A-Za-z0-9+/]{43}=$/
+/** The id git gives a tree (spec 0041 §2, decision 8): 40 hexadecimal characters, 64 in a sha256 repository. */
+const SKILL_TREE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
 const SKILL_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 
 /**
  * `skills` of the top or of a scope (spec 0041 §2): each key a skill's name
  * (lowercase letters, digits and hyphens, at most 64 characters, not
  * `rness`, the plugin's own directory), each entry `source`, `path`, `ref`,
- * `commit` and `hash`. `where` prefixes the error, `scope "web": ` or empty.
+ * `commit` and `tree`. `where` prefixes the error, `scope "web": ` or empty.
  */
 function readSkills(value: unknown, where: string): Record<string, SkillEntry> {
   const raw = value ?? {}
@@ -483,7 +483,7 @@ function readSkills(value: unknown, where: string): Record<string, SkillEntry> {
     if (!isRecord(entry)) fail(`${at} must be an object`)
     for (const key of Object.keys(entry))
       if (!SKILL_KEYS.includes(key)) fail(`${at}: unknown key ${quoted(key)}`)
-    const { source, path, ref, commit, hash } = entry
+    const { source, path, ref, commit, tree } = entry
     for (const [key, v] of [
       ['source', source],
       ['path', path],
@@ -512,14 +512,16 @@ function readSkills(value: unknown, where: string): Record<string, SkillEntry> {
       (typeof commit !== 'string' || !SKILL_COMMIT.test(commit))
     )
       fail(`${at}: "commit" must be a full commit hash (40 or 64 hex digits)`)
-    if (typeof hash !== 'string' || !SKILL_HASH.test(hash))
-      fail(`${at}: "hash" must be sha256- and a base64 SHA-256 digest`)
+    if (typeof tree !== 'string' || !SKILL_TREE.test(tree))
+      fail(
+        `${at}: "tree" must be the id git gives the copy's tree (40 or 64 hex digits)`
+      )
     skills[name] = {
       source,
       ...(path === undefined ? {} : { path }),
       ...(ref === undefined ? {} : { ref }),
       ...(commit === undefined ? {} : { commit }),
-      hash,
+      tree,
     }
   }
   return skills
@@ -1118,7 +1120,7 @@ function skillLines(
       ['path', skill.path],
       ['ref', skill.ref],
       ['commit', skill.commit],
-      ['hash', skill.hash],
+      ['tree', skill.tree],
     ].filter((kv): kv is [string, string] => kv[1] !== undefined)
     return [
       `${indent}${JSON.stringify(name)}: {`,

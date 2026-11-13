@@ -26,7 +26,10 @@ export async function safetyNet(
       `.rness pins @rness/cli ${drift.pin} but ${drift.installed ?? 'nothing'} is installed: run ${await workspacePackageManager(ws.rnessDir)} install in .rness`
     )
   try {
-    const { problems } = await checkWorkspace(ws, manifest)
+    // Every turn: no team skill's tree is built here (ruling R30).
+    const { problems } = await checkWorkspace(ws, manifest, {
+      skillTrees: false,
+    })
     if (problems.length > 0)
       notes.push(
         `${count(problems.length, ['problem', 'problems'])} in the workspace context: run rness validate`,
