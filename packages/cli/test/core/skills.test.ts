@@ -224,7 +224,11 @@ async function skillDir(
   return dir
 }
 
-/** No global git configuration: a developer's excludes file must not decide what a tree holds. */
+/**
+ * No global git configuration: a test's skill is new to `.rness`, and the
+ * developer's own excludes file would leave its untracked files out of the
+ * tree (a committed file stays, R37).
+ */
 function noGlobalGit(t: TestContext): void {
   const was = process.env['GIT_CONFIG_GLOBAL']
   process.env['GIT_CONFIG_GLOBAL'] = '/dev/null'
@@ -1309,4 +1313,79 @@ test('blockSkills: name and one-line plain description of each valid skill that 
     (await blockSkills(rnessDir, manifest, null)).map((s) => s.name),
     ['a', 'b']
   )
+})
+
+// ---- Rework fix round 1 ----
+
+/** `.rness` as a committed repository holding team skill `good`, declared at the tree HEAD gives it. */
+async function committedGood(t: TestContext) {
+  const root = await makeWorkspace(t, {
+    files: { 'skills/good/SKILL.md': SKILL_MD('good') },
+  })
+  const rnessDir = join(root, '.rness')
+  await git(['init', '-q', '-b', 'main'], rnessDir)
+  await git(['add', '-A'], rnessDir)
+  await git(['commit', '-q', '-m', 'good'], rnessDir)
+  const tree = (await git(['rev-parse', 'HEAD:skills/good'], rnessDir)).trim()
+  const manifest = {
+    ...(await loadManifest(rnessDir)),
+    skills: { good: { source: 'github:o/r', tree } },
+  }
+  return { rnessDir, manifest, tree }
+}
+
+test("a git variable of the caller's environment (GIT_OBJECT_DIRECTORY) never reaches the git calls on .rness's trees", async (t) => {
+  const { rnessDir, manifest, tree } = await committedGood(t)
+  const elsewhere = await tmp(t)
+  const was = process.env['GIT_OBJECT_DIRECTORY']
+  process.env['GIT_OBJECT_DIRECTORY'] = elsewhere
+  t.after(() => {
+    if (was === undefined) delete process.env['GIT_OBJECT_DIRECTORY']
+    else process.env['GIT_OBJECT_DIRECTORY'] = was
+  })
+  const at = join(rnessDir, 'skills/good')
+  const head = (await skillsAtHead(rnessDir, [{ name: 'good', dir: at }])).get(
+    at
+  )
+  assert.equal(head instanceof Error || head === null ? head : head?.tree, tree)
+  assert.deepEqual(
+    await checkSkillCopies(rnessDir, manifest, { trees: true }),
+    { problems: [], reported: [] }
+  )
+  assert.deepEqual(await readdir(elsewhere), [])
+})
+
+test('a .rness git refuses to open is reported, never taken for no repository (no temporary database then)', async (t) => {
+  const { rnessDir, manifest } = await committedGood(t)
+  await git(['config', 'core.repositoryformatversion', '99'], rnessDir)
+  await assert.rejects(
+    checkSkillCopies(rnessDir, manifest, { trees: true }),
+    /Expected git repo version <= 1, found 99/
+  )
+})
+
+test("fetchSkill: a repository root whose SKILL.md is a link is never read through it for the skill's name", async (t) => {
+  const work = await tmp(t)
+  const outside = join(work, 'outside.md')
+  await writeFile(outside, SKILL_MD('stolen'))
+  const repo = join(work, 'linked-root')
+  await mkdir(repo)
+  await symlink(outside, join(repo, 'SKILL.md'))
+  await git(['init', '-q', '-b', 'main'], repo)
+  await git(['add', '-A'], repo)
+  await git(['commit', '-q', '-m', 'x'], repo)
+  const rnessDir = join(work, '.rness')
+  await mkdir(rnessDir)
+  const f = await fetchSkill(rnessDir, `git:${pathToFileURL(repo).href}`, {
+    credentials: null,
+  })
+  try {
+    assert.equal(f.name, 'linked-root')
+    await assert.rejects(
+      copySkill(rnessDir, f, { scope: null }),
+      /"SKILL\.md" is a symbolic link/
+    )
+  } finally {
+    await f.release()
+  }
 })

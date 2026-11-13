@@ -294,20 +294,39 @@ export async function trackedPaths(
 
 /**
  * Where git commands on the objects of `.rness` run: its directory, and an
- * environment that never inherits the caller's `GIT_DIR`, `GIT_WORK_TREE`
- * or `GIT_INDEX_FILE`. `validate` runs inside the `.rness` pre-commit, where
- * git sets them for the commit's own index (ruling R31).
+ * environment that inherits none of the variables that point git at a
+ * repository (`ISOLATED`). `validate` runs inside the `.rness` pre-commit,
+ * where git sets them for the commit's own index (ruling R31).
  */
 export interface ObjectStore {
   dir: string
   env: GitEnv
 }
 
-const ISOLATED: GitEnv = {
-  GIT_DIR: undefined,
-  GIT_WORK_TREE: undefined,
-  GIT_INDEX_FILE: undefined,
-}
+/**
+ * Every variable `git rev-parse --local-env-vars` lists (git 2.56.0,
+ * 2026-11-13), removed: what git exports to a hook so that its own
+ * commands find the repository, its index, its objects and its settings.
+ */
+const ISOLATED: GitEnv = Object.fromEntries(
+  [
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_CONFIG',
+    'GIT_CONFIG_PARAMETERS',
+    'GIT_CONFIG_COUNT',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_IMPLICIT_WORK_TREE',
+    'GIT_GRAFT_FILE',
+    'GIT_INDEX_FILE',
+    'GIT_NO_REPLACE_OBJECTS',
+    'GIT_REPLACE_REF_BASE',
+    'GIT_PREFIX',
+    'GIT_SHALLOW_FILE',
+    'GIT_COMMON_DIR',
+  ].map((name) => [name, undefined])
+)
 
 /** The objects of the repository at `dir`, read with no caller's index or directory. */
 export const objectStore = (dir: string): ObjectStore => ({
@@ -426,12 +445,58 @@ export async function blobIds(
   return out.toString().split('\n').slice(0, files.length)
 }
 
+/**
+ * The trees `path` had in the commits of `HEAD` that changed it, newest
+ * first, at most `max` commits looked at: the versions of a skill an
+ * earlier `sync` may have installed. None when `HEAD` or the path has no
+ * history.
+ */
+export async function pathTrees(
+  store: ObjectStore,
+  path: string,
+  max: number
+): Promise<string[]> {
+  let commits: string[]
+  try {
+    commits = (
+      await git(
+        ['rev-list', `--max-count=${max}`, 'HEAD', '--', `:(literal)${path}`],
+        store.dir,
+        null,
+        [],
+        store.env
+      )
+    )
+      .split('\n')
+      .filter((c) => c !== '')
+  } catch {
+    return []
+  }
+  if (commits.length === 0 || /[\n\r]/.test(path)) return []
+  const out = await gitBytes(
+    ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
+    store.dir,
+    store.env,
+    commits.map((c) => `${c}:${path}\n`).join('')
+  )
+  return [
+    ...new Set(
+      out
+        .toString()
+        .split('\n')
+        .map((l) => l.split(' '))
+        .filter(([, type]) => type === 'tree')
+        .map(([id]) => id ?? '')
+    ),
+  ]
+}
+
 /** A temporary index over the working tree at `dir`, its objects in that repository's database. */
 export interface ScratchIndex extends ObjectStore {
-  /** `git add` of `paths` (relative to `dir`, literal), as a commit would take them. */
+  /** `git add` of `paths` (relative to `dir`, literal), as a commit would take them: changes, new files, deletions. */
   add: (paths: readonly string[]) => Promise<void>
-  /** The index emptied (`read-tree --empty`). */
-  clear: () => Promise<void>
+  /** The index back to where it started: `HEAD`'s tree, or empty. */
+  reset: () => Promise<void>
   /** `git write-tree`: the id of the tree the index holds. */
   writeTree: () => Promise<string>
 }
@@ -439,11 +504,15 @@ export interface ScratchIndex extends ObjectStore {
 /**
  * Run `work` with an index of its own over the working tree at `dir`: an
  * absolute `GIT_INDEX_FILE` in a fresh temporary directory, never the
- * index of a commit in progress (ruling R31). `git add` writes the blobs
- * and trees it makes into the repository's object database: loose objects,
- * collected by git's own gc when nothing reaches them. When `dir` is no
- * repository yet, a temporary one holds them, so the ids are the ones git
- * will give the same files there.
+ * index of a commit in progress (ruling R31). It starts from `HEAD`'s tree
+ * (ruling R37), as the next commit does: a committed file an exclude now
+ * matches stays, and a blob committed with CRLF is not converted again; an
+ * unborn `HEAD` starts empty. `git add` writes the blobs and trees it makes
+ * into the repository's object database: loose objects, collected by git's
+ * own gc when nothing reaches them. Only when `dir` is no git repository
+ * at all does a temporary one hold them, so the ids are the ones git will
+ * give the same files there; any other failure to open the repository
+ * (an unsafe owner, an unknown format) is thrown.
  */
 export async function withScratchIndex<T>(
   dir: string,
@@ -460,7 +529,10 @@ export async function withScratchIndex<T>(
       ISOLATED
     ).then(
       () => true,
-      () => false
+      (e: unknown) => {
+        if (/not a git repository/.test((e as Error).message)) return false
+        throw e
+      }
     )
     if (!repository) {
       const gitDir = join(tmp, 'objects.git')
@@ -468,6 +540,12 @@ export async function withScratchIndex<T>(
       env = { ...env, GIT_DIR: gitDir, GIT_WORK_TREE: dir }
     }
     const run = (args: string[]) => git(args, dir, null, [], env)
+    const head =
+      repository &&
+      (await run(['rev-parse', '--verify', '--quiet', 'HEAD^{tree}']).then(
+        () => true,
+        () => false
+      ))
     const index: ScratchIndex = {
       dir,
       env,
@@ -475,12 +553,12 @@ export async function withScratchIndex<T>(
         if (paths.length > 0)
           await run(['add', '--', ...paths.map((p) => `:(literal)${p}`)])
       },
-      clear: async () => {
-        await run(['read-tree', '--empty'])
+      reset: async () => {
+        await run(['read-tree', head ? 'HEAD' : '--empty'])
       },
       writeTree: async () => (await run(['write-tree'])).trim(),
     }
-    await index.clear()
+    await index.reset()
     return await work(index)
   } finally {
     await rm(tmp, { recursive: true, force: true })

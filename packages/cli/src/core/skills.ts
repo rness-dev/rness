@@ -1,9 +1,10 @@
-import type { Dirent } from 'node:fs'
+import { type Dirent, constants as fsConstants } from 'node:fs'
 import {
   chmod,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   readlink,
@@ -404,21 +405,49 @@ export async function readSkillMd(
 ): Promise<Record<string, unknown>> {
   const bad = nameProblem(name)
   if (bad !== null) throw refusal(name, bad)
+  return checkSkillMd(name, await skillMdText(dir, name))
+}
+
+/**
+ * The text of `dir/SKILL.md`, read only when it is a regular file of at
+ * most 1 MB and never through a link (ruling R35): `lstat` first (a link,
+ * a FIFO or a device is never opened), then opened with `O_NOFOLLOW` and
+ * checked again on the open file. Throws the refusal of skill `name`.
+ */
+async function skillMdText(dir: string, name: string): Promise<string> {
   const file = join(dir, 'SKILL.md')
+  const shape = (st: {
+    isFile(): boolean
+    isSymbolicLink(): boolean
+    size: number
+  }) => {
+    if (!st.isFile())
+      throw refusal(
+        name,
+        `"SKILL.md" is ${st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file'}; only regular files and directories are allowed`
+      )
+    if (st.size > MAX_SKILL_BYTES)
+      throw refusal(
+        name,
+        `SKILL.md is ${st.size} bytes, above the limit of ${MAX_SKILL_BYTES} bytes (1 MB)`
+      )
+  }
   const st = await lstat(file).catch(() => null)
   if (st === null)
     throw refusal(name, 'no SKILL.md at the root of its directory')
-  if (!st.isFile())
-    throw refusal(
-      name,
-      `"SKILL.md" is ${st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file'}; only regular files and directories are allowed`
-    )
-  if (st.size > MAX_SKILL_BYTES)
-    throw refusal(
-      name,
-      `SKILL.md is ${st.size} bytes, above the limit of ${MAX_SKILL_BYTES} bytes (1 MB)`
-    )
-  return checkSkillMd(name, await readFile(file, 'utf8'))
+  shape(st)
+  const handle = await open(
+    file,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)
+  ).catch(() => {
+    throw refusal(name, '"SKILL.md" could not be opened as a regular file')
+  })
+  try {
+    shape(await handle.stat())
+    return await handle.readFile('utf8')
+  } finally {
+    await handle.close()
+  }
 }
 
 /** Code points HFS+ ignores in a name: there, `.g\u200cit` is `.git`. */
@@ -643,7 +672,7 @@ async function workingTrees(
       await index.add(skills.map((s) => pathIn(rnessDir, s.dir)))
     } catch {
       // One copy git refuses fails the whole `add`: each alone says which.
-      await index.clear()
+      await index.reset()
       for (const s of skills)
         await index
           .add([pathIn(rnessDir, s.dir)])
@@ -701,9 +730,10 @@ export function skillSourceUrl(source: string): string | null {
 /** The `name` field of `dir/SKILL.md`; the repository's own name when there is none to read. */
 async function declaredName(dir: string, url: string): Promise<string> {
   try {
-    const name = parseFrontMatter(
-      await readFile(join(dir, 'SKILL.md'), 'utf8')
-    )?.['name']
+    // Never through a link: a checkout may hold one to any file.
+    const name = parseFrontMatter(await skillMdText(dir, basename(dir)))?.[
+      'name'
+    ]
     if (typeof name === 'string' && name !== '') return name
   } catch {
     // Unreadable: the check of the copy says why.
@@ -951,7 +981,7 @@ async function filesOf(
   dir: string
 ): Promise<Map<string, string>> {
   try {
-    await index.clear()
+    await index.reset()
     await index.add([pathIn(rnessDir, dir)])
     const at = entriesOf(
       await listTree(index, await index.writeTree(), ['skills']),
@@ -1020,7 +1050,7 @@ export async function copySkill(
       swapped = true
       // The tree is taken at the copy's own place: git's ignore rules are
       // those of that path in `.rness`.
-      await index.clear()
+      await index.reset()
       await index
         .add([pathIn(rnessDir, target)])
         .catch((e: unknown) => Promise.reject(cannotAdd(name, e)))

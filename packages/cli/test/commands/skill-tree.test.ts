@@ -33,7 +33,11 @@ async function put(dir: string, files: Record<string, string>): Promise<void> {
   }
 }
 
-/** No global git configuration: a developer's excludes file must not decide what a tree holds. */
+/**
+ * No global git configuration: a test's skill is copied fresh, and the
+ * developer's own excludes file would leave its untracked files out of the
+ * tree (a committed file stays, R37).
+ */
 function noGlobalGit(t: TestContext): void {
   const was = process.env['GIT_CONFIG_GLOBAL']
   process.env['GIT_CONFIG_GLOBAL'] = '/dev/null'
@@ -277,10 +281,13 @@ test('a .rness that is no git repository yet: the tree is the one git will give 
   noGlobalGit(t)
   const plain = await makeWorkspace(t, { org: 'acme' })
   const repo = await rnessRepo(t)
+  // The skill's own .gitignore holds in both: the working tree's rules.
   for (const root of [plain, repo])
     await put(join(root, 'ops/deploy'), {
       'SKILL.md': SKILL_MD('deploy'),
       'run.sh': 'echo\n',
+      '.gitignore': '*.log\n',
+      'debug.log': 'local\n',
     })
   for (const root of [plain, repo])
     assert.equal(
@@ -288,8 +295,58 @@ test('a .rness that is no git repository yet: the tree is the one git will give 
       0
     )
   assert.equal(await treeOf(plain, 'deploy'), await treeOf(repo, 'deploy'))
+  await commitRness(repo, 'deploy')
+  assert.equal(
+    (
+      await git(
+        ['ls-tree', '--name-only', 'HEAD:skills/deploy'],
+        join(repo, '.rness')
+      )
+    ).trim(),
+    '.gitignore\nSKILL.md\nrun.sh'
+  )
   await symlink('SKILL.md', join(plain, '.rness/skills/deploy/alias.md'))
   const v = await cli(['validate', '--cwd', plain])
   assert.equal(v.code, 1)
   assert.match(v.err, /skill "deploy": "alias\.md" is a symbolic link/)
+})
+
+// ---- Rework fix round 1: the scratch index starts from HEAD (ruling R37) ----
+
+test('a tracked file of a skill that a local exclude matches keeps the committed tree (R37)', async (t) => {
+  const root = await rnessRepo(t)
+  await put(join(root, 'ops/deploy'), {
+    'SKILL.md': SKILL_MD('deploy'),
+    'notes.log': 'kept\n',
+  })
+  assert.equal(
+    (await cli(['skill', 'add', 'path:../ops/deploy', '--cwd', root])).code,
+    0
+  )
+  await commitRness(root, 'deploy')
+  const exclude = join(root, '.rness/.git/info/exclude')
+  await writeFile(exclude, `${await readFile(exclude, 'utf8')}*.log\n`)
+  const v = await cli(['validate', '--cwd', root])
+  assert.doesNotMatch(v.err, /skill "/)
+})
+
+test('a skill committed with CRLF line ends, validated in a clone with core.autocrlf=true: no difference (R37)', async (t) => {
+  const root = await rnessRepo(t)
+  await put(join(root, 'ops/deploy'), {
+    'SKILL.md': SKILL_MD('deploy'),
+    'notes.md': 'one\r\ntwo\r\n',
+  })
+  assert.equal(
+    (await cli(['skill', 'add', 'path:../ops/deploy', '--cwd', root])).code,
+    0
+  )
+  await commitRness(root, 'deploy')
+  const mate = join(root, 'mate')
+  await mkdir(mate)
+  await git(
+    ['clone', '-q', '-c', 'core.autocrlf=true', join(root, '.rness'), '.rness'],
+    mate
+  )
+  const v = await cli(['validate', '--cwd', mate])
+  assert.doesNotMatch(v.err, /skill "/)
 })
