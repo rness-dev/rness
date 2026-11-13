@@ -105,6 +105,16 @@ function policies(context: Context): string {
 }
 
 /**
+ * A description as the block writes it: an `@` at its start or after
+ * whitespace becomes `\@`. Claude Code loads the file of an `@path` it reads
+ * in `CLAUDE.md` and `AGENTS.md`, so a skill's description (third-party
+ * text) could otherwise load `.env` into every session (ruling R28);
+ * Markdown still renders `\@` as `@`.
+ */
+const inertAt = (description: string): string =>
+  description.replace(/(^|\s)@/g, '$1\\@')
+
+/**
  * The `## Team skills` section, or '' when none applies. The command is the
  * bare `rness`, like the intro's: the block is committed in every clone, so it
  * cannot depend on how one developer launched the CLI.
@@ -115,7 +125,7 @@ function teamSkills(skills: readonly BlockSkill[]): string {
     '',
     '',
     '## Team skills',
-    ...skills.map((s) => `- ${s.name}: ${s.description}`),
+    ...skills.map((s) => `- ${s.name}: ${inertAt(s.description)}`),
     "Installed with each developer's consent: `rness skill install`.",
   ].join('\n')
 }

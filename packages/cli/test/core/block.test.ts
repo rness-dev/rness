@@ -454,3 +454,28 @@ test('team skills: the root block carries the section too', () => {
   })
   assert.match(root.text, /\n## Team skills\n- deploy: Does deploy\.\n/)
 })
+
+test('team skills: an @ that would load a file is escaped, a description without @ is unchanged', () => {
+  const base = { scope: 'web', org: 'acme', depth: 2, context: twoStandards }
+  const line = (description: string): string =>
+    (
+      renderBlock({ ...base, skills: [{ name: 'deploy', description }] })
+        .text.split('\n')
+        .find((l) => l.startsWith('- deploy: ')) ?? ''
+    ).slice('- deploy: '.length)
+  // Claude Code loads `@path` at the start or after whitespace (ruling R28).
+  assert.equal(line('@.env first'), '\\@.env first')
+  assert.equal(
+    line('Reads @.env for the target'),
+    'Reads \\@.env for the target'
+  )
+  assert.equal(line('x @y and\u00a0@z'), 'x \\@y and\u00a0\\@z')
+  // Not a reference: mid-word, already escaped, or no @ at all.
+  assert.equal(line('mail me@example.com'), 'mail me@example.com')
+  assert.equal(line('Deploys the app.'), 'Deploys the app.')
+  const plain = renderBlock({
+    ...base,
+    skills: [{ name: 'deploy', description: 'Deploys the app.' }],
+  })
+  assert.match(plain.text, /\n- deploy: Deploys the app\.\n/)
+})
