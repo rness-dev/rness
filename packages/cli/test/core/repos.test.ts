@@ -637,3 +637,51 @@ test('workspaceDirs lists the package directories declared in package.json#works
   assert.deepEqual(await workspaceDirs(mono), ['apps/web', 'packages/ui'])
   assert.deepEqual(await workspaceDirs(join(root, 'org')), [])
 })
+
+test('re-adding a repository and a part keeps their declared skills', async (t) => {
+  const url = await makeBareRepo(t, 'app')
+  const { root, rnessDir, manifest } = await ws(t)
+  await addRepository({
+    root,
+    rnessDir,
+    manifest,
+    spec: url,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: [],
+  })
+  const hash = `sha256-${'A'.repeat(43)}=`
+  const skill = (name: string) => ({
+    [name]: { source: 'github:o/r', hash },
+  })
+  await writeFile(
+    join(rnessDir, 'rness.json'),
+    JSON.stringify({
+      contract: 2,
+      org: 'acme',
+      scopes: {
+        app: {
+          url,
+          skills: skill('deploy'),
+          scopes: { web: { path: 'web', skills: skill('tokens') } },
+        },
+      },
+    })
+  )
+  const declared = await loadManifest(rnessDir)
+  await mkdir(join(root, 'org', 'app', 'web'), { recursive: true })
+  const readded = await addRepository({
+    root,
+    rnessDir,
+    manifest: declared,
+    spec: url,
+    org: 'acme',
+    host: 'file:///unused/',
+    scopes: ['web'],
+  })
+  assert.deepEqual(readded.manifest.scopes['app']?.skills, skill('deploy'))
+  assert.deepEqual(readded.manifest.scopes['web']?.skills, skill('tokens'))
+  const written = await loadManifest(rnessDir)
+  assert.deepEqual(written.scopes['app']?.skills, skill('deploy'))
+  assert.deepEqual(written.scopes['web']?.skills, skill('tokens'))
+})

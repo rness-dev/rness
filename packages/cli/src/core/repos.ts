@@ -85,6 +85,7 @@ export async function addRepository(
       url,
       parent: null,
       extends: current?.extends ?? [],
+      ...(current?.skills === undefined ? {} : { skills: current.skills }),
     },
   }
   const subs: { clean: string; base: string }[] = []
@@ -116,6 +117,7 @@ export async function addRepository(
       url: null,
       parent: existing?.parent ?? name,
       extends: existing?.extends ?? [name],
+      ...(existing?.skills === undefined ? {} : { skills: existing.skills }),
     }
     subs.push({ clean, base })
   }
