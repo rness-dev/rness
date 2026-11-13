@@ -35,6 +35,7 @@ import {
   diffSkillFiles,
   fetchSkill,
   plainText,
+  quoted,
   skillConflictsByName,
   skillFileDigests,
   skillSourceUrl,
@@ -96,7 +97,7 @@ function checkScope(manifest: Manifest, scope: string | undefined): void {
   if (scope === undefined || Object.hasOwn(manifest.scopes, scope)) return
   const known = Object.keys(manifest.scopes)
   throw new Refusal(
-    `unknown scope "${scope}"${known.length === 0 ? ': this workspace declares none' : `; known scopes: ${known.join(', ')}`}`
+    `unknown scope ${quoted(scope)}${known.length === 0 ? ': this workspace declares none' : `; known scopes: ${plainText(known.join(', '))}`}`
   )
 }
 
@@ -113,7 +114,9 @@ function keyPath(
     at = manifest.scopes[at]?.parent ?? null
   )
     chain.unshift(at)
-  return [...chain.map((s) => `scopes.${s}`), `skills.${name}`].join('.')
+  return plainText(
+    [...chain.map((s) => `scopes.${s}`), `skills.${name}`].join('.')
+  )
 }
 
 /** `.rness/skills/...` of a skill's directory, as a path with a trailing slash. */
@@ -242,7 +245,7 @@ export async function skillAddCommand(
         const name = opts.name ?? fetched.name
         if (Object.hasOwn(levelSkills(manifest, scope), name))
           throw new Refusal(
-            `skill "${name}" is already declared at ${keyPath(manifest, scope, name)}: run rness skill update ${name}`
+            `skill ${quoted(name)} is already declared at ${keyPath(manifest, scope, name)}: run rness skill update ${plainText(name)}`
           )
         const current = await teamSkills(ws.rnessDir, manifest)
         const dir = join(
@@ -258,7 +261,7 @@ export async function skillAddCommand(
           )
         )
           throw new Refusal(
-            `skill "${name}": ${copyPath(ws, { dir })} already exists, a skill written by the team; remove it or pick another name with --name`
+            `skill ${quoted(name)}: ${plainText(copyPath(ws, { dir }))} already exists, a skill written by the team; remove it or pick another name with --name`
           )
         const prospective: TeamSkill = {
           name,
@@ -295,11 +298,11 @@ export async function skillAddCommand(
         }
         ui.line(
           'added',
-          `skill ${copied.name} (${versionOf(source, opts.ref, fetched.commit)}, ${plural(files, 'file')}, ${kilobytes(copied.bytes)})`
+          `skill ${plainText(copied.name)} (${plainText(versionOf(source, opts.ref, fetched.commit))}, ${plural(files, 'file')}, ${kilobytes(copied.bytes)})`
         )
         ui.line(
           'wrote',
-          `${copyPath(ws, copied)}   review it in the pull request`
+          `${plainText(copyPath(ws, copied))}   review it in the pull request`
         )
         ui.line(
           'declared',
@@ -344,11 +347,11 @@ function resolveDeclared(
   if (places.length === 1) return places[0] as Place
   if (places.length > 1)
     throw new Refusal(
-      `skill "${name}" is declared in more than one place (${places.map((p) => keyPath(manifest, p.scope, name)).join(', ')}): pass --scope`
+      `skill ${quoted(name)} is declared in more than one place (${places.map((p) => keyPath(manifest, p.scope, name)).join(', ')}): pass --scope`
     )
   if (all.length > 0)
     throw new Refusal(
-      `skill "${name}" is not declared in scope "${scope ?? ''}" (declared at ${all.map((p) => keyPath(manifest, p.scope, name)).join(', ')})`
+      `skill ${quoted(name)} is not declared in scope ${quoted(scope ?? '')} (declared at ${all.map((p) => keyPath(manifest, p.scope, name)).join(', ')})`
     )
   const own = skills.find(
     (s) =>
@@ -357,7 +360,7 @@ function resolveDeclared(
       (scope === undefined || s.scope === scope)
   )
   if (own !== undefined) throw new Refusal(written(own))
-  throw new Refusal(`no skill "${name}" is declared in this organization`)
+  throw new Refusal(`no skill ${quoted(name)} is declared in this organization`)
 }
 
 /**
@@ -398,7 +401,8 @@ export async function skillUpdateCommand(
                 skills,
                 name,
                 opts.scope,
-                () => `skill "${name}": written by the team: nothing to update`
+                () =>
+                  `skill ${quoted(name)}: written by the team: nothing to update`
               ),
             }))
       if (targets.length === 0) {
@@ -420,7 +424,7 @@ export async function skillUpdateCommand(
               ))
             ) {
               ui.error(
-                `skill "${name}": ${entry.source} is not on this machine; only the machine that has it can update it (declared at .rness/rness.json ${key})`
+                `skill ${quoted(name)}: ${plainText(entry.source)} is not on this machine; only the machine that has it can update it (declared at .rness/rness.json ${key})`
               )
               failed = true
               continue
@@ -467,11 +471,14 @@ export async function skillUpdateCommand(
               diff.added.length + diff.changed.length + diff.removed.length ===
               0
             )
-              ui.line('unchanged', `skill ${name} (${version})`)
+              ui.line(
+                'unchanged',
+                `skill ${plainText(name)} (${plainText(version)})`
+              )
             else
               ui.line(
                 'updated',
-                `skill ${name} (${version}: ${diff.added.length} added, ${diff.changed.length} changed, ${diff.removed.length} removed)`
+                `skill ${plainText(name)} (${plainText(version)}: ${diff.added.length} added, ${diff.changed.length} changed, ${diff.removed.length} removed)`
               )
           } finally {
             await fetched.release()
@@ -504,14 +511,14 @@ export async function skillRemoveCommand(
       name,
       opts.scope,
       (s) =>
-        `skill "${name}" is written by the team: its directory ${copyPath(ws, s)} is the team's, delete it in a pull request`
+        `skill ${quoted(name)} is written by the team: its directory ${plainText(copyPath(ws, s))} is the team's, delete it in a pull request`
     )
     const copy = skills.find((s) => s.name === name && s.scope === scope)
     const key = keyPath(manifest, scope, name)
     await writeManifest(ws.rnessDir, withoutEntry(manifest, scope, name))
     if (copy !== undefined) await rm(copy.dir, { recursive: true, force: true })
-    ui.line('removed', `skill ${name}`)
-    if (copy !== undefined) ui.line('deleted', copyPath(ws, copy))
+    ui.line('removed', `skill ${plainText(name)}`)
+    if (copy !== undefined) ui.line('deleted', plainText(copyPath(ws, copy)))
     ui.line('undeclared', `.rness/rness.json  ${key}`)
     return 0
   })
@@ -593,7 +600,7 @@ export async function skillInstallCommand(
       )
       if (unknown.length > 0)
         throw new Refusal(
-          `unknown skill ${unknown.map((n) => `"${n}"`).join(', ')}; known skills: ${[...new Set(applied.map((a) => a.skill.name))].join(', ') || 'none'}`
+          `unknown skill ${unknown.map(quoted).join(', ')}; known skills: ${plainText([...new Set(applied.map((a) => a.skill.name))].join(', ')) || 'none'}`
         )
       const named = applied.filter((a) => names.includes(a.skill.name))
       const done = named.filter((a) => a.state === 'installed')

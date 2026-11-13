@@ -162,9 +162,9 @@ export function skillConflictsByName(
 ): { name: string; line: string }[] {
   const found = new Map<string, { name: string; line: string }>()
   const place = (s: TeamSkill): string =>
-    s.scope === null ? 'at the top' : `in scope "${s.scope}"`
+    s.scope === null ? 'at the top' : `in scope ${quoted(s.scope)}`
   const written = (s: TeamSkill): string =>
-    `written by the team at ${relative(rnessDir, s.dir)}`
+    `written by the team at ${plainText(relative(rnessDir, s.dir))}`
   for (const [repo, scope] of Object.entries(manifest.scopes)) {
     if (scope.parent !== null) continue
     const seen = new Map<string, TeamSkill>()
@@ -184,7 +184,7 @@ export function skillConflictsByName(
           : a.entry === null
             ? `declared ${place(b)}`
             : place(b)
-      const line = `skill "${s.name}" is ${first} and ${second}`
+      const line = `skill ${quoted(s.name)} is ${first} and ${second}`
       found.set(line, { name: s.name, line })
     }
   }
@@ -207,7 +207,7 @@ interface SkillFile {
 }
 
 const refusal = (name: string, reason: string): Error =>
-  new Error(`skill "${name}": ${reason}`)
+  new Error(`skill ${quoted(name)}: ${reason}`)
 
 /** Why `name` cannot name a team skill; null when it can. */
 function nameProblem(name: string): string | null {
@@ -243,7 +243,7 @@ async function walk(dir: string, name: string): Promise<SkillFile[]> {
       } else
         throw refusal(
           name,
-          `"${path}" is ${d.isSymbolicLink() ? 'a symbolic link' : 'neither a regular file nor a directory'}; only regular files and directories are allowed`
+          `${quoted(path)} is ${d.isSymbolicLink() ? 'a symbolic link' : 'neither a regular file nor a directory'}; only regular files and directories are allowed`
         )
     }
   }
@@ -268,6 +268,17 @@ const hasControlInText = (text: string): boolean =>
  */
 export const plainText = (text: string): string =>
   text.replace(/[\t\r\n]/g, ' ').replace(new RegExp(CONTROL.source, 'g'), '?')
+
+/**
+ * `text` as a quoted string that cannot act on a terminal: JSON quoting plus
+ * an escape for DEL and C1 controls, which JSON leaves as they are. For a
+ * value taken from a skill, a fetched tree or the manifest in a message.
+ */
+export const quoted = (text: string): string =>
+  JSON.stringify(text).replace(
+    new RegExp(CONTROL.source, 'g'),
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`
+  )
 
 /** The `allowed-tools` field as text: a string as is, a list of strings joined, anything else as JSON; null when absent. */
 export function allowedToolsText(value: unknown): string | null {
@@ -295,7 +306,7 @@ export async function checkSkillDir(
     if (CONTROL.test(f.path))
       throw refusal(
         name,
-        `file name ${JSON.stringify(f.path)} holds a control character`
+        `file name ${quoted(f.path)} holds a control character`
       )
   const bytes = files.reduce((n, f) => n + f.size, 0)
   if (bytes > MAX_SKILL_BYTES)
@@ -309,7 +320,7 @@ export async function checkSkillDir(
   try {
     fields = parseFrontMatter(await readFile(join(dir, 'SKILL.md'), 'utf8'))
   } catch (e) {
-    throw refusal(name, `SKILL.md: ${(e as Error).message}`)
+    throw refusal(name, `SKILL.md: ${plainText((e as Error).message)}`)
   }
   if (fields === null) throw refusal(name, 'SKILL.md has no front matter')
   if (typeof fields['name'] !== 'string' || fields['name'] === '')
@@ -317,7 +328,7 @@ export async function checkSkillDir(
   if (fields['name'] !== name)
     throw refusal(
       name,
-      `SKILL.md name "${fields['name']}" is not the directory's name "${name}"`
+      `SKILL.md name ${quoted(fields['name'])} is not the directory's name ${quoted(name)}`
     )
   const description = fields['description']
   if (typeof description !== 'string' || description.trim() === '')
@@ -385,7 +396,7 @@ export function skillSourceUrl(source: string): string | null {
   const repo = source.startsWith('github:') ? source.slice(7) : null
   if (repo === null || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo))
     throw new Error(
-      `a source is github:<owner>/<repo>, git:<url> or path:<dir>, not "${source}"`
+      `a source is github:<owner>/<repo>, git:<url> or path:<dir>, not ${quoted(source)}`
     )
   return `https://github.com/${repo}.git`
 }
@@ -439,26 +450,38 @@ export async function fetchSkill(
         () => false
       ))
     )
-      throw new Error(`no directory "${dir}" for source ${source}`)
+      throw new Error(
+        `no directory ${quoted(dir)} for source ${quoted(source)}`
+      )
     return { dir, name: basename(dir), commit: null, release: async () => {} }
   }
   const sub = opts.path === undefined ? '' : posix.normalize(opts.path)
   if (isAbsolute(sub) || sub === '..' || sub.startsWith('../'))
-    throw new Error(`path "${opts.path}" leaves the repository`)
+    throw new Error(`path ${quoted(opts.path ?? '')} leaves the repository`)
   const tmp = await mkdtemp(join(tmpdir(), 'rness-skill-'))
   const release = (): Promise<void> => rm(tmp, { recursive: true, force: true })
   try {
-    const commit = await fetchRef(url, opts.ref ?? null, tmp, opts.credentials)
+    // git's own message quotes the URL it was given.
+    const commit = await fetchRef(
+      url,
+      opts.ref ?? null,
+      tmp,
+      opts.credentials
+    ).catch((e: unknown) => {
+      throw new Error(plainText(e instanceof Error ? e.message : String(e)))
+    })
     const dir = sub === '' || sub === '.' ? tmp : join(tmp, sub)
     // A link inside the checkout must not lead out of it.
     const real = await realpath(dir).catch(() => null)
     if (real === null || !(await stat(real)).isDirectory())
-      throw new Error(`no directory "${opts.path}" in ${source}`)
+      throw new Error(
+        `no directory ${quoted(opts.path ?? '')} in ${quoted(source)}`
+      )
     if (
       real !== (await realpath(tmp)) &&
       !real.startsWith((await realpath(tmp)) + sep)
     )
-      throw new Error(`path "${opts.path}" leaves the repository`)
+      throw new Error(`path ${quoted(opts.path ?? '')} leaves the repository`)
     // At the root of a repository the name is the `name` of its SKILL.md
     // (the repository's own name says nothing of the skill); elsewhere the
     // directory's, which §4 requires SKILL.md to repeat.
@@ -499,7 +522,7 @@ function renamed(md: Buffer, from: string, name: string): Buffer {
 }
 
 const linkRefusal = (rnessDir: string, path: string): string =>
-  `${relative(rnessDir, path)} is a symbolic link; only regular files and directories are allowed`
+  `${plainText(relative(rnessDir, path))} is a symbolic link; only regular files and directories are allowed`
 
 /**
  * The first of `skills/`, `skills/scopes/` and `skills/scopes/<scope>/`
@@ -615,20 +638,20 @@ export async function checkSkillCopies(
   }
   for (const s of await teamSkills(rnessDir, manifest)) {
     if (linked.has(dirname(s.dir))) continue
-    const place = relative(rnessDir, s.dir)
+    const place = plainText(relative(rnessDir, s.dir))
     const st = await lstat(s.dir).catch((e: NodeJS.ErrnoException) => {
       if (e.code === 'ENOENT') return null
       throw e
     })
     if (st === null) {
       problems.push(
-        `skill "${s.name}" is declared but its copy ${place} is missing: run rness skill update ${s.name}`
+        `skill ${quoted(s.name)} is declared but its copy ${place} is missing: run rness skill update ${plainText(s.name)}`
       )
       continue
     }
     if (!st.isDirectory()) {
       problems.push(
-        `skill "${s.name}": ${place} is ${st.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}; only regular files and directories are allowed`
+        `skill ${quoted(s.name)}: ${place} is ${st.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}; only regular files and directories are allowed`
       )
       continue
     }
@@ -640,7 +663,7 @@ export async function checkSkillCopies(
     }
     if (s.entry !== null && (await hashSkillDir(s.dir)) !== s.entry.hash)
       reported.push(
-        `skill "${s.name}" differs from its source: run rness skill update, or remove its source to make it the team's own`
+        `skill ${quoted(s.name)} differs from its source: run rness skill update, or remove its source to make it the team's own`
       )
   }
   return { problems, reported }

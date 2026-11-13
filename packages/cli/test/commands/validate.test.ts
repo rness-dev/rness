@@ -708,3 +708,23 @@ test('validate: a copy that differs from its hash is reported, never refused', a
   )
   assert.equal(c.out().trim(), 'context ok')
 })
+
+test('validate: a copy with control characters in a name or file name prints none raw', async (t) => {
+  const root = await makeWorkspace(t, {
+    files: {
+      'skills/x/SKILL.md': '---\nname: "a\\u001b[2Kb"\ndescription: d\n---\n',
+      'skills/y/SKILL.md': '---\nname: y\ndescription: d\n---\n',
+      'skills/y/f\u001b[2K.md': 'x',
+      'skills/z\u001b[2K/SKILL.md': '---\nname: z\ndescription: d\n---\n',
+    },
+  })
+  const c = capture()
+  const code = await run(['validate', '--cwd', root])
+  c.restore()
+  assert.equal(code, 1)
+  assert.doesNotMatch(c.out() + c.err(), RAW_CONTROL)
+  assert.match(c.err(), /\\u001b/)
+})
+
+// eslint-disable-next-line no-control-regex
+const RAW_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/

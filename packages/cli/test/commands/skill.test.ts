@@ -1123,3 +1123,19 @@ test('install: after an unreadable record, only the skills just answered are wri
     ]
   )
 })
+
+test('add: a git source holding a control character prints no raw control character', async (t) => {
+  const root = await ws(t)
+  const r = await say(() =>
+    skillAddCommand(
+      'git:/nonexistent\u001b[2K\u0085repo',
+      { cwd: root },
+      deps()
+    )
+  )
+  assert.equal(r.code, 1)
+  assert.doesNotMatch(r.out + r.err, RAW_CONTROL)
+})
+
+// eslint-disable-next-line no-control-regex
+const RAW_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/

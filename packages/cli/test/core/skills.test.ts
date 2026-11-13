@@ -27,6 +27,7 @@ import {
   fetchSkill,
   hashSkillDir,
   plainText,
+  quoted,
   skillConflicts,
   skillFileDigests,
   skillSourceUrl,
@@ -792,4 +793,78 @@ test('plainText replaces control characters; allowedToolsText shows absent as nu
   assert.equal(allowedToolsText({ a: 1 }), '{"a":1}')
   assert.equal(allowedToolsText([]), '')
   assert.equal(allowedToolsText(3), '3')
+})
+
+// Ruling R21: a value from a skill, a fetched tree or the manifest is escaped
+// where a message is made.
+// eslint-disable-next-line no-control-regex
+const RAW_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/
+
+test('quoted escapes quotes, C0, DEL and C1 characters', () => {
+  assert.equal(quoted('a"b'), '"a\\"b"')
+  assert.equal(quoted('\u001b[2K\u007f\u0085'), '"\\u001b[2K\\u007f\\u0085"')
+  assert.equal(quoted('plain'), '"plain"')
+})
+
+test('a fetched tree holding a file named with ESC is refused without a raw ESC', async (t) => {
+  const src = await skillDir(t, 'demo', { 'bad\u001b[2Kname.md': 'x' })
+  const rnessDir = await tmp(t)
+  const fetched = await fetchSkill(rnessDir, `path:${src}`, {
+    credentials: null,
+  })
+  await assert.rejects(
+    copySkill(rnessDir, fetched, { scope: null }),
+    (e: Error) => {
+      assert.doesNotMatch(e.message, RAW_CONTROL)
+      assert.match(e.message, /bad\\u001b\[2Kname\.md/)
+      return true
+    }
+  )
+})
+
+test('a SKILL.md name holding ESC, not the directory name, is refused without a raw ESC', async (t) => {
+  const dir = await skillDir(t, 'demo')
+  await writeFile(
+    join(dir, 'SKILL.md'),
+    '---\nname: "x\\u001b[2Ky\\u0085"\ndescription: d\n---\nB\n'
+  )
+  await assert.rejects(checkSkillDir(dir, 'demo'), (e: Error) => {
+    assert.doesNotMatch(e.message, RAW_CONTROL)
+    assert.match(e.message, /SKILL\.md name "x\\u001b\[2Ky\\u0085" is not/)
+    return true
+  })
+})
+
+test('a source and a path with control characters are escaped in the refusals', async (t) => {
+  const rnessDir = await tmp(t)
+  await assert.rejects(
+    fetchSkill(rnessDir, 'path:nope\u001b[2K', { credentials: null }),
+    (e: Error) => !RAW_CONTROL.test(e.message)
+  )
+  assert.throws(
+    () => skillSourceUrl('bad\u001b[2K'),
+    (e: Error) => !RAW_CONTROL.test(e.message)
+  )
+  await assert.rejects(
+    fetchSkill(rnessDir, 'git:/nonexistent\u001b[2Krepo', {
+      credentials: null,
+    }),
+    (e: Error) => !RAW_CONTROL.test(e.message)
+  )
+})
+
+test('checkSkillCopies: a copy named with ESC is reported without a raw ESC', async (t) => {
+  const rnessDir = await tmp(t)
+  await put(rnessDir, {
+    'skills/a\u001b[2Kb/SKILL.md': SKILL_MD('ab'),
+    'skills/ok/bad\u001b[2K.md': 'x',
+    'skills/ok/SKILL.md': SKILL_MD('ok'),
+  })
+  const { problems, reported } = await checkSkillCopies(rnessDir, {
+    version: 2,
+    scopes: {},
+  } as unknown as Parameters<typeof checkSkillCopies>[1])
+  assert.equal(problems.length, 2)
+  for (const line of [...problems, ...reported])
+    assert.doesNotMatch(line, RAW_CONTROL)
 })

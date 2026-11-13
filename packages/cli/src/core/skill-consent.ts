@@ -8,6 +8,8 @@ import {
   type TeamSkill,
   checkSkillDir,
   hashSkillDir,
+  plainText,
+  quoted,
   skillsForClone,
   teamSkills,
 } from './skills.ts'
@@ -169,7 +171,7 @@ export async function appliedSkills(
     const id = skillId(skill)
     try {
       if (!(await exists(skill.dir)))
-        throw new Error(`skill "${skill.name}": its copy is missing`)
+        throw new Error(`skill ${quoted(skill.name)}: its copy is missing`)
       await checkSkillDir(skill.dir, skill.name)
       const hash = await hashSkillDir(skill.dir)
       applied.push({ id, skill, hash, state: stateOf(consent, id, hash) })
@@ -179,7 +181,7 @@ export async function appliedSkills(
         skill,
         hash: null,
         state: 'invalid',
-        problem: e instanceof Error ? e.message : String(e),
+        problem: plainText(e instanceof Error ? e.message : String(e)),
       })
     }
   }
