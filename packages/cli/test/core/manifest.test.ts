@@ -1647,3 +1647,42 @@ test('loadManifest: a top-level skill named scopes is refused, one in a scope is
     await rm(dirname(good), { recursive: true, force: true })
   }
 })
+
+test('skills: control characters in a key, source, path or ref are refused, shown escaped', async () => {
+  const ok = { source: 'github:o/r', hash: HASH }
+  const cases: [Record<string, unknown>, RegExp][] = [
+    [{ 'a\u009bb': ok }, /skill "a\\u009bb": the name may only contain/],
+    [
+      { x: { ...ok, ['extra\u007f']: 1 } },
+      /skill "x": unknown key "extra\\u007f"/,
+    ],
+    [
+      { x: { ...ok, source: 'git:file:///x\u001by' } },
+      /skill "x": "source" "git:file:\/\/\/x\\u001by" holds a control character/,
+    ],
+    [
+      { x: { ...ok, ref: 'v1\u009b' } },
+      /skill "x": "ref" "v1\\u009b" holds a control character/,
+    ],
+    [
+      { x: { ...ok, path: 'a\u001b/b' } },
+      /skill "x": "path" "a\\u001b\/b" holds a control character/,
+    ],
+  ]
+  for (const [skills, message] of cases) {
+    const d = await fixture({ contract: 2, skills, scopes: {} })
+    try {
+      await assert.rejects(
+        () => loadManifest(d),
+        (e: Error) => {
+          assert.match(e.message, message)
+          // eslint-disable-next-line no-control-regex
+          assert.doesNotMatch(e.message, /[\u0000-\u001f\u007f-\u009f]/)
+          return true
+        }
+      )
+    } finally {
+      await rm(dirname(d), { recursive: true, force: true })
+    }
+  }
+})

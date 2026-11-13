@@ -28,7 +28,10 @@ import { parseFrontMatter } from './frontmatter.ts'
 import { fetchRef } from './git.ts'
 import type { GitCredentials } from './provider.ts'
 import { scopeChain } from './scope.ts'
+import { CONTROL, plainText, quoted } from './text.ts'
 import type { Manifest, SkillEntry } from './types.ts'
+
+export { plainText, quoted }
 
 /**
  * A team skill (spec 0041): declared in `rness.json`, or written by the
@@ -253,32 +256,10 @@ async function walk(dir: string, name: string): Promise<SkillFile[]> {
   )
 }
 
-// The pattern is the point: it names the control characters it refuses.
-// eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/
 /** Free text (a description) may span lines and hold tabs; a `\r` only before a `\n`. */
 const hasControlInText = (text: string): boolean =>
   // eslint-disable-next-line no-control-regex
   /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(text.replace(/\r\n/g, '\n'))
-
-/**
- * `text` safe to print on a terminal: a tab, a carriage return or a line feed
- * becomes a space and every other control character (C0, DEL, C1) a `?`, so a value taken from a skill cannot move the cursor, clear a
- * line or recolour the consent question.
- */
-export const plainText = (text: string): string =>
-  text.replace(/[\t\r\n]/g, ' ').replace(new RegExp(CONTROL.source, 'g'), '?')
-
-/**
- * `text` as a quoted string that cannot act on a terminal: JSON quoting plus
- * an escape for DEL and C1 controls, which JSON leaves as they are. For a
- * value taken from a skill, a fetched tree or the manifest in a message.
- */
-export const quoted = (text: string): string =>
-  JSON.stringify(text).replace(
-    new RegExp(CONTROL.source, 'g'),
-    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`
-  )
 
 /** The `allowed-tools` field as text: a string as is, a list of strings joined, anything else as JSON; null when absent. */
 export function allowedToolsText(value: unknown): string | null {
@@ -468,7 +449,9 @@ export async function fetchSkill(
       tmp,
       opts.credentials
     ).catch((e: unknown) => {
-      throw new Error(plainText(e instanceof Error ? e.message : String(e)))
+      throw new Error(plainText(e instanceof Error ? e.message : String(e)), {
+        cause: e,
+      })
     })
     const dir = sub === '' || sub === '.' ? tmp : join(tmp, sub)
     // A link inside the checkout must not lead out of it.

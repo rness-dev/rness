@@ -10,6 +10,7 @@ import {
 import { writeFileAtomic } from './fs.ts'
 import { currentSshUrl, repoUrl } from './remote.ts'
 import { scopeChain } from './scope.ts'
+import { hasControl, quoted } from './text.ts'
 import type {
   BoardEntry,
   Boards,
@@ -470,7 +471,7 @@ function readSkills(value: unknown, where: string): Record<string, SkillEntry> {
   if (!isRecord(raw)) fail(`${where}"skills" must be an object`)
   const skills: Record<string, SkillEntry> = {}
   for (const [name, entry] of Object.entries(raw)) {
-    const at = `${where}skill ${JSON.stringify(name)}`
+    const at = `${where}skill ${quoted(name)}`
     if (!SKILL_NAME.test(name) || name.length > 64)
       fail(
         `${at}: the name may only contain lowercase letters, digits and hyphens, at most 64 characters`
@@ -481,9 +482,15 @@ function readSkills(value: unknown, where: string): Record<string, SkillEntry> {
       fail(`${at}: "scopes" is the directory of the scoped skills`)
     if (!isRecord(entry)) fail(`${at} must be an object`)
     for (const key of Object.keys(entry))
-      if (!SKILL_KEYS.includes(key))
-        fail(`${at}: unknown key ${JSON.stringify(key)}`)
+      if (!SKILL_KEYS.includes(key)) fail(`${at}: unknown key ${quoted(key)}`)
     const { source, path, ref, commit, hash } = entry
+    for (const [key, v] of [
+      ['source', source],
+      ['path', path],
+      ['ref', ref],
+    ] as const)
+      if (typeof v === 'string' && hasControl(v))
+        fail(`${at}: "${key}" ${quoted(v)} holds a control character`)
     if (
       typeof source !== 'string' ||
       !/^(?:github:[^/\s]+\/[^/\s]+|git:\S+|path:\S.*)$/.test(source)
@@ -557,7 +564,7 @@ function readScopes(value: unknown): Record<string, ScopeEntry> {
       for (const key of Object.keys(entry))
         if (!SCOPE_KEYS.includes(key))
           fail(`scope "${name}": unknown key ${JSON.stringify(key)}`)
-      const skills = readSkills(entry.skills, `scope "${name}": `)
+      const skills = readSkills(entry.skills, `scope ${quoted(name)}: `)
       const above = ancestors(parent)
       let path: string
       let url: string | null = null

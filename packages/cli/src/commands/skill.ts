@@ -42,6 +42,7 @@ import {
   teamSkills,
 } from '../core/skills.ts'
 import { defaultTerminal } from '../core/terminal.ts'
+import { hasControl } from '../core/text.ts'
 import type { Manifest, SkillEntry, Workspace } from '../core/types.ts'
 import { type Ui, makeUi } from '../core/ui.ts'
 import { findWorkspace } from '../core/workspace.ts'
@@ -90,6 +91,13 @@ async function openContext(
         (await openGitProvider(manifest)) ?? undefined)?.credentialsFor(url) ??
       null,
   }
+}
+
+/** Refused before anything is fetched or written: a control character in what git would be given and `rness.json` would hold. */
+function checkPlain(options: [string, string | undefined][]): void {
+  for (const [label, value] of options)
+    if (value !== undefined && hasControl(value))
+      throw new Refusal(`${label} ${quoted(value)} holds a control character`)
 }
 
 /** The scope `--scope` names: a key of `manifest.scopes`, else refused naming the known ones. */
@@ -229,6 +237,11 @@ export async function skillAddCommand(
     opts,
     deps,
     async ({ ws, manifest, ui, credentialsFor }) => {
+      checkPlain([
+        ['source', source],
+        ['--path', opts.path],
+        ['--ref', opts.ref],
+      ])
       const url = skillSourceUrl(source)
       if (url === null && (opts.path !== undefined || opts.ref !== undefined))
         throw new Refusal(
@@ -377,6 +390,7 @@ export async function skillUpdateCommand(
     opts,
     deps,
     async ({ ws, manifest: first, ui, credentialsFor }) => {
+      checkPlain([['--ref', opts.ref]])
       checkScope(first, opts.scope)
       if (opts.ref !== undefined && names.length !== 1)
         throw new Refusal('--ref needs exactly one skill name')

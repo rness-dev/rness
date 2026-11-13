@@ -1139,3 +1139,26 @@ test('add: a git source holding a control character prints no raw control charac
 
 // eslint-disable-next-line no-control-regex
 const RAW_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/
+
+test('add and update: a control character in the source, --path or --ref is refused before any fetch', async (t) => {
+  const root = await ws(t)
+  for (const [source, extra] of [
+    ['git:file:///x\u001by', {}],
+    ['github:o/r', { path: 'a\u009bb' }],
+    ['github:o/r', { ref: 'v1\u001b[2K' }],
+  ] as const) {
+    const r = await say(() =>
+      skillAddCommand(source, { cwd: root, ...extra }, deps())
+    )
+    assert.equal(r.code, 1)
+    assert.match(r.err, /holds a control character/)
+    assert.match(r.err, /\\u001b|\\u009b/)
+    assert.doesNotMatch(r.out + r.err, RAW_CONTROL)
+  }
+  const r = await say(() =>
+    skillUpdateCommand(['demo'], { cwd: root, ref: 'v\u009b' }, deps())
+  )
+  assert.equal(r.code, 1)
+  assert.match(r.err, /--ref "v\\u009b" holds a control character/)
+  assert.equal((await manifestOf(root)).skills, undefined)
+})
