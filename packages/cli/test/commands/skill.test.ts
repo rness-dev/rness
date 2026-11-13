@@ -440,6 +440,25 @@ test('update: a path: source absent here says so and exits 1, the others are upd
   assert.match(r.out, /unchanged +skill demo/)
 })
 
+test('update refuses --ref on a path: source, as add does, and writes nothing', async (t) => {
+  const src = await tmp(t)
+  await put(src, { 'mine/SKILL.md': SKILL_MD('mine') })
+  const root = await ws(t)
+  await say(() =>
+    skillAddCommand(`path:${join(src, 'mine')}`, { cwd: root }, deps())
+  )
+  const before = await readFile(join(root, '.rness/rness.json'), 'utf8')
+  const r = await say(() =>
+    skillUpdateCommand(['mine'], { cwd: root, ref: 'v1' }, deps())
+  )
+  assert.equal(r.code, 1)
+  assert.match(
+    r.err,
+    /a path: source is the skill's directory itself; --ref applies to a repository source/
+  )
+  assert.equal(await readFile(join(root, '.rness/rness.json'), 'utf8'), before)
+})
+
 test('update refuses: --ref with two names or none, a team-written skill, an unknown scope', async (t) => {
   const { root } = await withDemo(t, {
     files: { 'skills/release/SKILL.md': SKILL_MD('release') },
@@ -773,10 +792,10 @@ test('install --yes: accepts without asking, even without a terminal', async (t)
   assert.equal((await recordOf(root)).skills['brainstorming']?.date, TODAY)
 })
 
-test('install: no terminal and no --yes lists, records nothing, exits 1', async (t) => {
+test('install: no terminal and no --yes lists, records nothing, exits 2 (a refusal without a TTY)', async (t) => {
   const root = await consentWs(t, twoSkills)
   const r = await install(root, [], consentTerminal([], false))
-  assert.equal(r.code, 1)
+  assert.equal(r.code, 2)
   assert.match(r.out, /^skills +2 team skills for acme:$/m)
   assert.match(
     r.err,
@@ -892,6 +911,49 @@ test('install: an unreadable record reads as empty and is said once', async (t) 
   assert.equal(r.code, 0, r.err)
   assert.equal(r.err.match(/unreadable/g)?.length, 1)
   assert.equal((await recordOf(root)).skills['release']?.answer, 'accepted')
+})
+
+test('install: a malformed entry of the record is dropped, said once; the other answers are kept and stay installed', async (t) => {
+  const root = await consentWs(t, {
+    ...twoSkills,
+    agents: ['claude'],
+    files: {
+      ...twoSkills.files,
+      'skills/lint/SKILL.md': SKILL_MD('lint'),
+    },
+  })
+  await git(['init', '-q', '-b', 'main'], join(root, 'org/web'))
+  const a = await install(root, ['release'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(a.code, 0, a.err)
+  const file = join(root, '.rness/.git/rness/skills.json')
+  const record = JSON.parse(await readFile(file, 'utf8'))
+  record.skills['lint'] = { hash: 'x', answer: 'maybe', date: TODAY }
+  record.skills['bad'] = 'nope'
+  await writeFile(file, JSON.stringify(record))
+  const b = await install(root, ['brainstorming'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(b.code, 0, b.err)
+  assert.equal(b.err.match(/malformed/g)?.length, 1, b.err)
+  assert.match(b.err, /2 malformed entries dropped \("lint", "bad"\)/)
+  assert.doesNotMatch(b.err, /unreadable/)
+  assert.doesNotMatch(b.out, /^removed/m)
+  const after = await recordOf(root)
+  assert.deepEqual(Object.keys(after.skills).sort(), [
+    'brainstorming',
+    'release',
+  ])
+  assert.equal(after.skills['release']?.answer, 'accepted')
+  // A sync after it keeps release installed: its answer survived.
+  const s = await say(() => syncCommand({ cwd: root, yes: true }))
+  assert.equal(s.code, 0, s.err)
+  assert.equal(
+    await exists(join(root, 'org/web/.claude/skills/release/SKILL.md')),
+    true
+  )
+  assert.equal(await exists(join(root, '.claude/skills/release')), true)
 })
 
 test('list: one line per skill with where it applies and its state', async (t) => {

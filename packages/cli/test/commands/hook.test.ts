@@ -2223,6 +2223,15 @@ test('session start: an accepted skill is not listed; none pending adds nothing'
   assert.doesNotMatch(r.out, /team skill/i)
 })
 
+test('session start: .rness that is no git repository: no consent line, no instruction', async (t) => {
+  const root = await skillWs(t)
+  await rm(join(root, '.rness/.git'), { recursive: true })
+  const r = await hook('session-start', { cwd: root, source: 'startup' })
+  assert.equal(r.code, 0)
+  assert.doesNotMatch(JSON.parse(r.out).systemMessage ?? '', /team skill/)
+  assert.doesNotMatch(contextOf(r), /team skill|skill install/)
+})
+
 test('session start: on compact the developer is not told again, the model is', async (t) => {
   const root = await skillWs(t)
   const r = await hook('session-start', { cwd: root, source: 'compact' })
@@ -2232,6 +2241,7 @@ test('session start: on compact the developer is not told again, the model is', 
 
 test('session start: skills that cannot be listed are a note, never a crash', async (t) => {
   const root = await workspace(t)
+  await git(['init', '-q', '-b', 'main'], join(root, '.rness'))
   await writeFile(join(root, '.rness/skills'), 'not a directory')
   const r = await hook('session-start', { cwd: root, source: 'startup' })
   assert.equal(r.code, 0)

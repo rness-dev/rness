@@ -1478,12 +1478,14 @@ test('skills: --scope projects into that clone only, not at the root', async (t)
   assert.equal(await there(join(root, '.claude/skills/release')), false)
 })
 
-test('skills: a workspace whose .rness is no git repository installs nothing and still says what awaits', async (t) => {
+test('skills: a workspace whose .rness is no git repository installs nothing and says nothing of consent', async (t) => {
   const root = await skillsWorkspace(t)
   await rm(join(root, '.rness/.git'), { recursive: true })
   const r = await sync(['--yes', '--cwd', root])
   assert.equal(r.code, 0, r.err)
-  assert.match(r.out, PENDING('2 team skills await'))
+  // No consent record can exist there: `skill install` would only fail.
+  assert.doesNotMatch(r.out, /team skills? awaits?/)
+  assert.equal(await there(join(root, 'org/web/.agents/skills/release')), false)
 })
 
 test('skills: sync and install write nothing under HOME', async (t) => {

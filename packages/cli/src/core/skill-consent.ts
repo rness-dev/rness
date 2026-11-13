@@ -85,11 +85,14 @@ const isEntry = (v: unknown): v is ConsentEntry => {
 /**
  * The developer's record. Missing reads as empty; an unreadable one too,
  * after `onUnreadable` (called once) says so: a damaged record asks the
- * questions again, it never stops a command.
+ * questions again, it never stops a command. A malformed entry in a record
+ * otherwise sound is dropped alone, `onDropped` (called once) naming them:
+ * the other answers stand, and that skill is asked again.
  */
 export async function readConsent(
   rnessDir: string,
-  onUnreadable?: (file: string) => void
+  onUnreadable?: (file: string) => void,
+  onDropped?: (file: string, ids: string[]) => void
 ): Promise<Consent> {
   const file = await consentFile(rnessDir)
   let text: string
@@ -101,6 +104,7 @@ export async function readConsent(
     onUnreadable?.(file)
     return { version: 1, skills: {} }
   }
+  let entries: [string, unknown][]
   try {
     const data: unknown = JSON.parse(text)
     const skills = (data as { skills?: unknown }).skills
@@ -110,18 +114,28 @@ export async function readConsent(
       (data as { version?: unknown }).version !== 1 ||
       typeof skills !== 'object' ||
       skills === null ||
-      !Object.values(skills).every(isEntry)
+      Array.isArray(skills)
     )
       throw new Error('not a consent record')
-    return {
-      version: 1,
-      skills: { ...(skills as Record<string, ConsentEntry>) },
-    }
+    entries = Object.entries(skills)
   } catch {
     onUnreadable?.(file)
     return { version: 1, skills: {} }
   }
+  const dropped = entries.filter(([, e]) => !isEntry(e)).map(([id]) => id)
+  if (dropped.length > 0) onDropped?.(file, dropped)
+  return {
+    version: 1,
+    // Own keys only: an id such as `__proto__` stays a key, never a prototype.
+    skills: Object.fromEntries(
+      entries.filter((pair): pair is [string, ConsentEntry] => isEntry(pair[1]))
+    ),
+  }
 }
+
+/** The line said when `readConsent` dropped malformed entries. */
+export const droppedLine = (file: string, ids: readonly string[]): string =>
+  `${file}: ${ids.length === 1 ? '1 malformed entry' : `${ids.length} malformed entries`} dropped (${ids.map(quoted).join(', ')}); those skills are asked again`
 
 export async function writeConsent(
   rnessDir: string,

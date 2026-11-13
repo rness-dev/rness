@@ -12,6 +12,7 @@ import {
   type AppliedSkill,
   type Consent,
   appliedSkills,
+  droppedLine,
   isPending,
   isValid,
   originOf,
@@ -445,6 +446,13 @@ export async function skillUpdateCommand(
                   `skill ${quoted(name)}: written by the team: nothing to update`
               ),
             }))
+      if (
+        opts.ref !== undefined &&
+        targets.some((t) => isPathSource(t.entry.source))
+      )
+        throw new Refusal(
+          "a path: source is the skill's directory itself; --ref applies to a repository source"
+        )
       if (targets.length === 0) {
         ui.hint('no declared skills to update')
         return 0
@@ -619,12 +627,16 @@ export async function skillInstallCommand(
     // An unreadable record hides the earlier answers: the projection that
     // follows then writes the skills answered now and removes nothing.
     let unreadable = false
-    const consent = await readConsent(ws.rnessDir, (file) => {
-      unreadable = true
-      ui.warn(
-        `${file} is unreadable: read as empty, the questions are asked again`
-      )
-    })
+    const consent = await readConsent(
+      ws.rnessDir,
+      (file) => {
+        unreadable = true
+        ui.warn(
+          `${file} is unreadable: read as empty, the questions are asked again`
+        )
+      },
+      (file, ids) => ui.warn(droppedLine(file, ids))
+    )
     const applied = await appliedSkills(ws, manifest, consent)
     let listed: (AppliedSkill & { hash: string })[]
     // Invalid copies are reported, never offered: validate says what to fix.
@@ -694,9 +706,11 @@ export async function skillInstallCommand(
     let answer: 'accepted' | 'declined'
     if (opts.yes === true) answer = 'accepted'
     else if (!(deps.terminal ?? defaultTerminal).isTty()) {
-      throw new Refusal(
+      // A refusal without a TTY exits 2, as the other commands' (README).
+      ui.error(
         `answer in a terminal, or run ${rnessCommand()} skill install --yes`
       )
+      return 2
     } else {
       const p = await (deps.terminal ?? defaultTerminal).prompts()
       for (;;) {
@@ -800,8 +814,10 @@ export async function skillListCommand(
   deps: Partial<CommandDeps> = {}
 ): Promise<number> {
   return run('Skill list', opts, deps, async ({ ws, manifest, ui }) => {
-    const consent = await readConsent(ws.rnessDir, (file) =>
-      ui.warn(`${file} is unreadable: read as empty`)
+    const consent = await readConsent(
+      ws.rnessDir,
+      (file) => ui.warn(`${file} is unreadable: read as empty`),
+      (file, ids) => ui.warn(droppedLine(file, ids))
     )
     const applied = await appliedSkills(ws, manifest, consent)
     if (applied.length === 0) {

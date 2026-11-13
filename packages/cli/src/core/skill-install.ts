@@ -18,8 +18,8 @@ import { providerOf, repositories } from './manifest.ts'
 import { rnessCommand } from './pm.ts'
 import {
   type AppliedSkill,
-  type Consent,
   appliedSkills,
+  droppedLine,
   isValid,
   readConsent,
 } from './skill-consent.ts'
@@ -606,23 +606,29 @@ export async function projectRoot(
 
 /**
  * The applied skills of a run, and whether the projection may act: never
- * when `.rness` is no git repository (no consent can exist) or its record is
- * unreadable (what was accepted is unknown: everything is left as it is).
+ * when `.rness` is no git repository (no consent can exist: none is listed
+ * either, so nothing is said pending) or its record is unreadable (what was
+ * accepted is unknown: everything is left as it is).
  */
 export async function skillsOfRun(
   ws: Workspace,
   manifest: Manifest,
   warn: (text: string) => void
 ): Promise<{ applied: AppliedSkill[]; act: boolean }> {
-  let act = (await gitPath(ws.rnessDir, 'rness')) !== null
-  let consent: Consent = { version: 1, skills: {} }
-  if (act)
-    consent = await readConsent(ws.rnessDir, (file) => {
+  // No consent record can exist: nothing is pending, nothing is asked.
+  if ((await gitPath(ws.rnessDir, 'rness')) === null)
+    return { applied: [], act: false }
+  let act = true
+  const consent = await readConsent(
+    ws.rnessDir,
+    (file) => {
       act = false
       warn(
         `${file} is unreadable: team skills left as they are; ${rnessCommand()} skill install asks again`
       )
-    })
+    },
+    (file, ids) => warn(droppedLine(file, ids))
+  )
   return { applied: await appliedSkills(ws, manifest, consent), act }
 }
 
