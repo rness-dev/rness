@@ -602,6 +602,28 @@ organization. The team writes it as a directory of `.rness/skills/`
   where `.claude/skills/<name>` or `.agents/skills/<name>` is tracked by
   git, or holds a directory rness did not write, is skipped, and `sync`
   and `install` say so.
+- **Two kinds of names.** A skill the team writes in `.rness/skills/` (no
+  `source`) is installed for Claude Code inside the `rness` plugin,
+  `.claude/skills/rness/skills/<name>/`, and invoked as `/rness:<name>`; the
+  `CLAUDE.md` block line reads `- release (Claude Code: /rness:release): ...`.
+  Codex and Cursor read it under its plain name, `.agents/skills/<name>/`.
+  A declared skill (`github:`, `git:`, `path:`) keeps its original name
+  (`/no-ai-slop`). A 0.26.0 copy of a team-written skill moves at the next
+  `sync`. The names `status`, `adr`, `spec` and `plan` (rness's own skills)
+  and the retired `done` are refused for a team-written skill. Like
+  `/rness:status`, these load only when Claude Code is opened at a
+  repository root, in a trusted folder.
+- **Tools that see the installed copies** (verified 2026-11-13). The
+  exclude in `.git/info/exclude` hides the copies from git, not from every
+  tool. prettier 3.10.1, eslint 10.14.0, vitest 5.1.0 and jest 30.5.2 read
+  them (none reads `.git/info/exclude`), and biome 2.6.7 too unless
+  `vcs.useIgnoreFile` is on; tsc 7.0.2 and `node --test` skip dot
+  directories. rness never edits these tools' files; add the line yourself:
+  prettier `/.claude/skills/` and `/.agents/skills/` in `.prettierignore`;
+  eslint `ignores: [".claude/skills/", ".agents/skills/"]`; vitest
+  `test.exclude: [...configDefaults.exclude, ".claude/**", ".agents/**"]`;
+  jest `testPathIgnorePatterns: ["/\\.claude/", "/\\.agents/"]`; biome
+  `vcs.useIgnoreFile: true`.
 - **Where never.** Not in your home directory (`~/.claude/skills`,
   `~/.agents/skills`), not outside the workspace, and not in `.rness`
   beyond the reviewed copy.
@@ -1443,6 +1465,17 @@ per repository, the files to commit there.
 
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
+
+## Unreleased
+
+- **A skill the team writes is `/rness:<name>` in Claude Code.** It is
+  installed in the `rness` plugin (`.claude/skills/rness/skills/<name>/`);
+  Codex and Cursor read it under its plain name in `.agents/skills/<name>/`.
+  A declared skill keeps its name. A 0.26.0 copy moves at the next `sync`.
+  `status`, `adr`, `spec`, `plan` and `done` are refused as names of a
+  team-written skill.
+- **Documented: the tools that see installed copies**, with the ignore line
+  each needs (see Team skills). rness edits none of those files.
 
 ## 0.26.0 - team skills: declared, reviewed, installed with consent
 
