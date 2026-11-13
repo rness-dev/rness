@@ -113,28 +113,32 @@ export function skillsForScope(
   return skills.filter((s) => s.scope === null || applies.has(s.scope))
 }
 
+/** A team skill as the blocks list it: its name and description as plain text. */
+export interface ListedSkill {
+  skill: TeamSkill
+  name: string
+  description: string
+}
+
 /**
- * The skills the block of `scope` lists (spec 0041 §7), by name and
- * description, both as plain text: every skill that applies, declared or
- * written by the team, whose copy passes the checks. A copy that does not
- * is left out (`validate` says why), and so is the whole list when the
+ * Every team skill the blocks may list (spec 0041 §7), checked once for a
+ * whole run: declared or written by the team, whose copy passes the checks,
+ * with its name and one-line description as plain text. A copy that does not
+ * pass is left out (`validate` says why), and so is everything when the
  * skills cannot be listed: a block is never what fails.
  */
-export async function blockSkills(
+export async function listedSkills(
   rnessDir: string,
-  manifest: Manifest,
-  scope: string | null
-): Promise<{ name: string; description: string }[]> {
+  manifest: Manifest
+): Promise<ListedSkill[]> {
   let all: TeamSkill[]
   try {
-    all = skillsForScope(manifest, await teamSkills(rnessDir, manifest), scope)
+    all = await teamSkills(rnessDir, manifest)
   } catch {
     return []
   }
-  const listed: { name: string; description: string }[] = []
-  const seen = new Set<string>()
+  const listed: ListedSkill[] = []
   for (const skill of all) {
-    if (seen.has(skill.name)) continue
     try {
       await checkSkillDir(skill.dir, skill.name)
       const fields = parseFrontMatter(
@@ -142,8 +146,8 @@ export async function blockSkills(
       )
       const description = fields?.['description']
       if (typeof description !== 'string') continue
-      seen.add(skill.name)
       listed.push({
+        skill,
         name: plainText(skill.name),
         description: plainText(description).replace(/ {2,}/g, ' ').trim(),
       })
@@ -152,6 +156,43 @@ export async function blockSkills(
     }
   }
   return listed
+}
+
+/** The skills the block of `scope` lists, from `listedSkills`: those that apply to it, a name once (the first, in the order of `teamSkills`). */
+export function blockSkillsOf(
+  manifest: Manifest,
+  listed: readonly ListedSkill[],
+  scope: string | null
+): { name: string; description: string }[] {
+  let applies: Set<TeamSkill>
+  try {
+    applies = new Set(
+      skillsForScope(
+        manifest,
+        listed.map((l) => l.skill),
+        scope
+      )
+    )
+  } catch {
+    return []
+  }
+  const seen = new Set<string>()
+  const out: { name: string; description: string }[] = []
+  for (const l of listed) {
+    if (!applies.has(l.skill) || seen.has(l.skill.name)) continue
+    seen.add(l.skill.name)
+    out.push({ name: l.name, description: l.description })
+  }
+  return out
+}
+
+/** The skills the block of `scope` lists: `listedSkills` then `blockSkillsOf`, for a single block. */
+export async function blockSkills(
+  rnessDir: string,
+  manifest: Manifest,
+  scope: string | null
+): Promise<{ name: string; description: string }[]> {
+  return blockSkillsOf(manifest, await listedSkills(rnessDir, manifest), scope)
 }
 
 /**

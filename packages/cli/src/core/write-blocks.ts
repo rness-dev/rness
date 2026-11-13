@@ -13,7 +13,7 @@ import {
   mergeBlock,
 } from './merge.ts'
 import { rnessCommand } from './pm.ts'
-import { blockSkills } from './skills.ts'
+import { type ListedSkill, blockSkillsOf, listedSkills } from './skills.ts'
 import type { Manifest, Workspace } from './types.ts'
 import type { Line } from './ui.ts'
 import { orgDirs } from './workspace.ts'
@@ -132,6 +132,9 @@ export async function writeBlocks(input: {
   let differences = 0
   const lines: (Line | string)[] = []
   const problems: string[] = []
+  // The skills are checked once for every block (final review 11), and only
+  // when a block is rendered.
+  let listed: Promise<ListedSkill[]> | undefined
   for (const t of targetsOf(manifest, ws.root, input.scope)) {
     // `exists()` would find `org/dApp` for `org/dapp` on macOS: the
     // block waits for the rename, on every system alike.
@@ -173,7 +176,11 @@ export async function writeBlocks(input: {
       org,
       depth: t.depth,
       context,
-      skills: await blockSkills(ws.rnessDir, manifest, t.scope),
+      skills: blockSkillsOf(
+        manifest,
+        await (listed ??= listedSkills(ws.rnessDir, manifest)),
+        t.scope
+      ),
     })
     if (block.bytes > BLOCK_SIZE_WARNING) {
       warn(

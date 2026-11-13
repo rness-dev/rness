@@ -8,7 +8,7 @@ import { workspaceName } from './manifest.ts'
 import type { AddedLinesFile } from './policy-check.ts'
 import { type Policy, policiesFor } from './policy.ts'
 import { resolveScope } from './scope.ts'
-import { blockSkills } from './skills.ts'
+import { type ListedSkill, blockSkillsOf, listedSkills } from './skills.ts'
 import type { Manifest, Workspace } from './types.ts'
 
 /**
@@ -115,11 +115,13 @@ export async function policiesByPath(
 /**
  * The hash of the block `sync` writes in a block file of this path, from a
  * fresh render, as sync renders it: the root's (global) and each scope's,
- * at the scope's own directory. Null where sync writes no block.
+ * at the scope's own directory. Null where sync writes no block. `listed`:
+ * the team skills already checked for this run (`listedSkills`).
  */
 export async function freshBlockHash(
   ws: PolicyWorkspace,
-  path: string
+  path: string,
+  listed?: () => Promise<readonly ListedSkill[]>
 ): Promise<string | null> {
   if (!BLOCK_FILES.includes(posix.basename(path))) return null
   const dir = posix.dirname(path)
@@ -141,7 +143,11 @@ export async function freshBlockHash(
     org: workspaceName(ws.manifest, ws.root),
     depth: dir === '.' ? 0 : dir.split('/').length,
     context,
-    skills: await blockSkills(ws.rnessDir, ws.manifest, scope),
+    skills: blockSkillsOf(
+      ws.manifest,
+      await (listed?.() ?? listedSkills(ws.rnessDir, ws.manifest)),
+      scope
+    ),
   }).hash
 }
 
@@ -160,8 +166,11 @@ export async function rnessOutputProofs(
     ? await wholeFileContents(ws.root, ws.manifest)
     : new Map<string, string>()
   const hashes = new Map<string, string>()
+  let listed: Promise<ListedSkill[]> | undefined
+  const once = (): Promise<ListedSkill[]> =>
+    (listed ??= listedSkills(ws.rnessDir, ws.manifest))
   for (const path of new Set(paths)) {
-    const hash = await freshBlockHash(ws, path)
+    const hash = await freshBlockHash(ws, path, once)
     if (hash !== null) hashes.set(path, hash)
   }
   return {

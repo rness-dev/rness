@@ -5,7 +5,7 @@ import { assembleContext } from './context.ts'
 import { exists, readOrNull } from './fs.ts'
 import { findBlock } from './merge.ts'
 import { rnessCommand } from './pm.ts'
-import { blockSkills } from './skills.ts'
+import { type ListedSkill, blockSkillsOf, listedSkills } from './skills.ts'
 import type { Manifest } from './types.ts'
 
 export interface CheckBlocksInput {
@@ -94,6 +94,9 @@ export async function checkBlocks({
     })
   }
 
+  // The skills are checked once for every block (final review 11), and only
+  // when a block is rendered.
+  let listed: Promise<ListedSkill[]> | undefined
   for (const t of targets) {
     if (!(await exists(t.dir))) {
       note(
@@ -128,7 +131,11 @@ export async function checkBlocks({
       org,
       depth: t.depth,
       context,
-      skills: await blockSkills(rnessDir, manifest, t.scope),
+      skills: blockSkillsOf(
+        manifest,
+        await (listed ??= listedSkills(rnessDir, manifest)),
+        t.scope
+      ),
     })
     // Two ways to be stale: the header no longer matches a fresh render, or the
     // body no longer matches its own header — a hand edit inside the block.
