@@ -42,12 +42,17 @@ export async function validateCommand(
     const ws = await findWorkspace(cwd)
     const manifest = await loadManifest(ws.rnessDir)
     const org = workspaceName(manifest, ws.root)
-    const { problems, blocks, targets } = await checkWorkspace(ws, manifest)
+    const {
+      problems,
+      reported: skillReports,
+      blocks,
+      targets,
+    } = await checkWorkspace(ws, manifest)
 
     // A redundant `extends` is said, never refused (spec 0038 §8). Then the
     // scaffold (spec 0013 §4): a warning, never a problem - and nothing in a
     // one-commit CI checkout, whose history is not there to read.
-    const reported: string[] = redundantExtends(manifest)
+    const reported: string[] = [...redundantExtends(manifest), ...skillReports]
     if ((await isRepository(ws.rnessDir)) && !(await isShallow(ws.rnessDir))) {
       const pin = await readPin(ws.rnessDir)
       const base = await findScaffoldBase(ws.rnessDir)

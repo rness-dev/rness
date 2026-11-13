@@ -663,10 +663,48 @@ test('skills declared once each, or written by the team, validate clean', async 
   const root = await makeWorkspace(t, {
     skills: { x: entry },
     scopes: { web: { url: 'u', skills: { y: entry } } },
-    files: { 'skills/mine/SKILL.md': 'x' },
+    files: {
+      'skills/x/SKILL.md': '---\nname: x\ndescription: d\n---\n',
+      'skills/scopes/web/y/SKILL.md': '---\nname: y\ndescription: d\n---\n',
+      'skills/mine/SKILL.md': '---\nname: mine\ndescription: d\n---\n',
+    },
   })
   const c = capture()
   const code = await run(['validate', '--cwd', root])
   c.restore()
   assert.equal(code, 0, c.err())
+})
+
+test('validate: a team skill breaking §4 or a declared copy gone is a problem, naming it', async (t) => {
+  const entry = { source: 'github:o/r', hash: `sha256-${'A'.repeat(43)}=` }
+  const root = await makeWorkspace(t, {
+    skills: { gone: entry },
+    files: { 'skills/mine/SKILL.md': '# no front matter\n' },
+  })
+  const c = capture()
+  const code = await run(['validate', '--cwd', root])
+  c.restore()
+  assert.equal(code, 1)
+  assert.match(
+    c.err(),
+    /skill "gone" is declared but its copy skills\/gone is missing: run rness skill update gone/
+  )
+  assert.match(c.err(), /skill "mine": SKILL\.md has no front matter/)
+})
+
+test('validate: a copy that differs from its hash is reported, never refused', async (t) => {
+  const entry = { source: 'github:o/r', hash: `sha256-${'A'.repeat(43)}=` }
+  const root = await makeWorkspace(t, {
+    skills: { x: entry },
+    files: { 'skills/x/SKILL.md': '---\nname: x\ndescription: d\n---\n' },
+  })
+  const c = capture()
+  const code = await run(['validate', '--cwd', root])
+  c.restore()
+  assert.equal(code, 0, c.err())
+  assert.match(
+    c.err(),
+    /skill "x" differs from its source: run rness skill update, or remove its source to make it the team's own/
+  )
+  assert.equal(c.out().trim(), 'context ok')
 })

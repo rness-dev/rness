@@ -7,12 +7,14 @@ import { workspaceName } from './manifest.ts'
 import { rnessCommand } from './pm.ts'
 import { PROVIDERS, unsupportedProviderMessage } from './providers.ts'
 import { scopeChain } from './scope.ts'
-import { skillConflicts, teamSkills } from './skills.ts'
+import { checkSkillCopies, skillConflicts, teamSkills } from './skills.ts'
 import type { Manifest, Workspace } from './types.ts'
 
 export interface WorkspaceCheck {
   /** One line each, as `validate` prints them off a terminal. */
   problems: string[]
+  /** Said, never refused: `validate` prints them as warnings. */
+  reported: string[]
   blocks: CheckBlocksResult
   targets: TargetOutcome[]
 }
@@ -39,6 +41,8 @@ export async function checkWorkspace(
       await teamSkills(ws.rnessDir, manifest)
     )
   )
+  const copies = await checkSkillCopies(ws.rnessDir, manifest)
+  problems.push(...copies.problems)
   const blocks = await checkBlocks({
     root: ws.root,
     rnessDir: ws.rnessDir,
@@ -58,5 +62,5 @@ export async function checkWorkspace(
       )
     else if (o.status === 'invalid')
       problems.push(`${o.label}: ${o.detail ?? 'unreadable'}`)
-  return { problems, blocks, targets }
+  return { problems, reported: copies.reported, blocks, targets }
 }

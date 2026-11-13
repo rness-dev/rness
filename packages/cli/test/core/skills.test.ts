@@ -1,14 +1,37 @@
 import assert from 'node:assert/strict'
-import { join } from 'node:path'
-import { test } from 'node:test'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { type TestContext, test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 
+import { fetchRef } from '../../src/core/git.ts'
 import { loadManifest } from '../../src/core/manifest.ts'
 import {
+  checkSkillCopies,
+  checkSkillDir,
+  copySkill,
+  diffSkillFiles,
+  fetchSkill,
+  hashSkillDir,
   skillConflicts,
+  skillFileDigests,
+  skillSourceUrl,
   skillsForClone,
   skillsForScope,
   teamSkills,
 } from '../../src/core/skills.ts'
+import { git } from '../helpers/git.ts'
 import { makeWorkspace } from '../helpers/workspace.ts'
 
 const HASH = `sha256-${'A'.repeat(43)}=`
@@ -163,4 +186,411 @@ test('skillConflicts: a scope that extends another gets both, so a shared name c
     skillConflicts(rnessDir, manifest, await teamSkills(rnessDir, manifest)),
     ['skill "z" is declared in scope "api" and in scope "app"']
   )
+})
+
+// ---- content: hash, checks, fetch, copy (spec 0041 §3, §4, §9) ----
+
+const SKILL_MD = (name: string, extra = 'description: Does a thing.\n') =>
+  `---\nname: ${name}\n${extra}---\n# ${name}\n`
+
+async function tmp(t: TestContext): Promise<string> {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-skill-')))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  return dir
+}
+
+async function put(base: string, files: Record<string, string>) {
+  for (const [rel, content] of Object.entries(files)) {
+    await mkdir(dirname(join(base, rel)), { recursive: true })
+    await writeFile(join(base, rel), content)
+  }
+}
+
+async function skillDir(
+  t: TestContext,
+  name = 'demo',
+  files: Record<string, string> = {}
+): Promise<string> {
+  const dir = join(await tmp(t), name)
+  await put(dir, { 'SKILL.md': SKILL_MD(name), ...files })
+  return dir
+}
+
+test('hashSkillDir: sha256 base64, deterministic, content, path and mode all count', async (t) => {
+  const a = await skillDir(t, 'demo', { 'run.sh': '#!/bin/sh\n' })
+  const h = await hashSkillDir(a)
+  assert.match(h, /^sha256-[A-Za-z0-9+/]{43}=$/)
+  assert.equal(await hashSkillDir(a), h)
+  await chmod(join(a, 'run.sh'), 0o755)
+  const exec = await hashSkillDir(a)
+  assert.notEqual(exec, h)
+  await writeFile(join(a, 'run.sh'), '#!/bin/sh\necho\n')
+  assert.notEqual(await hashSkillDir(a), exec)
+  const b = await skillDir(t, 'demo', { 'other.sh': '#!/bin/sh\n' })
+  const c = await skillDir(t, 'demo', { 'run.sh': '#!/bin/sh\n' })
+  assert.notEqual(await hashSkillDir(b), await hashSkillDir(c))
+})
+
+test('hashSkillDir: the exact encoding, byte-ordered paths, a root .git ignored', async (t) => {
+  const { createHash } = await import('node:crypto')
+  const dir = await skillDir(t, 'demo', {
+    'b.txt': 'bb',
+    'B/x': 'x',
+    '.git/HEAD': 'ref',
+  })
+  const md = SKILL_MD('demo')
+  const want = createHash('sha256')
+  for (const [p, body] of [
+    ['B/x', 'x'],
+    ['SKILL.md', md],
+    ['b.txt', 'bb'],
+  ] as const)
+    want.update(`${p}\0-\0${Buffer.byteLength(body)}\0` + body)
+  assert.equal(await hashSkillDir(dir), `sha256-${want.digest('base64')}`)
+})
+
+test('checkSkillDir: a good skill passes and reports its size', async (t) => {
+  const dir = await skillDir(t)
+  const c = await checkSkillDir(dir, 'demo')
+  assert.equal(c.bytes, Buffer.byteLength(SKILL_MD('demo')))
+})
+
+test('checkSkillDir: each refusal of §4 names the skill and the reason', async (t) => {
+  const refused = async (dir: string, name: string, re: RegExp) =>
+    assert.rejects(checkSkillDir(dir, name), (e: Error) => {
+      assert.match(e.message, re)
+      assert.match(e.message, new RegExp(`skill "${name}"`))
+      return true
+    })
+  const none = join(await tmp(t), 'demo')
+  await mkdir(none)
+  await refused(none, 'demo', /no SKILL\.md/)
+  await refused(
+    await skillDir(t, 'other'),
+    'demo',
+    /name "other" is not the directory's name "demo"/
+  )
+  const nodesc = join(await tmp(t), 'demo')
+  await put(nodesc, { 'SKILL.md': '---\nname: demo\n---\n' })
+  await refused(nodesc, 'demo', /no description/)
+  const nofm = join(await tmp(t), 'demo')
+  await put(nofm, { 'SKILL.md': '# hi\n' })
+  await refused(nofm, 'demo', /front matter/)
+  const upper = join(await tmp(t), 'Demo')
+  await put(upper, { 'SKILL.md': SKILL_MD('Demo') })
+  await refused(upper, 'Demo', /lowercase letters, digits and hyphens/)
+  const long = 'a'.repeat(65)
+  await refused(await skillDir(t, long), long, /at most 64 characters/)
+  await refused(
+    await skillDir(t, 'rness'),
+    'rness',
+    /collides with the rness plugin/
+  )
+  const link = await skillDir(t)
+  await symlink('SKILL.md', join(link, 'alias.md'))
+  await refused(link, 'demo', /"alias\.md" is a symbolic link/)
+  const big = await skillDir(t, 'demo', { 'big.bin': 'x'.repeat(1048576) })
+  await refused(big, 'demo', /is \d+ bytes, above the limit of 1048576 bytes/)
+})
+
+test('checkSkillDir: exactly 1 MB passes', async (t) => {
+  const dir = join(await tmp(t), 'demo')
+  const md = SKILL_MD('demo')
+  await put(dir, {
+    'SKILL.md': md,
+    'pad.bin': 'x'.repeat(1048576 - Buffer.byteLength(md)),
+  })
+  assert.equal((await checkSkillDir(dir, 'demo')).bytes, 1048576)
+})
+
+test('skillSourceUrl: github maps to https, git as given, path none', () => {
+  assert.equal(
+    skillSourceUrl('github:obra/superpowers'),
+    'https://github.com/obra/superpowers.git'
+  )
+  assert.equal(skillSourceUrl('git:ssh://h/r.git'), 'ssh://h/r.git')
+  assert.equal(skillSourceUrl('path:../x'), null)
+  assert.throws(
+    () => skillSourceUrl('github:no-slash'),
+    /github:<owner>\/<repo>/
+  )
+})
+
+/** A repository: skill in `skills/demo`, a tag, an annotated tag, a branch, and a later commit. */
+async function fixtureRepo(t: TestContext) {
+  const work = await tmp(t)
+  await put(work, {
+    'skills/demo/SKILL.md': SKILL_MD('demo'),
+    'skills/demo/run.sh': '#!/bin/sh\n',
+  })
+  await chmod(join(work, 'skills/demo/run.sh'), 0o755)
+  await git(['init', '-q', '-b', 'main'], work)
+  await git(['config', 'uploadpack.allowAnySHA1InWant', 'true'], work)
+  await git(['add', '-A'], work)
+  await git(['commit', '-q', '-m', 'one'], work)
+  const first = (await git(['rev-parse', 'HEAD'], work)).trim()
+  await git(['tag', 'light'], work)
+  await git(['tag', '-a', 'annot', '-m', 'annotated'], work)
+  await git(['branch', 'topic'], work)
+  await put(work, { 'skills/demo/extra.md': 'later' })
+  await git(['add', '-A'], work)
+  await git(['commit', '-q', '-m', 'two'], work)
+  const second = (await git(['rev-parse', 'HEAD'], work)).trim()
+  return { work, url: pathToFileURL(work).href, first, second }
+}
+
+test('fetchRef: a lightweight tag, an annotated tag, a branch, a full SHA that is no tip, HEAD', async (t) => {
+  const { url, first, second } = await fixtureRepo(t)
+  const at = async (ref: string | null) => {
+    const dir = await tmp(t)
+    return { commit: await fetchRef(url, ref, dir), dir }
+  }
+  assert.equal((await at('light')).commit, first)
+  assert.equal((await at('annot')).commit, first)
+  assert.equal((await at('topic')).commit, first)
+  const sha = await at(first)
+  assert.equal(sha.commit, first)
+  await assert.rejects(stat(join(sha.dir, 'skills/demo/extra.md')))
+  const head = await at(null)
+  assert.equal(head.commit, second)
+  assert.equal(
+    (await stat(join(head.dir, 'skills/demo/run.sh'))).mode & 0o100,
+    0o100
+  )
+})
+
+test("fetchRef: a short SHA is refused with the 40 characters wording, an unknown ref with git's error", async (t) => {
+  const { url, first } = await fixtureRepo(t)
+  await assert.rejects(
+    fetchRef(url, first.slice(0, 7), await tmp(t)),
+    /a commit ref needs its 40 hexadecimal characters/
+  )
+  await assert.rejects(
+    fetchRef(url, 'nope', await tmp(t)),
+    /couldn't find remote ref nope/
+  )
+  await assert.rejects(
+    fetchRef(url, '--upload-pack=x', await tmp(t)),
+    /suspicious/
+  )
+})
+
+test('fetchSkill: a repository subdirectory at a tag, with its commit and a name from the path', async (t) => {
+  const { url, first } = await fixtureRepo(t)
+  const f = await fetchSkill(await tmp(t), `git:${url}`, {
+    path: 'skills/demo',
+    ref: 'light',
+    credentials: null,
+  })
+  try {
+    assert.equal(f.commit, first)
+    assert.equal(f.name, 'demo')
+    assert.equal(
+      await readFile(join(f.dir, 'SKILL.md'), 'utf8'),
+      SKILL_MD('demo')
+    )
+  } finally {
+    await f.release()
+  }
+  await assert.rejects(stat(f.dir))
+})
+
+test('fetchSkill: a path leaving the checkout is refused', async (t) => {
+  const { url } = await fixtureRepo(t)
+  await assert.rejects(
+    fetchSkill(await tmp(t), `git:${url}`, { path: '../x', credentials: null }),
+    /leaves the repository/
+  )
+  await assert.rejects(
+    fetchSkill(await tmp(t), `git:${url}`, {
+      path: 'nothing',
+      credentials: null,
+    }),
+    /no directory "nothing"/
+  )
+})
+
+test('fetchSkill: a path: source is read in place, relative to .rness or absolute', async (t) => {
+  const base = await tmp(t)
+  const rnessDir = join(base, '.rness')
+  await put(base, { 'vendor/demo/SKILL.md': SKILL_MD('demo') })
+  await mkdir(rnessDir)
+  const rel = await fetchSkill(rnessDir, 'path:../vendor/demo', {
+    credentials: null,
+  })
+  assert.equal(rel.dir, join(base, 'vendor/demo'))
+  assert.equal(rel.commit, null)
+  assert.equal(rel.name, 'demo')
+  const abs = await fetchSkill(rnessDir, `path:${join(base, 'vendor/demo')}`, {
+    credentials: null,
+  })
+  assert.equal(abs.dir, rel.dir)
+  await rel.release()
+  assert.equal((await stat(rel.dir)).isDirectory(), true)
+  await assert.rejects(
+    fetchSkill(rnessDir, 'path:../missing', { credentials: null }),
+    /no directory/
+  )
+})
+
+test('copySkill: into skills/<name>, executable bit kept, modes 755/644, no .git, replaced whole', async (t) => {
+  const { url } = await fixtureRepo(t)
+  const rnessDir = join(await tmp(t), '.rness')
+  await mkdir(rnessDir)
+  const f = await fetchSkill(rnessDir, `git:${url}`, {
+    path: 'skills/demo',
+    credentials: null,
+  })
+  const c = await copySkill(rnessDir, f, { scope: null })
+  await f.release()
+  assert.equal(c.dir, join(rnessDir, 'skills', 'demo'))
+  assert.equal(c.name, 'demo')
+  assert.equal((await stat(join(c.dir, 'run.sh'))).mode & 0o777, 0o755)
+  assert.equal((await stat(join(c.dir, 'SKILL.md'))).mode & 0o777, 0o644)
+  assert.equal(c.hash, await hashSkillDir(c.dir))
+  assert.equal(c.bytes, (await checkSkillDir(c.dir, 'demo')).bytes)
+  // A second copy replaces the first, leaving no leftover and no stale file.
+  await writeFile(join(c.dir, 'stale.md'), 'old')
+  const f2 = await fetchSkill(rnessDir, `git:${url}`, {
+    path: 'skills/demo',
+    credentials: null,
+  })
+  await copySkill(rnessDir, f2, { scope: 'web' })
+  await copySkill(rnessDir, f2, { scope: null })
+  await f2.release()
+  await assert.rejects(stat(join(c.dir, 'stale.md')))
+  const { readdir } = await import('node:fs/promises')
+  assert.deepEqual(await readdir(join(rnessDir, 'skills')), ['demo', 'scopes'])
+  assert.deepEqual(await readdir(join(rnessDir, 'skills/scopes/web')), ['demo'])
+})
+
+test('copySkill: a repository root is a skill named after the repository', async (t) => {
+  const work = await tmp(t)
+  const repo = join(work, 'my-skill.git-src')
+  await put(repo, { 'SKILL.md': SKILL_MD('my-skill-git-src') })
+  await git(['init', '-q', '-b', 'main'], repo)
+  await git(['add', '-A'], repo)
+  await git(['commit', '-q', '-m', 'x'], repo)
+  const rnessDir = join(work, '.rness')
+  await mkdir(rnessDir)
+  const f = await fetchSkill(rnessDir, `git:${pathToFileURL(repo).href}`, {
+    credentials: null,
+  })
+  assert.equal(f.name, 'my-skill.git-src')
+  await f.release()
+})
+
+test('copySkill: a refused source writes nothing', async (t) => {
+  const base = await tmp(t)
+  const rnessDir = join(base, '.rness')
+  await mkdir(rnessDir)
+  const src = join(base, 'demo')
+  await put(src, { 'SKILL.md': SKILL_MD('other') })
+  const f = await fetchSkill(rnessDir, `path:${src}`, { credentials: null })
+  await assert.rejects(
+    copySkill(rnessDir, f, { scope: null }),
+    /not the directory's name/
+  )
+  await assert.rejects(stat(join(rnessDir, 'skills')))
+})
+
+test('copySkill --name: only the name line changes, the hash is taken after, the old name is no copy', async (t) => {
+  const base = await tmp(t)
+  const rnessDir = join(base, '.rness')
+  await mkdir(rnessDir)
+  const src = join(base, 'demo')
+  const md =
+    '---\r\nname: demo\r\ndescription: keeps the name\r\n---\r\nname: demo\r\n'
+  await put(src, { 'SKILL.md': md, 'a.txt': 'a' })
+  const f = await fetchSkill(rnessDir, `path:${src}`, { credentials: null })
+  const c = await copySkill(rnessDir, f, { scope: 'web', name: 'renamed' })
+  assert.equal(c.name, 'renamed')
+  assert.equal(c.dir, join(rnessDir, 'skills/scopes/web/renamed'))
+  assert.equal(
+    await readFile(join(c.dir, 'SKILL.md'), 'utf8'),
+    md.replace('name: demo\r\ndescription', 'name: renamed\r\ndescription')
+  )
+  assert.equal(c.hash, await hashSkillDir(c.dir))
+  assert.notEqual(c.hash, await hashSkillDir(src))
+  assert.equal(await readFile(join(src, 'SKILL.md'), 'utf8'), md)
+  await assert.rejects(
+    copySkill(rnessDir, f, { scope: null, name: 'Bad Name' }),
+    /lowercase letters, digits and hyphens/
+  )
+})
+
+test('skillFileDigests and diffSkillFiles: added, changed (mode too), removed', async (t) => {
+  const a = await skillDir(t, 'demo', {
+    'k.txt': 'k',
+    'gone.txt': 'g',
+    'run.sh': 'r',
+  })
+  const before = await skillFileDigests(a)
+  await rm(join(a, 'gone.txt'))
+  await writeFile(join(a, 'k.txt'), 'changed')
+  await chmod(join(a, 'run.sh'), 0o755)
+  await writeFile(join(a, 'new.txt'), 'n')
+  const d = diffSkillFiles(before, await skillFileDigests(a))
+  assert.deepEqual(d, {
+    added: ['new.txt'],
+    changed: ['k.txt', 'run.sh'],
+    removed: ['gone.txt'],
+  })
+})
+
+test('teamSkills: a symbolic link under skills/ is a skill entry the checks refuse; other errors are not swallowed', async (t) => {
+  const root = await makeWorkspace(t, {})
+  const rnessDir = join(root, '.rness')
+  await mkdir(join(rnessDir, 'skills'))
+  await symlink('/tmp', join(rnessDir, 'skills', 'lnk'))
+  const manifest = await loadManifest(rnessDir)
+  const all = await teamSkills(rnessDir, manifest)
+  assert.deepEqual(
+    all.map((s) => s.name),
+    ['lnk']
+  )
+  const { problems } = await checkSkillCopies(rnessDir, manifest)
+  assert.deepEqual(problems, [
+    'skill "lnk": skills/lnk is a symbolic link; only regular files and directories are allowed',
+  ])
+  // A skills "directory" that is a file is no ENOENT: it is not hidden.
+  const root2 = await makeWorkspace(t, { files: { skills: 'x' } })
+  const dir2 = join(root2, '.rness')
+  await assert.rejects(teamSkills(dir2, await loadManifest(dir2)), /ENOTDIR/)
+})
+
+test('checkSkillCopies: a declared copy that is missing, a refusal, a hash mismatch reported', async (t) => {
+  const good = SKILL_MD('good')
+  const root = await makeWorkspace(t, {
+    skills: { good: decl(), gone: decl() },
+    scopes: { web: { url: 'u', skills: { bad: decl() } } },
+    files: {
+      'skills/good/SKILL.md': good,
+      'skills/scopes/web/bad/SKILL.md': '---\nname: bad\n---\n',
+      'skills/mine/SKILL.md': SKILL_MD('other'),
+    },
+  })
+  const rnessDir = join(root, '.rness')
+  const manifest = await loadManifest(rnessDir)
+  const r = await checkSkillCopies(rnessDir, manifest)
+  assert.deepEqual(r.problems, [
+    'skill "gone" is declared but its copy skills/gone is missing: run rness skill update gone',
+    'skill "mine": SKILL.md name "other" is not the directory\'s name "mine"',
+    'skill "bad": SKILL.md has no description',
+  ])
+  assert.deepEqual(r.reported, [
+    'skill "good" differs from its source: run rness skill update, or remove its source to make it the team\'s own',
+  ])
+})
+
+test('checkSkillCopies: a copy at its hash is silent', async (t) => {
+  const dir = await skillDir(t, 'good')
+  const hash = await hashSkillDir(dir)
+  const root = await makeWorkspace(t, {
+    skills: { good: { source: 'github:o/r', hash } },
+    files: { 'skills/good/SKILL.md': SKILL_MD('good') },
+  })
+  const rnessDir = join(root, '.rness')
+  const r = await checkSkillCopies(rnessDir, await loadManifest(rnessDir))
+  assert.deepEqual(r, { problems: [], reported: [] })
 })

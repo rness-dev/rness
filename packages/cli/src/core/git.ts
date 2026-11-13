@@ -98,6 +98,38 @@ export async function clone(
 }
 
 /**
+ * Fetch one commit of `url` into the empty directory `dir` and check it out
+ * (spec 0041 §3): `ref` is a tag, a branch or a full 40-character SHA, `HEAD`
+ * when null. Returns the commit it resolved to. Shallow, so a short SHA,
+ * which git cannot fetch, is refused with the reason.
+ */
+export async function fetchRef(
+  url: string,
+  ref: string | null,
+  dir: string,
+  credentials?: GitCredentials | null
+): Promise<string> {
+  const target = positional(ref ?? 'HEAD', 'ref')
+  const from = positional(url, 'repository url')
+  await git(['init', '-q'], dir)
+  try {
+    await git(
+      ['fetch', '--depth', '1', '--quiet', '--', from, target],
+      dir,
+      credentials
+    )
+  } catch (e) {
+    if (/^[0-9a-f]{4,39}$/i.test(target))
+      throw new Error('a commit ref needs its 40 hexadecimal characters', {
+        cause: e,
+      })
+    throw e
+  }
+  await git(['checkout', '-q', 'FETCH_HEAD'], dir)
+  return (await git(['rev-parse', 'FETCH_HEAD^{commit}'], dir)).trim()
+}
+
+/**
  * True when `git status --porcelain` prints nothing, ignoring the paths in
  * `ignore` (rness-managed files such as `AGENTS.md`/`CLAUDE.md` that sync
  * itself writes into every clone and that should never veto an auto-pull).
