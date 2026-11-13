@@ -963,6 +963,77 @@ test('install: two sibling repositories each with their own deploy keep two reco
   )
 })
 
+/** web and api, each with its own `deploy` (ruling R27). */
+const twoDeploys = {
+  scopes: {
+    web: {
+      url: 'git@github.com:acme/web.git',
+      skills: { deploy: { source: 'path:/w', hash: HASH } },
+    },
+    api: {
+      url: 'git@github.com:acme/api.git',
+      skills: { deploy: { source: 'path:/a', hash: HASH } },
+    },
+  },
+  dirs: ['org/web', 'org/api'],
+  files: {
+    'skills/scopes/web/deploy/SKILL.md': SKILL_MD('deploy', 'x: web\n'),
+    'skills/scopes/api/deploy/SKILL.md': SKILL_MD('deploy', 'x: api\n'),
+  },
+}
+
+test('install: a name two skills share is refused under --yes, naming their ids; an id installs that one only', async (t) => {
+  const root = await consentWs(t, twoDeploys)
+  const d = await install(root, [], consentTerminal(['decline']))
+  assert.equal(d.code, 0, d.err)
+  assert.match(
+    d.out,
+    /^declined +web\/deploy, api\/deploy {3}\(rness skill install <scope>\/<name> installs one later\)$/m
+  )
+  // web/deploy changes: it alone is pending again.
+  await writeFile(join(root, '.rness/skills/scopes/web/deploy/extra.md'), 'new')
+  const before = await recordOf(root)
+  const bare = await install(root, ['deploy'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(bare.code, 1)
+  assert.match(
+    bare.err,
+    /skill "deploy" names more than one team skill: name one by its id, web\/deploy or api\/deploy/
+  )
+  assert.deepEqual(await recordOf(root), before)
+
+  const byId = await install(root, ['web/deploy'], consentTerminal([], false), {
+    yes: true,
+  })
+  assert.equal(byId.code, 0, byId.err)
+  assert.match(
+    byId.out,
+    /^ *web\/deploy +path:\/w +1 KB +allowed-tools: none$/m
+  )
+  assert.match(byId.out, /^accepted +web\/deploy$/m)
+  const after = await recordOf(root)
+  assert.equal(after.skills['web/deploy']?.answer, 'accepted')
+  assert.deepEqual(after.skills['api/deploy'], before.skills['api/deploy'])
+  assert.equal(after.skills['api/deploy']?.answer, 'declined')
+
+  // An unknown name lists the skills as install takes them.
+  const unknown = await install(root, ['nope'], consentTerminal([]))
+  assert.equal(unknown.code, 1)
+  assert.match(unknown.err, /known skills: web\/deploy, api\/deploy$/m)
+})
+
+test('install: interactively, a name two skills share lists both in the question', async (t) => {
+  const root = await consentWs(t, twoDeploys)
+  const term = consentTerminal(['decline'])
+  const r = await install(root, ['deploy'], term)
+  assert.equal(r.code, 0, r.err)
+  assert.equal(term.asked.length, 1)
+  assert.match(r.out, /^skills +2 team skills for acme:$/m)
+  assert.match(r.out, /^ *web\/deploy +path:\/w/m)
+  assert.match(r.out, /^ *api\/deploy +path:\/a/m)
+})
+
 test('install: .rness that is no git repository is refused naming it', async (t) => {
   const root = await makeWorkspace(t, { ...twoSkills })
   const r = await install(root, [], consentTerminal(['install']))

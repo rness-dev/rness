@@ -2232,6 +2232,58 @@ test('session start: .rness that is no git repository: no consent line, no instr
   assert.doesNotMatch(contextOf(r), /team skill|skill install/)
 })
 
+test('session start: a name two applied skills share is said by its id, in the list and the command', async (t) => {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: {
+      web: {
+        url: 'https://github.com/acme/web.git',
+        skills: { deploy: { source: 'path:/w', hash: SKILL_HASH } },
+      },
+      api: {
+        url: 'https://github.com/acme/api.git',
+        skills: { deploy: { source: 'path:/a', hash: SKILL_HASH } },
+      },
+    },
+    files: {
+      'skills/scopes/web/deploy/SKILL.md': skillMd('deploy', 'x: web\n'),
+      'skills/scopes/api/deploy/SKILL.md': skillMd('deploy', 'x: api\n'),
+    },
+    dirs: ['org/web', 'org/api'],
+  })
+  await git(['init', '-q', '-b', 'main'], join(root, '.rness'))
+  // api/deploy declined: only web/deploy is pending, still said by its id.
+  const ws = await findWorkspace(root)
+  const manifest = await loadManifest(ws.rnessDir)
+  const api = (
+    await appliedSkills(ws, manifest, { version: 1, skills: {} })
+  ).find((a) => a.id === 'api/deploy')
+  await writeConsent(ws.rnessDir, {
+    version: 1,
+    skills: {
+      'api/deploy': {
+        hash: api?.hash ?? '',
+        answer: 'declined',
+        date: '2026-11-13',
+      },
+    },
+  })
+  const r = await hook('session-start', { cwd: root, source: 'startup' })
+  const lines = contextOf(r).split('\n')
+  assert.ok(
+    lines.includes('- web/deploy: path:/w, allowed-tools: none'),
+    lines.join('\n')
+  )
+  assert.ok(
+    lines.some((l) =>
+      l.includes(
+        'run rness skill install web/deploy --yes; never without asking'
+      )
+    ),
+    lines.join('\n')
+  )
+})
+
 test('session start: on compact the developer is not told again, the model is', async (t) => {
   const root = await skillWs(t)
   const r = await hook('session-start', { cwd: root, source: 'compact' })

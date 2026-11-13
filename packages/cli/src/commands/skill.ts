@@ -12,11 +12,13 @@ import {
   type AppliedSkill,
   type Consent,
   appliedSkills,
+  designated,
   droppedLine,
   isPending,
   isValid,
   originOf,
   readConsent,
+  skillLabel,
   versionOf,
   writeConsent,
 } from '../core/skill-consent.ts'
@@ -599,12 +601,6 @@ async function allowedToolsOf(dir: string): Promise<string> {
   return allowedToolsText(fields?.['allowed-tools']) ?? 'none'
 }
 
-/** A skill's name, or its record id when another skill of the list has the same name. */
-const labeller = (list: readonly AppliedSkill[]) => (a: AppliedSkill) =>
-  list.filter((o) => o.skill.name === a.skill.name).length > 1
-    ? a.id
-    : a.skill.name
-
 const pad = (cells: readonly string[], widths: readonly number[]): string =>
   cells
     .map((c, i) => (i === cells.length - 1 ? c : c.padEnd(widths[i] ?? 0)))
@@ -654,6 +650,8 @@ export async function skillInstallCommand(
       (file, ids) => ui.warn(droppedLine(file, ids))
     )
     const applied = await appliedSkills(ws, manifest, consent)
+    // A name two applied skills share is said, and taken, by its id.
+    const label = skillLabel(applied)
     let listed: (AppliedSkill & { hash: string })[]
     // Invalid copies are reported, never offered: validate says what to fix.
     const skip = (a: AppliedSkill): void =>
@@ -661,27 +659,34 @@ export async function skillInstallCommand(
         ui,
         'line',
         'skipped',
-        `${a.skill.name}: ${a.problem ?? 'invalid'}; run rness validate`
+        `${label(a)}: ${a.problem ?? 'invalid'}; run rness validate`
       )
     let onlyInvalid = false
     // Named and accepted at their current hash already: projected again
     // below, said `already installed` when nothing had to be written.
     let done: AppliedSkill[] = []
-    let doneLabel = (a: AppliedSkill): string => a.skill.name
     if (names.length === 0) {
       applied.filter((a) => a.state === 'invalid').forEach(skip)
       listed = applied.filter(isValid).filter((a) => isPending(a.state))
     } else {
-      const unknown = names.filter(
-        (n) => !applied.some((a) => a.skill.name === n)
-      )
+      const unknown = names.filter((n) => designated(applied, n).length === 0)
       if (unknown.length > 0)
         throw new Refusal(
-          `unknown skill ${unknown.map(quoted).join(', ')}; known skills: ${plainText([...new Set(applied.map((a) => a.skill.name))].join(', ')) || 'none'}`
+          `unknown skill ${unknown.map(quoted).join(', ')}; known skills: ${plainText([...new Set(applied.map(label))].join(', ')) || 'none'}`
         )
-      const named = applied.filter((a) => names.includes(a.skill.name))
+      // The answer given ahead never covers a skill the developer did not
+      // name: a name two skills share is taken by its id only (ruling R27).
+      if (opts.yes === true)
+        for (const n of names) {
+          const several = designated(applied, n)
+          if (several.length > 1)
+            throw new Refusal(
+              `skill ${quoted(n)} names more than one team skill: name one by its id, ${plainText(several.map((a) => a.id).join(' or '))}`
+            )
+        }
+      const chosen = new Set(names.flatMap((n) => designated(applied, n)))
+      const named = applied.filter((a) => chosen.has(a))
       done = named.filter((a) => a.state === 'installed')
-      doneLabel = labeller(named)
       named.filter((a) => a.state === 'invalid').forEach(skip)
       onlyInvalid = named.every((a) => a.state === 'invalid')
       listed = named.filter(isValid).filter((a) => a.state !== 'installed')
@@ -693,7 +698,7 @@ export async function skillInstallCommand(
           ui,
           'line',
           'skills',
-          `${left.map(doneLabel).join(', ')}: already installed`
+          `${left.map(label).join(', ')}: already installed`
         )
     }
     if (listed.length === 0) {
@@ -711,7 +716,6 @@ export async function skillInstallCommand(
         say(ui, 'line', 'skills', 'no team skill awaits your consent')
       return 0
     }
-    const label = labeller(listed)
     const rows: string[][] = []
     for (const a of listed) {
       const { bytes } = await checkSkillDir(a.skill.dir, a.skill.name)
@@ -779,15 +783,23 @@ export async function skillInstallCommand(
     const skills = { ...consent.skills }
     for (const a of listed) skills[a.id] = { hash: a.hash, answer, date }
     await writeConsent(ws.rnessDir, { version: 1, skills })
-    const said = listed.map(label).join(', ')
+    const labels = listed.map(label)
+    const said = labels.join(', ')
     if (answer === 'accepted') say(ui, 'line', 'accepted', said)
-    else
+    else {
+      // The form install takes back: the name, or the id it was said by.
+      const forms = [
+        ...new Set(
+          labels.map((l) => (l.includes('/') ? '<scope>/<name>' : '<name>'))
+        ),
+      ].sort()
       say(
         ui,
         'line',
         'declined',
-        `${said}   (rness skill install <name> installs one later)`
+        `${said}   (rness skill install ${forms.join(' or ')} installs one later)`
       )
+    }
     // The answers made true on disk (spec 0041 §6): an accepted skill written,
     // a declined one removed, in every clone and at the root.
     const only = unreadable

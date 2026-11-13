@@ -61,7 +61,12 @@ import {
 import { cloneHolding } from '../core/repos.ts'
 import { safetyNet } from '../core/safety-net.ts'
 import { resolveScope, scopeChain } from '../core/scope.ts'
-import { isPending, originOf, versionOf } from '../core/skill-consent.ts'
+import {
+  isPending,
+  originOf,
+  skillLabel,
+  versionOf,
+} from '../core/skill-consent.ts'
 import {
   installedFile,
   pendingLine,
@@ -255,12 +260,15 @@ async function pendingSkills(
   const pending = applied.filter((a) => isPending(a.state))
   if (pending.length === 0) return null
   const [verb, rest] = pendingLine(pending.length, env)
+  // A name two applied skills share is said by its id, the form `install`
+  // takes for that one alone (ruling R27).
+  const label = skillLabel(applied)
   const items: string[] = []
   for (const a of pending)
     items.push(
-      `- ${plainText(a.skill.name)}: ${plainText(originOf(a.skill))}${a.state === 'changed' ? ' (changed since accepted)' : ''}, allowed-tools: ${await allowedTools(a.skill.dir)}`
+      `- ${plainText(label(a))}: ${plainText(originOf(a.skill))}${a.state === 'changed' ? ' (changed since accepted)' : ''}, allowed-tools: ${await allowedTools(a.skill.dir)}`
     )
-  const names = pending.map((a) => plainText(a.skill.name)).join(' ')
+  const names = pending.map((a) => plainText(label(a))).join(' ')
   return {
     line: `${verb.padEnd(COLUMN)} ${rest}`,
     context: [

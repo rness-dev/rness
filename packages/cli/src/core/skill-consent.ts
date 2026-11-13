@@ -216,6 +216,31 @@ export async function appliedSkills(
   return applied
 }
 
+/**
+ * How a skill is named to the developer, to the agent and to `install`
+ * (ruling R27): its name, or its id (`<scope>/<name>`) when another skill
+ * of `applied`, in any state, has the same name.
+ */
+export const skillLabel =
+  (applied: readonly AppliedSkill[]) =>
+  (a: AppliedSkill): string =>
+    applied.some((o) => o !== a && o.skill.name === a.skill.name)
+      ? a.id
+      : a.skill.name
+
+/**
+ * The skills of `applied` a name given to `install` designates: the one
+ * whose id it is (`<scope>/<name>`, or `<name>` for a top-level skill),
+ * else every skill of that name.
+ */
+export function designated(
+  applied: readonly AppliedSkill[],
+  given: string
+): AppliedSkill[] {
+  const byId = applied.filter((a) => a.id === given)
+  return byId.length > 0 ? byId : applied.filter((a) => a.skill.name === given)
+}
+
 /** How many of `applied` await an answer (the `sync` line, the session start). */
 export const pendingCount = (applied: readonly AppliedSkill[]): number =>
   applied.filter((a) => isPending(a.state)).length
