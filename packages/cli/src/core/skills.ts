@@ -88,7 +88,9 @@ export async function teamSkills(
   for (const [scope, declared, base] of levels) {
     for (const [name, entry] of Object.entries(declared))
       found.push({ name, scope, dir: join(base, name), entry })
-    for (const name of await subdirectories(base))
+    // A linked level is refused by `checkSkillCopies`, never read through.
+    const linked = (await linkedLevel(rnessDir, base)) !== null
+    for (const name of linked ? [] : await subdirectories(base))
       if (
         !(scope === null && name === 'scopes') &&
         !Object.hasOwn(declared, name)
@@ -338,11 +340,29 @@ export function skillSourceUrl(source: string): string | null {
   return `https://github.com/${repo}.git`
 }
 
+/** The `name` field of `dir/SKILL.md`; the repository's own name when there is none to read. */
+async function declaredName(dir: string, url: string): Promise<string> {
+  try {
+    const name = parseFrontMatter(
+      await readFile(join(dir, 'SKILL.md'), 'utf8')
+    )?.['name']
+    if (typeof name === 'string' && name !== '') return name
+  } catch {
+    // Unreadable: the check of the copy says why.
+  }
+  return basename(
+    url
+      .replace(/\/+$/, '')
+      .replace(/\.git$/, '')
+      .replace(/^.*:/, '')
+  )
+}
+
 /** A skill fetched from its source, to be copied; `release` removes the temporary checkout. */
 export interface FetchedSkill {
   /** The directory holding the skill (the checkout or its `path`; the directory itself for `path:`). */
   dir: string
-  /** The source directory's name: the last segment of `path`, of the repository URL, or of the `path:` directory. */
+  /** The source's name: the `name` of its SKILL.md at a repository root, else its directory's (last segment of `path`, or of the `path:` directory). */
   name: string
   /** The commit fetched; null for a `path:` source. */
   commit: string | null
@@ -389,15 +409,10 @@ export async function fetchSkill(
       !real.startsWith((await realpath(tmp)) + sep)
     )
       throw new Error(`path "${opts.path}" leaves the repository`)
-    const name =
-      dir === tmp
-        ? basename(
-            url
-              .replace(/\/+$/, '')
-              .replace(/\.git$/, '')
-              .replace(/^.*:/, '')
-          )
-        : basename(dir)
+    // At the root of a repository the name is the `name` of its SKILL.md
+    // (the repository's own name says nothing of the skill); elsewhere the
+    // directory's, which §4 requires SKILL.md to repeat.
+    const name = dir === tmp ? await declaredName(dir, url) : basename(dir)
     return { dir, name, commit, release }
   } catch (e) {
     await release()
@@ -405,16 +420,53 @@ export async function fetchSkill(
   }
 }
 
-/** `SKILL.md` with the `name` of its front matter set to `name`, every other byte unchanged. */
-function renamed(md: string, from: string, name: string): string {
-  const block = md.match(/^(\uFEFF?---\r?\n)([\s\S]*?)(\r?\n---)/)
-  const at = block?.[2]?.search(/^name:.*$/m) ?? -1
-  if (block === null || block[2] === undefined || at < 0)
+/**
+ * `SKILL.md` with the value of the `name` field of its front matter set to
+ * `name`; every other byte, a quote style or a comment after the value
+ * included, is unchanged. Works on bytes (as latin1), so no byte is altered
+ * by a text round trip.
+ */
+function renamed(md: Buffer, from: string, name: string): Buffer {
+  const text = md.toString('latin1')
+  const block = text.match(/^((?:\xEF\xBB\xBF)?---\r?\n)([\s\S]*?)\r?\n---/)
+  const field =
+    block === null ? null : /^name:[ \t]*(["']?)/m.exec(block[2] ?? '')
+  if (block === null || field === null)
     throw refusal(from, 'SKILL.md has no name line to rewrite')
-  const head = (block[1] ?? '').length
-  const line = /^name:.*$/m.exec(block[2])?.[0] ?? ''
-  const start = head + at
-  return md.slice(0, start) + `name: ${name}` + md.slice(start + line.length)
+  const start = (block[1] ?? '').length + field.index + field[0].length
+  const rest = text.slice(start)
+  const quote = field[1] ?? ''
+  const length =
+    quote !== ''
+      ? Math.max(rest.indexOf(quote), 0)
+      : (/^[^\r\n]*/.exec(rest)?.[0] ?? '')
+          .replace(/[ \t]+#.*$/, '')
+          .replace(/[ \t]+$/, '').length
+  return Buffer.from(
+    text.slice(0, start) + name + text.slice(start + length),
+    'latin1'
+  )
+}
+
+const linkRefusal = (rnessDir: string, path: string): string =>
+  `${relative(rnessDir, path)} is a symbolic link; only regular files and directories are allowed`
+
+/**
+ * The first of `skills/`, `skills/scopes/` and `skills/scopes/<scope>/`
+ * leading to `base` (a level's directory) that is a symbolic link, absolute;
+ * null when none is. Writing or reading through one would leave `.rness`.
+ */
+async function linkedLevel(
+  rnessDir: string,
+  base: string
+): Promise<string | null> {
+  let at = join(rnessDir, 'skills')
+  for (const part of ['', ...relative(at, base).split(sep).filter(Boolean)]) {
+    at = join(at, part)
+    const st = await lstat(at).catch(() => null)
+    if (st?.isSymbolicLink() === true) return at
+  }
+  return null
 }
 
 /** What `copySkill` made. */
@@ -443,10 +495,17 @@ export async function copySkill(
   const source = await checkSkillDir(from.dir, from.name)
   const bad = nameProblem(name)
   if (bad !== null) throw refusal(name, bad)
+  if (opts.scope === null && name === 'scopes')
+    throw refusal(
+      name,
+      'the name "scopes" is the directory of the scoped skills'
+    )
   const base =
     opts.scope === null
       ? join(rnessDir, 'skills')
       : join(rnessDir, 'skills', 'scopes', opts.scope)
+  const link = await linkedLevel(rnessDir, base)
+  if (link !== null) throw refusal(name, linkRefusal(rnessDir, link))
   const target = join(base, name)
   await mkdir(base, { recursive: true })
   const staged = await mkdtemp(join(base, `.${name}-`))
@@ -454,9 +513,9 @@ export async function copySkill(
     for (const f of source.files) {
       const to = join(staged, ...f.path.split('/'))
       await mkdir(dirname(to), { recursive: true })
-      let bytes: Buffer | string = await readFile(f.abs)
+      let bytes: Buffer = await readFile(f.abs)
       if (f.path === 'SKILL.md' && name !== from.name)
-        bytes = renamed(bytes.toString('utf8'), from.name, name)
+        bytes = renamed(bytes, from.name, name)
       await writeFile(to, bytes)
       await chmod(to, f.executable ? 0o755 : 0o644)
     }
@@ -489,7 +548,23 @@ export async function checkSkillCopies(
 ): Promise<{ problems: string[]; reported: string[] }> {
   const problems: string[] = []
   const reported: string[] = []
+  const levels = [
+    join(rnessDir, 'skills'),
+    ...Object.keys(manifest.scopes).map((n) =>
+      join(rnessDir, 'skills', 'scopes', n)
+    ),
+  ]
+  const linked = new Set<string>()
+  for (const base of levels) {
+    const link = await linkedLevel(rnessDir, base)
+    if (link !== null) linked.add(base)
+    if (link !== null) {
+      const line = `skills: ${linkRefusal(rnessDir, link)}`
+      if (!problems.includes(line)) problems.push(line)
+    }
+  }
   for (const s of await teamSkills(rnessDir, manifest)) {
+    if (linked.has(dirname(s.dir))) continue
     const place = relative(rnessDir, s.dir)
     const st = await lstat(s.dir).catch((e: NodeJS.ErrnoException) => {
       if (e.code === 'ENOENT') return null

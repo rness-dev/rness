@@ -36,26 +36,31 @@ export function withCredentials(
 async function git(
   args: readonly string[],
   cwd?: string,
-  credentials?: GitCredentials | null
+  credentials?: GitCredentials | null,
+  config: readonly string[] = []
 ): Promise<string> {
   const auth = withCredentials(credentials)
   try {
-    const { stdout } = await execFileP('git', [...auth.args, ...args], {
-      ...(cwd === undefined ? {} : { cwd }),
-      env: {
-        ...process.env,
-        ...auth.env,
-        GIT_TERMINAL_PROMPT: '0',
-        // Pin the command to `cwd` itself: without a ceiling, git walks up and
-        // a plain directory under `org/` would report — or be pulled into —
-        // whatever repository happens to sit above the workspace root. git
-        // ignores a relative ceiling entry, hence the resolve().
-        ...(cwd === undefined
-          ? {}
-          : { GIT_CEILING_DIRECTORIES: dirname(resolve(cwd)) }),
-      },
-      maxBuffer: 16 * 1024 * 1024,
-    })
+    const { stdout } = await execFileP(
+      'git',
+      [...auth.args, ...config, ...args],
+      {
+        ...(cwd === undefined ? {} : { cwd }),
+        env: {
+          ...process.env,
+          ...auth.env,
+          GIT_TERMINAL_PROMPT: '0',
+          // Pin the command to `cwd` itself: without a ceiling, git walks up and
+          // a plain directory under `org/` would report, or be pulled into,
+          // whatever repository happens to sit above the workspace root. git
+          // ignores a relative ceiling entry, hence the resolve().
+          ...(cwd === undefined
+            ? {}
+            : { GIT_CEILING_DIRECTORIES: dirname(resolve(cwd)) }),
+        },
+        maxBuffer: 16 * 1024 * 1024,
+      }
+    )
     return stdout
   } catch (e) {
     const err = e as { stderr?: string; message?: string }
@@ -116,7 +121,11 @@ export async function fetchRef(
     await git(
       ['fetch', '--depth', '1', '--quiet', '--', from, target],
       dir,
-      credentials
+      credentials,
+      // A redirect must never carry the credentials to another host.
+      credentials === null || credentials === undefined
+        ? []
+        : ['-c', 'http.followRedirects=false']
     )
   } catch (e) {
     if (/^[0-9a-f]{4,39}$/i.test(target))

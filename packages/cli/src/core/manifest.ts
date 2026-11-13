@@ -477,6 +477,8 @@ function readSkills(value: unknown, where: string): Record<string, SkillEntry> {
       )
     if (name === 'rness')
       fail(`${at}: "rness" is the name of the plugin's own directory`)
+    if (name === 'scopes' && where === '')
+      fail(`${at}: "scopes" is the directory of the scoped skills`)
     if (!isRecord(entry)) fail(`${at} must be an object`)
     for (const key of Object.keys(entry))
       if (!SKILL_KEYS.includes(key))

@@ -1628,3 +1628,22 @@ test('skills: a name of 64 characters and a 64-hex commit are read', async (t) =
   t.after(() => rm(dirname(d), { recursive: true, force: true }))
   assert.equal((await loadManifest(d)).skills?.[name]?.commit, 'f'.repeat(64))
 })
+
+test('loadManifest: a top-level skill named scopes is refused, one in a scope is fine', async () => {
+  const ok = { source: 'github:o/r', hash: `sha256-${'A'.repeat(43)}=` }
+  const bad = await fixture({ contract: 2, skills: { scopes: ok }, scopes: {} })
+  const good = await fixture({
+    contract: 2,
+    scopes: { web: { url: 'u', skills: { scopes: ok } } },
+  })
+  try {
+    await assert.rejects(
+      () => loadManifest(bad),
+      /skill "scopes": "scopes" is the directory of the scoped skills/
+    )
+    await loadManifest(good)
+  } finally {
+    await rm(dirname(bad), { recursive: true, force: true })
+    await rm(dirname(good), { recursive: true, force: true })
+  }
+})
