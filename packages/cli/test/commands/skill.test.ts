@@ -1049,3 +1049,39 @@ test('install: values from a copy made before the check are sanitized on display
   assert.equal(r.code, 0, r.err)
   assert.equal(r.out.includes('\u001b'), false)
 })
+
+// ---- install: the answers made true in the clones (spec 0041 §6) ----
+
+test('install: a skill accepted is installed in the clones and at the root; its new version declined, it is removed', async (t) => {
+  const root = await consentWs(t, { ...twoSkills, agents: ['claude'] })
+  await git(['init', '-q', '-b', 'main'], join(root, 'org/web'))
+  const r = await install(root, [], consentTerminal(['install']))
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^installed brainstorming, release {3}\(org\/web, workspace root\)$/m
+  )
+  for (const p of [
+    'org/web/.claude/skills/release/SKILL.md',
+    'org/web/.agents/skills/brainstorming/notes.md',
+    '.claude/skills/brainstorming/SKILL.md',
+  ])
+    assert.equal(await exists(join(root, p)), true, p)
+
+  await writeFile(
+    join(root, '.rness/skills/release/SKILL.md'),
+    SKILL_MD('release', 'v: 2\n')
+  )
+  const d = await install(root, [], consentTerminal(['decline']))
+  assert.equal(d.code, 0, d.err)
+  assert.match(d.out, /^removed +release {3}\(org\/web, workspace root\)$/m)
+  assert.equal(
+    await exists(join(root, 'org/web/.claude/skills/release')),
+    false
+  )
+  assert.equal(await exists(join(root, '.claude/skills/release')), false)
+  assert.equal(
+    await exists(join(root, 'org/web/.claude/skills/brainstorming')),
+    true
+  )
+})

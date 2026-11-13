@@ -228,6 +228,29 @@ export async function seenPaths(
 }
 
 /**
+ * Which of `paths` (relative to `dir`, the root of a repository) git tracks:
+ * a file at the path or under it, in the index (`git ls-files`). A path is
+ * literal, never a glob. Throws when `dir` is no repository.
+ */
+export async function trackedPaths(
+  dir: string,
+  paths: readonly string[]
+): Promise<Set<string>> {
+  if (paths.length === 0) return new Set()
+  const files = (
+    await git(
+      ['ls-files', '-z', '--', ...paths.map((p) => `:(literal)${p}`)],
+      dir
+    )
+  )
+    .split('\0')
+    .filter((f) => f !== '')
+  return new Set(
+    paths.filter((p) => files.some((f) => f === p || f.startsWith(`${p}/`)))
+  )
+}
+
+/**
  * `name` in the git directory of `dir`, absolute — its worktree's own for a
  * linked worktree (`git rev-parse --git-path`). Never pushed. Null when
  * `dir` is no repository.

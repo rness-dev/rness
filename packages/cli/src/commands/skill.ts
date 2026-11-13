@@ -10,6 +10,7 @@ import type { GitCredentials } from '../core/provider.ts'
 import { openGitProvider } from '../core/providers.ts'
 import {
   type AppliedSkill,
+  type Consent,
   appliedSkills,
   isPending,
   isValid,
@@ -18,6 +19,13 @@ import {
   versionOf,
   writeConsent,
 } from '../core/skill-consent.ts'
+import {
+  type Projection,
+  ROOT_LABEL,
+  declaredClones,
+  projectClone,
+  projectRoot,
+} from '../core/skill-install.ts'
 import {
   type TeamSkill,
   allowedToolsText,
@@ -546,8 +554,8 @@ const STATE_WORDS = {
 
 /**
  * `rness skill install [names...] [--yes]`: show the team skills awaiting
- * the developer and record their answer, per content hash (spec 0041 §5).
- * Records the consent only; the copies into the clones are the projection's.
+ * the developer and record their answer, per content hash (spec 0041 §5),
+ * then project the answers into the clones and the root (§6).
  */
 export async function skillInstallCommand(
   names: readonly string[],
@@ -678,8 +686,48 @@ export async function skillInstallCommand(
         'declined',
         `${said}   (rness skill install <name> installs one later)`
       )
-    return 0
+    // The answers made true on disk (spec 0041 §6): an accepted skill written,
+    // a declined one removed, in every clone and at the root.
+    return (await projectAll(ws, manifest, ui, { version: 1, skills })) ? 0 : 1
   })
+}
+
+/**
+ * Run the projection of the accepted skills over the declared clones and
+ * the root, and say it: `installed <names>   (<places>)`, the same for what
+ * was removed, then each clash. False when a place failed.
+ */
+async function projectAll(
+  ws: Workspace,
+  manifest: Manifest,
+  ui: Ui,
+  consent: Consent
+): Promise<boolean> {
+  const applied = await appliedSkills(ws, manifest, consent)
+  const places: [string, Projection][] = []
+  for (const repo of await declaredClones(ws, manifest))
+    places.push([
+      `org/${repo}`,
+      await projectClone(ws, manifest, applied, repo),
+    ])
+  places.push([ROOT_LABEL, await projectRoot(ws, manifest, applied)])
+  const summary = (verb: string, of: (p: Projection) => string[]): void => {
+    const done = places.filter(([, p]) => of(p).length > 0)
+    if (done.length === 0) return
+    const names = [...new Set(done.flatMap(([, p]) => of(p)))].sort()
+    say(
+      ui,
+      'line',
+      verb,
+      `${names.join(', ')}   (${done.map(([l]) => l).join(', ')})`
+    )
+  }
+  summary('installed', (p) => [...p.installed, ...p.rewritten])
+  summary('removed', (p) => p.removed)
+  for (const [, p] of places) for (const n of p.notes) say(ui, 'hint', n)
+  const problems = places.flatMap(([, p]) => p.problems)
+  for (const line of problems) ui.error(plainText(line))
+  return problems.length === 0
 }
 
 /** `rness skill list`: every team skill that applies to this workspace, with its state for the developer. */

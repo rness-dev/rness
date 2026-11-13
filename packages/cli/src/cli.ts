@@ -337,7 +337,7 @@ function buildProgram(state: RunState): Command {
   skill
     .command('install')
     .description(
-      'Show the team skills awaiting your consent and record your answer'
+      'Show the team skills awaiting your consent, record your answer, install the accepted ones'
     )
     .argument('[names...]', 'the skills to install (default: all pending)')
     .option('-y, --yes', 'accept without the question')

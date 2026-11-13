@@ -1,0 +1,614 @@
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, isAbsolute, join, relative } from 'node:path'
+
+import { readOrNull, writeFileAtomic } from './fs.ts'
+import { gitPath, trackedPaths } from './git.ts'
+import { providerOf, repositories } from './manifest.ts'
+import { rnessCommand } from './pm.ts'
+import {
+  type AppliedSkill,
+  type Consent,
+  appliedSkills,
+  isValid,
+  readConsent,
+} from './skill-consent.ts'
+import { checkSkillDir, hashSkillDir, skillsForClone } from './skills.ts'
+import { count } from './style.ts'
+import type { Manifest, Workspace } from './types.ts'
+import type { Line } from './ui.ts'
+import { orgDirs } from './workspace.ts'
+
+// The projection of the team skills a developer accepted (spec 0041 §6):
+// copies written into the clones of the workspace and at its root, excluded
+// from git, recorded, and removed when no longer accepted or declared. rness
+// only ever removes or rewrites a path its record names, never through a
+// symbolic link, never outside the clone or the root (decision 7).
+
+/** The line `.git/info/exclude` keeps rness's lines under (ruling R7). */
+export const EXCLUDE_HEADER =
+  '# rness: team skills (rness sync keeps these lines)'
+
+/** What a clone's record holds for one skill: the hash it was written at, the paths written. */
+export interface InstalledEntry {
+  hash: string
+  /** Relative to the clone (or the root): `.claude/skills/<name>`, `.agents/skills/<name>`. */
+  paths: string[]
+}
+
+/** `.git/rness/skills.json` of a clone, `rness/root-skills.json` in the git directory of `.rness` for the root. */
+export interface InstalledRecord {
+  version: 1
+  /** By skill name (one name per clone: `validate` refuses a name twice). */
+  skills: Record<string, InstalledEntry>
+}
+
+/** A clone holds both directories; the root only `.claude/skills` (spec 0041 §6). */
+export type InstalledKind = 'clone' | 'root'
+
+const NAME = '[a-z0-9]+(?:-[a-z0-9]+)*'
+const CLONE_PATH = new RegExp(`^\\.(?:claude|agents)/skills/${NAME}$`)
+const ROOT_PATH = new RegExp(`^\\.claude/skills/${NAME}$`)
+const HASH = /^sha256-[A-Za-z0-9+/]{43}=$/
+const EXCLUDE_LINE = /^\/\.(?:claude|agents)\/skills\/[^/]+\/$/
+
+/** The record of the clone `clone`; null when it is no git repository. */
+export const installedFile = (clone: string): Promise<string | null> =>
+  gitPath(clone, 'rness/skills.json')
+
+/** The record of the workspace root, in the git directory of `.rness`; null when `.rness` is no git repository. */
+export const rootInstalledFile = (rnessDir: string): Promise<string | null> =>
+  gitPath(rnessDir, 'rness/root-skills.json')
+
+const emptyRecord = (): InstalledRecord => ({ version: 1, skills: {} })
+
+/** True when `p` is a path rness writes `name` to in a place of `kind`. */
+const isSkillPath = (kind: InstalledKind, name: string, p: string): boolean =>
+  (kind === 'root' ? ROOT_PATH : CLONE_PATH).test(p) &&
+  p.endsWith(`/skills/${name}`)
+
+/**
+ * The record at `file` (`installedFile`, `rootInstalledFile`). Missing: an
+ * empty record. Null when it cannot be trusted: unreadable, not JSON, or
+ * naming a path rness never writes (anything but `.claude/skills/<name>`,
+ * and `.agents/skills/<name>` in a clone, `<name>` its key). Nothing is
+ * removed or rewritten on a null record: the guard and the projection only
+ * act on paths a valid record names.
+ */
+export async function readInstalled(
+  file: string,
+  kind: InstalledKind = 'clone'
+): Promise<InstalledRecord | null> {
+  let text: string | null
+  try {
+    text = await readOrNull(file)
+  } catch {
+    return null
+  }
+  if (text === null) return emptyRecord()
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof data !== 'object' || data === null) return null
+  const { version, skills } = data as { version?: unknown; skills?: unknown }
+  if (version !== 1 || typeof skills !== 'object' || skills === null)
+    return null
+  const record = emptyRecord()
+  for (const [name, entry] of Object.entries(skills)) {
+    if (typeof entry !== 'object' || entry === null) return null
+    const { hash, paths } = entry as { hash?: unknown; paths?: unknown }
+    if (
+      typeof hash !== 'string' ||
+      !HASH.test(hash) ||
+      !Array.isArray(paths) ||
+      paths.length === 0 ||
+      new Set(paths).size !== paths.length ||
+      !paths.every((p) => typeof p === 'string' && isSkillPath(kind, name, p))
+    )
+      return null
+    record.skills[name] = { hash, paths: paths as string[] }
+  }
+  return record
+}
+
+/** Write the record at `file`, atomically. */
+export async function writeInstalled(
+  file: string,
+  record: InstalledRecord
+): Promise<void> {
+  await mkdir(dirname(file), { recursive: true })
+  await writeFileAtomic(file, `${JSON.stringify(record, null, 2)}\n`)
+}
+
+/** What one place (a clone or the root) became. Names sorted. */
+export interface Projection {
+  /** Written where they were not. */
+  installed: string[]
+  /** Written again over a copy rness wrote: edited there, or accepted at a new hash. */
+  rewritten: string[]
+  /** At least one path removed. */
+  removed: string[]
+  /** Said, never a failure: a clash, a symbolic link, an unreadable record. */
+  notes: string[]
+  /** Failures. */
+  problems: string[]
+}
+
+const nothing = (): Projection => ({
+  installed: [],
+  rewritten: [],
+  removed: [],
+  notes: [],
+  problems: [],
+})
+
+interface Place {
+  kind: InstalledKind
+  base: string
+  label: string
+  /** The git directory's `rness/`: the record's directory, and where copies are staged. */
+  gitDir: string
+  record: string
+  /** `.git/info/exclude`, found when first needed; null at the root (no repository). */
+  exclude: (() => Promise<string | null>) | null
+  /** `.claude/skills`, `.agents/skills`, as `agents` and the place want. */
+  dirs: string[]
+  candidates: readonly AppliedSkill[]
+}
+
+/** `p` under `base`, absolute; throws unless `p` is a skill path and stays inside `base` (decision 7). */
+function inside(base: string, p: string): string {
+  if (!CLONE_PATH.test(p))
+    throw new Error(`refusing ${p}: not a path rness writes a team skill to`)
+  const abs = join(base, ...p.split('/'))
+  const rel = relative(base, abs)
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel))
+    throw new Error(`refusing ${abs}: outside ${base}`)
+  return abs
+}
+
+const lstatOrNull = (p: string) =>
+  lstat(p).catch((e: NodeJS.ErrnoException) => {
+    if (e.code === 'ENOENT') return null
+    throw e
+  })
+
+/** Why nothing may be written under `top` (`.claude`, `.agents`) of `base`; null when it may. */
+async function levelProblem(base: string, top: string): Promise<string | null> {
+  for (const rel of [top, `${top}/skills`]) {
+    const st = await lstatOrNull(join(base, rel))
+    if (st === null) return null
+    if (st.isSymbolicLink())
+      return `${rel} is a symbolic link; rness writes no team skill through it`
+    if (!st.isDirectory())
+      return `${rel} is not a directory; rness writes no team skill there`
+  }
+  return null
+}
+
+/** Replace rness's lines of `.git/info/exclude` (the header and the lines right after it) with `paths`; every other line kept. */
+async function updateExclude(
+  file: string,
+  paths: readonly string[]
+): Promise<void> {
+  const text = (await readOrNull(file)) ?? ''
+  const lines = text === '' ? [] : text.replace(/\n$/, '').split('\n')
+  const at = lines.indexOf(EXCLUDE_HEADER)
+  const section =
+    paths.length === 0
+      ? []
+      : [EXCLUDE_HEADER, ...[...paths].sort().map((p) => `/${p}/`)]
+  if (at === -1 && section.length === 0) return
+  let next: string[]
+  if (at === -1) next = [...lines, ...section]
+  else {
+    let end = at + 1
+    while (end < lines.length && EXCLUDE_LINE.test(lines[end] ?? '')) end += 1
+    next = [...lines.slice(0, at), ...section, ...lines.slice(end)]
+  }
+  const out = next.length === 0 ? '' : `${next.join('\n')}\n`
+  if (out === text) return
+  await mkdir(dirname(file), { recursive: true })
+  await writeFileAtomic(file, out)
+}
+
+interface SkillBytes {
+  path: string
+  executable: boolean
+  bytes: Buffer
+}
+
+async function writeFiles(files: readonly SkillBytes[], to: string) {
+  await mkdir(to, { recursive: true })
+  for (const f of files) {
+    const at = join(to, ...f.path.split('/'))
+    await mkdir(dirname(at), { recursive: true })
+    await writeFile(at, f.bytes)
+    await chmod(at, f.executable ? 0o755 : 0o644)
+  }
+}
+
+/**
+ * Put the copy `files` of skill `name` at `abs`: staged in the git
+ * directory, checked against `hash` (only accepted bytes are installed),
+ * then moved in place of what rness wrote there before.
+ */
+async function placeCopy(
+  place: Place,
+  name: string,
+  files: readonly SkillBytes[],
+  hash: string,
+  abs: string
+): Promise<void> {
+  await mkdir(place.gitDir, { recursive: true })
+  const tmp = await mkdtemp(join(place.gitDir, 'staging-'))
+  try {
+    const staged = join(tmp, name)
+    await writeFiles(files, staged)
+    if ((await hashSkillDir(staged)) !== hash)
+      throw new Error(
+        `team skill ${name} changed in .rness while it was installed; run ${rnessCommand()} sync again`
+      )
+    await mkdir(dirname(abs), { recursive: true })
+    await rm(abs, { recursive: true, force: true })
+    try {
+      await rename(staged, abs)
+    } catch (e) {
+      // The git directory on another device (a worktree's): written in place.
+      if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e
+      await writeFiles(files, abs)
+    }
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+}
+
+type PathState = 'absent' | 'ours' | 'foreign' | 'odd' | 'tracked' | 'blocked'
+
+/** One place: the decisions of spec 0041 §6, then the removals, the record and exclude, the copies. */
+async function project(place: Place): Promise<Projection> {
+  const out = nothing()
+  const note = (line: string): void => {
+    out.notes.push(`${place.label}: ${line}`)
+  }
+  const record = await readInstalled(place.record, place.kind)
+  if (record === null) {
+    note(
+      `${relative(place.base, place.record)} is unreadable; team skills left as they are there`
+    )
+    return out
+  }
+  const byName = new Map<string, AppliedSkill[]>()
+  for (const a of place.candidates)
+    byName.set(a.skill.name, [...(byName.get(a.skill.name) ?? []), a])
+  // What each name should be here: written at the accepted hash, left as it
+  // is (pending a new answer, invalid, or a name twice), or nothing.
+  const want = new Map<string, AppliedSkill & { hash: string }>()
+  const kept = new Set<string>()
+  for (const [name, list] of byName) {
+    const one = list.length === 1 ? list[0] : undefined
+    if (one === undefined) {
+      // Said once it matters: one of them accepted, or a copy here already.
+      if (
+        list.some((a) => a.state === 'installed') ||
+        Object.hasOwn(record.skills, name)
+      )
+        note(
+          `team skill ${name} applies here more than once (${rnessCommand()} validate says where); left as it is`
+        )
+      kept.add(name)
+    } else if (one.state === 'changed' || one.state === 'invalid')
+      kept.add(name)
+    else if (one.state === 'installed' && isValid(one) && place.dirs.length > 0)
+      want.set(name, one)
+  }
+  const names = [...new Set([...Object.keys(record.skills), ...want.keys()])]
+    .filter((n) => !kept.has(n))
+    .sort()
+  if (names.length === 0) return out
+
+  // Decision 7: the home directory is never a place.
+  const home = await realpath(homedir()).catch(() => null)
+  if (home !== null && (await realpath(place.base)) === home) {
+    note('it is your home directory; rness never writes a team skill there')
+    return out
+  }
+
+  const levels = new Map<string, string | null>()
+  for (const top of ['.claude', '.agents'])
+    levels.set(top, await levelProblem(place.base, top))
+  const wantedPaths = (name: string): string[] =>
+    want.has(name) ? place.dirs.map((d) => `${d}/${name}`) : []
+  const all = names.flatMap((n) => [
+    ...new Set([...wantedPaths(n), ...(record.skills[n]?.paths ?? [])]),
+  ])
+  const topOf = (p: string): string => p.split('/')[0] ?? ''
+  const tracked =
+    place.kind === 'clone'
+      ? await trackedPaths(
+          place.base,
+          all.filter((p) => levels.get(topOf(p)) === null)
+        )
+      : new Set<string>()
+  const state = new Map<string, PathState>()
+  for (const p of all) {
+    if (levels.get(topOf(p)) !== null) state.set(p, 'blocked')
+    else if (tracked.has(p)) state.set(p, 'tracked')
+    else {
+      const st = await lstatOrNull(inside(place.base, p))
+      const recorded = Object.values(record.skills).some((e) =>
+        e.paths.includes(p)
+      )
+      state.set(
+        p,
+        st === null
+          ? 'absent'
+          : st.isSymbolicLink() || !st.isDirectory()
+            ? 'odd'
+            : recorded
+              ? 'ours'
+              : 'foreign'
+      )
+    }
+  }
+
+  const next: InstalledRecord = emptyRecord()
+  const removals: { name: string; path: string }[] = []
+  const writes: { name: string; path: string; fresh: boolean }[] = []
+  const blockedSaid = new Set<string>()
+  for (const name of Object.keys(record.skills).sort())
+    if (kept.has(name))
+      next.skills[name] = record.skills[name] as InstalledEntry
+  for (const name of names) {
+    const entry = record.skills[name]
+    const a = want.get(name)
+    let paths = wantedPaths(name)
+    const clashes = paths.filter((p) => {
+      const s = state.get(p)
+      return s !== 'absent' && s !== 'ours'
+    })
+    for (const p of clashes) {
+      const s = state.get(p)
+      if (s === 'blocked') {
+        const top = topOf(p)
+        if (!blockedSaid.has(top)) note(levels.get(top) ?? '')
+        blockedSaid.add(top)
+      } else if (s === 'tracked')
+        note(
+          `${p} is the repository's own; team skill ${name} not installed there`
+        )
+      else
+        note(
+          `${p} is not one rness wrote; team skill ${name} not installed there`
+        )
+    }
+    if (clashes.length > 0) paths = []
+    // Only what the record names and is still a directory rness wrote goes;
+    // a path now tracked, linked or replaced is forgotten, never touched.
+    for (const p of entry?.paths ?? [])
+      if (!paths.includes(p) && state.get(p) === 'ours')
+        removals.push({ name, path: p })
+    if (a === undefined || paths.length === 0) continue
+    next.skills[name] = { hash: a.hash, paths }
+    for (const p of paths) {
+      const fresh = state.get(p) === 'absent'
+      const stale =
+        fresh ||
+        entry?.hash !== a.hash ||
+        (await hashSkillDir(inside(place.base, p)).catch(() => null)) !== a.hash
+      if (stale) writes.push({ name, path: p, fresh })
+    }
+  }
+
+  const removed = new Set<string>()
+  for (const r of removals)
+    try {
+      await rm(inside(place.base, r.path), { recursive: true, force: true })
+      removed.add(r.name)
+    } catch (e) {
+      out.problems.push(`${place.label}: ${(e as Error).message}`)
+      // Still rness's: kept in the record, removed again by the next run.
+      const kept = next.skills[r.name]
+      const was = record.skills[r.name]
+      if (was !== undefined)
+        next.skills[r.name] = {
+          hash: kept?.hash ?? was.hash,
+          paths: [...(kept?.paths ?? []), r.path],
+        }
+    }
+
+  // The record and the exclude lines name a copy before it is written: an
+  // interrupted run leaves a path rness owns and rewrites, never a stray
+  // directory it would take for the repository's own.
+  const sorted: InstalledRecord = {
+    version: 1,
+    skills: Object.fromEntries(
+      Object.entries(next.skills).sort(([x], [y]) => (x < y ? -1 : 1))
+    ),
+  }
+  const had = Object.keys(record.skills).length > 0
+  if (
+    (had || Object.keys(sorted.skills).length > 0) &&
+    JSON.stringify(sorted) !== JSON.stringify(record)
+  )
+    await writeInstalled(place.record, sorted)
+  if (place.exclude !== null) {
+    const file = await place.exclude()
+    if (file !== null)
+      await updateExclude(
+        file,
+        Object.values(sorted.skills).flatMap((e) => e.paths)
+      )
+  }
+
+  const installed = new Set<string>()
+  const rewritten = new Set<string>()
+  const byWrite = new Map<string, typeof writes>()
+  for (const w of writes)
+    byWrite.set(w.name, [...(byWrite.get(w.name) ?? []), w])
+  for (const [name, list] of byWrite) {
+    const a = want.get(name)
+    if (a === undefined) continue
+    try {
+      const { files } = await checkSkillDir(a.skill.dir, name)
+      const bytes = await Promise.all(
+        files.map(async (f) => ({
+          path: f.path,
+          executable: f.executable,
+          bytes: await readFile(f.abs),
+        }))
+      )
+      for (const w of list) {
+        await placeCopy(place, name, bytes, a.hash, inside(place.base, w.path))
+        ;(w.fresh ? installed : rewritten).add(name)
+      }
+    } catch (e) {
+      out.problems.push(`${place.label}: ${(e as Error).message}`)
+    }
+  }
+  out.installed = [...installed].sort()
+  out.rewritten = [...rewritten].filter((n) => !installed.has(n)).sort()
+  out.removed = [...removed].sort()
+  return out
+}
+
+const dirsOf = (manifest: Manifest, kind: InstalledKind): string[] => [
+  ...((manifest.agents ?? []).includes('claude') ? ['.claude/skills'] : []),
+  ...(kind === 'clone' ? ['.agents/skills'] : []),
+]
+
+/**
+ * Install in the clone `org/<repo>` the skills that apply to it (its
+ * repository's, its parts', the top-level ones) and that the developer
+ * accepted at their current hash; remove what rness wrote there and is no
+ * longer accepted or declared. A clone that is no git repository is left
+ * alone, as the hooks leave it.
+ */
+export async function projectClone(
+  ws: Workspace,
+  manifest: Manifest,
+  applied: readonly AppliedSkill[],
+  repo: string
+): Promise<Projection> {
+  const base = join(ws.root, 'org', repo)
+  const gitDir = await gitPath(base, 'rness')
+  if (gitDir === null) return nothing()
+  const applies = new Set(
+    skillsForClone(
+      manifest,
+      applied.map((a) => a.skill),
+      repo
+    )
+  )
+  return project({
+    kind: 'clone',
+    base,
+    label: `org/${repo}`,
+    gitDir,
+    record: join(gitDir, 'skills.json'),
+    exclude: () => gitPath(base, 'info/exclude'),
+    dirs: dirsOf(manifest, 'clone'),
+    candidates: applied.filter((a) => applies.has(a.skill)),
+  })
+}
+
+/** The label of the root in what is said. */
+export const ROOT_LABEL = 'workspace root'
+
+/**
+ * Install the top-level skills accepted at the workspace root's
+ * `.claude/skills/` when `agents` declares `claude`, for a session opened
+ * there; their record lives in the git directory of `.rness`.
+ */
+export async function projectRoot(
+  ws: Workspace,
+  manifest: Manifest,
+  applied: readonly AppliedSkill[]
+): Promise<Projection> {
+  // A context checkout on its own (`rness.json` at its top) has no root of
+  // its own: its parent directory is no workspace.
+  if (ws.rnessDir !== join(ws.root, '.rness')) return nothing()
+  const gitDir = await gitPath(ws.rnessDir, 'rness')
+  if (gitDir === null) return nothing()
+  return project({
+    kind: 'root',
+    base: ws.root,
+    label: ROOT_LABEL,
+    gitDir,
+    record: join(gitDir, 'root-skills.json'),
+    exclude: null,
+    dirs: dirsOf(manifest, 'root'),
+    candidates: applied.filter((a) => a.skill.scope === null),
+  })
+}
+
+/**
+ * The applied skills of a run, and whether the projection may act: never
+ * when `.rness` is no git repository (no consent can exist) or its record is
+ * unreadable (what was accepted is unknown: everything is left as it is).
+ */
+export async function skillsOfRun(
+  ws: Workspace,
+  manifest: Manifest,
+  warn: (text: string) => void
+): Promise<{ applied: AppliedSkill[]; act: boolean }> {
+  let act = (await gitPath(ws.rnessDir, 'rness')) !== null
+  let consent: Consent = { version: 1, skills: {} }
+  if (act)
+    consent = await readConsent(ws.rnessDir, (file) => {
+      act = false
+      warn(
+        `${file} is unreadable: team skills left as they are; ${rnessCommand()} skill install asks again`
+      )
+    })
+  return { applied: await appliedSkills(ws, manifest, consent), act }
+}
+
+/** The declared repositories cloned in `org/`, by name: where `install` writes. */
+export async function declaredClones(
+  ws: Workspace,
+  manifest: Manifest
+): Promise<string[]> {
+  const { clones } = await orgDirs(ws.root, providerOf(manifest))
+  return repositories(manifest)
+    .map((r) => r.name)
+    .filter((n) => clones.has(n))
+}
+
+/** `sync`'s lines for one place: what was written and removed, then the notes. */
+export function projectionLines(
+  label: string,
+  p: Projection
+): (Line | string)[] {
+  const said = (names: readonly string[]): string =>
+    `${label} team ${names.length === 1 ? 'skill' : 'skills'} (${names.join(', ')})`
+  return [
+    ...(p.installed.length > 0
+      ? [['installed', said(p.installed)] as const]
+      : []),
+    ...(p.rewritten.length > 0
+      ? [['rewrote', said(p.rewritten)] as const]
+      : []),
+    ...(p.removed.length > 0 ? [['removed', said(p.removed)] as const] : []),
+    ...p.notes,
+  ]
+}
+
+/** The line said when skills await the developer's answer (spec 0041 §5). */
+export const pendingLine = (n: number): Line => [
+  'skills',
+  `${count(n, ['team skill awaits', 'team skills await'])} your consent: ${rnessCommand()} skill install`,
+]

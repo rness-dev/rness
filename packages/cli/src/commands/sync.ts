@@ -48,6 +48,15 @@ import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { openGitProvider } from '../core/providers.ts'
 import { pruneRefusals } from '../core/refusals.ts'
+import { pendingCount } from '../core/skill-consent.ts'
+import {
+  ROOT_LABEL,
+  pendingLine,
+  projectClone,
+  projectRoot,
+  projectionLines,
+  skillsOfRun,
+} from '../core/skill-install.ts'
 import { count } from '../core/style.ts'
 import { type Terminal, defaultTerminal } from '../core/terminal.ts'
 import {
@@ -652,8 +661,36 @@ export async function syncCommand(
         }
       }
 
-      // 4. The git hooks of the policies, and the refusal records, in every
-      // declared clone of the selection: never `.rness`, never under --check.
+      // The team skills of the workspace, with the developer's answers (spec
+      // 0041 §5): read under --check too, for the line of those awaiting one.
+      let skills: Awaited<ReturnType<typeof skillsOfRun>> | null = null
+      try {
+        skills = await skillsOfRun(ws, manifest, (text) => ui.warn(text))
+      } catch (e) {
+        problems.push(
+          `team skills: ${e instanceof Error ? e.message : String(e)}`
+        )
+      }
+      /** Write the accepted skills into one place (spec 0041 §6); what it says, said. */
+      const project = async (
+        label: string,
+        work: () => ReturnType<typeof projectClone>
+      ): Promise<void> => {
+        try {
+          const p = await work()
+          lines.push(...projectionLines(label, p))
+          problems.push(...p.problems)
+        } catch (e) {
+          problems.push(
+            `${label}: ${e instanceof Error ? e.message : String(e)}`
+          )
+        }
+      }
+      const projecting = skills !== null && skills.act && !check
+
+      // 4. The git hooks of the policies, the refusal records, and the team
+      // skills accepted, in every declared clone of the selection: never
+      // `.rness`, never under --check.
       if (!check && (await exists(join(ws.root, 'org')))) {
         for (const name of hookClones(manifest, opts.scope, [
           ...clones,
@@ -672,8 +709,23 @@ export async function syncCommand(
           }
           // Independent of the hooks: an error above must not skip it.
           await pruneRefusals(dir)
+          if (projecting && skills !== null) {
+            const { applied } = skills
+            await project(label, () =>
+              projectClone(ws, manifest, applied, name)
+            )
+          }
         }
       }
+      // The top-level skills at the root, for a session opened there: the
+      // whole workspace, so never under --scope.
+      if (projecting && skills !== null && opts.scope === undefined) {
+        const { applied } = skills
+        await project(ROOT_LABEL, () => projectRoot(ws, manifest, applied))
+      }
+      // Never a failure: `sync --check` keeps its exit code (spec 0041 §9).
+      const pending = skills === null ? 0 : pendingCount(skills.applied)
+      if (pending > 0) lines.push(pendingLine(pending))
       // `.rness` gets no hook from sync, but the guard and its own
       // `.githooks/` record there too.
       if (!check) await pruneRefusals(ws.rnessDir)

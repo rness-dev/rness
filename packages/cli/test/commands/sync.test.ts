@@ -3,14 +3,17 @@ import {
   access,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   readlink,
+  realpath,
   rm,
   stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
@@ -1249,4 +1252,247 @@ test('contract 1: sync says the line of upgrade alone, exit 1, and writes nothin
   assert.equal(r.out, '')
   assert.equal(await readOrNull(join(root, 'AGENTS.md')), null)
   assert.equal(await readOrNull(join(root, 'org', 'web', 'AGENTS.md')), null)
+})
+
+// ---- team skills: the projection of the accepted ones (spec 0041 §5, §6) ----
+
+const SKILL_MD = (name: string, extra = ''): string =>
+  `---\nname: ${name}\ndescription: A skill\n${extra}---\nBody\n`
+
+/** acme with claude: `release` (top) and `deploy` (web); org/web cloned, every repository a git one. */
+async function skillsWorkspace(t: Parameters<typeof makeWorkspace>[0]) {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    agents: ['claude'],
+    scopes: {
+      web: {
+        url: 'https://github.com/acme/web.git',
+        skills: {
+          deploy: { source: 'path:/d', hash: `sha256-${'A'.repeat(43)}=` },
+        },
+      },
+      api: { url: 'https://github.com/acme/api.git' },
+    },
+    files: {
+      'standards/coding.md': coding,
+      'skills/release/SKILL.md': SKILL_MD('release'),
+      'skills/scopes/web/deploy/SKILL.md': SKILL_MD('deploy'),
+    },
+    dirs: ['org/web'],
+  })
+  for (const dir of ['.rness', 'org/web'])
+    await git(['init', '-q', '-b', 'main'], join(root, dir))
+  return root
+}
+
+const PENDING = (n: string) =>
+  new RegExp(`^skills +${n} your consent: rness skill install$`, 'm')
+
+async function installSkills(root: string, names: string[]) {
+  const c = capture()
+  let code: number
+  try {
+    code = await run(['skill', 'install', ...names, '--yes', '--cwd', root])
+  } finally {
+    c.restore()
+  }
+  return { code, out: c.out(), err: c.err() }
+}
+
+const there = (p: string): Promise<boolean> =>
+  lstat(p).then(
+    () => true,
+    () => false
+  )
+
+test('skills: sync -y installs no pending skill and says how many await; --check and validate keep their exit codes', async (t) => {
+  const root = await skillsWorkspace(t)
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, PENDING('2 team skills await'))
+  for (const dir of ['.claude/skills', '.agents/skills'])
+    for (const name of ['release', 'deploy'])
+      assert.equal(await there(join(root, 'org/web', dir, name)), false)
+  assert.equal(await there(join(root, '.claude/skills/release')), false)
+
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 0, check.out + check.err)
+  assert.match(check.out, PENDING('2 team skills await'))
+
+  const c = capture()
+  let code: number
+  try {
+    code = await run(['validate', '--cwd', root])
+  } finally {
+    c.restore()
+  }
+  assert.equal(code, 0, c.out() + c.err())
+})
+
+test('skills: no pending skill and none installed, sync says nothing of skills', async (t) => {
+  const root = await hooksWorkspace(t)
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.out, /skill/)
+})
+
+test('skills: install writes the accepted ones and names where; sync installs no new one and gives a fresh clone the accepted ones', async (t) => {
+  const root = await skillsWorkspace(t)
+  const i = await installSkills(root, ['release'])
+  assert.equal(i.code, 0, i.err)
+  assert.match(i.out, /^accepted +release$/m)
+  assert.match(i.out, /^installed release {3}\(org\/web, workspace root\)$/m)
+  assert.equal(
+    await readFile(
+      join(root, 'org/web/.agents/skills/release/SKILL.md'),
+      'utf8'
+    ),
+    SKILL_MD('release')
+  )
+  assert.equal(await there(join(root, '.claude/skills/release/SKILL.md')), true)
+  assert.equal(
+    await git(
+      ['status', '--porcelain', '--', '.agents', '.claude/skills/release'],
+      join(root, 'org/web')
+    ),
+    ''
+  )
+
+  // A new skill of the team: pending, never installed by sync.
+  await mkdir(join(root, '.rness/skills/lint'), { recursive: true })
+  await writeFile(join(root, '.rness/skills/lint/SKILL.md'), SKILL_MD('lint'))
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, PENDING('2 team skills await'))
+  assert.equal(await there(join(root, 'org/web/.agents/skills/lint')), false)
+  assert.doesNotMatch(r.out, /^installed/m)
+
+  // A fresh clone gets the accepted one, and only it.
+  await mkdir(join(root, 'org/api'))
+  await git(['init', '-q', '-b', 'main'], join(root, 'org/api'))
+  const fresh = await sync(['--yes', '--cwd', root])
+  assert.equal(fresh.code, 0, fresh.err)
+  assert.match(fresh.out, /^installed org\/api team skill \(release\)$/m)
+  assert.equal(
+    await readFile(
+      join(root, 'org/api/.claude/skills/release/SKILL.md'),
+      'utf8'
+    ),
+    SKILL_MD('release')
+  )
+  assert.equal(await there(join(root, 'org/api/.agents/skills/deploy')), false)
+  assert.equal(
+    await git(
+      ['status', '--porcelain', '--', '.agents'],
+      join(root, 'org/api')
+    ),
+    ''
+  )
+})
+
+test('skills: sync --check writes nothing; sync reinstalls a removed copy and rewrites an edited one', async (t) => {
+  const root = await skillsWorkspace(t)
+  assert.equal((await installSkills(root, [])).code, 0)
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0)
+  await rm(join(root, 'org/web/.agents/skills/deploy'), { recursive: true })
+  const check = await sync(['--check', '--cwd', root])
+  assert.equal(check.code, 0, check.out + check.err)
+  assert.equal(await there(join(root, 'org/web/.agents/skills/deploy')), false)
+  assert.doesNotMatch(check.out, PENDING('\\d+ team skills? awaits?'))
+
+  await writeFile(
+    join(root, 'org/web/.claude/skills/release/SKILL.md'),
+    'edited\n'
+  )
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^installed org\/web team skill \(deploy\)$/m)
+  assert.match(r.out, /^rewrote {2}org\/web team skill \(release\)$/m)
+  assert.equal(
+    await readFile(
+      join(root, 'org/web/.claude/skills/release/SKILL.md'),
+      'utf8'
+    ),
+    SKILL_MD('release')
+  )
+})
+
+test('skills: a clash in a clone is said by sync, never a failure', async (t) => {
+  const root = await skillsWorkspace(t)
+  const own = join(root, 'org/web/.agents/skills/deploy')
+  await mkdir(own, { recursive: true })
+  await writeFile(join(own, 'SKILL.md'), 'ours\n')
+  await git(
+    ['add', '-f', '.agents/skills/deploy/SKILL.md'],
+    join(root, 'org/web')
+  )
+  const i = await installSkills(root, [])
+  assert.equal(i.code, 0, i.err)
+  assert.match(
+    i.out,
+    /^org\/web: \.agents\/skills\/deploy is the repository's own; team skill deploy not installed there$/m
+  )
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^org\/web: \.agents\/skills\/deploy is the repository's own; team skill deploy not installed there$/m
+  )
+  assert.equal(await readFile(join(own, 'SKILL.md'), 'utf8'), 'ours\n')
+})
+
+test('skills: --scope projects into that clone only, not at the root', async (t) => {
+  const root = await skillsWorkspace(t)
+  await mkdir(join(root, 'org/api'))
+  await git(['init', '-q', '-b', 'main'], join(root, 'org/api'))
+  assert.equal((await installSkills(root, [])).code, 0)
+  for (const p of [
+    'org/web/.agents/skills/release',
+    'org/api/.agents/skills/release',
+    '.claude/skills/release',
+  ])
+    await rm(join(root, p), { recursive: true })
+  const r = await sync(['--yes', '--scope', 'api', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.equal(await there(join(root, 'org/api/.agents/skills/release')), true)
+  assert.equal(await there(join(root, 'org/web/.agents/skills/release')), false)
+  assert.equal(await there(join(root, '.claude/skills/release')), false)
+})
+
+test('skills: a workspace whose .rness is no git repository installs nothing and still says what awaits', async (t) => {
+  const root = await skillsWorkspace(t)
+  await rm(join(root, '.rness/.git'), { recursive: true })
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, PENDING('2 team skills await'))
+})
+
+test('skills: sync and install write nothing under HOME', async (t) => {
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'rness-home-')))
+  t.after(() => rm(home, { recursive: true, force: true }))
+  const was = process.env['HOME']
+  process.env['HOME'] = home
+  t.after(() => {
+    process.env['HOME'] = was
+  })
+  const root = await skillsWorkspace(t)
+  assert.equal((await installSkills(root, [])).code, 0)
+  assert.equal((await sync(['--yes', '--cwd', root])).code, 0)
+  assert.equal(await there(join(root, 'org/web/.agents/skills/release')), true)
+  assert.deepEqual(await readdir(home), [])
+})
+
+test('skills: an unreadable consent record leaves every installed copy as it is, and says so', async (t) => {
+  const root = await skillsWorkspace(t)
+  assert.equal((await installSkills(root, [])).code, 0)
+  await writeFile(join(root, '.rness/.git/rness/skills.json'), '{not json')
+  const r = await sync(['--yes', '--cwd', root])
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.err,
+    /skills\.json is unreadable: team skills left as they are/
+  )
+  assert.equal(await there(join(root, 'org/web/.agents/skills/release')), true)
+  assert.equal(await there(join(root, '.claude/skills/release')), true)
+  assert.doesNotMatch(r.out, /^removed/m)
 })
