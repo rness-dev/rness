@@ -28,7 +28,7 @@ import { parseFrontMatter } from './frontmatter.ts'
 import { fetchRef } from './git.ts'
 import type { GitCredentials } from './provider.ts'
 import { scopeChain } from './scope.ts'
-import { CONTROL, plainText, quoted } from './text.ts'
+import { CONTROL, INVISIBLE, plainText, quoted } from './text.ts'
 import type { Manifest, SkillEntry } from './types.ts'
 
 export { plainText, quoted }
@@ -302,11 +302,15 @@ const hasControlInText = (text: string): boolean =>
   // eslint-disable-next-line no-control-regex
   /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(text.replace(/\r\n/g, '\n'))
 
-/** The `allowed-tools` field as text: a string as is, a list of strings joined, anything else as JSON; null when absent. */
+/** The `allowed-tools` field as text: a string as is, a list of strings joined (an empty one as `[]`), anything else as JSON; null when absent. */
 export function allowedToolsText(value: unknown): string | null {
   if (value === undefined) return null
   if (typeof value === 'string') return value
-  if (Array.isArray(value) && value.every((v) => typeof v === 'string'))
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((v) => typeof v === 'string')
+  )
     return value.join(', ')
   return JSON.stringify(value)
 }
@@ -324,12 +328,18 @@ export async function checkSkillDir(
   const bad = nameProblem(name)
   if (bad !== null) throw refusal(name, bad)
   const files = await walk(dir, name)
-  for (const f of files)
+  for (const f of files) {
     if (CONTROL.test(f.path))
       throw refusal(
         name,
         `file name ${quoted(f.path)} holds a control character`
       )
+    if (INVISIBLE.test(f.path))
+      throw refusal(
+        name,
+        `file name ${quoted(f.path)} holds a zero-width or bidirectional character`
+      )
+  }
   const bytes = files.reduce((n, f) => n + f.size, 0)
   if (bytes > MAX_SKILL_BYTES)
     throw refusal(

@@ -792,7 +792,8 @@ test('plainText replaces control characters; allowedToolsText shows absent as nu
   assert.equal(allowedToolsText('Read, Grep'), 'Read, Grep')
   assert.equal(allowedToolsText(['Read', 'Grep']), 'Read, Grep')
   assert.equal(allowedToolsText({ a: 1 }), '{"a":1}')
-  assert.equal(allowedToolsText([]), '')
+  // An empty list is shown as declared, never as nothing (final review 7).
+  assert.equal(allowedToolsText([]), '[]')
   assert.equal(allowedToolsText(3), '3')
 })
 
@@ -805,6 +806,53 @@ test('quoted escapes quotes, C0, DEL and C1 characters', () => {
   assert.equal(quoted('a"b'), '"a\\"b"')
   assert.equal(quoted('\u001b[2K\u007f\u0085'), '"\\u001b[2K\\u007f\\u0085"')
   assert.equal(quoted('plain'), '"plain"')
+})
+
+// Bidirectional controls and zero-width characters reorder or hide text on a
+// terminal: replaced on display, escaped in messages, refused in a file name
+// (final review 13).
+const INVISIBLE = [
+  '\u200b',
+  '\u200d',
+  '\u200f',
+  '\u202a',
+  '\u202e',
+  '\u2066',
+  '\u2069',
+  '\ufeff',
+]
+const RAW_INVISIBLE = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/
+
+test('plainText and quoted neutralise bidirectional controls and zero-width characters', () => {
+  for (const c of INVISIBLE) {
+    assert.equal(plainText(`a${c}b`), 'a?b')
+    const q = quoted(`a${c}b`)
+    assert.doesNotMatch(q, RAW_INVISIBLE)
+    assert.equal(q, `"a\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}b"`)
+  }
+  // Their neighbours are left alone.
+  assert.equal(plainText('a\u200a\u2010\u2065b'), 'a\u200a\u2010\u2065b')
+})
+
+test('checkSkillDir: a bidirectional or zero-width character in a file name or the name is refused, escaped', async (t) => {
+  for (const c of ['\u202e', '\u200b', '\ufeff', '\u2066']) {
+    const dir = await skillDir(t, 'demo', { [`evil${c}dm.md`]: 'x' })
+    await assert.rejects(checkSkillDir(dir, 'demo'), (e: Error) => {
+      assert.doesNotMatch(e.message, RAW_INVISIBLE)
+      assert.match(e.message, /file name "evil\\u[0-9a-f]{4}dm\.md" holds/)
+      return true
+    })
+  }
+  const dir = await skillDir(t, 'demo')
+  await writeFile(
+    join(dir, 'SKILL.md'),
+    '---\nname: "de\u202emo"\ndescription: d\n---\nB\n'
+  )
+  await assert.rejects(checkSkillDir(dir, 'demo'), (e: Error) => {
+    assert.doesNotMatch(e.message, RAW_INVISIBLE)
+    assert.match(e.message, /SKILL\.md name "de\\u202emo" is not/)
+    return true
+  })
 })
 
 test('a fetched tree holding a file named with ESC is refused without a raw ESC', async (t) => {
