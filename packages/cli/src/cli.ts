@@ -335,6 +335,28 @@ function buildProgram(state: RunState): Command {
     })
 
   skill
+    .command('install')
+    .description(
+      'Show the team skills awaiting your consent and record your answer'
+    )
+    .argument('[names...]', 'the skills to install (default: all pending)')
+    .option('-y, --yes', 'accept without the question')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (names: string[], opts: SkillOptions) => {
+      const { skillInstallCommand } = await import('./commands/skill.ts')
+      state.code = await skillInstallCommand(names, opts)
+    })
+
+  skill
+    .command('list')
+    .description('List the team skills of this workspace and their state')
+    .addOption(new Option('--cwd <dir>').hideHelp())
+    .action(async (opts: SkillOptions) => {
+      const { skillListCommand } = await import('./commands/skill.ts')
+      state.code = await skillListCommand(opts)
+    })
+
+  skill
     .command('remove')
     .description('Undeclare a skill and delete its copy')
     .argument('<name>', 'the skill to remove')

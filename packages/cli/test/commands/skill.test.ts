@@ -17,6 +17,8 @@ import { pathToFileURL } from 'node:url'
 import { run } from '../../src/cli.ts'
 import {
   skillAddCommand,
+  skillInstallCommand,
+  skillListCommand,
   skillRemoveCommand,
   skillUpdateCommand,
 } from '../../src/commands/skill.ts'
@@ -582,4 +584,366 @@ test('skillConflictsByName: names each conflict, and skillConflicts keeps its li
     { name: 'demo', line },
   ])
   assert.deepEqual(skillConflicts(rnessDir, manifest, all), [line])
+})
+
+/** A well-formed declared hash: consent reads the copy, never this. */
+const HASH = 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+
+// ---- consent: rness skill install and list (spec 0041 §5) ----
+
+const CANCELLED = Symbol('cancelled')
+
+/** A scripted terminal: the answers to the `select`, what was asked, and a TTY or not. */
+function consentTerminal(answers: (string | symbol)[], tty = true) {
+  const asked: { message: string; values: unknown[] }[] = []
+  const prompts = {
+    select: (opts: {
+      message: string
+      options: { value: unknown }[]
+    }): Promise<unknown> => {
+      asked.push({
+        message: opts.message,
+        values: opts.options.map((o) => o.value),
+      })
+      const next = answers.shift()
+      if (next === undefined) throw new Error('no scripted answer')
+      return Promise.resolve(next)
+    },
+    isCancel: (v: unknown) => v === CANCELLED,
+  }
+  return {
+    asked,
+    left: () => answers.length,
+    terminal: {
+      isTty: () => tty,
+      prompts: () => Promise.resolve(prompts as never),
+    },
+  }
+}
+
+const TODAY = '2026-11-13'
+
+/** A workspace whose `.rness` is a git repository (the record lives in its git directory), one clone `org/web`. */
+async function consentWs(
+  t: TestContext,
+  spec: Parameters<typeof makeWorkspace>[1] = {}
+): Promise<string> {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    scopes: { web: { url: 'git@github.com:acme/web.git' } },
+    dirs: ['org/web'],
+    ...spec,
+  })
+  await git(['init', '-q', '-b', 'main'], join(root, '.rness'))
+  return root
+}
+
+const recordOf = async (root: string) =>
+  JSON.parse(
+    await readFile(join(root, '.rness/.git/rness/skills.json'), 'utf8')
+  ) as {
+    version: number
+    skills: Record<string, { hash: string; answer: string; date: string }>
+  }
+
+const DECLARED = {
+  brainstorming: {
+    source: 'github:obra/superpowers',
+    ref: 'v7.0.0',
+    hash: HASH,
+  },
+}
+
+/** `brainstorming` (declared, 2 files) and `release` (written by the team). */
+const twoSkills = {
+  skills: DECLARED,
+  files: {
+    'skills/brainstorming/SKILL.md': SKILL_MD(
+      'brainstorming',
+      'allowed-tools: Read, Grep\n'
+    ),
+    'skills/brainstorming/notes.md': 'x'.repeat(2000),
+    'skills/release/SKILL.md': SKILL_MD('release'),
+  },
+}
+
+const install = (
+  root: string,
+  names: string[],
+  term: ReturnType<typeof consentTerminal>,
+  extra: { yes?: boolean } = {}
+) =>
+  say(() =>
+    skillInstallCommand(
+      names,
+      { cwd: root, ...extra },
+      { terminal: term.terminal, now: () => Date.parse(`${TODAY}T10:00:00Z`) }
+    )
+  )
+
+test('install: lists the pending skills, y records accepted with hash and date', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  const term = consentTerminal(['install'])
+  const r = await install(root, [], term)
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^skills +2 team skills for acme:$/m)
+  assert.match(
+    r.out,
+    /brainstorming +github:obra\/superpowers@v7\.0\.0 +3 KB +allowed-tools: Read, Grep$/m
+  )
+  assert.match(
+    r.out,
+    /release +written by the team \(\.rness\/skills\/release\) +1 KB +allowed-tools: none$/m
+  )
+  assert.match(r.out, /^accepted +brainstorming, release$/m)
+  assert.deepEqual(
+    term.asked[0]?.values,
+    ['install', 'decline', 'details'],
+    'install first, decline the default'
+  )
+  const rec = await recordOf(root)
+  assert.equal(rec.version, 1)
+  assert.deepEqual(Object.keys(rec.skills).sort(), ['brainstorming', 'release'])
+  assert.equal(rec.skills['release']?.answer, 'accepted')
+  assert.equal(rec.skills['release']?.date, TODAY)
+  assert.match(rec.skills['release']?.hash ?? '', /^sha256-/)
+  // never committed: nothing in the worktree
+  assert.equal(await exists(join(root, '.rness/skills.json')), false)
+})
+
+test('install: N declines, the record says declined, a bare install does not propose it again', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  const r = await install(root, [], consentTerminal(['decline']))
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^declined +brainstorming, release {3}\(rness skill install <name> installs one later\)$/m
+  )
+  assert.equal((await recordOf(root)).skills['release']?.answer, 'declined')
+  const again = consentTerminal([])
+  const r2 = await install(root, [], again)
+  assert.equal(r2.code, 0, r2.err)
+  assert.match(r2.out, /^skills +no team skill awaits your consent$/m)
+  assert.equal(again.asked.length, 0)
+})
+
+test('install: a copy edited, or a team skill rewritten, is pending again; a declined one too', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  await install(root, [], consentTerminal(['install']))
+  await writeFile(join(root, '.rness/skills/release/more.md'), 'new')
+  await writeFile(join(root, '.rness/skills/brainstorming/notes.md'), 'edited')
+  const term = consentTerminal(['decline'])
+  const r = await install(root, [], term)
+  assert.match(r.out, /^skills +2 team skills for acme:$/m)
+  // declined at this hash, edited again: pending once more
+  await writeFile(join(root, '.rness/skills/release/more.md'), 'newer')
+  const again = consentTerminal(['install'])
+  const r2 = await install(root, [], again)
+  assert.match(r2.out, /^skills +1 team skill for acme:$/m)
+  assert.match(r2.out, /^accepted +release$/m)
+})
+
+test('install: a ref moved with the same content is not pending', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  await install(root, [], consentTerminal(['install']))
+  const file = join(root, '.rness/rness.json')
+  const m = JSON.parse(await readFile(file, 'utf8'))
+  m.skills.brainstorming.ref = 'v8.0.0'
+  m.skills.brainstorming.commit = 'a'.repeat(40)
+  await writeFile(file, JSON.stringify(m))
+  const r = await install(root, [], consentTerminal([]))
+  assert.match(r.out, /^skills +no team skill awaits your consent$/m)
+})
+
+test('install --yes: accepts without asking, even without a terminal', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  const term = consentTerminal([], false)
+  const r = await install(root, [], term, { yes: true })
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^accepted +brainstorming, release$/m)
+  assert.equal(term.asked.length, 0)
+  assert.equal((await recordOf(root)).skills['brainstorming']?.date, TODAY)
+})
+
+test('install: no terminal and no --yes lists, records nothing, exits 1', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  const r = await install(root, [], consentTerminal([], false))
+  assert.equal(r.code, 1)
+  assert.match(r.out, /^skills +2 team skills for acme:$/m)
+  assert.match(
+    r.err,
+    /answer in a terminal, or run (rness|.* rness(\/cli)?.*) skill install --yes/
+  )
+  assert.equal(await exists(join(root, '.rness/.git/rness/skills.json')), false)
+})
+
+test('install: cancelling the question records nothing, exits 1', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  const r = await install(root, [], consentTerminal([CANCELLED]))
+  assert.equal(r.code, 1)
+  assert.equal(await exists(join(root, '.rness/.git/rness/skills.json')), false)
+})
+
+test('install: details prints the description and the files, then asks again', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  const term = consentTerminal(['details', 'install'])
+  const r = await install(root, [], term)
+  assert.equal(r.code, 0, r.err)
+  assert.equal(term.asked.length, 2)
+  assert.match(r.out, /A skill/)
+  assert.match(r.out, /notes\.md/)
+  assert.match(r.out, /SKILL\.md/)
+  assert.match(r.out, /^accepted +brainstorming, release$/m)
+})
+
+test('install: names pick some, an unknown name is refused naming the known ones', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  const r = await install(root, ['release'], consentTerminal(['install']))
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^skills +1 team skill for acme:$/m)
+  assert.deepEqual(Object.keys((await recordOf(root)).skills), ['release'])
+  const bad = await install(root, ['nope'], consentTerminal([]))
+  assert.equal(bad.code, 1)
+  assert.match(bad.err, /unknown skill "nope"; known skills: .*brainstorming/)
+})
+
+test('install: a named skill declined before is asked again; an installed one is already installed', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  await install(root, [], consentTerminal(['decline']))
+  const r = await install(root, ['release'], consentTerminal(['install']))
+  assert.match(r.out, /^accepted +release$/m)
+  const done = consentTerminal([])
+  const r2 = await install(root, ['release'], done)
+  assert.equal(r2.code, 0, r2.err)
+  assert.match(r2.out, /^skills +release: already installed$/m)
+  assert.equal(done.asked.length, 0)
+})
+
+test('install: nothing declared says so', async (t) => {
+  const root = await consentWs(t)
+  const r = await install(root, [], consentTerminal([]))
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.out, /^skills +no team skill awaits your consent$/m)
+})
+
+test('install: a skill of a repository whose clone is absent does not apply', async (t) => {
+  const root = await consentWs(t, {
+    scopes: {
+      web: { url: 'git@github.com:acme/web.git' },
+      api: {
+        url: 'git@github.com:acme/api.git',
+        skills: { deploy: { source: 'path:/x', hash: HASH } },
+      },
+    },
+    files: { 'skills/scopes/api/deploy/SKILL.md': SKILL_MD('deploy') },
+  })
+  const r = await install(root, [], consentTerminal([]))
+  assert.match(r.out, /^skills +no team skill awaits your consent$/m)
+})
+
+test('install: two sibling repositories each with their own deploy keep two record ids', async (t) => {
+  const root = await consentWs(t, {
+    scopes: {
+      web: {
+        url: 'git@github.com:acme/web.git',
+        skills: { deploy: { source: 'path:/w', hash: HASH } },
+      },
+      api: {
+        url: 'git@github.com:acme/api.git',
+        skills: { deploy: { source: 'path:/a', hash: HASH } },
+      },
+    },
+    dirs: ['org/web', 'org/api'],
+    files: {
+      'skills/scopes/web/deploy/SKILL.md': SKILL_MD('deploy', 'x: web\n'),
+      'skills/scopes/api/deploy/SKILL.md': SKILL_MD('deploy', 'x: api\n'),
+    },
+  })
+  const r = await install(root, ['deploy'], consentTerminal(['install']))
+  assert.equal(r.code, 0, r.err)
+  const rec = await recordOf(root)
+  assert.deepEqual(Object.keys(rec.skills).sort(), ['api/deploy', 'web/deploy'])
+  assert.notEqual(
+    rec.skills['api/deploy']?.hash,
+    rec.skills['web/deploy']?.hash
+  )
+})
+
+test('install: .rness that is no git repository is refused naming it', async (t) => {
+  const root = await makeWorkspace(t, { ...twoSkills })
+  const r = await install(root, [], consentTerminal(['install']))
+  assert.equal(r.code, 1)
+  assert.match(r.err, /\.rness/)
+})
+
+test('install: an unreadable record reads as empty and is said once', async (t) => {
+  const root = await consentWs(t, twoSkills)
+  await mkdir(join(root, '.rness/.git/rness'), { recursive: true })
+  await writeFile(join(root, '.rness/.git/rness/skills.json'), '{not json')
+  const r = await install(root, [], consentTerminal(['install']))
+  assert.equal(r.code, 0, r.err)
+  assert.equal(r.err.match(/unreadable/g)?.length, 1)
+  assert.equal((await recordOf(root)).skills['release']?.answer, 'accepted')
+})
+
+test('list: one line per skill with where it applies and its state', async (t) => {
+  const root = await consentWs(t, {
+    scopes: {
+      web: {
+        url: 'git@github.com:acme/web.git',
+        skills: { deploy: { source: 'path:/w', hash: HASH } },
+      },
+    },
+    skills: DECLARED,
+    files: {
+      'skills/brainstorming/SKILL.md': SKILL_MD('brainstorming'),
+      'skills/release/SKILL.md': SKILL_MD('release'),
+      'skills/lint/SKILL.md': SKILL_MD('lint'),
+      'skills/scopes/web/deploy/SKILL.md': SKILL_MD('deploy'),
+    },
+  })
+  await install(root, ['brainstorming'], consentTerminal(['install']))
+  await install(root, ['release'], consentTerminal(['decline']))
+  await install(root, ['lint'], consentTerminal(['install']))
+  await writeFile(join(root, '.rness/skills/lint/extra.md'), 'changed')
+  const c = consentTerminal([])
+  const r = await say(() =>
+    skillListCommand({ cwd: root }, { terminal: c.terminal })
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^brainstorming +all +github:obra\/superpowers@v7\.0\.0 +installed$/m
+  )
+  assert.match(r.out, /^release +all +written by the team +declined$/m)
+  assert.match(
+    r.out,
+    /^lint +all +written by the team +changed since accepted$/m
+  )
+  assert.match(r.out, /^deploy +web +path:\/w +pending$/m)
+})
+
+test('list: no skills says so, exit 0', async (t) => {
+  const root = await consentWs(t)
+  const r = await say(() =>
+    skillListCommand({ cwd: root }, { terminal: consentTerminal([]).terminal })
+  )
+  assert.equal(r.code, 0, r.err)
+  assert.match(
+    r.out,
+    /^skills +no team skill in rness\.json or \.rness\/skills$/m
+  )
+})
+
+test('install and list are in the skill group of the command line', async (t) => {
+  const root = await consentWs(t)
+  const c = capture()
+  let code: number
+  try {
+    code = await run(['skill', 'list', '--cwd', root])
+  } finally {
+    c.restore()
+  }
+  assert.equal(code, 0)
+  assert.match(c.out(), /no team skill/)
 })

@@ -1,12 +1,25 @@
 import { lstat, rm, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 
 import type { CommandDeps } from '../core/deps.ts'
-import { loadManifest, writeManifest } from '../core/manifest.ts'
+import { parseFrontMatter } from '../core/frontmatter.ts'
+import { loadManifest, workspaceName, writeManifest } from '../core/manifest.ts'
+import { rnessCommand } from '../core/pm.ts'
 import type { GitCredentials } from '../core/provider.ts'
 import { openGitProvider } from '../core/providers.ts'
 import {
+  type AppliedSkill,
+  appliedSkills,
+  isPending,
+  originOf,
+  readConsent,
+  versionOf,
+  writeConsent,
+} from '../core/skill-consent.ts'
+import {
   type TeamSkill,
+  checkSkillDir,
   copySkill,
   diffSkillFiles,
   fetchSkill,
@@ -33,6 +46,8 @@ export interface SkillOptions {
   ref?: string
   /** `add`: install the skill under another name. */
   name?: string
+  /** `install`: accept without the question (the answer given ahead). */
+  yes?: boolean
 }
 
 /** A refusal: said as the one line of the error contract, exit 1. */
@@ -159,16 +174,6 @@ function entryOf(
 }
 
 const isPathSource = (source: string): boolean => source.startsWith('path:')
-
-/** `source@ref`, the ref as given or the commit's first 7 characters; the source alone for `path:`. */
-const versionOf = (
-  source: string,
-  ref: string | undefined,
-  commit: string | null | undefined
-): string =>
-  isPathSource(source)
-    ? source
-    : `${source}@${ref ?? commit?.slice(0, 7) ?? 'HEAD'}`
 
 const kilobytes = (bytes: number): string =>
   `${Math.max(1, Math.ceil(bytes / 1024))} KB`
@@ -496,6 +501,174 @@ export async function skillRemoveCommand(
     ui.line('removed', `skill ${name}`)
     if (copy !== undefined) ui.line('deleted', copyPath(ws, copy))
     ui.line('undeclared', `.rness/rness.json  ${key}`)
+    return 0
+  })
+}
+
+/** The `allowed-tools` a skill's SKILL.md asks for, as one line; `none` when it asks for none. */
+async function allowedToolsOf(dir: string): Promise<string> {
+  const fields = parseFrontMatter(await readFile(join(dir, 'SKILL.md'), 'utf8'))
+  const value: unknown = fields?.['allowed-tools']
+  if (Array.isArray(value) && value.length > 0) return value.join(', ')
+  if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  return 'none'
+}
+
+/** A skill's name, or its record id when another skill of the list has the same name. */
+const labeller = (list: readonly AppliedSkill[]) => (a: AppliedSkill) =>
+  list.filter((o) => o.skill.name === a.skill.name).length > 1
+    ? a.id
+    : a.skill.name
+
+const pad = (cells: readonly string[], widths: readonly number[]): string =>
+  cells
+    .map((c, i) => (i === cells.length - 1 ? c : c.padEnd(widths[i] ?? 0)))
+    .join('  ')
+    .trimEnd()
+
+const widthsOf = (rows: readonly (readonly string[])[]): number[] =>
+  (rows[0] ?? []).map((_, i) => Math.max(...rows.map((r) => r[i]?.length ?? 0)))
+
+const STATE_WORDS = {
+  installed: 'installed',
+  declined: 'declined',
+  pending: 'pending',
+  changed: 'changed since accepted',
+} as const
+
+/**
+ * `rness skill install [names...] [--yes]`: show the team skills awaiting
+ * the developer and record their answer, per content hash (spec 0041 §5).
+ * Records the consent only; the copies into the clones are the projection's.
+ */
+export async function skillInstallCommand(
+  names: readonly string[],
+  opts: SkillOptions,
+  deps: Partial<CommandDeps> = {}
+): Promise<number> {
+  return run('Skill install', opts, deps, async ({ ws, manifest, ui }) => {
+    const consent = await readConsent(ws.rnessDir, (file) =>
+      ui.warn(
+        `${file} is unreadable: read as empty, the questions are asked again`
+      )
+    )
+    const applied = await appliedSkills(ws, manifest, consent)
+    let listed: AppliedSkill[]
+    if (names.length === 0) listed = applied.filter((a) => isPending(a.state))
+    else {
+      const unknown = names.filter(
+        (n) => !applied.some((a) => a.skill.name === n)
+      )
+      if (unknown.length > 0)
+        throw new Refusal(
+          `unknown skill ${unknown.map((n) => `"${n}"`).join(', ')}; known skills: ${[...new Set(applied.map((a) => a.skill.name))].join(', ') || 'none'}`
+        )
+      const named = applied.filter((a) => names.includes(a.skill.name))
+      const done = named.filter((a) => a.state === 'installed')
+      if (done.length > 0) {
+        const label = labeller(named)
+        ui.line('skills', `${done.map(label).join(', ')}: already installed`)
+      }
+      listed = named.filter((a) => a.state !== 'installed')
+    }
+    if (listed.length === 0) {
+      if (names.length === 0)
+        ui.line('skills', 'no team skill awaits your consent')
+      return 0
+    }
+    const label = labeller(listed)
+    const rows: string[][] = []
+    for (const a of listed) {
+      const { bytes } = await checkSkillDir(a.skill.dir, a.skill.name)
+      rows.push([
+        label(a),
+        a.skill.entry === null
+          ? `written by the team (${copyPath(ws, a.skill).replace(/\/$/, '')})`
+          : originOf(a.skill),
+        kilobytes(bytes),
+        `allowed-tools: ${await allowedToolsOf(a.skill.dir)}`,
+      ])
+    }
+    const widths = widthsOf(rows)
+    const where = workspaceName(manifest, ws.root)
+    ui.line('skills', `${plural(listed.length, 'team skill')} for ${where}:`)
+    for (const row of rows) ui.hint(`  ${pad(row, widths)}`)
+
+    let answer: 'accepted' | 'declined'
+    if (opts.yes === true) answer = 'accepted'
+    else if (!(deps.terminal ?? defaultTerminal).isTty()) {
+      throw new Refusal(
+        `answer in a terminal, or run ${rnessCommand()} skill install --yes`
+      )
+    } else {
+      const p = await (deps.terminal ?? defaultTerminal).prompts()
+      for (;;) {
+        const choice = await p.select({
+          message: `Install them in the repositories of ${where}?`,
+          options: [
+            { value: 'install', label: 'Install (y)' },
+            { value: 'decline', label: 'Decline (N)' },
+            { value: 'details', label: 'Details' },
+          ],
+          initialValue: 'decline',
+        })
+        if (p.isCancel(choice)) {
+          ui.cancelled()
+          return 1
+        }
+        if (choice === 'details') {
+          for (const a of listed) {
+            const fields = parseFrontMatter(
+              await readFile(join(a.skill.dir, 'SKILL.md'), 'utf8')
+            )
+            const { files } = await checkSkillDir(a.skill.dir, a.skill.name)
+            ui.line('skill', label(a))
+            ui.hint(`  ${String(fields?.['description'] ?? '').trim()}`)
+            for (const f of files) ui.hint(`  ${f.path}  ${kilobytes(f.size)}`)
+          }
+          continue
+        }
+        answer = choice === 'install' ? 'accepted' : 'declined'
+        break
+      }
+    }
+    const date = new Date(deps.now?.() ?? Date.now()).toISOString().slice(0, 10)
+    const skills = { ...consent.skills }
+    for (const a of listed) skills[a.id] = { hash: a.hash, answer, date }
+    await writeConsent(ws.rnessDir, { version: 1, skills })
+    const said = listed.map(label).join(', ')
+    if (answer === 'accepted') ui.line('accepted', said)
+    else
+      ui.line(
+        'declined',
+        `${said}   (rness skill install <name> installs one later)`
+      )
+    return 0
+  })
+}
+
+/** `rness skill list`: every team skill that applies to this workspace, with its state for the developer. */
+export async function skillListCommand(
+  opts: SkillOptions,
+  deps: Partial<CommandDeps> = {}
+): Promise<number> {
+  return run('Skill list', opts, deps, async ({ ws, manifest, ui }) => {
+    const consent = await readConsent(ws.rnessDir, (file) =>
+      ui.warn(`${file} is unreadable: read as empty`)
+    )
+    const applied = await appliedSkills(ws, manifest, consent)
+    if (applied.length === 0) {
+      ui.line('skills', 'no team skill in rness.json or .rness/skills')
+      return 0
+    }
+    const rows = applied.map((a) => [
+      a.skill.name,
+      a.skill.scope ?? 'all',
+      originOf(a.skill),
+      STATE_WORDS[a.state],
+    ])
+    const widths = widthsOf(rows)
+    for (const row of rows) ui.hint(pad(row, widths))
     return 0
   })
 }
