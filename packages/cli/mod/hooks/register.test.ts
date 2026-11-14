@@ -135,7 +135,12 @@ function engine(
     return { value: undefined }
   })
   // The ring moves where the chain leaves it; the window too.
-  on('ui.focus', async (_$, e) => {
+  // Claude Code 2.1.325 asks two answers: a call on `$` (the mod's
+  // `$.ui.focus({ requestId, key })`) gets `{ value }`, as `ui.status` and
+  // `ui.close` above; the event the tests raise carries the mod's own name
+  // as `plugin`, which a stub reaches only through `{ plugin: '*' }`.
+  on('ui.focus', async () => ({ value: {} }) as never)
+  on('ui.focus', { plugin: '*' }, async (_$, e) => {
     focused.push(e.element)
     return {}
   })
