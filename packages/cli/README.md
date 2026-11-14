@@ -1468,6 +1468,15 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
+## Unreleased
+
+- **The `/rness:status` pane: Enter opens the selected row again under
+  Claude Code 2.1.325**, after ↑/↓ or a click, instead of changing the
+  tab. Claude Code's terminal keeps the focus ring as a place among the
+  pane's buttons, and the `‹` `›` that moved with the selection shifted
+  that place onto the `›` beside the new row. Each row now keeps its `‹`
+  `›`, hidden on the rows not selected, so its button keeps its place.
+
 ## 0.26.1 - a skill the team writes is /rness:<name>; the tools that see installed copies
 
 - **A skill the team writes is `/rness:<name>` in Claude Code.** It is

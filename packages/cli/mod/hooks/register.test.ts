@@ -761,8 +761,9 @@ test('two documents of one date: each row opens its own', async ($, on) => {
   await clock.advance(0)
   await $.command.run({ command: 'rness:status', args: '' } as never)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  // One tab, Close, two rows, and `‹` `›` on the selected one.
-  expect(await pane.findAll({ type: 'Button' })).toHaveLength(6)
+  // One tab, Close, and three on each row: its own, and `‹` `›`, shown on
+  // the selected one, hidden on the other.
+  expect(await pane.findAll({ type: 'Button' })).toHaveLength(8)
   await pane.press({ key: 'open-marketing/2026-10-03-thread.md' })
   expect(reads.at(-1)).toMatch(/\/marketing\/2026-10-03-thread\.md$/)
   expect((await pane.find({ key: 'head' }))?.text).toMatch(/2026-10-03 Thread/)
@@ -791,6 +792,45 @@ function keysUnder(children: unknown[]): string[] {
     const el = child as { key?: string; props?: { key?: string } }
     return [el.key ?? el.props?.key].filter((k): k is string => k !== undefined)
   })
+}
+
+/** A mounted pane, as the ring below reads and presses it. */
+interface Drawn {
+  findAll: (q: {
+    type?: string
+    key?: string
+  }) => Promise<{ key: string | undefined; children: unknown[] }[]>
+  press: (target: { key: string }) => Promise<unknown>
+}
+
+/** The keys of the pane's Buttons in drawing order: what the ring counts. */
+const focusables = async (pane: Drawn) =>
+  (await pane.findAll({ type: 'Button' })).map((b) => b.key ?? '')
+
+/**
+ * Enter as the terminal of Claude Code 2.1.325 answers it (its pane code,
+ * read on 2026-11-14): the ring is an index into the pane's Buttons, Inputs
+ * and Selects in drawing order, and keeps no key, so a redraw leaves the
+ * index where it was. A move asked of `$.ui.focus` lands at once, on the
+ * drawing on screen, when its element is drawn there already: before the
+ * redraw that the same ↑, ↓ or click asks for. Enter presses the Button at
+ * that index in the drawing that follows.
+ *
+ * The kit draws no ring (a plugin's `$.ui.focus` has no implementation under
+ * `claude plugin test`), so the move is played here: `key` is the element
+ * the mod moves the ring onto, `move` what moves it. Answers what Enter
+ * pressed.
+ */
+async function enterAfter(
+  pane: Drawn,
+  key: string,
+  move: () => Promise<unknown>
+): Promise<string | undefined> {
+  const at = (await focusables(pane)).indexOf(key)
+  await move()
+  const pressed = at === -1 ? undefined : (await focusables(pane))[at]
+  if (pressed !== undefined) await pane.press({ key: pressed })
+  return pressed
 }
 
 /** The row carrying `‹` and `›`, the selection: the Box holding `tab-next`. */
@@ -851,7 +891,7 @@ test('↑/↓ move the selection, not the ring walk: the row with ‹ › and th
   expect(await selectedRow(pane)).toBe('row-plans/0001.md')
 })
 
-test('Enter opens the selected row: after ↓, the second document', async ($, on) => {
+test('Enter opens the selected row: after ↓ the second document, after ↑ the first, the ring landing before the redraw (Claude Code 2.1.325)', async ($, on) => {
   const clock = mock.clock(on)
   engine(on)
   cli(on, SNAPSHOT)
@@ -860,10 +900,72 @@ test('Enter opens the selected row: after ↓, the second document', async ($, o
   await clock.advance(0)
   await $.command.run({ command: 'rness:status', args: 'plans' } as never)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await scrollBy($, 1, 10, 12)
-  await pane.press({ key: 'open-plans/0001-a.md' })
+  expect(
+    await enterAfter(pane, 'open-plans/0001-a.md', () => scrollBy($, 1, 10, 12))
+  ).toBe('open-plans/0001-a.md')
   expect(reads.at(-1)).toMatch(/\/plans\/0001-a\.md$/)
   expect((await pane.find({ key: 'head' }))?.text).toMatch(/0001 First/)
+  await pane.press({ key: 'back' })
+  expect(
+    await enterAfter(pane, 'open-plans/0002-b.md', () =>
+      scrollBy($, -1, 10, 12)
+    )
+  ).toBe('open-plans/0002-b.md')
+  expect((await pane.find({ key: 'head' }))?.text).toMatch(/0002 Second/)
+})
+
+test('a row keeps its place among the pane’s Buttons whatever row is selected: `‹` `›` shown on the selected one, hidden on the others', async ($, on) => {
+  const clock = mock.clock(on)
+  engine(on)
+  const rows = Array.from({ length: 60 }, (_, i) => {
+    const id = String(i + 1).padStart(4, '0')
+    return {
+      id,
+      title: `Plan ${id}`,
+      status: 'Draft',
+      path: `plans/${id}.md`,
+      color: 'gray',
+      link: null,
+    }
+  })
+  cli(on, { ...SNAPSHOT, tabs: [{ name: 'plans', label: 'Plans', rows }] })
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: '' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const first = await focusables(pane)
+  // ↓, ↓, a page down, End, Home: each row's Button where it was, so the
+  // ring lands on it whether it moves before the redraw or after.
+  for (const by of [1, 1, 10, 61, -61]) {
+    await scrollBy($, by, 10, 61)
+    const now = await focusables(pane)
+    expect(now).toHaveLength(first.length)
+    for (const row of rows)
+      expect(now.indexOf(`open-${row.path}`)).toBe(
+        first.indexOf(`open-${row.path}`)
+      )
+  }
+  expect(await selectedRow(pane)).toBe('row-plans/0001.md')
+  for (const side of ['prev', 'next'])
+    expect(
+      (await pane.find({ key: `hidden-${side}-plans/0002.md` }))?.props[
+        'display'
+      ]
+    ).toBe('none')
+})
+
+test('the ring walked onto another row’s hidden `‹` or `›` lands on that row, selected', async ($, on) => {
+  const clock = mock.clock(on)
+  const focused: (string | undefined)[] = []
+  engine(on, [], { opened: [], closed: [] }, [], focused)
+  cli(on, SNAPSHOT)
+  await $.session.start(start)
+  await clock.advance(0)
+  await $.command.run({ command: 'rness:status', args: 'plans' } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ring($, 'next-plans/0001-a.md')
+  expect(focused.at(-1)).toBe('open-plans/0001-a.md')
+  expect(await selectedRow(pane)).toBe('row-plans/0001-a.md')
 })
 
 test('Tab changes the tab, the ring stays on the row: landing on › is the next tab, on ‹ the previous, wrapping; the selection starts over', async ($, on) => {
@@ -921,17 +1023,25 @@ test('Tab changes the tab, the ring stays on the row: landing on › is the next
   expect(await selectedRow(pane)).toBe('row-plans/0002-b.md')
 })
 
-test('a click on another row selects it, and the ring goes there', async ($, on) => {
+test('a click on another row selects it, and the ring goes there: Enter then opens it', async ($, on) => {
   const clock = mock.clock(on)
   const focused: (string | undefined)[] = []
   engine(on, [], { opened: [], closed: [] }, [], focused)
   cli(on, SNAPSHOT)
+  files(on, '# First\n', '/.rness/plans/0001-a.md')
   await $.session.start(start)
   await clock.advance(0)
   await $.command.run({ command: 'rness:status', args: 'plans' } as never)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ring($, 'open-plans/0001-a.md')
+  // The click's own ring move, then Enter: the row clicked opens.
+  expect(
+    await enterAfter(pane, 'open-plans/0001-a.md', () =>
+      ring($, 'open-plans/0001-a.md')
+    )
+  ).toBe('open-plans/0001-a.md')
   expect(focused.at(-1)).toBe('open-plans/0001-a.md')
+  expect((await pane.find({ key: 'head' }))?.text).toMatch(/0001 First/)
+  await pane.press({ key: 'back' })
   expect(await selectedRow(pane)).toBe('row-plans/0001-a.md')
 })
 
