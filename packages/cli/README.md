@@ -220,6 +220,13 @@ the files a given agent needs, for the agents the team declares in
 
 ### The mod
 
+Claude Code loads the plugin only in a folder trusted itself (verified with
+2.1.325, 2026-11-16): under a trusted parent folder the hooks run and the
+session-start line shows, but `/rness:status` and the team skills answer
+`Unknown command`. Set `projects["<path>"].hasTrustDialogAccepted` to `true`
+in `~/.claude.json`, `<path>` being the repository root (the workspace root
+and each clone where you open sessions); rness does not do it for you.
+
 Since 0.19.0 the plugin carries a hooks module — what Claude Code calls a
 mod — in `hooks/hooks.json`, `hooks/register.tsx` and `types/index.d.ts`.
 It draws the workspace in the session, from `rness status --json` run by
@@ -1469,6 +1476,10 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
 ## Unreleased
+
+- **Documented: Claude Code loads the plugin only in a folder trusted
+  itself.** Under a trusted parent folder `/rness:status` and the team
+  skills answer `Unknown command`; the fix is a hand edit of `~/.claude.json`.
 
 - **The `/rness:status` pane: Enter opens the selected row again under
   Claude Code 2.1.325**, after ↑/↓ or a click, instead of changing the
