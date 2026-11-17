@@ -225,7 +225,11 @@ Claude Code loads the plugin only in a folder trusted itself (verified with
 session-start line shows, but `/rness:status` and the team skills answer
 `Unknown command`. Set `projects["<path>"].hasTrustDialogAccepted` to `true`
 in `~/.claude.json`, `<path>` being the repository root (the workspace root
-and each clone where you open sessions); rness does not do it for you.
+and each clone where you open sessions); rness does not do it for you. When
+`agents` declares `claude`, the session start says it: one line naming the
+folder and this fix, for you and for the model. It reads Claude Code's
+`.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set) and never writes
+it; a file it cannot read gives no line.
 
 Since 0.19.0 the plugin carries a hooks module — what Claude Code calls a
 mod — in `hooks/hooks.json`, `hooks/register.tsx` and `types/index.d.ts`.
@@ -1480,6 +1484,9 @@ Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 - **Documented: Claude Code loads the plugin only in a folder trusted
   itself.** Under a trusted parent folder `/rness:status` and the team
   skills answer `Unknown command`; the fix is a hand edit of `~/.claude.json`.
+  **The session start now says it** (`agents` declaring `claude`): one line
+  naming the folder and the fix, read from `~/.claude.json`
+  (`$CLAUDE_CONFIG_DIR/.claude.json` when set), which rness never writes.
 
 - **The `/rness:status` pane: Enter opens the selected row again under
   Claude Code 2.1.325**, after ↑/↓ or a click, instead of changing the
