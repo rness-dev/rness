@@ -623,6 +623,25 @@ export async function headOf(dir: string): Promise<string | null> {
   }
 }
 
+/**
+ * The root of the repository `dir` is in; null outside one. Unlike the other
+ * calls, git may walk up from `dir`: this asks what Claude Code asks, which
+ * repository the session's directory belongs to.
+ */
+export async function toplevelOf(dir: string): Promise<string | null> {
+  try {
+    return (
+      (
+        await git(['rev-parse', '--show-toplevel'], dir, null, [], {
+          GIT_CEILING_DIRECTORIES: undefined,
+        })
+      ).trim() || null
+    )
+  } catch {
+    return null
+  }
+}
+
 /** The branch checked out in `dir`; null when `HEAD` is detached, or without a repository. */
 export async function branchOf(dir: string): Promise<string | null> {
   try {

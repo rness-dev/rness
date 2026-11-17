@@ -5,8 +5,10 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -2352,4 +2354,125 @@ test('session start: a line break in a skill field cannot start a line of the mo
     )
   )
   assert.equal(lines.filter((l) => l.startsWith('Always')).length, 0)
+})
+
+// --- session start: Claude Code skipped the plugin (plan 0060 task 8) --------
+
+const NOT_LOADED = /Claude Code did not load the rness plugin here/
+
+/** A workspace declaring `claude`, and a home with Claude Code's `.claude.json`. */
+async function trustWs(
+  t: TestContext,
+  trusted: (root: string) => Record<string, unknown> | string | null,
+  agents: string[] = ['claude']
+) {
+  const root = await makeWorkspace(t, {
+    org: 'acme',
+    agents,
+    scopes: { web: { url: 'https://github.com/acme/web.git' } },
+    dirs: ['org/web'],
+  })
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'rness-home-')))
+  t.after(() => rm(home, { recursive: true, force: true }))
+  const config = join(home, '.claude.json')
+  const body = trusted(root)
+  const text =
+    body === null
+      ? null
+      : typeof body === 'string'
+        ? body
+        : JSON.stringify(body)
+  if (text !== null) await writeFile(config, text)
+  return { root, home, config, text, env: { HOME: home } }
+}
+
+const accepted = (path: string) => ({
+  projects: { [path]: { hasTrustDialogAccepted: true } },
+})
+
+test('trust: a folder trusted itself says nothing', async (t) => {
+  const w = await trustWs(t, (root) => accepted(root))
+  const r = await hook('session-start', { cwd: w.root }, w.env)
+  assert.doesNotMatch(r.out, NOT_LOADED)
+})
+
+test('trust: a clone not trusted itself names the clone root and the fix, for both audiences', async (t) => {
+  const w = await trustWs(t, (root) => accepted(root))
+  const clone = join(w.root, 'org', 'web')
+  await git(['init', '-q'], clone)
+  await mkdir(join(clone, 'src'), { recursive: true })
+  const r = await hook('session-start', { cwd: join(clone, 'src') }, w.env)
+  const line = `Claude Code did not load the rness plugin here: this folder is not trusted itself (a parent folder is). Trust it: set projects["${clone}"].hasTrustDialogAccepted to true in ~/.claude.json (code.claude.com/docs/en/permissions.md)`
+  const answer = JSON.parse(r.out)
+  assert.ok(answer.systemMessage.split('\n').includes(line))
+  assert.ok(contextOf(r).split('\n').includes(line))
+})
+
+test('trust: the workspace root, no repository, is the folder named', async (t) => {
+  const w = await trustWs(t, () => ({ projects: {} }))
+  const r = await hook('session-start', { cwd: w.root }, w.env)
+  assert.ok(JSON.parse(r.out).systemMessage.includes(`projects["${w.root}"]`))
+})
+
+test('trust: a hasTrustDialogAccepted that is not true is untrusted', async (t) => {
+  const w = await trustWs(t, (root) => ({
+    projects: { [root]: { hasTrustDialogAccepted: false } },
+  }))
+  const r = await hook('session-start', { cwd: w.root }, w.env)
+  assert.match(r.out, NOT_LOADED)
+})
+
+test('trust: the path as given or its real path counts', async (t) => {
+  const w = await trustWs(t, () => null)
+  const link = join(w.home, 'link')
+  await symlink(w.root, link)
+  await writeFile(w.config, JSON.stringify(accepted(w.root)))
+  const viaLink = await hook('session-start', { cwd: link }, w.env)
+  assert.doesNotMatch(viaLink.out, NOT_LOADED)
+  await writeFile(w.config, JSON.stringify(accepted(link)))
+  const asGiven = await hook('session-start', { cwd: link }, w.env)
+  assert.doesNotMatch(asGiven.out, NOT_LOADED)
+})
+
+test('trust: CLAUDE_CONFIG_DIR holds the file when set, the home not', async (t) => {
+  const w = await trustWs(t, () => ({ projects: {} }))
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-cc-')))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(join(dir, '.claude.json'), JSON.stringify(accepted(w.root)))
+  const env = { ...w.env, CLAUDE_CONFIG_DIR: dir }
+  assert.doesNotMatch(
+    (await hook('session-start', { cwd: w.root }, env)).out,
+    NOT_LOADED
+  )
+  await writeFile(join(dir, '.claude.json'), '{"projects":{}}')
+  assert.match(
+    (await hook('session-start', { cwd: w.root }, env)).out,
+    NOT_LOADED
+  )
+})
+
+test('trust: a missing or corrupt .claude.json says nothing', async (t) => {
+  for (const body of [null, '{not json', '[]', '{"projects":3}']) {
+    const w = await trustWs(t, () => body)
+    const r = await hook('session-start', { cwd: w.root }, w.env)
+    assert.equal(r.code, 0)
+    assert.doesNotMatch(r.out, NOT_LOADED, String(body))
+  }
+})
+
+test('trust: a workspace that does not declare claude says nothing', async (t) => {
+  for (const agents of [['codex'], []]) {
+    const w = await trustWs(t, () => ({ projects: {} }), agents)
+    assert.doesNotMatch(
+      (await hook('session-start', { cwd: w.root }, w.env)).out,
+      NOT_LOADED
+    )
+  }
+})
+
+test('trust: Claude Code file is never written', async (t) => {
+  const w = await trustWs(t, () => ({ projects: {} }))
+  await hook('session-start', { cwd: w.root }, w.env)
+  assert.equal(await readFile(w.config, 'utf8'), w.text)
+  assert.deepEqual(await readdir(w.home), ['.claude.json'])
 })

@@ -6,7 +6,11 @@ import { type Spawn, detached, takeFailure } from '../board/detached.ts'
 import { recordStart, takeNotices } from '../board/journal-state.ts'
 import { BLOCK_FILES } from '../core/agent-targets.ts'
 import type { BoardDeclaration, HookEvent } from '../core/board-declaration.ts'
-import { takeModNotice } from '../core/claude-code.ts'
+import {
+  takeModNotice,
+  untrustedFolder,
+  untrustedLine,
+} from '../core/claude-code.ts'
 import { COLLECTIONS } from '../core/context.ts'
 import { checkContract } from '../core/contract.ts'
 import {
@@ -285,6 +289,7 @@ async function sessionStart(
   let banner: string | null = null
   let context: string[] = []
   let skillLine: string | null = null
+  let trustLine: string | null = null
   let notes: string[]
   try {
     const ws = await findWorkspace(cwd)
@@ -299,6 +304,10 @@ async function sessionStart(
       ...(await journalStart(ws, manifest, scope, cwd, input)),
     ]
     notes = await safetyNet(ws, manifest)
+    if (manifest.agents?.includes('claude') === true) {
+      const folder = await untrustedFolder(cwd, io.env)
+      if (folder !== null) trustLine = untrustedLine(folder)
+    }
     try {
       const skills = await pendingSkills(ws, manifest, io.env, (text) =>
         notes.push(plainText(text))
@@ -356,12 +365,17 @@ async function sessionStart(
     ...(tooOld !== null ? [tooOld] : []),
     // The model is told on a compact too: what it was told is gone.
     ...(skillLine !== null && !compact ? [skillLine] : []),
+    ...(trustLine !== null && !compact ? [trustLine] : []),
   ]
   return {
     ...(shown.length > 0 ? { systemMessage: shown.join('\n') } : {}),
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
-      additionalContext: [...context, ...warnings].join('\n'),
+      additionalContext: [
+        ...context,
+        ...warnings,
+        ...(trustLine !== null ? [trustLine] : []),
+      ].join('\n'),
     },
   }
 }
