@@ -306,7 +306,7 @@ async function sessionStart(
     notes = await safetyNet(ws, manifest)
     if (manifest.agents?.includes('claude') === true) {
       const folder = await untrustedFolder(cwd, io.env)
-      if (folder !== null) trustLine = untrustedLine(folder)
+      if (folder !== null) trustLine = untrustedLine(folder, io.env)
     }
     try {
       const skills = await pendingSkills(ws, manifest, io.env, (text) =>

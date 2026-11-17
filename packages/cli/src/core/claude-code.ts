@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath } from 'node:fs/promises'
+import { access, mkdir, readFile, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { configDir } from './auth.ts'
@@ -96,9 +96,18 @@ function claudeJson(env: NodeJS.ProcessEnv): string | null {
   return home === undefined || home === '' ? null : join(home, '.claude.json')
 }
 
+/** Whether the rness plugin is written in `folder`: the file `sync` writes. */
+const pluginAt = (folder: string): Promise<boolean> =>
+  access(
+    join(folder, '.claude', 'skills', 'rness', '.claude-plugin', 'plugin.json')
+  ).then(
+    () => true,
+    () => false
+  )
+
 /**
- * The folder Claude Code did not trust itself for a session in `cwd`, else
- * null (verified with 2.1.325, 2026-11-16). Claude Code loads a project
+ * The folder Claude Code did not trust itself for a session in `cwd`, when
+ * the rness plugin is written there, else null (verified with 2.1.325, 2026-11-16). Claude Code loads a project
  * plugin only in a folder trusted itself; under a trusted parent it shows no
  * dialog, runs the hooks and skips the plugin. The hook input carries no
  * trust field, so this reads Claude Code's `.claude.json`, never writes it:
@@ -113,11 +122,14 @@ export async function untrustedFolder(
   try {
     const file = claudeJson(env)
     if (file === null) return null
+    const folder = (await toplevelOf(cwd)) ?? cwd
+    // No plugin written here (`.rness`, a clone not yet synced): nothing was
+    // skipped, so nothing is said.
+    if (!(await pluginAt(folder))) return null
     const data: unknown = JSON.parse(await readFile(file, 'utf8'))
     if (data === null || typeof data !== 'object') return null
     const projects = (data as Record<string, unknown>)['projects']
     if (projects === null || typeof projects !== 'object') return null
-    const folder = (await toplevelOf(cwd)) ?? cwd
     const trusted = (path: string): boolean => {
       if (!Object.hasOwn(projects, path)) return false
       const entry = (projects as Record<string, unknown>)[path]
@@ -135,5 +147,13 @@ export async function untrustedFolder(
 }
 
 /** The line for a folder Claude Code did not trust itself (see {@link untrustedFolder}). */
-export const untrustedLine = (folder: string): string =>
-  `Claude Code did not load the rness plugin here: this folder is not trusted itself (a parent folder is). Trust it: set projects[${JSON.stringify(folder)}].hasTrustDialogAccepted to true in ~/.claude.json (code.claude.com/docs/en/permissions.md)`
+export const untrustedLine = (
+  folder: string,
+  env: NodeJS.ProcessEnv
+): string => {
+  const file =
+    (env['CLAUDE_CONFIG_DIR'] ?? '') !== ''
+      ? '$CLAUDE_CONFIG_DIR/.claude.json'
+      : '~/.claude.json'
+  return `Claude Code did not load the rness plugin here: this folder is not trusted itself. Trust it: set projects[${JSON.stringify(folder)}].hasTrustDialogAccepted to true in ${file} (code.claude.com/docs/en/permissions.md)`
+}

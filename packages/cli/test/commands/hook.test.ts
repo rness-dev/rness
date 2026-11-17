@@ -2372,6 +2372,7 @@ async function trustWs(
     scopes: { web: { url: 'https://github.com/acme/web.git' } },
     dirs: ['org/web'],
   })
+  await plugin(root)
   const home = await realpath(await mkdtemp(join(tmpdir(), 'rness-home-')))
   t.after(() => rm(home, { recursive: true, force: true }))
   const config = join(home, '.claude.json')
@@ -2384,6 +2385,15 @@ async function trustWs(
         : JSON.stringify(body)
   if (text !== null) await writeFile(config, text)
   return { root, home, config, text, env: { HOME: home } }
+}
+
+const PLUGIN = '.claude/skills/rness/.claude-plugin/plugin.json'
+
+async function plugin(dir: string): Promise<void> {
+  await mkdir(join(dir, '.claude/skills/rness/.claude-plugin'), {
+    recursive: true,
+  })
+  await writeFile(join(dir, PLUGIN), '{}')
 }
 
 const accepted = (path: string) => ({
@@ -2400,9 +2410,10 @@ test('trust: a clone not trusted itself names the clone root and the fix, for bo
   const w = await trustWs(t, (root) => accepted(root))
   const clone = join(w.root, 'org', 'web')
   await git(['init', '-q'], clone)
+  await plugin(clone)
   await mkdir(join(clone, 'src'), { recursive: true })
   const r = await hook('session-start', { cwd: join(clone, 'src') }, w.env)
-  const line = `Claude Code did not load the rness plugin here: this folder is not trusted itself (a parent folder is). Trust it: set projects["${clone}"].hasTrustDialogAccepted to true in ~/.claude.json (code.claude.com/docs/en/permissions.md)`
+  const line = `Claude Code did not load the rness plugin here: this folder is not trusted itself. Trust it: set projects["${clone}"].hasTrustDialogAccepted to true in ~/.claude.json (code.claude.com/docs/en/permissions.md)`
   const answer = JSON.parse(r.out)
   assert.ok(answer.systemMessage.split('\n').includes(line))
   assert.ok(contextOf(r).split('\n').includes(line))
@@ -2475,4 +2486,30 @@ test('trust: Claude Code file is never written', async (t) => {
   await hook('session-start', { cwd: w.root }, w.env)
   assert.equal(await readFile(w.config, 'utf8'), w.text)
   assert.deepEqual(await readdir(w.home), ['.claude.json'])
+})
+
+test('trust: no plugin written at the folder says nothing (.rness, an unsynced clone)', async (t) => {
+  const w = await trustWs(t, () => ({ projects: {} }))
+  const rness = join(w.root, '.rness')
+  const clone = join(w.root, 'org', 'web')
+  await git(['init', '-q'], clone)
+  for (const cwd of [rness, clone])
+    assert.doesNotMatch(
+      (await hook('session-start', { cwd }, w.env)).out,
+      NOT_LOADED,
+      cwd
+    )
+})
+
+test('trust: with CLAUDE_CONFIG_DIR the line names the file read', async (t) => {
+  const w = await trustWs(t, () => null)
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'rness-cc-')))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(join(dir, '.claude.json'), '{"projects":{}}')
+  const r = await hook(
+    'session-start',
+    { cwd: w.root },
+    { ...w.env, CLAUDE_CONFIG_DIR: dir }
+  )
+  assert.match(r.out, /to true in \$CLAUDE_CONFIG_DIR\/\.claude\.json \(/)
 })
