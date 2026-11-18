@@ -1479,7 +1479,7 @@ per repository, the files to commit there.
 Exit codes: 0 success, 1 failure, 2 usage — or a refusal without a TTY.
 `RNESS_DEBUG=1` adds stack traces; `RNESS_NO_DELEGATE=1` skips the delegation.
 
-## Unreleased
+## 0.26.2 - the status pane under Claude Code 2.1.325; a folder Claude Code does not trust, said
 
 - **Documented: Claude Code loads the plugin only in a folder trusted
   itself.** Under a trusted parent folder `/rness:status` and the team
