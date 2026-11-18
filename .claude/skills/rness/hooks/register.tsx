@@ -342,20 +342,21 @@ export const register: Register = (on) => {
   // `›` and `‹` beside it, drawn for that. The ring stays on the row and the
   // tab changes, as Tab does in the full-screen `rness status`. A click on
   // another row makes it the selection; the press that follows opens it.
+  // The ring walked onto another row's hidden `‹` or `›` (Tab from outside
+  // the rows) lands on that row's Button, the row selected.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     if (e.origin.kind !== 'person' || e.element === undefined) return next(e)
     if (e.element === 'tab-next' || e.element === 'tab-prev') {
       await cycleTab($, e.element === 'tab-next' ? 1 : -1)
       return {}
     }
-    if (e.element.startsWith('open-')) {
-      const path = e.element.slice('open-'.length)
-      const shown = await snapshotNow($)
-      const rows = shown?.tabs[await tabNow($)]?.rows ?? []
-      const i = rows.findIndex((row) => row.path === path)
-      if (i !== -1) await update($, selected, () => i)
-    }
-    return next(e)
+    const path = /^(?:open|prev|next)-(.+)$/.exec(e.element)?.[1]
+    if (path === undefined) return next(e)
+    const shown = await snapshotNow($)
+    const rows = shown?.tabs[await tabNow($)]?.rows ?? []
+    const i = rows.findIndex((row) => row.path === path)
+    if (i !== -1) await update($, selected, () => i)
+    return next({ ...e, element: `open-${path}` })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -461,6 +462,15 @@ export const register: Register = (on) => {
           // Every row, keyed by path (two documents of one date share an
           // id): Enter or a click opens it. The selected row carries the
           // ring and, beside it, `‹` and `›`: where Shift+Tab and Tab land.
+          //
+          // Each other row keeps its `‹` and `›` too, hidden, in the same
+          // order: a row's Button has the same place among the pane's
+          // Buttons whatever row is selected. Claude Code's terminal keeps
+          // the ring as that place, not as a key (2.1.325), and lands a
+          // `$.ui.focus` on the drawing on screen, before the redraw that
+          // moves the selection: were the arrows to move between rows, the
+          // ring would land on the `›` beside the new row and Enter would
+          // change the tab.
           rows.map((row, i) => {
             const status = row.status ?? '?'
             const isSel = i === sel
@@ -468,42 +478,61 @@ export const register: Register = (on) => {
               `${row.id} ${row.title}`,
               width - status.length - (isSel ? 5 : 3)
             )
+            const open = (
+              <Button
+                key={`open-${row.path}`}
+                plain
+                label={label}
+                {...(isSel ? { autoFocus: true as const } : {})}
+                onPress={() => void show($, row.path)}
+              />
+            )
+            // Hidden, inside a Box of its own: no gap is laid around it.
+            const hidden = (side: 'prev' | 'next') => (
+              <Box key={`hidden-${side}-${row.path}`} display="none">
+                <Button
+                  key={`${side}-${row.path}`}
+                  plain
+                  label={side === 'prev' ? '‹' : '›'}
+                  onPress={() => void show($, row.path)}
+                />
+              </Box>
+            )
+            const statusText = (
+              <Text key={`status-${row.path}`} color={COLORS[row.color]}>
+                {status}
+              </Text>
+            )
             return (
               <Box key={`row-${row.path}`} flexDirection="row" gap={1}>
-                {[
-                  isSel ? (
-                    <Button
-                      key="tab-prev"
-                      plain
-                      dimColor
-                      label="‹"
-                      onPress={() => void cycleTab($, -1)}
-                    />
-                  ) : (
-                    <Text key={`gap-${row.path}`}> </Text>
-                  ),
-                  <Button
-                    key={`open-${row.path}`}
-                    plain
-                    label={label}
-                    {...(isSel ? { autoFocus: true as const } : {})}
-                    onPress={() => void show($, row.path)}
-                  />,
-                  <Text key={`status-${row.path}`} color={COLORS[row.color]}>
-                    {status}
-                  </Text>,
-                  ...(isSel
-                    ? [
-                        <Button
-                          key="tab-next"
-                          plain
-                          dimColor
-                          label="›"
-                          onPress={() => void cycleTab($, 1)}
-                        />,
-                      ]
-                    : []),
-                ]}
+                {isSel
+                  ? [
+                      <Button
+                        key="tab-prev"
+                        plain
+                        dimColor
+                        label="‹"
+                        onPress={() => void cycleTab($, -1)}
+                      />,
+                      open,
+                      statusText,
+                      <Button
+                        key="tab-next"
+                        plain
+                        dimColor
+                        label="›"
+                        onPress={() => void cycleTab($, 1)}
+                      />,
+                    ]
+                  : [
+                      <Box key={`gap-${row.path}`}>
+                        {[<Text key="gap"> </Text>, hidden('prev')]}
+                      </Box>,
+                      <Box key={`cell-${row.path}`}>
+                        {[open, hidden('next')]}
+                      </Box>,
+                      statusText,
+                    ]}
               </Box>
             )
           })
